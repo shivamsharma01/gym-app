@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>TrueFaceLinuxPOC</RootNamespace>
+    <AssemblyName>TrueFaceLinuxPOC</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DefaultItemExcludes>$(DefaultItemExcludes);NetSDKCS\**;tests\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="NetSDKCS\NetSDKCS.csproj" />
+  </ItemGroup>
+
+  <!-- Copy native libraries next to the app so dlopen("libdhconfigsdk.so") resolves. -->
+  <ItemGroup>
+    <None Include="Native\*.so" CopyToOutputDirectory="PreserveNewest" Link="Native\%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,3 @@
+# Native Linux libraries are provisioned out-of-band (gitignores *.so).
+# Run: ./copy-native.sh
+# Source default: ~/Downloads/dahua-sdk-master/libs/lin64/

@@ -1,0 +1,60 @@
+spring:
+  application:
+    name: gym-backend
+  # Activate a profile via SPRING_PROFILES_ACTIVE (e.g. "dev") or -Dspring-boot.run.profiles=dev.
+  # Intentionally not defaulted here so tests (@ActiveProfiles("test")) are never polluted by "dev".
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/gym?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${DB_USERNAME:gym}
+    password: ${DB_PASSWORD:gym}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Schema is owned exclusively by Flyway. Hibernate never creates/updates/validates it.
+      ddl-auto: none
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    include-message: never
+    include-binding-errors: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when_authorized
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+app:
+  security:
+    jwt:
+      # Dev-only secret; MUST be overridden via APP_SECURITY_JWT_SECRET in real environments.
+      secret: ${APP_SECURITY_JWT_SECRET:dev-only-insecure-secret-change-me-0123456789-0123456789}
+      access-token-ttl: ${APP_JWT_ACCESS_TTL:PT15M}
+      refresh-token-ttl: ${APP_JWT_REFRESH_TTL:P7D}
+      issuer: gym-backend
+    lockout:
+      max-failed-attempts: 5
+      lock-duration: PT15M
+  cors:
+    allowed-origins: ${APP_CORS_ORIGINS:http://localhost:5173}
+
+logging:
+  level:
+    org.springframework.security: INFO

@@ -1,0 +1,34 @@
+# ---- Build outputs -------------------------------------------------------------------------------
+backend/target/
+**/bin/
+**/obj/
+**/.vs/
+
+# ---- Secrets / environment -----------------------------------------------------------------------
+.env
+**/.env
+*.env.local
+
+# ---- Vendor native SDK binaries ------------------------------------------------------------------
+# Large, vendor-provided binaries are provisioned out-of-band (see docs/PHASE-0-ASSESSMENT.md),
+# not tracked in git. Source (*.cs, *.csproj, *.sln) IS tracked.
+*.dll
+*.so
+*.so.*
+*.lib
+*.exe
+*.pdb
+
+# ---- Logs / runtime ------------------------------------------------------------------------------
+*.log
+**/sdk_log/
+*.cache
+*.Up2Date
+*.CopyComplete
+
+# ---- IDE / OS ------------------------------------------------------------------------------------
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

@@ -54,6 +54,21 @@ app:
       lock-duration: PT15M
   cors:
     allowed-origins: ${APP_CORS_ORIGINS:http://localhost:5173}
+  gateway:
+    # Per-deployment shared token the device gateway may present at the WSS handshake
+    # (optional; per-gateway tokens issued at create time are preferred).
+    shared-token: ${APP_GATEWAY_SHARED_TOKEN:}
+    heartbeat-timeout-seconds: 90
+    # In-process mock gateway. Never enable in production — it is not hardware.
+    simulator-enabled: ${APP_GATEWAY_SIMULATOR_ENABLED:false}
+    outbox:
+      dispatcher-enabled: ${APP_GATEWAY_OUTBOX_DISPATCHER_ENABLED:true}
+      dispatch-interval-ms: 10000
+      batch-size: 50
+      max-attempts: 6
+      base-backoff: PT5S
+      max-backoff: PT10M
+      jitter: PT1S
 
 logging:
   level:

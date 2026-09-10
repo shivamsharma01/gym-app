@@ -32,6 +32,17 @@ public final class AuditActions {
     public static final String PAYMENT_RECORDED = "PAYMENT_RECORDED";
     public static final String PAYMENT_REFUNDED = "PAYMENT_REFUNDED";
 
+    // Phase 3: device integration
+    public static final String GATEWAY_REGISTERED = "GATEWAY_REGISTERED";
+    public static final String DEVICE_CREATED = "DEVICE_CREATED";
+    public static final String DEVICE_UPDATED = "DEVICE_UPDATED";
+    public static final String DEVICE_MAPPING_CREATED = "DEVICE_MAPPING_CREATED";
+    public static final String DEVICE_SYNC_ENQUEUED = "DEVICE_SYNC_ENQUEUED";
+    public static final String DEVICE_SYNC_RETRIED = "DEVICE_SYNC_RETRIED";
+    public static final String DEVICE_SYNC_CANCELLED = "DEVICE_SYNC_CANCELLED";
+    public static final String DEVICE_RECONCILE_REQUESTED = "DEVICE_RECONCILE_REQUESTED";
+    public static final String DEVICE_REMOTE_DOOR = "DEVICE_REMOTE_DOOR";
+
     public static final String RESULT_SUCCESS = "SUCCESS";
     public static final String RESULT_FAILURE = "FAILURE";
 }

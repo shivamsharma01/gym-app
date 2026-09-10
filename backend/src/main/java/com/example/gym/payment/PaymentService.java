@@ -3,6 +3,7 @@ package com.example.gym.payment;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.device.DeviceAuthorizationService;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
 import com.example.gym.membership.Membership;
@@ -30,17 +31,20 @@ public class PaymentService {
     private final MembershipRepository membershipRepository;
     private final MemberService memberService;
     private final MembershipService membershipService;
+    private final DeviceAuthorizationService deviceAuthorizationService;
     private final AuditService auditService;
 
     public PaymentService(PaymentRepository paymentRepository,
                           MembershipRepository membershipRepository,
                           MemberService memberService,
                           MembershipService membershipService,
+                          DeviceAuthorizationService deviceAuthorizationService,
                           AuditService auditService) {
         this.paymentRepository = paymentRepository;
         this.membershipRepository = membershipRepository;
         this.memberService = memberService;
         this.membershipService = membershipService;
+        this.deviceAuthorizationService = deviceAuthorizationService;
         this.auditService = auditService;
     }
 
@@ -127,6 +131,7 @@ public class PaymentService {
             membership.setPaymentStatus(MembershipPaymentStatus.PARTIAL);
         }
         membershipRepository.save(membership);
+        deviceAuthorizationService.syncMembership(membership);
     }
 
     private String resolveCurrency(String requested, Membership membership) {

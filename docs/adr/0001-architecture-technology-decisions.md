@@ -69,5 +69,6 @@ optimistic locking; FKs and constraints; indexes matched to real query patterns.
 ## Open items carried into later phases
 1. Obtain `libdhnetsdk.so` (Linux) from Dahua/TimeWatch (blocks Linux Phase 4).
 2. Re-verify face enrollment / remote capture on hardware; confirm error-code semantics.
-3. Finalise gateway auth (mTLS vs signed token) in Phase 3.
+3. Gateway authentication is a **per-gateway hashed token** issued at create time, with an optional
+   deployment-wide shared token (`APP_GATEWAY_SHARED_TOKEN`). mTLS remains a future hardening option.
 4. Confirm device offline-authorization behaviour to finalise connectivity-state UX.

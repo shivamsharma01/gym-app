@@ -62,6 +62,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- WebSocket: the gateway link (device gateway -> backend, outbound WSS) and, later,
+             admin live feeds. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
 
         <!-- OpenAPI / Swagger UI (Spring Boot 4 line) -->
         <dependency>

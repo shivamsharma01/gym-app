@@ -12,18 +12,21 @@ import com.example.gym.plan.PlanService;
 import com.example.gym.plan.PlanStatus;
 import com.example.gym.plan.MembershipPlanRepository;
 import com.example.gym.tenant.TenantGuard;
+import com.example.gym.membership.MembershipChangedEvent.ChangeType;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
  * Membership lifecycle: create, renew (preserving history), freeze/unfreeze (pausing validity),
- * and cancel. Device authorization is NOT performed here — memberships stay {@code NOT_SYNCED}
- * until the Phase 3 sync engine runs; we never fabricate a device result.
+ * and cancel. Device I/O is not performed here — a {@link MembershipChangedEvent} is published
+ * in the same transaction so the outbox can enqueue authorization commands. Results stay
+ * {@code NOT_SYNCED}/{@code PENDING} until the gateway reports {@code SYNC_RESULT}.
  */
 @Service
 public class MembershipService {
@@ -33,17 +36,20 @@ public class MembershipService {
     private final MemberService memberService;
     private final PlanService planService;
     private final AuditService auditService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public MembershipService(MembershipRepository membershipRepository,
                              MembershipPlanRepository planRepository,
                              MemberService memberService,
                              PlanService planService,
-                             AuditService auditService) {
+                             AuditService auditService,
+                             ApplicationEventPublisher eventPublisher) {
         this.membershipRepository = membershipRepository;
         this.planRepository = planRepository;
         this.memberService = memberService;
         this.planService = planService;
         this.auditService = auditService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -71,6 +77,7 @@ public class MembershipService {
         auditService.record(AuditActions.MEMBERSHIP_CREATED, AuditActions.RESULT_SUCCESS,
                 "Membership", saved.getPublicId(),
                 Map.of("memberId", member.getPublicId(), "plan", plan.getName()));
+        publish(saved, ChangeType.CREATED);
         return saved;
     }
 
@@ -94,6 +101,7 @@ public class MembershipService {
         auditService.record(AuditActions.MEMBERSHIP_RENEWED, AuditActions.RESULT_SUCCESS,
                 "Membership", saved.getPublicId(),
                 Map.of("renewedFrom", current.getPublicId(), "plan", plan.getName()));
+        publish(saved, ChangeType.RENEWED);
         return saved;
     }
 
@@ -109,6 +117,7 @@ public class MembershipService {
         Membership saved = membershipRepository.save(membership);
         auditService.record(AuditActions.MEMBERSHIP_FROZEN, AuditActions.RESULT_SUCCESS,
                 "Membership", saved.getPublicId(), null);
+        publish(saved, ChangeType.FROZEN);
         return saved;
     }
 
@@ -131,6 +140,7 @@ public class MembershipService {
         Membership saved = membershipRepository.save(membership);
         auditService.record(AuditActions.MEMBERSHIP_UNFROZEN, AuditActions.RESULT_SUCCESS,
                 "Membership", saved.getPublicId(), Map.of("extendedDays", frozenDays));
+        publish(saved, ChangeType.UNFROZEN);
         return saved;
     }
 
@@ -146,7 +156,13 @@ public class MembershipService {
         Membership saved = membershipRepository.save(membership);
         auditService.record(AuditActions.MEMBERSHIP_CANCELLED, AuditActions.RESULT_SUCCESS,
                 "Membership", saved.getPublicId(), reason == null ? null : Map.of("reason", reason));
+        publish(saved, ChangeType.CANCELLED);
         return saved;
+    }
+
+    private void publish(Membership membership, ChangeType type) {
+        eventPublisher.publishEvent(new MembershipChangedEvent(
+                membership.getTenantId(), membership.getMemberId(), membership.getId(), type));
     }
 
     private Membership build(Long tenantId, Long memberId, MembershipPlan plan, LocalDate start) {

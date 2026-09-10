@@ -3,6 +3,13 @@ package com.example.gym.support;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.repo.AttendanceEventRepository;
+import com.example.gym.device.repo.AttendanceSyncCursorRepository;
+import com.example.gym.device.repo.DeviceRepository;
+import com.example.gym.device.repo.DeviceSyncCommandRepository;
+import com.example.gym.device.repo.GatewayRepository;
+import com.example.gym.device.repo.MemberDeviceMappingRepository;
+import com.example.gym.device.repo.SecurityEventRepository;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.payment.PaymentRepository;
@@ -77,6 +84,27 @@ public abstract class AbstractIntegrationTest {
     protected PaymentRepository paymentRepository;
 
     @Autowired
+    protected DeviceSyncCommandRepository deviceSyncCommandRepository;
+
+    @Autowired
+    protected AttendanceEventRepository attendanceEventRepository;
+
+    @Autowired
+    protected AttendanceSyncCursorRepository attendanceSyncCursorRepository;
+
+    @Autowired
+    protected SecurityEventRepository securityEventRepository;
+
+    @Autowired
+    protected MemberDeviceMappingRepository memberDeviceMappingRepository;
+
+    @Autowired
+    protected DeviceRepository deviceRepository;
+
+    @Autowired
+    protected GatewayRepository gatewayRepository;
+
+    @Autowired
     protected PasswordEncoder passwordEncoder;
 
     /**
@@ -85,6 +113,13 @@ public abstract class AbstractIntegrationTest {
      * left intact.
      */
     protected void resetDatabase() {
+        deviceSyncCommandRepository.deleteAllInBatch();
+        attendanceEventRepository.deleteAllInBatch();
+        attendanceSyncCursorRepository.deleteAllInBatch();
+        securityEventRepository.deleteAllInBatch();
+        memberDeviceMappingRepository.deleteAllInBatch();
+        deviceRepository.deleteAllInBatch();
+        gatewayRepository.deleteAllInBatch();
         paymentRepository.deleteAllInBatch();
         membershipRepository.deleteAllInBatch();
         memberRepository.deleteAllInBatch();

@@ -38,7 +38,11 @@ public class SecurityConfig {
             "/actuator/health",
             "/actuator/health/**",
             "/actuator/info",
-            "/error"
+            "/error",
+            // Device-gateway WSS + REST fallback authenticate with a per-gateway token
+            // (or optional deployment shared token), not the user JWT filter.
+            "/gateway",
+            "/internal/gateway/**"
     };
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;

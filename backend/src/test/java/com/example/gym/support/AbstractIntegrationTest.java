@@ -1,5 +1,12 @@
 package com.example.gym.support;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.example.gym.member.MemberRepository;
+import com.example.gym.membership.MembershipRepository;
+import com.example.gym.payment.PaymentRepository;
+import com.example.gym.plan.MembershipPlanRepository;
 import com.example.gym.security.domain.Role;
 import com.example.gym.security.domain.RoleRepository;
 import com.example.gym.tenant.Tenant;
@@ -11,10 +18,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.MySQLContainer;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -56,7 +65,48 @@ public abstract class AbstractIntegrationTest {
     protected RoleRepository roleRepository;
 
     @Autowired
+    protected MembershipPlanRepository planRepository;
+
+    @Autowired
+    protected MemberRepository memberRepository;
+
+    @Autowired
+    protected MembershipRepository membershipRepository;
+
+    @Autowired
+    protected PaymentRepository paymentRepository;
+
+    @Autowired
     protected PasswordEncoder passwordEncoder;
+
+    /**
+     * Clears all tenant data in FK-safe order (child -> parent). The container is shared across
+     * every test class, so each class must start from a clean slate. Seeded roles/permissions are
+     * left intact.
+     */
+    protected void resetDatabase() {
+        paymentRepository.deleteAllInBatch();
+        membershipRepository.deleteAllInBatch();
+        memberRepository.deleteAllInBatch();
+        planRepository.deleteAllInBatch();
+        userRepository.deleteAll();     // cascades to refresh_token / user_role via DB FKs
+        tenantRepository.deleteAll();
+    }
+
+    /** Logs in with the shared default password and returns a bearer access token. */
+    protected String tokenFor(String username) throws Exception {
+        String body = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usernameOrEmail\":\"" + username + "\",\"password\":\""
+                                + DEFAULT_PASSWORD + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return jsonMapper.readTree(body).get("accessToken").asString();
+    }
+
+    protected JsonNode readJson(String body) {
+        return jsonMapper.readTree(body);
+    }
 
     protected Tenant createTenant(String name, String slug) {
         return tenantRepository.save(new Tenant(name, slug));

@@ -19,8 +19,7 @@ class AuthAndSecurityIT extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        userRepository.deleteAll();
-        tenantRepository.deleteAll();
+        resetDatabase();
         tenant = createTenant("Acme Gym", "acme-gym");
         createUser(tenant.getId(), "acme-admin", "admin@acme.local", "GYM_ADMIN");
         createUser(tenant.getId(), "acme-frontdesk", "fd@acme.local", "FRONT_DESK");

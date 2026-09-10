@@ -19,8 +19,7 @@ class TenantIsolationIT extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        userRepository.deleteAll();
-        tenantRepository.deleteAll();
+        resetDatabase();
 
         Tenant tenantA = createTenant("Tenant A", "tenant-a");
         Tenant tenantB = createTenant("Tenant B", "tenant-b");

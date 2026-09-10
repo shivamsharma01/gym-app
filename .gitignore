@@ -19,6 +19,10 @@ backend/target/
 *.exe
 *.pdb
 
+# Exception: TrueFace Linux POC ships the exact lin64 .so set so a gym-LAN
+# machine can clone and run without a separate Dahua SDK pack.
+!TrueFaceLinuxPOC/Native/*.so
+
 # ---- Logs / runtime ------------------------------------------------------------------------------
 *.log
 **/sdk_log/

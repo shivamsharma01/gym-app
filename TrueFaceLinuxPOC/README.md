@@ -14,13 +14,15 @@ A successful **login against the physical TrueFace3000** is the only result that
 
 ## Prerequisites
 
-- Linux x64 (tested: Ubuntu 24.04.5 LTS)
+- Linux x64 (tested: Ubuntu 24.04.5 LTS). The gym Windows PC cannot run this POC.
 - .NET 10 SDK
 - TrueFace3000 reachable on TCP **37777**
 - Valid device credentials (never committed)
-- Native libraries from the Linux SDK pack (`libs/lin64/`)
+- The `Native/*.so` files already in this folder (tracked in git)
 
 ## Setup
+
+On the gym Linux machine: clone/copy this repo (or just `TrueFaceLinuxPOC/`) and install .NET 10. You do **not** need `dahua-sdk-master` and you do **not** need `./copy-native.sh`.
 
 ### 1. .NET 10 SDK
 
@@ -36,16 +38,7 @@ Ubuntu 24.04 can also use `sudo apt-get install -y dotnet-sdk-10.0`.
 
 ### 2. Native libraries
 
-`*.so` files are **not** git-tracked. Copy them next to the project:
-
-```bash
-cd TrueFaceLinuxPOC
-./copy-native.sh
-```
-
-Default source: `$HOME/Downloads/dahua-sdk-master/libs/lin64/`. Override with `DAHUA_LIN64_DIR`.
-
-Required:
+The required Linux x64 `.so` files ship in `Native/`:
 
 | Library | Why |
 | --- | --- |
@@ -54,9 +47,11 @@ Required:
 | `libavnetsdk.so` | Same: name appears in `libdhnetsdk.so` strings. |
 | `libInfra.so`, `libNetFramework.so`, `libStream.so`, `libStreamSvr.so` | DT_NEEDED of `libavnetsdk.so`. |
 
-Not copied: `libjawt.so` (Java AWT), `libdhplay.so` (play SDK; P/Invoke is lazy and unused here), `libStreamConvertor.so` (referenced by name in netsdk strings but **not present** in `libs/lin64`; not required for Init on this host).
+Not included: `libjawt.so` (Java AWT), `libdhplay.so` (play SDK; P/Invoke is lazy and unused here), `libStreamConvertor.so` (named in netsdk strings but absent from the vendor lin64 pack; not required for Init).
 
-Libraries stay **application-local** (`TrueFaceLinuxPOC/Native/`). They are copied to the build output. `LD_LIBRARY_PATH` is prepended at process start so native `dlopen` of companions works. Nothing is installed into `/usr/lib`.
+Libraries stay **application-local**. They are copied to the build output. `LD_LIBRARY_PATH` is prepended at process start so native `dlopen` of companions works. Nothing is installed into `/usr/lib`.
+
+`./copy-native.sh` is only for refreshing `Native/` from a local SDK pack (`$HOME/Downloads/dahua-sdk-master/libs/lin64` or `DAHUA_LIN64_DIR`). That pack exists on the development workstation, not on the gym machine.
 
 ### 3. Build
 
@@ -125,13 +120,13 @@ Classify failures; do not lump everything into “Linux SDK unsupported.”
 
 `[ERROR] Native loading: libdhnetsdk.so not found`
 
-Run `./copy-native.sh`. Or pass `--native-dir /path/to/lin64`.
+`Native/` is missing the tracked `.so` files. Re-copy the full `TrueFaceLinuxPOC` folder, or pass `--native-dir` at a directory that contains them.
 
 ### Dependency missing
 
 `DllNotFoundException` / `libxxx.so: cannot open shared object file`
 
-A companion `.so` was `dlopen`ed. Ensure `copy-native.sh` completed. Confirm `LD_LIBRARY_PATH` includes `Native/` (the app sets this itself). Check with `ldd Native/libavnetsdk.so`.
+A companion `.so` was `dlopen`ed. Confirm every file listed above is in `Native/` and that `LD_LIBRARY_PATH` includes `Native/` (the app sets this itself). Check with `ldd Native/libavnetsdk.so`.
 
 ### Architecture mismatch
 

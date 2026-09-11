@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>Gym.Gateway.Adapters</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Gym.Gateway.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gym.Gateway.NetSdk\Gym.Gateway.NetSdk.csproj" />
+  </ItemGroup>
+</Project>

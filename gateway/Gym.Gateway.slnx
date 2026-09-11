@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Gym.Gateway.Adapters/Gym.Gateway.Adapters.csproj" />
+    <Project Path="src/Gym.Gateway.NetSdk/Gym.Gateway.NetSdk.csproj" />
+    <Project Path="src/Gym.Gateway/Gym.Gateway.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Gym.Gateway.Tests/Gym.Gateway.Tests.csproj" />
+  </Folder>
+</Solution>

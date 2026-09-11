@@ -23,6 +23,10 @@ backend/target/
 # machine can clone and run without a separate Dahua SDK pack.
 !TrueFaceLinuxPOC/Native/*.so
 
+# Exception: Phase 4 Windows Device Gateway ships the demo's win-x64 DLLs so a
+# gym Windows PC can run without hunting through TrueFace_SDK/bin.
+!gateway/native/win-x64/*.dll
+
 # ---- Logs / runtime ------------------------------------------------------------------------------
 *.log
 **/sdk_log/

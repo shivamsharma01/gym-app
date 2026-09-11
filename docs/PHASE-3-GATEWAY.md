@@ -65,7 +65,6 @@ fake biometric enrolment.
 Alternatively set `APP_GATEWAY_SIMULATOR_ENABLED=true` for an in-process mock
 used only in local demos — never in production.
 
-## Unresolved (Phase 4)
+## Unresolved (later)
 
-Native `TrueFaceDeviceAdapter`, Linux `libdhnetsdk.so`, remote face enrolment,
-and exact offline-authorization behaviour of the standalone terminal.
+Remote face enrolment remains UNVERIFIED (`0x10030110`). Offline-authorization UX of the standalone terminal still needs a live observation. Linux `libdhnetsdk.so` is unused for this gym (Windows LAN gateway).

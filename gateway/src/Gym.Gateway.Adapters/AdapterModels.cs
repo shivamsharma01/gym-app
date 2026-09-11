@@ -1,0 +1,71 @@
+namespace Gym.Gateway.Adapters;
+
+public sealed record DeviceConnectionConfig(
+    string DeviceId,
+    string Ip,
+    ushort Port,
+    string Username,
+    string Password,
+    string? NativeDirectory = null);
+
+public sealed record DeviceConnectionStatus(bool Ok, string ConnectionState, string? Error)
+{
+    public static DeviceConnectionStatus Online() => new(true, "ONLINE", null);
+
+    public static DeviceConnectionStatus Failed(string error) => new(false, "OFFLINE", error);
+}
+
+public sealed record DeviceInfoSnapshot(
+    string? SerialNumber,
+    int DeviceType,
+    int ChannelCount,
+    int AlarmInCount,
+    int AlarmOutCount,
+    int DiskCount);
+
+public sealed record DeviceHealth(string ConnectionState, DateTimeOffset? LastSeenUtc, string? Detail);
+
+public sealed record DeviceUserMutation(
+    string DeviceUserId,
+    string? Name = null,
+    bool? Enabled = null,
+    DateTimeOffset? ValidFrom = null,
+    DateTimeOffset? ValidTo = null);
+
+public sealed record DeviceCommandResult(bool Ok, string? Error)
+{
+    public static DeviceCommandResult Success() => new(true, null);
+
+    public static DeviceCommandResult Fail(string error) => new(false, error);
+}
+
+public sealed record EnrollmentOutcome(string Status, string? Error)
+{
+    /// <summary>Guided on-device enrollment; never a fabricated remote success.</summary>
+    public static EnrollmentOutcome GuidedPending(string reason) => new("GUIDED_PENDING", reason);
+
+    public static EnrollmentOutcome Failed(string error) => new("FAILED", error);
+}
+
+public sealed record DeviceAttendanceRecord(
+    string? DeviceUserId,
+    DateTimeOffset OccurredAt,
+    string Method,
+    bool Granted,
+    long? RecNo);
+
+public sealed record DeviceReconciliationResult(
+    bool Ok,
+    string? Error,
+    IReadOnlyList<DeviceAttendanceRecord> Events,
+    IReadOnlyList<string> DeviceUserIds);
+
+public sealed record NormalizedDeviceEvent(
+    string Kind,
+    string? DeviceUserId,
+    DateTimeOffset OccurredAt,
+    string Method,
+    bool Granted,
+    long? RecNo,
+    string? AlarmType,
+    string? Details);

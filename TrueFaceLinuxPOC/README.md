@@ -22,7 +22,7 @@ A successful **login against the physical TrueFace3000** is the only result that
 
 ## Setup
 
-On the gym Linux machine: clone/copy this repo (or just `TrueFaceLinuxPOC/`) and install .NET 10. You do **not** need `dahua-sdk-master` and you do **not** need `./copy-native.sh`.
+On a Linux x64 machine: clone/copy this folder (including `Native/*.so`) and install .NET 10.
 
 ### 1. .NET 10 SDK
 
@@ -50,8 +50,6 @@ The required Linux x64 `.so` files ship in `Native/`:
 Not included: `libjawt.so` (Java AWT), `libdhplay.so` (play SDK; P/Invoke is lazy and unused here), `libStreamConvertor.so` (named in netsdk strings but absent from the vendor lin64 pack; not required for Init).
 
 Libraries stay **application-local**. They are copied to the build output. `LD_LIBRARY_PATH` is prepended at process start so native `dlopen` of companions works. Nothing is installed into `/usr/lib`.
-
-`./copy-native.sh` is only for refreshing `Native/` from a local SDK pack (`$HOME/Downloads/dahua-sdk-master/libs/lin64` or `DAHUA_LIN64_DIR`). That pack exists on the development workstation, not on the gym machine.
 
 ### 3. Build
 

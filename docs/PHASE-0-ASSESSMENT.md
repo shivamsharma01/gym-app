@@ -41,11 +41,9 @@ TrueFace_SDK/
     UserManager/         ← user / card / fingerprint CRUD forms
     QueryRecord/         ← attendance & alarm record queries, device log query
     Setting/, Config/    ← device time, network, holidays, schedules, upgrade, reboot
-    bin/x64Debug/
-      dhnetsdk.dll, dhconfigsdk.dll, avnetsdk.dll, dhplay.dll   ← Windows native libs (present)
-      sdk_log/1_sdk_log.log   ← REAL session log against device 192.168.1.108:37777
-      Capture/*.jpg           ← REAL face frames captured from the device camera
 ```
+
+Runtime leftovers (`bin/`, `obj/`, `sdk_log/`, camera `Capture/*.jpg`) are **not** kept in git. Face frames must not stay in the tree. Windows DLLs used by the gateway live in `gateway/native/win-x64/`.
 
 **Conclusion:** The "TrueFace SDK" is a rebranded **Dahua NetSDK** (family `AccessControl2S`,
 2nd-gen standalone access terminal). A complete, compilable C# binding and a demo that has

@@ -1,3 +1,1 @@
-# Linux x64 Dahua NetSDK libraries for this POC live in this directory
-# and are tracked in git so the gym-machine test is self-contained.
-# copy-native.sh is only a refresh helper if you have a newer SDK pack.
+# Linux x64 Dahua NetSDK libraries for this POC. Tracked in git.

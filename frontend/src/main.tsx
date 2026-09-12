@@ -38,6 +38,7 @@ import { ContactPage } from '@/public/ContactPage'
 import { HomePage } from '@/public/HomePage'
 import { MembershipPlansPage } from '@/public/MembershipPlansPage'
 import { PublicLayout } from '@/public/PublicLayout'
+import { RootLandingPage } from '@/public/RootLandingPage'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -62,7 +63,10 @@ const publicChildren = [
 ]
 
 const router = createBrowserRouter([
-  { path: '/', element: <Navigate to={`/g/${DEFAULT_GYM_SLUG}`} replace /> },
+  {
+    path: '/',
+    element: DEFAULT_GYM_SLUG ? <Navigate to={`/g/${DEFAULT_GYM_SLUG}`} replace /> : <RootLandingPage />,
+  },
   {
     path: '/g/:gymSlug',
     element: (

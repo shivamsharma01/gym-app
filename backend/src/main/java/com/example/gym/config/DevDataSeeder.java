@@ -2,8 +2,6 @@ package com.example.gym.config;
 
 import com.example.gym.security.domain.Role;
 import com.example.gym.security.domain.RoleRepository;
-import com.example.gym.tenant.Tenant;
-import com.example.gym.tenant.TenantRepository;
 import com.example.gym.user.AdminUser;
 import com.example.gym.user.AdminUserRepository;
 import java.util.Set;
@@ -16,9 +14,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Seeds a demo tenant and one account per role for local development only. Idempotent and strictly
- * gated to the {@code dev} profile — never runs in test/prod. The default password is a placeholder
- * that must be changed; it is logged (dev-only) purely for convenience.
+ * Dev bootstrap: platform SUPER_ADMIN only. Gyms and gym staff are created by SUPER_ADMIN via
+ * the enroll UI (then gym admins create further staff/members). Never runs in test/prod.
  */
 @Component
 @Profile("dev")
@@ -27,14 +24,12 @@ public class DevDataSeeder implements CommandLineRunner {
     private static final Logger log = LoggerFactory.getLogger(DevDataSeeder.class);
     private static final String DEFAULT_PASSWORD = "ChangeMe123!";
 
-    private final TenantRepository tenantRepository;
     private final AdminUserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
 
-    public DevDataSeeder(TenantRepository tenantRepository, AdminUserRepository userRepository,
-                         RoleRepository roleRepository, PasswordEncoder passwordEncoder) {
-        this.tenantRepository = tenantRepository;
+    public DevDataSeeder(AdminUserRepository userRepository, RoleRepository roleRepository,
+                         PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
@@ -43,29 +38,16 @@ public class DevDataSeeder implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
-        Tenant tenant = tenantRepository.findBySlug("downtown-fitness")
-                .orElseGet(() -> tenantRepository.save(new Tenant("Downtown Fitness", "downtown-fitness")));
-
-        seedUser(null, "superadmin", "superadmin@platform.local", "Platform Super Admin", "SUPER_ADMIN");
-        seedUser(tenant.getId(), "owner", "owner@demo.local", "Demo Owner", "GYM_OWNER");
-        seedUser(tenant.getId(), "admin", "admin@demo.local", "Demo Admin", "GYM_ADMIN");
-        seedUser(tenant.getId(), "staff", "staff@demo.local", "Demo Staff", "STAFF");
-        seedUser(tenant.getId(), "frontdesk", "frontdesk@demo.local", "Demo Front Desk", "FRONT_DESK");
-
-        log.warn("DEV data seeded. Default password for all seeded accounts is '{}'. "
-                + "Change it before any non-local use.", DEFAULT_PASSWORD);
-    }
-
-    private void seedUser(Long tenantId, String username, String email, String fullName, String roleName) {
-        if (userRepository.existsByUsername(username)) {
+        if (userRepository.existsByUsername("superadmin")) {
             return;
         }
-        Role role = roleRepository.findByNameAndTenantIdIsNull(roleName)
-                .orElseThrow(() -> new IllegalStateException("System role missing: " + roleName));
-        AdminUser user = new AdminUser(tenantId, username, email,
-                passwordEncoder.encode(DEFAULT_PASSWORD), fullName);
+        Role role = roleRepository.findByNameAndTenantIdIsNull("SUPER_ADMIN")
+                .orElseThrow(() -> new IllegalStateException("System role missing: SUPER_ADMIN"));
+        AdminUser user = new AdminUser(null, "superadmin", "superadmin@platform.local",
+                passwordEncoder.encode(DEFAULT_PASSWORD), "Platform Super Admin");
         user.setRoles(Set.of(role));
         userRepository.save(user);
-        log.info("Seeded dev user '{}' with role {}", username, roleName);
+        log.warn("DEV bootstrap: created platform SUPER_ADMIN 'superadmin' with password '{}'. "
+                + "Enroll gyms from /app/platform/gyms — no demo gym is seeded.", DEFAULT_PASSWORD);
     }
 }

@@ -6,7 +6,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.support.AbstractIntegrationTest;
-import com.example.gym.tenant.Tenant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -20,12 +19,13 @@ class Phase9IT extends AbstractIntegrationTest {
         resetDatabase();
         createUser(null, "plat-super", "plat-super@platform.local", "SUPER_ADMIN");
         superToken = tokenFor("plat-super");
-        Tenant existing = createTenant("Downtown Fitness", "downtown-fitness");
-        createUser(existing.getId(), "p9-admin", "p9-admin@demo.local", "GYM_ADMIN");
     }
 
     @Test
     void superAdminEnrollsGymAndPublicSiteResolvesByHeader() throws Exception {
+        mockMvc.perform(get("/api/v1/public/site"))
+                .andExpect(status().isNotFound());
+
         mockMvc.perform(post("/api/v1/platform/tenants")
                         .header("Authorization", "Bearer " + superToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -55,16 +55,39 @@ class Phase9IT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.slug").value("h13gym"))
                 .andExpect(jsonPath("$.displayName").value("H13Gym"));
 
-        mockMvc.perform(get("/api/v1/public/site").header("X-Gym-Slug", "downtown-fitness"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.slug").value("downtown-fitness"));
+        String ownerToken = tokenFor("h13owner");
+        mockMvc.perform(post("/api/v1/users")
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "username":"h13staff",
+                                  "email":"staff@h13.local",
+                                  "fullName":"H13 Staff",
+                                  "password":"ChangeMe123!",
+                                  "roles":["STAFF"]
+                                }
+                                """))
+                .andExpect(status().isCreated());
     }
 
     @Test
     void gymAdminCannotEnrollTenants() throws Exception {
-        String adminToken = tokenFor("p9-admin");
         mockMvc.perform(post("/api/v1/platform/tenants")
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + superToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name":"Temp Gym","slug":"temp-gym","displayName":"Temp",
+                                  "ownerUsername":"tempowner","ownerEmail":"temp@gym.local",
+                                  "ownerFullName":"Temp Owner","ownerPassword":"ChangeMe123!"
+                                }
+                                """))
+                .andExpect(status().isCreated());
+
+        String ownerToken = tokenFor("tempowner");
+        mockMvc.perform(post("/api/v1/platform/tenants")
+                        .header("Authorization", "Bearer " + ownerToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

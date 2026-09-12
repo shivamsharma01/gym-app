@@ -70,9 +70,9 @@ app:
       max-backoff: PT10M
       jitter: PT1S
   public:
-    # Fallback gym slug when X-Gym-Slug / subdomain do not resolve a tenant.
-    tenant-slug: ${APP_PUBLIC_TENANT_SLUG:downtown-fitness}
-    # Production: set to the apex domain so {slug}.example.com maps to that gym (e.g. gym.example.com).
+    # Optional fallback when X-Gym-Slug / subdomain are absent. Leave empty — no gym is pre-seeded.
+    tenant-slug: ${APP_PUBLIC_TENANT_SLUG:}
+    # Production: set to the apex domain so {slug}.example.com maps to that gym.
     # Leave empty for local/dev — use path /g/{slug} and the X-Gym-Slug header instead.
     base-domain: ${APP_PUBLIC_BASE_DOMAIN:}
 

@@ -8,7 +8,7 @@ Unauthenticated. Looks like a gym brochure, not the staff sidebar.
 
 - `GET /api/v1/public/site` and `GET /api/v1/public/plans` (no JWT)
 - `POST /api/v1/public/enquiries` writes a real lead
-- Gym identity comes from settings / `APP_PUBLIC_TENANT_SLUG` (default `downtown-fitness`)
+- Gym identity comes from settings / `X-Gym-Slug` (or optional `APP_PUBLIC_TENANT_SLUG`). No demo gym is seeded; SUPER_ADMIN enrolls gyms (Phase 9).
 
 ## Staff additions
 

@@ -28,6 +28,7 @@ class Phase6IT extends AbstractIntegrationTest {
     @Test
     void publicEnquiryAndStaffList() throws Exception {
         mockMvc.perform(post("/api/v1/public/enquiries")
+                        .header("X-Gym-Slug", "downtown-fitness")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Ada","email":"ada@example.com","phone":"999","message":"Trial?","planInterest":"Monthly"}
@@ -60,7 +61,7 @@ class Phase6IT extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("True Gym Downtown"));
 
-        mockMvc.perform(get("/api/v1/public/site"))
+        mockMvc.perform(get("/api/v1/public/site").header("X-Gym-Slug", "downtown-fitness"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("True Gym Downtown"));
 
@@ -76,7 +77,7 @@ class Phase6IT extends AbstractIntegrationTest {
 
     @Test
     void publicPlansDoNotRequireAuth() throws Exception {
-        mockMvc.perform(get("/api/v1/public/plans"))
+        mockMvc.perform(get("/api/v1/public/plans").header("X-Gym-Slug", "downtown-fitness"))
                 .andExpect(status().isOk());
         assertThat(true).isTrue();
     }

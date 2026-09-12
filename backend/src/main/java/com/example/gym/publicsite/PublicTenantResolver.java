@@ -13,7 +13,8 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 /**
  * Resolves which gym the unauthenticated website belongs to.
  * Order: {@code X-Gym-Slug} header → {@code slug} query → subdomain of
- * {@code app.public.base-domain} → {@code app.public.tenant-slug} fallback.
+ * {@code app.public.base-domain} → optional {@code app.public.tenant-slug} fallback.
+ * No gym is assumed to exist until SUPER_ADMIN enrolls one.
  */
 @Component
 public class PublicTenantResolver {
@@ -25,10 +26,10 @@ public class PublicTenantResolver {
     private final String baseDomain;
 
     public PublicTenantResolver(TenantRepository tenantRepository,
-                                @Value("${app.public.tenant-slug:downtown-fitness}") String fallbackSlug,
+                                @Value("${app.public.tenant-slug:}") String fallbackSlug,
                                 @Value("${app.public.base-domain:}") String baseDomain) {
         this.tenantRepository = tenantRepository;
-        this.fallbackSlug = fallbackSlug;
+        this.fallbackSlug = fallbackSlug == null ? "" : fallbackSlug.trim();
         this.baseDomain = baseDomain == null ? "" : baseDomain.trim().toLowerCase();
     }
 
@@ -38,6 +39,9 @@ public class PublicTenantResolver {
 
     public Tenant require(HttpServletRequest request) {
         String slug = resolveSlug(request);
+        if (slug == null || slug.isBlank()) {
+            throw CommonExceptions.notFound("Gym");
+        }
         return tenantRepository.findBySlug(slug)
                 .filter(t -> t.getStatus() == TenantStatus.ACTIVE)
                 .orElseThrow(() -> CommonExceptions.notFound("Gym"));
@@ -57,6 +61,9 @@ public class PublicTenantResolver {
             if (fromHost != null) {
                 return fromHost;
             }
+        }
+        if (fallbackSlug.isBlank()) {
+            return null;
         }
         return normalizeSlug(fallbackSlug);
     }

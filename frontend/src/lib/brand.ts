@@ -16,7 +16,7 @@ export const BRAND_DEFAULTS = {
 } as const
 
 export const DEFAULT_GYM_SLUG =
-  (import.meta.env.VITE_DEFAULT_GYM_SLUG as string | undefined)?.trim() || 'downtown-fitness'
+  (import.meta.env.VITE_DEFAULT_GYM_SLUG as string | undefined)?.trim() || ''
 
 export type PublicSite = {
   tenantId: string

@@ -16,6 +16,13 @@ export function useGymSlug() {
 /** Reads :gymSlug from the route and provides it to public API calls / links. */
 export function GymSlugFromRoute({ children }: { children: ReactNode }) {
   const { gymSlug } = useParams()
-  const slug = useMemo(() => gymSlug?.trim() || DEFAULT_GYM_SLUG, [gymSlug])
+  const slug = useMemo(() => (gymSlug?.trim() || DEFAULT_GYM_SLUG).trim(), [gymSlug])
+  if (!slug) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#0b0c0b] px-4 text-center text-white/70">
+        Missing gym slug in the URL. Use <code className="text-[#c8f542]">/g/your-slug</code>.
+      </main>
+    )
+  }
   return <GymSlugProvider slug={slug}>{children}</GymSlugProvider>
 }

@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gym visit checklist — TrueFace door test</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      font-family: system-ui, Segoe UI, sans-serif;
+      line-height: 1.5;
+      max-width: 46rem;
+      margin: 1.25rem auto;
+      padding: 0 1rem 2.5rem;
+      color: #111;
+      font-size: 15px;
+    }
+    h1 { font-size: 1.5rem; margin: 0 0 0.35rem; }
+    h2 { font-size: 1.15rem; margin: 1.6rem 0 0.5rem; border-bottom: 2px solid #111; padding-bottom: 0.2rem; }
+    h3 { font-size: 1.02rem; margin: 1.15rem 0 0.35rem; }
+    .lead { font-size: 1.02rem; margin: 0.5rem 0 1rem; }
+    .tag {
+      display: inline-block;
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.25rem;
+      margin: 0 0.25rem 0.35rem 0;
+    }
+    .ok { background: #d1fae5; color: #065f46; }
+    .warn { background: #fef3c7; color: #92400e; }
+    .bad { background: #fee2e2; color: #991b1b; }
+    .step {
+      border: 1px solid #cbd5e1;
+      border-radius: 0.4rem;
+      padding: 0.85rem 1rem;
+      margin: 0.75rem 0;
+      background: #fff;
+      break-inside: avoid;
+    }
+    .step h3 { margin-top: 0; }
+    .label { font-weight: 700; color: #334155; }
+    .do-not {
+      background: #fff1f2;
+      border: 1px solid #fda4af;
+      border-radius: 0.4rem;
+      padding: 0.75rem 1rem;
+      margin: 0.75rem 0;
+    }
+    .box {
+      border: 1px solid #94a3b8;
+      padding: 0.75rem 1rem;
+      border-radius: 0.35rem;
+      background: #f8fafc;
+      margin: 0.75rem 0;
+    }
+    ul.check { list-style: none; padding-left: 0; margin: 0.4rem 0; }
+    ul.check li { padding: 0.35rem 0 0.35rem 1.6rem; position: relative; }
+    ul.check li::before { content: "☐"; position: absolute; left: 0; font-size: 1.05rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; margin: 0.5rem 0; }
+    th, td { border: 1px solid #94a3b8; padding: 0.45rem 0.55rem; text-align: left; vertical-align: top; }
+    th { background: #e2e8f0; }
+    code, pre { font-family: ui-monospace, Consolas, monospace; font-size: 0.84rem; }
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 0.35rem;
+      padding: 0.85rem 1rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+    .pass { color: #065f46; font-weight: 700; }
+    .fail { color: #991b1b; font-weight: 700; }
+    @media print {
+      body { max-width: none; margin: 0; font-size: 12.5px; }
+      .step { border-color: #999; }
+      a { color: inherit; text-decoration: none; }
+      pre { background: #f1f5f9; color: #111; border: 1px solid #ccc; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Gym visit checklist — TrueFace door test</h1>
+  <p class="lead">
+    Print this page and keep it next to the Windows laptop during the visit.
+    Follow the steps <strong>in order</strong>. Tick each box as you finish it.
+  </p>
+  <p>
+    <span class="tag ok">We do not use the gym website or gym database</span>
+    <span class="tag warn">We talk only to the door tablet</span>
+    <span class="tag bad">Never change a real member</span>
+  </p>
+
+  <!-- ========== WHY ========== -->
+  <h2>1. Why we are doing this</h2>
+  <p>
+    <span class="label">What:</span>
+    A short live test on the real TrueFace door tablet to prove the software can
+    create a temporary test person, turn their access off and on, and remove them cleanly.
+  </p>
+  <p>
+    <span class="label">Why:</span>
+    The final gym product will use this same tablet connection.
+    If this visit works, we know door allow/deny can be controlled from our software.
+    If it fails, the website cannot fix it later — we need to know now.
+  </p>
+  <p>
+    <span class="label">What this does <em>not</em> prove:</span>
+    The gym website, online login, cloud connection, or member payments.
+    Those are separate visits.
+  </p>
+  <div class="box">
+    <strong>Important idea:</strong>
+    We only create one throwaway person whose id looks like
+    <code>POC-20260912-A3F2</code>.
+    We never edit, freeze, or delete a real gym member on the tablet.
+  </div>
+
+  <!-- ========== BEFORE ========== -->
+  <h2>2. Before anyone arrives (gym staff)</h2>
+  <p>Do these on a calm day <strong>before</strong> the visit starts.</p>
+
+  <div class="step">
+    <h3>A. Close other tablet software</h3>
+    <p><span class="label">What:</span> Fully quit Interactive Attendance (IAS) and any other program that talks to this tablet.</p>
+    <p><span class="label">Where:</span> On the PC or laptop that normally runs IAS for this door.</p>
+    <p><span class="label">How:</span> Exit the program completely (not just minimize). Confirm it is not still running in the system tray.</p>
+    <p><span class="label">When:</span> Before we plug in our laptop and start the test.</p>
+    <p><span class="label">Why:</span> Only one program may talk to the tablet at a time. If two programs connect, the tablet can kick one off or behave strangely.</p>
+  </div>
+
+  <div class="step">
+    <h3>B. Backup the people already on the tablet (strongly recommended)</h3>
+    <p><span class="label">What:</span> Export / backup the current user list from IAS or from the tablet’s own menu.</p>
+    <p><span class="label">Where:</span> IAS backup/export screen, or the tablet admin menu (whichever your gym already uses).</p>
+    <p><span class="label">How:</span> Use the same backup steps you already know for this tablet. Keep the file somewhere safe.</p>
+    <p><span class="label">When:</span> Before the test begins.</p>
+    <p><span class="label">Why:</span> Faces stay only on the tablet — our tool cannot copy them. Our cleanup only removes the temporary <code>POC-…</code> person we add. A backup is extra safety if something unexpected happens.</p>
+  </div>
+
+  <div class="step">
+    <h3>C. Write down tablet connection details</h3>
+    <p><span class="label">What:</span> Have ready:</p>
+    <ul>
+      <li>Tablet LAN IP address (example: <code>192.168.1.50</code>)</li>
+      <li>Port <strong>37777</strong> (usually this number; do not change it unless your installer says otherwise)</li>
+      <li>Tablet <strong>admin username and password</strong> (the login used on the device itself)</li>
+    </ul>
+    <p><span class="label">Where:</span> From the person who set up the tablet — <strong>not</strong> the gym website login.</p>
+    <p><span class="label">Why:</span> Our laptop must log into the tablet on the local Wi‑Fi/LAN like a technician tool.</p>
+  </div>
+
+  <div class="step">
+    <h3>D. Arrange a test person</h3>
+    <p><span class="label">What:</span> One volunteer who can stand in front of the door camera twice (once when access should work, once when it should not, then again when it should work).</p>
+    <p><span class="label">When:</span> Available for about 15–30 minutes during the visit.</p>
+    <p><span class="label">Why:</span> We must prove the physical door responds, not only that the laptop screen says “OK”.</p>
+  </div>
+
+  <div class="box">
+    <strong>You do <em>not</em> need:</strong>
+    the gym website running, MySQL, cloud firewall changes, or production API access.
+    The laptop only needs to reach the tablet on the same local network.
+  </div>
+
+  <!-- ========== SETUP ========== -->
+  <h2>3. Set up the Windows laptop (operator)</h2>
+
+  <div class="step">
+    <h3>E. Put the software on the laptop</h3>
+    <p><span class="label">What:</span> Copy the project folder that contains both <code>TrueFaceWindowsPOC</code> and <code>gateway</code> onto the Windows PC.</p>
+    <p><span class="label">Where:</span> Any easy path, for example <code>C:\gym\</code>.</p>
+    <p><span class="label">How:</span> USB drive, zip, or git clone — whatever you used to bring the files.</p>
+    <p><span class="label">Why:</span> The test program needs both folders; it reuses the same tablet code the real gateway will use.</p>
+  </div>
+
+  <div class="step">
+    <h3>F. Install .NET (if not already installed)</h3>
+    <p><span class="label">What:</span> Install the .NET SDK that can run this project (<code>net10.0</code>).</p>
+    <p><span class="label">Where:</span> On the Windows laptop.</p>
+    <p><span class="label">How:</span> Install from Microsoft’s .NET download page, then open a new Command Prompt and type <code>dotnet --version</code> to confirm it works.</p>
+    <p><span class="label">When:</span> Before the first run.</p>
+  </div>
+
+  <div class="step">
+    <h3>G. Connect to the same network as the tablet</h3>
+    <p><span class="label">What:</span> Join the gym LAN / Wi‑Fi that can reach the tablet IP.</p>
+    <p><span class="label">How to check:</span> From Command Prompt: <code>ping 192.168.x.x</code> (use the real tablet IP). You should get replies.</p>
+    <p><span class="label">Why:</span> If ping fails, the test cannot log in. Fix network first; do not continue.</p>
+  </div>
+
+  <div class="step">
+    <h3>H. Prepare a small face photo (optional but useful)</h3>
+    <p><span class="label">What:</span> One JPEG photo of a face for the “remote upload” probe.</p>
+    <p><span class="label">Where:</span> Save it on the laptop, e.g. <code>C:\gym\test-face.jpg</code>.</p>
+    <p><span class="label">Why:</span> We expect the tablet to <strong>reject</strong> remote photo upload. We still need to try once and write the error into the log. Door success later uses face enrollment <strong>on the tablet screen</strong>, not this photo.</p>
+    <p>If you have no photo, you may run with <code>--skip-face-upload</code> (see command below). Door tests can still run after on-tablet enroll.</p>
+  </div>
+
+  <div class="step">
+    <h3>I. Start the test program</h3>
+    <p><span class="label">Where:</span> Open <strong>Command Prompt</strong> (or PowerShell).</p>
+    <p><span class="label">How:</span></p>
+    <ol>
+      <li>Go into the POC folder:
+        <pre>cd C:\gym\TrueFaceWindowsPOC</pre>
+        (Use your real path.)
+      </li>
+      <li>Set the tablet details (replace with real values; do not share the password in chat or email later):
+<pre>set TRUEFACE_IP=192.168.1.50
+set TRUEFACE_USERNAME=admin
+set TRUEFACE_PASSWORD=your-tablet-password-here</pre>
+      </li>
+      <li>Start the full visit (with face photo probe):
+<pre>dotnet run -- --face-image C:\gym\test-face.jpg</pre>
+      </li>
+    </ol>
+    <p><span class="label">Other useful starts:</span></p>
+    <ul>
+      <li>No door walks (only login + create/delete) — use only if you cannot test the door today:
+        <pre>dotnet run -- --skip-door --skip-face-upload</pre>
+        If you use <code>--skip-door</code>, you must <strong>not</strong> claim allow/deny worked.
+      </li>
+      <li>No photo probe, but still do door walks:
+        <pre>dotnet run -- --skip-face-upload</pre>
+      </li>
+    </ul>
+    <p><span class="label">What you will see:</span> Lines print on screen and also save to a file named like <code>poc-run-20260912-143022.log</code> in the same folder. Keep that file.</p>
+    <p><span class="label">Safety:</span> Never put the tablet password into the log by typing it into chat. Prefer the <code>set TRUEFACE_PASSWORD=...</code> method. Do not commit passwords or face photos to git.</p>
+  </div>
+
+  <!-- ========== LIVE STEPS ========== -->
+  <h2>4. Live test steps (follow the laptop prompts)</h2>
+  <p>
+    The program pauses and asks you to press <strong>Enter</strong> at key moments.
+    Read the on-screen message, do the physical action, then press Enter.
+    If something goes wrong, press <strong>Ctrl+C</strong> once — the program will try to delete the temporary person.
+  </p>
+
+  <div class="do-not">
+    <strong>Do not do any of these during the test</strong>
+    <ul>
+      <li>Do not factory-reset the tablet.</li>
+      <li>Do not reboot the tablet “to fix it.”</li>
+      <li>Do not change the tablet’s clock.</li>
+      <li>Do not use “remote open door” from any app as the allow/deny proof — that opens the door without checking membership.</li>
+      <li>Do not create, edit, freeze, or delete any user except the one whose id starts with <code>POC-</code>.</li>
+      <li>Do not start IAS again until this test has fully finished and exited.</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 1 — Laptop logs into the tablet</h3>
+    <p><span class="label">What happens:</span> The program connects using the IP and admin password you set.</p>
+    <p><span class="label">Where to look:</span> On the laptop console / log.</p>
+    <p><span class="label">Pass looks like:</span> Connected / online, a serial number, and a channel count. No login error.</p>
+    <p><span class="label">Fail looks like:</span> Login error with a code and message. Stop. Check: IAS closed? Correct IP? Correct password? Same network?</p>
+    <p><span class="label">Why:</span> If login fails, nothing else can be trusted.</p>
+    <ul class="check"><li>Login succeeded</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 2 — Take a “before” photo of who is on the tablet (user list)</h3>
+    <p><span class="label">What happens:</span> The program lists every person id already on the tablet (names and frozen/not frozen if available). No faces are copied.</p>
+    <p><span class="label">Where to look:</span> Laptop log shows a count and a sorted list of ids.</p>
+    <p><span class="label">Pass:</span> List prints without an error.</p>
+    <p><span class="label">Fail:</span> “Find user” / list failed — stop; we cannot safely clean up without a before-list.</p>
+    <p><span class="label">Why:</span> At the end we compare this list to the final list. They must match exactly (except we briefly add then remove our <code>POC-…</code> person).</p>
+    <ul class="check"><li>Before-list printed</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 3 — Create the temporary test person</h3>
+    <p><span class="label">What happens:</span> The program creates one new person with an id like <code>POC-20260912-A3F2</code> and a clear test name (for example “POC Test”).</p>
+    <p><span class="label">Where:</span> Only on the tablet, through our laptop program — not on the gym website.</p>
+    <p><span class="label">Pass:</span> Create succeeds, and that id appears when the program lists people again.</p>
+    <p><span class="label">Fail:</span> Create error codes in the log. Stop if create failed; there should be nothing to clean up. If create partly succeeded, keep the id from the log for cleanup.</p>
+    <p><span class="label">Why:</span> We must never risk a real member’s record. A tagged <code>POC-…</code> id is easy to find and delete.</p>
+    <p><span class="label">Write it down:</span> POC id = _______________________________</p>
+    <ul class="check"><li>POC person created and visible</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 4 — Rename / adjust the temporary person</h3>
+    <p><span class="label">What happens:</span> The program changes the display name (for example to “POC Renamed”) and validity dates.</p>
+    <p><span class="label">Pass:</span> Re-list shows the new name.</p>
+    <p><span class="label">Fail:</span> Update failed in the log.</p>
+    <p><span class="label">Why:</span> Proves we can change a person the same way the real product will.</p>
+    <ul class="check"><li>Rename visible on re-list</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 5 — Try sending a face photo from the laptop (expected to fail)</h3>
+    <p><span class="label">What happens:</span> If you gave <code>--face-image</code>, the program tries to upload that JPEG to the tablet for the POC person.</p>
+    <p><span class="label">Where:</span> Automatic on the laptop — you do not tap the tablet for this step.</p>
+    <p><span class="label">Pass for this visit:</span> The attempt is logged with a result and an error code. Often the code is <code>0x10030110</code>. The program must <strong>not</strong> say remote enroll “succeeded.” The photo bytes are never printed in the log.</p>
+    <p><span class="label">Fail (serious):</span> The program crashes. Stop the visit carefully; still try cleanup (Ctrl+C or let it finish cleanup). Note what happened.</p>
+    <p><span class="label">Why:</span> We already expect remote photo enroll to fail on this firmware. The log is evidence. Real face capture for the door test is the next step, on the tablet itself.</p>
+    <p>If you used <code>--skip-face-upload</code>, tick “skipped” instead.</p>
+    <ul class="check">
+      <li>Face upload probe logged (or intentionally skipped)</li>
+      <li>We did not treat remote upload as product success</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 6 — Enroll the face on the tablet screen (required for door walks)</h3>
+    <p><span class="label">What:</span> Teach the tablet the test person’s face using the tablet’s own menus.</p>
+    <p><span class="label">Where:</span> On the <strong>TrueFace tablet</strong> touch screen (device admin / user / face enroll screens — use the same path your installer uses for adding a face to a person).</p>
+    <p><span class="label">How:</span></p>
+    <ol>
+      <li>Find the person whose id is the <code>POC-…</code> id you wrote down (name may show as “POC Renamed”).</li>
+      <li>Enroll / capture <strong>face</strong> for that person only.</li>
+      <li>Do <strong>not</strong> enroll under a real member id.</li>
+      <li>When the tablet says enroll is done, go back to the laptop.</li>
+      <li>When the laptop says to press Enter after enroll — press <strong>Enter</strong>.</li>
+    </ol>
+    <p><span class="label">When:</span> After create/rename (and after the photo probe if you ran it), before the first door walk.</p>
+    <p><span class="label">Why:</span> The door camera needs a face stored on the device. Laptop photo upload is not trusted for this.</p>
+    <p>If the gym refuses on-device enroll, skip door walks (<code>--skip-door</code> next time) and do not claim allow/deny.</p>
+    <ul class="check"><li>Face enrolled on tablet for POC id only; Enter pressed on laptop</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 7 — First door walk (should ALLOW)</h3>
+    <p><span class="label">What:</span> Prove the temporary person can open / be granted access.</p>
+    <p><span class="label">Where:</span> At the physical door / tablet camera. Watch the laptop for the event line.</p>
+    <p><span class="label">How:</span></p>
+    <ol>
+      <li>Read the laptop message, then press <strong>Enter</strong> when it asks you to start the walk.</li>
+      <li>Have the test person stand in front of the tablet like a normal entry.</li>
+      <li>Wait for the laptop log to show an ACCESS event for the <code>POC-…</code> id with access granted (look for wording like <code>granted=true</code> or “Grant event”).</li>
+    </ol>
+    <p><span class="label">Pass:</span> Event for the correct POC id, granted yes, within the wait time (default about 90 seconds).</p>
+    <p><span class="label">Fail:</span> Timeout, wrong person id, or no event. Note it; cleanup still matters later.</p>
+    <p><span class="label">Why:</span> Baseline: access works while the person is enabled.</p>
+    <ul class="check"><li>First allow walk confirmed in the log</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 8 — Turn the temporary person OFF (disable / freeze)</h3>
+    <p><span class="label">What:</span> The laptop tells the tablet to freeze / disable the POC person (they stay on the list but should not get in).</p>
+    <p><span class="label">Where:</span> Automatic from the laptop program — you should not manually freeze other people on the tablet.</p>
+    <p><span class="label">Pass:</span> Disable succeeds; re-list may show them as frozen.</p>
+    <p><span class="label">Fail:</span> Disable error in the log.</p>
+    <p><span class="label">Why:</span> This is how expired or unpaid memberships will be blocked in the real product.</p>
+    <ul class="check"><li>Disable succeeded</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 9 — Second door walk (should DENY)</h3>
+    <p><span class="label">What:</span> Prove a disabled person cannot get in.</p>
+    <p><span class="label">How:</span></p>
+    <ol>
+      <li>Press <strong>Enter</strong> on the laptop when asked.</li>
+      <li>Same test person tries the door again.</li>
+      <li>Watch for either:
+        <ul>
+          <li>Laptop log shows ACCESS for the POC id with granted <strong>false</strong>, or</li>
+          <li>Door clearly stays locked / denied — when the laptop asks, type <strong>YES</strong> (door stayed locked) or <strong>NO</strong>.</li>
+        </ul>
+      </li>
+    </ol>
+    <p><span class="label">Pass:</span> Deny event in the log, or operator typed YES and that answer is written into the log.</p>
+    <p><span class="label">Unclear:</span> If you are not sure, the log may say UNVERIFIED — still continue to re-enable and clean up.</p>
+    <p><span class="label">Why:</span> Without this, we cannot trust “membership off” at the door.</p>
+    <ul class="check"><li>Deny proven (event or YES in log)</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 10 — Turn the temporary person ON again (enable)</h3>
+    <p><span class="label">What:</span> Laptop unfreezes the POC person.</p>
+    <p><span class="label">Pass:</span> Enable succeeds in the log.</p>
+    <p><span class="label">Why:</span> Membership can be restored without deleting the person.</p>
+    <ul class="check"><li>Enable succeeded</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 11 — Third door walk (should ALLOW again)</h3>
+    <p><span class="label">What:</span> Same as step 7 after re-enable.</p>
+    <p><span class="label">How:</span> Press Enter when asked; test person walks; laptop shows grant for the POC id again.</p>
+    <p><span class="label">Pass:</span> Second grant / allow event in the log.</p>
+    <p><span class="label">Why:</span> Proves disable was reversible — not a broken user.</p>
+    <ul class="check"><li>Second allow walk confirmed</li></ul>
+  </div>
+
+  <div class="step">
+    <h3>Step 12 — Delete the temporary person and compare lists</h3>
+    <p><span class="label">What:</span> Laptop deletes only the <code>POC-…</code> person, then lists everyone again.</p>
+    <p><span class="label">Pass:</span>
+      <ul>
+        <li>POC id is gone.</li>
+        <li>The set of remaining ids matches the before-list from Step 2 exactly.</li>
+        <li>Log contains a clear line like <strong class="pass">POC PASS</strong>.</li>
+      </ul>
+    </p>
+    <p><span class="label">Fail:</span> POC still present, or any other id appeared/disappeared → <strong class="fail">POC FAIL</strong> even if earlier door walks looked good. Follow section 5 below.</p>
+    <p><span class="label">Why:</span> Leaving a test person on a live door tablet is not acceptable.</p>
+    <ul class="check">
+      <li>Delete succeeded</li>
+      <li>Before and after user lists match</li>
+      <li>Log says POC PASS</li>
+    </ul>
+  </div>
+
+  <!-- ========== CLEANUP FAIL ========== -->
+  <h2>5. If cleanup fails (leftover POC person)</h2>
+  <div class="step">
+    <p><span class="label">What to do:</span></p>
+    <ol>
+      <li>Open the latest <code>poc-run-….log</code> file in Notepad.</li>
+      <li>Search for <code>MANUAL CLEANUP REQUIRED</code> and copy the exact <code>POC-…</code> id.</li>
+      <li>Make sure our test program has exited (and is disconnected).</li>
+      <li>On the tablet alone (or with IAS alone — never both our program and IAS at once), delete <strong>only</strong> that POC user.</li>
+      <li>Do not delete real members. Do not reboot as a substitute for deleting the POC user.</li>
+    </ol>
+    <p><span class="label">Why:</span> The visit is a failure until that temporary id is gone, even if door walks worked.</p>
+    <ul class="check"><li>No POC-… user left on the tablet</li></ul>
+  </div>
+
+  <!-- ========== CHEAT SHEET ========== -->
+  <h2>6. Quick pass / fail sheet</h2>
+  <table>
+    <thead>
+      <tr><th>Step</th><th>Good</th><th>Bad</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Login</td>
+        <td>Connected; serial shown</td>
+        <td>Login error — fix network / IAS / password</td>
+      </tr>
+      <tr>
+        <td>Before list</td>
+        <td>Count + ids printed</td>
+        <td>Cannot list users</td>
+      </tr>
+      <tr>
+        <td>Create / rename</td>
+        <td>POC id appears; name updates</td>
+        <td>Create/update error</td>
+      </tr>
+      <tr>
+        <td>Laptop face photo</td>
+        <td>Error logged (often <code>0x10030110</code>); no “success” claim</td>
+        <td>Crash — stop; still clean up</td>
+      </tr>
+      <tr>
+        <td>Tablet face enroll</td>
+        <td>POC person has a face on device</td>
+        <td>Refused / wrong person enrolled</td>
+      </tr>
+      <tr>
+        <td>Allow → disable → deny → enable → allow</td>
+        <td>Events in log, or YES on deny</td>
+        <td>Timeout / wrong id / unclear (UNVERIFIED)</td>
+      </tr>
+      <tr>
+        <td>Delete + after list</td>
+        <td>POC gone; lists match; <span class="pass">POC PASS</span></td>
+        <td><span class="fail">POC FAIL</span> — manual delete required</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ========== AFTER ========== -->
+  <h2>7. After the visit</h2>
+  <ul class="check">
+    <li>Save the <code>poc-run-….log</code> file (remove any accidental secrets before sharing).</li>
+    <li>Keep this checklist with notes / tick marks.</li>
+    <li>Do not upload face photos or passwords to git or chat.</li>
+    <li>You may start IAS again only after the test program has fully exited.</li>
+  </ul>
+  <div class="box">
+    <strong>What the results mean for the product</strong>
+    <ul>
+      <li>If laptop face upload still fails with <code>0x10030110</code> → keep “enroll face on the tablet” as the product method.</li>
+      <li>If disable/enable and door walks worked → controlling members from our gateway software is justified.</li>
+      <li>If login failed while IAS was open → the rollout checklist must say: stop IAS before starting the gateway service.</li>
+    </ul>
+  </div>
+
+  <h2>8. One-page reminder</h2>
+  <ol>
+    <li>Close IAS → backup users → same Wi‑Fi as tablet → start program with IP + admin password.</li>
+    <li>Watch create of <code>POC-…</code> only → enroll face on tablet for that id → allow walk → disable → deny walk → enable → allow walk → delete.</li>
+    <li>End only when lists match and log says <span class="pass">POC PASS</span> (or you manually deleted any leftover POC id).</li>
+  </ol>
+
+</body>
+</html>

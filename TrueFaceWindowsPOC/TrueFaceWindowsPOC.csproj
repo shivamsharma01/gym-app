@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>TrueFaceWindowsPOC</RootNamespace>
+    <AssemblyName>TrueFaceWindowsPOC</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\gateway\src\Gym.Gateway.Adapters\Gym.Gateway.Adapters.csproj" />
+  </ItemGroup>
+
+  <!-- Copy Windows NetSDK DLLs next to the app (same set the production gateway ships). -->
+  <ItemGroup>
+    <None Include="..\gateway\native\win-x64\*.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="native\win-x64\%(Filename)%(Extension)"
+          Condition="Exists('..\gateway\native\win-x64')" />
+  </ItemGroup>
+</Project>

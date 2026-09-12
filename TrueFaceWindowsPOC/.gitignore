@@ -1,0 +1,5 @@
+bin/
+obj/
+poc-run-*.log
+*.user
+.vs/

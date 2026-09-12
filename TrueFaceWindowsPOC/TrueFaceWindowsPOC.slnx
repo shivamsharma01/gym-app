@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/TrueFaceWindowsPOC.Tests/TrueFaceWindowsPOC.Tests.csproj" />
+  </Folder>
+  <Project Path="../gateway/src/Gym.Gateway.Adapters/Gym.Gateway.Adapters.csproj" />
+  <Project Path="../gateway/src/Gym.Gateway.NetSdk/Gym.Gateway.NetSdk.csproj" />
+  <Project Path="TrueFaceWindowsPOC.csproj" />
+</Solution>

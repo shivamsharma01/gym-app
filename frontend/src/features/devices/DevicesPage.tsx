@@ -35,7 +35,7 @@ export function DevicesPage() {
     <div className="space-y-10">
       <PageHeader
         title="Devices"
-        description="TrueFace terminals and the Windows LAN gateway that talks to them."
+        description="This website registers the gateway and TrueFace terminals. The Windows PC still has to run the gateway/ agent with the one-time token — the tablet does not enrol itself."
         actions={
           has('DEVICE_MANAGE') ? (
             <Link to="/app/devices/new">

@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { MemberPicker } from '@/components/MemberPicker'
@@ -8,9 +8,10 @@ import { Badge, Button, Card, EmptyState, FieldError, Input, Label, PageHeader, 
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { CURRENCIES } from '@/lib/catalog'
 import { formatDate, money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
-import type { Member, PageResponse, Payment } from '@/lib/types'
+import type { Member, Membership, PageResponse, Payment } from '@/lib/types'
 
 const schema = z.object({
   amount: z.string().min(1, 'Required'),
@@ -37,6 +38,36 @@ export function PaymentsPage() {
     resolver: zodResolver(schema),
     defaultValues: { amount: '', currency: 'INR', method: 'CASH', reference: '', paidOn: '', notes: '', membershipId: '' },
   })
+  const memberships = useQuery({
+    queryKey: ['memberships', member?.id],
+    queryFn: () => api<Membership[]>(`/api/v1/members/${member!.id}/memberships`),
+    enabled: Boolean(member),
+  })
+  const membershipId = form.watch('membershipId')
+  const selectedMembership = memberships.data?.find((m) => m.id === membershipId)
+  const currencyOptions = selectedMembership
+    ? Array.from(new Set([selectedMembership.currency, ...CURRENCIES]))
+    : [...CURRENCIES]
+
+  useEffect(() => {
+    if (!member) {
+      form.setValue('membershipId', '')
+      form.setValue('amount', '')
+      form.setValue('currency', 'INR')
+      return
+    }
+    if (!memberships.data) return
+    const unpaid = memberships.data.find((m) => m.status !== 'CANCELLED' && m.paymentStatus !== 'PAID')
+    form.setValue('membershipId', unpaid?.id ?? '')
+  }, [member, memberships.data, form])
+
+  useEffect(() => {
+    if (!selectedMembership) return
+    const remaining = Number(selectedMembership.price) - Number(selectedMembership.amountPaid)
+    if (remaining > 0) form.setValue('amount', remaining.toFixed(2))
+    form.setValue('currency', selectedMembership.currency)
+  }, [selectedMembership, form])
+
   const record = useMutation({
     mutationFn: (body: Form) => {
       if (!member) throw new Error('Pick a member')
@@ -66,7 +97,7 @@ export function PaymentsPage() {
   })
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[1fr_22rem]">
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
       <div>
         <PageHeader title="Payments" description="Recorded against members. Refunds require PAYMENT_CREATE." />
         {payments.isLoading ? <Skeleton className="h-40" /> : null}
@@ -96,7 +127,7 @@ export function PaymentsPage() {
                       <Badge tone={statusTone(p.status)}>{p.status}</Badge>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {has('PAYMENT_CREATE') && p.status === 'PAID' ? (
+                      {has('PAYMENT_CREATE') && p.status === 'COMPLETED' ? (
                         <Button
                           variant="outline"
                           onClick={() => {
@@ -133,13 +164,33 @@ export function PaymentsPage() {
               <MemberPicker value={member} onChange={setMember} />
             </div>
             <div>
+              <Label>Membership</Label>
+              <Select {...form.register('membershipId')} disabled={!member || memberships.isLoading}>
+                <option value="">Not linked to a membership</option>
+                {(memberships.data ?? [])
+                  .filter((m) => m.status !== 'CANCELLED')
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.planName} · {m.paymentStatus} · {money(m.amountPaid, m.currency)} of{' '}
+                      {money(m.price, m.currency)}
+                    </option>
+                  ))}
+              </Select>
+            </div>
+            <div>
               <Label>Amount</Label>
               <Input type="number" step="0.01" {...form.register('amount')} />
               <FieldError message={form.formState.errors.amount?.message} />
             </div>
             <div>
               <Label>Currency</Label>
-              <Input maxLength={3} {...form.register('currency')} />
+              <Select {...form.register('currency')} disabled={Boolean(selectedMembership)}>
+                {currencyOptions.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </Select>
             </div>
             <div>
               <Label>Method</Label>
@@ -158,10 +209,6 @@ export function PaymentsPage() {
             <div>
               <Label>Paid on</Label>
               <Input type="date" {...form.register('paidOn')} />
-            </div>
-            <div>
-              <Label>Membership id (optional)</Label>
-              <Input {...form.register('membershipId')} placeholder="Public id from member page" />
             </div>
             {record.error ? <QueryError error={record.error} /> : null}
             <Button type="submit" disabled={record.isPending || !member}>

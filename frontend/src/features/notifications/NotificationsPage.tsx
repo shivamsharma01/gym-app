@@ -4,6 +4,7 @@ import { MemberPicker } from '@/components/MemberPicker'
 import { Button, Card, Input, Label, PageHeader, Select, Textarea } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { NOTIFICATION_CHANNELS, NOTIFICATION_TEMPLATE_KEYS } from '@/lib/catalog'
 import { formatDateTime } from '@/lib/cn'
 import type { Member, PageResponse } from '@/lib/types'
 
@@ -30,14 +31,15 @@ export function NotificationsPage() {
     queryFn: () => api<Template[]>('/api/v1/notification-templates'),
   })
   const [member, setMember] = useState<Member | null>(null)
-  const [templateKey, setTemplateKey] = useState('EXPIRY_REMINDER')
-  const [channel, setChannel] = useState('EMAIL')
+  const [templateRef, setTemplateRef] = useState('EXPIRY_REMINDER|EMAIL')
   const send = useMutation({
-    mutationFn: () =>
-      api('/api/v1/notifications', {
+    mutationFn: () => {
+      const [templateKey, channel] = templateRef.split('|')
+      return api('/api/v1/notifications', {
         method: 'POST',
         body: JSON.stringify({ memberId: member?.id, templateKey, channel }),
-      }),
+      })
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
   })
   const reminders = useMutation({
@@ -63,20 +65,16 @@ export function NotificationsPage() {
       <Card className="space-y-3">
         <h2 className="text-sm font-semibold uppercase text-muted">Send to a member</h2>
         <MemberPicker value={member} onChange={setMember} />
-        <Select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
+        <Label>Template</Label>
+        <Select value={templateRef} onChange={(e) => setTemplateRef(e.target.value)}>
           {(templates.data && templates.data.length > 0
             ? templates.data
             : [{ templateKey: 'EXPIRY_REMINDER', channel: 'EMAIL' }]
           ).map((t) => (
-            <option key={t.templateKey + t.channel} value={t.templateKey}>
+            <option key={t.templateKey + t.channel} value={`${t.templateKey}|${t.channel}`}>
               {t.templateKey} ({t.channel})
             </option>
           ))}
-        </Select>
-        <Select value={channel} onChange={(e) => setChannel(e.target.value)}>
-          <option value="EMAIL">EMAIL</option>
-          <option value="SMS">SMS</option>
-          <option value="IN_APP">IN_APP</option>
         </Select>
         {send.error ? <QueryError error={send.error} /> : null}
         <Button disabled={!member || send.isPending} onClick={() => send.mutate()}>
@@ -112,6 +110,9 @@ export function NotificationTemplatesPage() {
   const [channel, setChannel] = useState('EMAIL')
   const [subject, setSubject] = useState('{{memberName}}, your membership')
   const [body, setBody] = useState('Hi {{memberName}}. Expires {{expiryDate}} ({{daysRemaining}} days). {{gymName}}')
+  const keyOptions = Array.from(
+    new Set([...NOTIFICATION_TEMPLATE_KEYS, ...(templates.data ?? []).map((t) => t.templateKey)]),
+  )
   const save = useMutation({
     mutationFn: () =>
       api('/api/v1/notification-templates', {
@@ -124,17 +125,35 @@ export function NotificationTemplatesPage() {
     <div className="max-w-xl space-y-4">
       <PageHeader title="Templates" description="Variables: {{memberName}} {{gymName}} {{expiryDate}} {{daysRemaining}}" />
       {templates.data?.map((t) => (
-        <p key={t.id} className="text-sm text-muted">
+        <button
+          key={t.id}
+          type="button"
+          className="block w-full rounded-md border border-line px-3 py-2 text-left text-sm hover:bg-raised"
+          onClick={() => {
+            setTemplateKey(t.templateKey)
+            setChannel(t.channel)
+            setSubject(t.subject ?? '')
+            setBody(t.body)
+          }}
+        >
           {t.templateKey} / {t.channel}
-        </p>
+        </button>
       ))}
       <Label>Key</Label>
-      <Input value={templateKey} onChange={(e) => setTemplateKey(e.target.value)} />
+      <Select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
+        {keyOptions.map((key) => (
+          <option key={key} value={key}>
+            {key}
+          </option>
+        ))}
+      </Select>
       <Label>Channel</Label>
       <Select value={channel} onChange={(e) => setChannel(e.target.value)}>
-        <option>EMAIL</option>
-        <option>SMS</option>
-        <option>IN_APP</option>
+        {NOTIFICATION_CHANNELS.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
       </Select>
       <Label>Subject</Label>
       <Input value={subject} onChange={(e) => setSubject(e.target.value)} />

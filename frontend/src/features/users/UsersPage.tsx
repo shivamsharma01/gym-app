@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Badge, Button, Input, Label, PageHeader, Skeleton } from '@/components/ui'
+import { Link } from 'react-router'
+import { Badge, Button, Input, Label, PageHeader, Select, Skeleton } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { STAFF_ROLES } from '@/lib/catalog'
 import { statusTone } from '@/lib/status'
 import type { PageResponse } from '@/lib/types'
 
@@ -15,17 +17,30 @@ type StaffUser = {
   roles: string[]
 }
 
+type RoleOption = { id: string; name: string; description: string | null }
+
+function roleLabel(name: string) {
+  return STAFF_ROLES.find((r) => r.name === name)?.label ?? name
+}
+
 export function UsersPage() {
   const qc = useQueryClient()
   const users = useQuery({
     queryKey: ['users'],
     queryFn: () => api<PageResponse<StaffUser>>('/api/v1/users?size=50'),
   })
+  const catalog = useQuery({
+    queryKey: ['roles'],
+    queryFn: () => api<RoleOption[]>('/api/v1/roles'),
+  })
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
   const [password, setPassword] = useState('')
-  const [roles, setRoles] = useState('STAFF')
+  const [role, setRole] = useState('STAFF')
+  const available = new Set((catalog.data ?? []).map((r) => r.name))
+  const assignable = STAFF_ROLES.filter((r) => available.has(r.name))
+  const selected = STAFF_ROLES.find((r) => r.name === role)
   const create = useMutation({
     mutationFn: () =>
       api('/api/v1/users', {
@@ -35,7 +50,7 @@ export function UsersPage() {
           email,
           fullName,
           password,
-          roles: roles.split(',').map((r) => r.trim()),
+          roles: [role],
         }),
       }),
     onSuccess: () => {
@@ -52,9 +67,12 @@ export function UsersPage() {
   })
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[1fr_20rem]">
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
       <div>
-        <PageHeader title="Users" />
+        <PageHeader
+          title="Staff accounts"
+          description="Logins for this app only. Gym members are created under Members. The TrueFace tablet never sees these roles."
+        />
         {users.isLoading ? <Skeleton className="h-32" /> : null}
         {users.error ? <QueryError error={users.error} /> : null}
         <ul className="divide-y divide-line rounded-xl border border-line">
@@ -63,7 +81,7 @@ export function UsersPage() {
               <div>
                 <div className="font-semibold">{u.fullName}</div>
                 <div className="text-muted">
-                  {u.username} · {u.roles.join(', ')}
+                  {u.username} · {u.roles.map(roleLabel).join(', ')}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -85,19 +103,37 @@ export function UsersPage() {
           create.mutate()
         }}
       >
-        <h2 className="text-sm font-semibold uppercase text-muted">New user</h2>
+        <h2 className="text-sm font-semibold uppercase text-muted">New staff login</h2>
+        <p className="text-sm text-muted">
+          To enrol someone on the door, create them as a{' '}
+          <Link className="underline" to="/app/members/new">
+            member
+          </Link>
+          , then map them on the member page.
+        </p>
         <Label>Username</Label>
         <Input value={username} onChange={(e) => setUsername(e.target.value)} />
         <Label>Email</Label>
         <Input value={email} onChange={(e) => setEmail(e.target.value)} />
         <Label>Full name</Label>
         <Input value={fullName} onChange={(e) => setFullName(e.target.value)} />
-        <Label>Password</Label>
-        <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        <Label>Roles (comma)</Label>
-        <Input value={roles} onChange={(e) => setRoles(e.target.value)} />
+        <Label htmlFor="new-user-password">Password</Label>
+        <Input id="new-user-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Label htmlFor="new-user-role">App role</Label>
+        <Select id="new-user-role" value={role} onChange={(e) => setRole(e.target.value)} disabled={catalog.isLoading}>
+          {assignable.length === 0 ? <option value={role}>{roleLabel(role)}</option> : null}
+          {assignable.map((r) => (
+            <option key={r.name} value={r.name}>
+              {r.label}
+            </option>
+          ))}
+        </Select>
+        {selected ? <p className="text-xs text-muted">{selected.description}</p> : null}
+        {catalog.error ? <QueryError error={catalog.error} /> : null}
         {create.error ? <QueryError error={create.error} /> : null}
-        <Button type="submit">Create</Button>
+        <Button type="submit" disabled={create.isPending || !role}>
+          Create
+        </Button>
       </form>
     </div>
   )

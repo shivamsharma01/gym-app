@@ -5,6 +5,7 @@ import { Badge, Button, Card, Input, Label, PageHeader, Select, Skeleton, Textar
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { DEVICE_MODELS } from '@/lib/catalog'
 import { cn, formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
 import type { Device, DeviceHealth, Gateway, PageResponse, SecurityEvent, SyncCommand } from '@/lib/types'
@@ -267,12 +268,22 @@ function Settings({ device }: { device: Device }) {
         </div>
         <div>
           <Label>Port</Label>
-          <Input value={port} onChange={(e) => setPort(e.target.value)} />
+          <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} />
         </div>
       </div>
       <div>
         <Label>Model</Label>
-        <Input value={model} onChange={(e) => setModel(e.target.value)} />
+        <Select value={model} onChange={(e) => setModel(e.target.value)}>
+          {DEVICE_MODELS.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+          {model && !(DEVICE_MODELS as readonly string[]).includes(model) ? (
+            <option value={model}>{model}</option>
+          ) : null}
+          <option value="">Unknown / other</option>
+        </Select>
       </div>
       <div>
         <Label>Serial</Label>

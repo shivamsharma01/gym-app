@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { Badge, Button, Card, EmptyState, Input, Label, PageHeader, Select, Skeleton } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, Label, PageHeader, Select, Skeleton } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { MembershipPanel } from '@/features/memberships/MembershipPanel'
 import { ApiError, api } from '@/lib/api'
@@ -120,7 +120,10 @@ export function MemberDetailPage() {
         <section>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Payments</h2>
           {!payments.data?.length ? (
-            <EmptyState title="No payments" body="Record a payment from the payments page." />
+            <EmptyState
+              title="No payments"
+              body="This list is history only. Record cash/UPI/card on Payments, pick this member, and link the membership."
+            />
           ) : (
             <ul className="divide-y divide-line rounded-xl border border-line">
               {payments.data.map((p) => (
@@ -133,6 +136,11 @@ export function MemberDetailPage() {
               ))}
             </ul>
           )}
+          {has('PAYMENT_CREATE') ? (
+            <Link to="/app/payments" className="mt-3 inline-block text-sm underline">
+              Record a payment
+            </Link>
+          ) : null}
         </section>
       ) : null}
 
@@ -156,51 +164,62 @@ export function MemberDetailPage() {
         </section>
       ) : null}
 
-      {has('DEVICE_MANAGE') ? <EnrollmentPanel memberId={m.id} /> : null}
+      {has('DEVICE_MANAGE') ? <EnrollmentPanel memberId={m.id} memberCode={m.memberCode} /> : null}
     </div>
   )
 }
 
-function EnrollmentPanel({ memberId }: { memberId: string }) {
+function EnrollmentPanel({ memberId, memberCode }: { memberId: string; memberCode: string }) {
   const devices = useQuery({
     queryKey: ['devices'],
     queryFn: () => api<PageResponse<Device>>('/api/v1/devices?size=50'),
   })
   const [deviceId, setDeviceId] = useState('')
-  const [deviceUserId, setDeviceUserId] = useState('')
   const map = useMutation({
     mutationFn: () =>
       api<Mapping>(`/api/v1/devices/${deviceId}/mappings`, {
         method: 'POST',
-        body: JSON.stringify({ memberId, deviceUserId }),
+        body: JSON.stringify({ memberId, deviceUserId: memberCode }),
       }),
   })
+  const registered = devices.data?.content ?? []
   return (
     <section>
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Device enrolment</h2>
       <Card className="space-y-3">
         <p className="text-sm text-muted">
-          Remote face capture is not claimed as success. Mapping a user queues CREATE_USER; complete the face on the
-          terminal, then verify enrolment status from the device.
+          Powering on a tablet does not fill this list. Register the terminal under Devices first (name, entrance/exit,
+          LAN IP, gateway). Mapping then queues a face user on that tablet using this member’s gym code (
+          {memberCode}) as the device user id — that is the id TrueFace stores, not Staff/Admin.
         </p>
-        <Label>Device</Label>
-        <Select value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
-          <option value="">Select device</option>
-          {devices.data?.content.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </Select>
-        <Label>Device user id</Label>
-        <Input value={deviceUserId} onChange={(e) => setDeviceUserId(e.target.value)} placeholder="e.g. 1001" />
-        <Button disabled={!deviceId || !deviceUserId || map.isPending} onClick={() => map.mutate()}>
-          Map to device
-        </Button>
+        {registered.length === 0 ? (
+          <p className="text-sm text-muted">
+            No devices in the app yet.{' '}
+            <Link className="underline" to="/app/devices">
+              Register a device
+            </Link>
+            .
+          </p>
+        ) : (
+          <>
+            <Label>Device</Label>
+            <Select value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
+              <option value="">Select device</option>
+              {registered.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+            <Button disabled={!deviceId || map.isPending} onClick={() => map.mutate()}>
+              Map to device
+            </Button>
+          </>
+        )}
         {map.isSuccess ? (
           <p className="text-sm text-ok">
-            Mapped. Enrolment {map.data.enrollmentStatus}, sync {map.data.syncState}. This is not proof the face is on
-            the terminal.
+            Mapped as device user {memberCode}. Enrolment {map.data.enrollmentStatus}, sync {map.data.syncState}. This is
+            not proof the face is on the terminal — complete the face on the device, then check enrolment there.
           </p>
         ) : null}
         {map.error instanceof ApiError ? <p className="text-sm text-danger">{map.error.message}</p> : null}

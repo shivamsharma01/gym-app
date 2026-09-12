@@ -1,11 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router'
 import { z } from 'zod'
 import { Button, FieldError, Input, Label, PageHeader, Select } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { DEVICE_MODELS } from '@/lib/catalog'
 import type { Device, Gateway, PageResponse } from '@/lib/types'
 
 const schema = z.object({
@@ -28,8 +30,14 @@ export function DeviceNewPage() {
   })
   const form = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { name: '', role: 'ENTRANCE', host: '', port: '37777', model: '', serialNumber: '', gatewayId: '' },
+    defaultValues: { name: '', role: 'ENTRANCE', host: '', port: '37777', model: 'TrueFace 3000', serialNumber: '', gatewayId: '' },
   })
+  useEffect(() => {
+    const rows = gateways.data?.content ?? []
+    if (rows.length === 1 && !form.getValues('gatewayId')) {
+      form.setValue('gatewayId', rows[0].id)
+    }
+  }, [gateways.data, form])
   const create = useMutation({
     mutationFn: (body: Form) =>
       api<Device>('/api/v1/devices', {
@@ -76,7 +84,14 @@ export function DeviceNewPage() {
         </div>
         <div>
           <Label>Model</Label>
-          <Input {...form.register('model')} />
+          <Select {...form.register('model')}>
+            {DEVICE_MODELS.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+            <option value="">Unknown / other</option>
+          </Select>
         </div>
         <div>
           <Label>Serial number</Label>

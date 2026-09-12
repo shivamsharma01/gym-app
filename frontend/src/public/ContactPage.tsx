@@ -2,10 +2,10 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
-import { Button, FieldError, Input, Label, Textarea } from '@/components/ui'
+import { Button, FieldError, Input, Label, Select, Textarea } from '@/components/ui'
 import { api } from '@/lib/api'
 import { QueryError } from '@/components/QueryError'
-import { usePublicSite } from '@/public/HomePage'
+import { usePublicPlans, usePublicSite } from '@/public/HomePage'
 
 const schema = z.object({
   name: z.string().min(1, 'Required'),
@@ -19,6 +19,7 @@ type Form = z.infer<typeof schema>
 
 export function ContactPage() {
   const site = usePublicSite()
+  const plans = usePublicPlans()
   const form = useForm<Form>({
     resolver: zodResolver(schema),
     defaultValues: { name: '', email: '', phone: '', planInterest: '', message: '' },
@@ -69,7 +70,14 @@ export function ContactPage() {
         </div>
         <div>
           <Label>Plan interest</Label>
-          <Input {...form.register('planInterest')} />
+          <Select {...form.register('planInterest')}>
+            <option value="">Not sure yet</option>
+            {(plans.data ?? []).map((plan) => (
+              <option key={plan.id} value={plan.name}>
+                {plan.name}
+              </option>
+            ))}
+          </Select>
         </div>
         <div>
           <Label>Message</Label>

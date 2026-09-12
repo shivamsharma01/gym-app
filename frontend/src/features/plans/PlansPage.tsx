@@ -3,10 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
-import { Badge, Button, Card, EmptyState, FieldError, Input, Label, PageHeader, Skeleton, Textarea } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, FieldError, Input, Label, PageHeader, Select, Skeleton, Textarea } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { CURRENCIES, PLAN_DURATIONS } from '@/lib/catalog'
 import { money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
 import type { PageResponse, Plan } from '@/lib/types'
@@ -72,7 +73,7 @@ export function PlansPage() {
   }
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[1fr_20rem]">
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
       <div>
         <PageHeader title="Plans" description="Membership products. Archiving keeps history on existing memberships." />
         {plans.isLoading ? <Skeleton className="h-40" /> : null}
@@ -133,11 +134,29 @@ export function PlansPage() {
             </div>
             <div>
               <Label>Currency</Label>
-              <Input maxLength={3} {...form.register('currency')} />
+              <Select {...form.register('currency')}>
+                {CURRENCIES.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+                {editing && !(CURRENCIES as readonly string[]).includes(editing.currency) ? (
+                  <option value={editing.currency}>{editing.currency}</option>
+                ) : null}
+              </Select>
             </div>
             <div>
-              <Label>Duration (days)</Label>
-              <Input type="number" min={1} {...form.register('durationDays')} />
+              <Label>Duration</Label>
+              <Select {...form.register('durationDays')}>
+                {PLAN_DURATIONS.map((d) => (
+                  <option key={d.days} value={String(d.days)}>
+                    {d.label}
+                  </option>
+                ))}
+                {editing && !PLAN_DURATIONS.some((d) => d.days === editing.durationDays) ? (
+                  <option value={String(editing.durationDays)}>{editing.durationDays} days</option>
+                ) : null}
+              </Select>
             </div>
             {save.error ? <QueryError error={save.error} /> : null}
             <div className="flex gap-2">

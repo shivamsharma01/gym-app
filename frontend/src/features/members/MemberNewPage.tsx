@@ -15,7 +15,6 @@ const schema = z.object({
   dateOfBirth: z.string().optional(),
   gender: z.string(),
   notes: z.string().optional(),
-  memberCode: z.string().optional(),
 })
 
 type Form = z.infer<typeof schema>
@@ -24,7 +23,7 @@ export function MemberNewPage() {
   const navigate = useNavigate()
   const form = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { firstName: '', lastName: '', email: '', phone: '', gender: 'UNSPECIFIED', notes: '', memberCode: '' },
+    defaultValues: { firstName: '', lastName: '', email: '', phone: '', gender: 'UNSPECIFIED', notes: '' },
   })
   const mutation = useMutation({
     mutationFn: (body: Form) =>
@@ -35,7 +34,7 @@ export function MemberNewPage() {
           email: body.email || null,
           lastName: body.lastName || null,
           dateOfBirth: body.dateOfBirth || null,
-          memberCode: body.memberCode || null,
+          memberCode: null,
         }),
       }),
     onSuccess: (m) => navigate(`/app/members/${m.id}`),
@@ -43,7 +42,7 @@ export function MemberNewPage() {
 
   return (
     <div className="max-w-xl">
-      <PageHeader title="New member" />
+      <PageHeader title="New member" description="The gym assigns a member code automatically." />
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => mutation.mutate(v))}>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -76,10 +75,6 @@ export function MemberNewPage() {
             <option value="MALE">Male</option>
             <option value="OTHER">Other</option>
           </Select>
-        </div>
-        <div>
-          <Label>Member code (optional)</Label>
-          <Input {...form.register('memberCode')} />
         </div>
         <div>
           <Label>Notes</Label>

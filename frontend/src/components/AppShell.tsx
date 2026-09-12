@@ -33,7 +33,7 @@ const links = [
   { to: '/app/enquiries', label: 'Enquiries', icon: Inbox, perm: 'ENQUIRY_VIEW' },
   { to: '/app/reports', label: 'Reports', icon: BarChart3, perm: 'REPORT_VIEW' },
   { to: '/app/notifications', label: 'Notifications', icon: Bell, perm: 'NOTIFICATION_SEND' },
-  { to: '/app/users', label: 'Users', icon: Users, perm: 'USER_MANAGE' },
+  { to: '/app/users', label: 'Staff', icon: Users, perm: 'USER_MANAGE' },
   { to: '/app/roles', label: 'Roles', icon: Shield, perm: 'ROLE_MANAGE' },
   { to: '/app/audit', label: 'Audit', icon: ClipboardList, perm: 'AUDIT_VIEW' },
   { to: '/app/settings', label: 'Settings', icon: Settings, perm: 'SETTINGS_MANAGE' },
@@ -62,7 +62,10 @@ export function AppShell() {
 
       {open ? (
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setOpen(false)}>
-          <nav className="h-full w-72 overflow-y-auto bg-panel p-4" onClick={(e) => e.stopPropagation()}>
+          <nav
+            className="h-full w-[min(18rem,88vw)] overflow-y-auto bg-panel p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mb-6 flex items-center justify-between">
               <span className="font-extrabold">True Gym</span>
               <button type="button" aria-label="Close menu" onClick={() => setOpen(false)}>
@@ -93,8 +96,9 @@ export function AppShell() {
         </div>
       ) : null}
 
-      <div className="mx-auto flex min-h-screen max-w-7xl">
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-line bg-panel p-4 md:flex">
+      {/* Full-bleed shell: sidebar flush to the viewport edge (no centered max-width gutter). */}
+      <div className="flex min-h-screen w-full">
+        <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-line bg-panel p-3 md:flex lg:w-60 lg:p-4 xl:w-64">
           <div className="px-2 pb-6 pt-2">
             <div className="text-lg font-extrabold tracking-tight">True Gym</div>
             <div className="text-xs text-muted">
@@ -112,8 +116,10 @@ export function AppShell() {
             </Button>
           </div>
         </aside>
-        <main className="min-w-0 flex-1 px-4 py-6 md:px-8">
-          <Outlet />
+        <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 md:px-8 lg:py-6 xl:px-10">
+          <div className="mx-auto w-full max-w-[90rem]">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

@@ -27,10 +27,19 @@ public interface IDeviceAdapter : IDisposable
 
     DeviceCommandResult UpdateValidity(DeviceUserMutation mutation);
 
+    /// <summary>Enumerate access users (id, name, frozen). No biometrics.</summary>
+    IReadOnlyList<DeviceUserSnapshot> ListUsers();
+
     /// <summary>
     /// Remote face capture is UNVERIFIED on this firmware. Implementations must not report success.
     /// </summary>
     EnrollmentOutcome StartFaceEnrollment(string deviceUserId);
+
+    /// <summary>
+    /// Actually calls OperateAccessFaceService(INSERT) for evidence. Never claim product success.
+    /// Image bytes must not be logged by callers.
+    /// </summary>
+    FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes);
 
     DeviceCommandResult DeleteFace(string deviceUserId);
 

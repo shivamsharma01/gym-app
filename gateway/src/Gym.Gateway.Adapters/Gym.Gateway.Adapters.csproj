@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Gym.Gateway.Tests" />
+    <InternalsVisibleTo Include="TrueFaceWindowsPOC.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Gym.Gateway.NetSdk\Gym.Gateway.NetSdk.csproj" />

@@ -81,6 +81,19 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
 
     public DeviceCommandResult UpdateValidity(DeviceUserMutation mutation) => UpdateUser(mutation);
 
+    public IReadOnlyList<DeviceUserSnapshot> ListUsers()
+    {
+        if (!_connected)
+        {
+            return [];
+        }
+
+        return _users.Values
+            .Select(u => new DeviceUserSnapshot(u.DeviceUserId, u.Name, Frozen: u.Enabled == false))
+            .OrderBy(u => u.DeviceUserId, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     public EnrollmentOutcome StartFaceEnrollment(string deviceUserId)
     {
         if (!_users.ContainsKey(deviceUserId))
@@ -90,6 +103,23 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
 
         return EnrollmentOutcome.GuidedPending(
             "UNVERIFIED: remote face enrollment is not claimed as success; complete enrollment on the device");
+    }
+
+    public FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes)
+    {
+        _ = jpegBytes;
+        if (!_connected)
+        {
+            return new FaceProbeResult(false, -1, "0xFFFFFFFF", null, "Device is not connected");
+        }
+
+        // Mock mirrors the known firmware reject so Linux CI can exercise the POC evidence path.
+        return new FaceProbeResult(
+            false,
+            unchecked((int)0x10030110),
+            "0x10030110",
+            null,
+            $"Mock: OperateAccessFaceService INSERT for {deviceUserId} rejected (simulated 0x10030110)");
     }
 
     public DeviceCommandResult DeleteFace(string deviceUserId) =>

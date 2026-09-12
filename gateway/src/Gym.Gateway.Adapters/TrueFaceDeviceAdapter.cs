@@ -158,12 +158,145 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     public DeviceCommandResult UpdateValidity(DeviceUserMutation mutation) => UpsertUser(mutation, freeze: mutation.Enabled == false);
 
+    public IReadOnlyList<DeviceUserSnapshot> ListUsers()
+    {
+        if (_loginId == IntPtr.Zero)
+        {
+            return [];
+        }
+
+        return QueryUsers();
+    }
+
     public EnrollmentOutcome StartFaceEnrollment(string deviceUserId)
     {
-        // OperateAccessFaceService returned 0x10030110 on this firmware. Do not claim success.
+        // Product path: do not claim remote success. POC uses ProbeRemoteFaceInsert for evidence.
         _ = deviceUserId;
         return EnrollmentOutcome.GuidedPending(
             "UNVERIFIED: remote face enrollment failed in the recorded session (0x10030110); complete on device");
+    }
+
+    public FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes)
+    {
+        if (jpegBytes == null || jpegBytes.Length == 0)
+        {
+            return new FaceProbeResult(false, -1, "0xFFFFFFFF", null, "No jpeg bytes provided");
+        }
+
+        if (!EnsureLogin(out var err))
+        {
+            return new FaceProbeResult(false, -1, "0xFFFFFFFF", null, err);
+        }
+
+        // Marshal pattern mirrors AccessDemo2s UserInfoForm.btn_AddFace_Click (never log image bytes).
+        var faceInfoPtr = IntPtr.Zero;
+        var photoPtr = IntPtr.Zero;
+        var failCodePtr = IntPtr.Zero;
+        var inParamPtr = IntPtr.Zero;
+        var outParamPtr = IntPtr.Zero;
+        try
+        {
+            faceInfoPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_ACCESS_FACE_INFO>());
+            photoPtr = Marshal.AllocHGlobal(jpegBytes.Length);
+            Marshal.Copy(jpegBytes, 0, photoPtr, jpegBytes.Length);
+
+            var faceInfo = new NET_ACCESS_FACE_INFO
+            {
+                szUserID = deviceUserId,
+                nFacePhoto = 1,
+                nInFacePhotoLen = new int[5],
+                nOutFacePhotoLen = new int[5],
+                pFacePhoto = new IntPtr[5]
+            };
+            faceInfo.nInFacePhotoLen[0] = jpegBytes.Length;
+            faceInfo.nOutFacePhotoLen[0] = jpegBytes.Length;
+            faceInfo.pFacePhoto[0] = photoPtr;
+            Marshal.StructureToPtr(faceInfo, faceInfoPtr, false);
+
+            var insertIn = new NET_IN_ACCESS_FACE_SERVICE_INSERT
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_INSERT>(),
+                nFaceInfoNum = 1,
+                pFaceInfo = faceInfoPtr
+            };
+            inParamPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_INSERT>());
+            Marshal.StructureToPtr(insertIn, inParamPtr, false);
+
+            failCodePtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_EM_FAILCODE>());
+            Marshal.StructureToPtr(new NET_EM_FAILCODE(), failCodePtr, false);
+
+            var insertOut = new NET_OUT_ACCESS_FACE_SERVICE_INSERT
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_INSERT>(),
+                nMaxRetNum = 1,
+                pFailCode = failCodePtr
+            };
+            outParamPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_INSERT>());
+            Marshal.StructureToPtr(insertOut, outParamPtr, false);
+
+            var result = NETClient.OperateAccessFaceService(
+                _loginId, EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, inParamPtr, outParamPtr, WaitMs);
+            var errorCode = NETClient.GetLastErrorCode();
+            var errorHex = $"0x{errorCode:X8}";
+            var errorText = NETClient.GetLastError() ?? "(none)";
+            string? failCode = null;
+            try
+            {
+                var outStruct = Marshal.PtrToStructure<NET_OUT_ACCESS_FACE_SERVICE_INSERT>(outParamPtr);
+                if (outStruct.pFailCode != IntPtr.Zero)
+                {
+                    var fail = Marshal.PtrToStructure<NET_EM_FAILCODE>(outStruct.pFailCode);
+                    failCode = fail.emCode.ToString();
+                }
+            }
+            catch
+            {
+                // best-effort failcode read
+            }
+
+            Touch();
+            var detail = result
+                ? $"OperateAccessFaceService INSERT returned true for user={deviceUserId} jpegBytes={jpegBytes.Length} sdkText={errorText} (do NOT claim product remote enroll success)"
+                : $"OperateAccessFaceService INSERT returned false for user={deviceUserId} jpegBytes={jpegBytes.Length} sdk={errorHex} sdkText={errorText} failCode={failCode ?? "(none)"}";
+            return new FaceProbeResult(result, errorCode, errorHex, failCode, detail);
+        }
+        catch (Exception ex)
+        {
+            var errorCode = NETClient.GetLastErrorCode();
+            return new FaceProbeResult(
+                false,
+                errorCode,
+                $"0x{errorCode:X8}",
+                null,
+                $"OperateAccessFaceService INSERT threw {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            if (photoPtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(photoPtr);
+            }
+
+            if (faceInfoPtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(faceInfoPtr);
+            }
+
+            if (failCodePtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(failCodePtr);
+            }
+
+            if (inParamPtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(inParamPtr);
+            }
+
+            if (outParamPtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(outParamPtr);
+            }
+        }
     }
 
     public DeviceCommandResult DeleteFace(string deviceUserId)
@@ -393,7 +526,10 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
     }
 
-    private IReadOnlyList<string> QueryUserIds()
+    private IReadOnlyList<string> QueryUserIds() =>
+        QueryUsers().Select(u => u.DeviceUserId).ToArray();
+
+    private IReadOnlyList<DeviceUserSnapshot> QueryUsers()
     {
         var startIn = new NET_IN_USERINFO_START_FIND
         {
@@ -410,7 +546,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             return [];
         }
 
-        var ids = new List<string>();
+        var users = new List<DeviceUserSnapshot>();
         try
         {
             const int page = 50;
@@ -443,7 +579,10 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                         var user = Marshal.PtrToStructure<NET_ACCESS_USER_INFO>(ptr);
                         if (!string.IsNullOrWhiteSpace(user.szUserID))
                         {
-                            ids.Add(user.szUserID);
+                            users.Add(new DeviceUserSnapshot(
+                                user.szUserID.Trim(),
+                                NullIfEmpty(user.szName),
+                                Frozen: user.nUserStatus != 0));
                         }
                     }
 
@@ -465,7 +604,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             NETClient.StopFindUserInfo(find);
         }
 
-        return ids;
+        return users;
     }
 
     private bool EnsureLogin(out string error)

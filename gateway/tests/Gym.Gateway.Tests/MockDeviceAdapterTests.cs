@@ -18,6 +18,20 @@ public class MockDeviceAdapterTests
     }
 
     [Fact]
+    public void ListUsers_and_face_probe_are_available()
+    {
+        var adapter = Connected();
+        Assert.True(adapter.CreateUser(new DeviceUserMutation("1001", "Ada")).Ok);
+        var listed = adapter.ListUsers();
+        Assert.Contains(listed, u => u.DeviceUserId == "1001" && u.Name == "Ada" && !u.Frozen);
+
+        var probe = adapter.ProbeRemoteFaceInsert("1001", [0xFF, 0xD8, 0xFF]);
+        Assert.False(probe.SdkCallReturnedTrue);
+        Assert.True(probe.MatchesKnownFirmwareReject);
+        Assert.DoesNotContain("0xFF", probe.Detail); // must not echo image bytes
+    }
+
+    [Fact]
     public void Face_enrollment_is_never_success()
     {
         var adapter = Connected();

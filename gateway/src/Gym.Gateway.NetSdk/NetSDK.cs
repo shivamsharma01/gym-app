@@ -823,6 +823,9 @@ namespace NetSDKCS
             return reslut;
         }
 
+        /// <summary>Raw last SDK error code (for verbose diagnostics; never log secrets).</summary>
+        public static int GetLastErrorCode() => OriginalSDK.CLIENT_GetLastError();
+
         /// <summary>
         /// initialize SDK,can only be called once.Must be called before others SDK function,otherwise others SDK function will fail.
         /// SDK，，SDK。

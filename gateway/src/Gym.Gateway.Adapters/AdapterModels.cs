@@ -69,3 +69,24 @@ public sealed record NormalizedDeviceEvent(
     long? RecNo,
     string? AlarmType,
     string? Details);
+
+/// <summary>Device-side access user as returned by enumeration (no biometrics).</summary>
+public sealed record DeviceUserSnapshot(string DeviceUserId, string? Name, bool Frozen);
+
+/// <summary>
+/// Raw evidence from a remote face INSERT attempt. Never treat as product success —
+/// even if the SDK returns true, the product path remains guided on-device until verified.
+/// </summary>
+public sealed record FaceProbeResult(
+    bool SdkCallReturnedTrue,
+    int SdkErrorCode,
+    string SdkErrorHex,
+    string? FailCode,
+    string Detail)
+{
+    public bool MatchesKnownFirmwareReject =>
+        !SdkCallReturnedTrue
+        && (SdkErrorCode == unchecked((int)0x10030110)
+            || SdkErrorHex.Contains("10030110", StringComparison.OrdinalIgnoreCase)
+            || (Detail?.Contains("10030110", StringComparison.OrdinalIgnoreCase) ?? false));
+}

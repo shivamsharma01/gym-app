@@ -10,12 +10,17 @@ import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.GatewayRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
+import com.example.gym.enquiry.EnquiryRepository;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.membership.MembershipRepository;
+import com.example.gym.notification.AnnouncementRepository;
+import com.example.gym.notification.NotificationTemplateRepository;
+import com.example.gym.notification.OutboundNotificationRepository;
 import com.example.gym.payment.PaymentRepository;
 import com.example.gym.plan.MembershipPlanRepository;
 import com.example.gym.security.domain.Role;
 import com.example.gym.security.domain.RoleRepository;
+import com.example.gym.settings.GymProfileRepository;
 import com.example.gym.tenant.Tenant;
 import com.example.gym.tenant.TenantRepository;
 import com.example.gym.user.AdminUser;
@@ -105,6 +110,21 @@ public abstract class AbstractIntegrationTest {
     protected GatewayRepository gatewayRepository;
 
     @Autowired
+    protected EnquiryRepository enquiryRepository;
+
+    @Autowired
+    protected GymProfileRepository gymProfileRepository;
+
+    @Autowired
+    protected NotificationTemplateRepository notificationTemplateRepository;
+
+    @Autowired
+    protected OutboundNotificationRepository outboundNotificationRepository;
+
+    @Autowired
+    protected AnnouncementRepository announcementRepository;
+
+    @Autowired
     protected PasswordEncoder passwordEncoder;
 
     /**
@@ -120,6 +140,11 @@ public abstract class AbstractIntegrationTest {
         memberDeviceMappingRepository.deleteAllInBatch();
         deviceRepository.deleteAllInBatch();
         gatewayRepository.deleteAllInBatch();
+        outboundNotificationRepository.deleteAllInBatch();
+        notificationTemplateRepository.deleteAllInBatch();
+        announcementRepository.deleteAllInBatch();
+        enquiryRepository.deleteAllInBatch();
+        gymProfileRepository.deleteAllInBatch();
         paymentRepository.deleteAllInBatch();
         membershipRepository.deleteAllInBatch();
         memberRepository.deleteAllInBatch();

@@ -31,4 +31,8 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
                         @Param("q") String q,
                         @Param("status") MemberStatus status,
                         Pageable pageable);
+
+    long countByTenantId(Long tenantId);
+
+    long countByTenantIdAndStatus(Long tenantId, MemberStatus status);
 }

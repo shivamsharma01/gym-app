@@ -9,4 +9,8 @@ public interface MembershipRepository extends JpaRepository<Membership, Long> {
     Optional<Membership> findByPublicId(String publicId);
 
     List<Membership> findByMemberIdOrderByStartDateDesc(Long memberId);
+
+    List<Membership> findByTenantId(Long tenantId);
+
+    long countByTenantIdAndStatus(Long tenantId, MembershipStatus status);
 }

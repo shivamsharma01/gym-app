@@ -12,8 +12,11 @@ import com.example.gym.device.repo.AttendanceEventRepository;
 import com.example.gym.device.repo.AttendanceSyncCursorRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
+import com.example.gym.live.StaffLiveBroadcast;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,15 +34,18 @@ public class AttendanceIngestionService {
     private final AttendanceSyncCursorRepository cursorRepository;
     private final MemberDeviceMappingRepository mappingRepository;
     private final SecurityEventRepository securityEventRepository;
+    private final ApplicationEventPublisher events;
 
     public AttendanceIngestionService(AttendanceEventRepository attendanceRepository,
                                       AttendanceSyncCursorRepository cursorRepository,
                                       MemberDeviceMappingRepository mappingRepository,
-                                      SecurityEventRepository securityEventRepository) {
+                                      SecurityEventRepository securityEventRepository,
+                                      ApplicationEventPublisher events) {
         this.attendanceRepository = attendanceRepository;
         this.cursorRepository = cursorRepository;
         this.mappingRepository = mappingRepository;
         this.securityEventRepository = securityEventRepository;
+        this.events = events;
     }
 
     /** @return the persisted event, or empty when it was a duplicate. */
@@ -71,6 +77,14 @@ public class AttendanceIngestionService {
 
         advanceWatermark(tenantId, device.getId(), deviceRecNo, occurredAt);
         maybeRaiseSecurityEvent(tenantId, device.getId(), granted, memberId, deviceUserId, occurredAt);
+        events.publishEvent(new StaffLiveBroadcast(tenantId, granted ? "ATTENDANCE" : "ACCESS_DENIED",
+                Map.of(
+                        "deviceId", device.getPublicId(),
+                        "deviceUserId", deviceUserId == null ? "" : deviceUserId,
+                        "result", result.name(),
+                        "direction", event.getDirection().name(),
+                        "occurredAt", occurredAt == null ? "" : occurredAt.toString(),
+                        "memberLinked", memberId != null)));
         return Optional.of(event);
     }
 

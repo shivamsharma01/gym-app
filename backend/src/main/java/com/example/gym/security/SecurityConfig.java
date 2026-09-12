@@ -42,7 +42,9 @@ public class SecurityConfig {
             // Device-gateway WSS + REST fallback authenticate with a per-gateway token
             // (or optional deployment shared token), not the user JWT filter.
             "/gateway",
-            "/internal/gateway/**"
+            "/internal/gateway/**",
+            "/api/v1/public/**",
+            "/live"
     };
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;

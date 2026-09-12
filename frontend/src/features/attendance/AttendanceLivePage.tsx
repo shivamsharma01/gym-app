@@ -10,14 +10,14 @@ export function AttendanceLivePage() {
   const attendance = useQuery({
     queryKey: ['attendance', 'live'],
     queryFn: () => api<PageResponse<Attendance>>('/api/v1/attendance?page=0&size=25'),
-    refetchInterval: 15_000,
+    refetchInterval: 60_000,
   })
 
   return (
     <div>
       <PageHeader
         title="Attendance live"
-        description="WebSocket push is Phase 6. This view polls every 15 seconds and can be refreshed by hand."
+        description="Pushes over /live when the staff socket is connected. Manual refresh still works if the socket is down."
         actions={
           <Button variant="outline" onClick={() => void attendance.refetch()} disabled={attendance.isFetching}>
             Refresh now

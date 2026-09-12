@@ -43,6 +43,12 @@ public final class AuditActions {
     public static final String DEVICE_RECONCILE_REQUESTED = "DEVICE_RECONCILE_REQUESTED";
     public static final String DEVICE_REMOTE_DOOR = "DEVICE_REMOTE_DOOR";
 
+    public static final String ENQUIRY_RECEIVED = "ENQUIRY_RECEIVED";
+    public static final String ENQUIRY_UPDATED = "ENQUIRY_UPDATED";
+    public static final String SETTINGS_UPDATED = "SETTINGS_UPDATED";
+    public static final String NOTIFICATION_QUEUED = "NOTIFICATION_QUEUED";
+    public static final String ANNOUNCEMENT_CREATED = "ANNOUNCEMENT_CREATED";
+
     public static final String RESULT_SUCCESS = "SUCCESS";
     public static final String RESULT_FAILURE = "FAILURE";
 }

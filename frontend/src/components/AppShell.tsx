@@ -1,11 +1,17 @@
 import { NavLink, Outlet, useNavigate } from 'react-router'
 import {
   Activity,
+  BarChart3,
+  Bell,
+  ClipboardList,
   CreditCard,
+  Inbox,
   LayoutDashboard,
   LogOut,
   Menu,
   MonitorSmartphone,
+  Settings,
+  Shield,
   Users,
   Wallet,
   X,
@@ -14,6 +20,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { useStaffLive } from '@/lib/live'
 
 const links = [
   { to: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: null },
@@ -23,12 +30,20 @@ const links = [
   { to: '/app/payments', label: 'Payments', icon: Wallet, perm: 'PAYMENT_VIEW' },
   { to: '/app/attendance', label: 'Attendance', icon: Activity, perm: 'ATTENDANCE_VIEW' },
   { to: '/app/devices', label: 'Devices', icon: MonitorSmartphone, perm: 'DEVICE_VIEW' },
+  { to: '/app/enquiries', label: 'Enquiries', icon: Inbox, perm: 'ENQUIRY_VIEW' },
+  { to: '/app/reports', label: 'Reports', icon: BarChart3, perm: 'REPORT_VIEW' },
+  { to: '/app/notifications', label: 'Notifications', icon: Bell, perm: 'NOTIFICATION_SEND' },
+  { to: '/app/users', label: 'Users', icon: Users, perm: 'USER_MANAGE' },
+  { to: '/app/roles', label: 'Roles', icon: Shield, perm: 'ROLE_MANAGE' },
+  { to: '/app/audit', label: 'Audit', icon: ClipboardList, perm: 'AUDIT_VIEW' },
+  { to: '/app/settings', label: 'Settings', icon: Settings, perm: 'SETTINGS_MANAGE' },
 ]
 
 export function AppShell() {
   const { user, logout, has } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
+  const live = useStaffLive()
   const visible = links.filter((l) => !l.perm || has(l.perm))
 
   async function onLogout() {
@@ -47,10 +62,7 @@ export function AppShell() {
 
       {open ? (
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setOpen(false)}>
-          <nav
-            className="h-full w-72 bg-panel p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <nav className="h-full w-72 overflow-y-auto bg-panel p-4" onClick={(e) => e.stopPropagation()}>
             <div className="mb-6 flex items-center justify-between">
               <span className="font-extrabold">True Gym</span>
               <button type="button" aria-label="Close menu" onClick={() => setOpen(false)}>
@@ -66,7 +78,6 @@ export function AppShell() {
               >
                 {user?.fullName}
               </NavLink>
-              <div className="px-3 text-xs text-muted">{user?.roles.join(', ')}</div>
               <Button
                 variant="ghost"
                 className="mt-3 w-full justify-start"
@@ -83,10 +94,12 @@ export function AppShell() {
       ) : null}
 
       <div className="mx-auto flex min-h-screen max-w-7xl">
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-panel p-4 md:flex">
+        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-line bg-panel p-4 md:flex">
           <div className="px-2 pb-6 pt-2">
             <div className="text-lg font-extrabold tracking-tight">True Gym</div>
-            <div className="text-xs text-muted">Operations</div>
+            <div className="text-xs text-muted">
+              Operations · live {live === 'live' ? 'on' : live === 'down' ? 'reconnecting' : 'off'}
+            </div>
           </div>
           <NavItems items={visible} />
           <div className="mt-auto border-t border-line pt-4">

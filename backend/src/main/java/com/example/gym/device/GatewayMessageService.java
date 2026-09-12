@@ -12,12 +12,14 @@ import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.GatewayRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
+import com.example.gym.live.StaffLiveBroadcast;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -42,6 +44,7 @@ public class GatewayMessageService {
     private final SecurityEventRepository securityEventRepository;
     private final MemberDeviceMappingRepository mappingRepository;
     private final JsonMapper jsonMapper;
+    private final ApplicationEventPublisher events;
 
     public GatewayMessageService(GatewayService gatewayService,
                                  GatewayRepository gatewayRepository,
@@ -51,7 +54,8 @@ public class GatewayMessageService {
                                  DeviceSyncService deviceSyncService,
                                  SecurityEventRepository securityEventRepository,
                                  MemberDeviceMappingRepository mappingRepository,
-                                 JsonMapper jsonMapper) {
+                                 JsonMapper jsonMapper,
+                                 ApplicationEventPublisher events) {
         this.gatewayService = gatewayService;
         this.gatewayRepository = gatewayRepository;
         this.deviceRepository = deviceRepository;
@@ -61,6 +65,7 @@ public class GatewayMessageService {
         this.securityEventRepository = securityEventRepository;
         this.mappingRepository = mappingRepository;
         this.jsonMapper = jsonMapper;
+        this.events = events;
     }
 
     /** Parses and handles a raw inbound message; returns an optional reply to send back. */
@@ -109,11 +114,18 @@ public class GatewayMessageService {
                 yield ack(message);
             }
             case DEVICE_STATUS, DEVICE_METADATA -> {
-                resolveDevice(message).ifPresent(device -> deviceService.updateConnection(device,
-                        connectionState(message.payload()),
-                        text(message.payload(), "firmware"),
-                        text(message.payload(), "model"),
-                        instant(message.payload(), "lastSeen")));
+                resolveDevice(message).ifPresent(device -> {
+                    deviceService.updateConnection(device,
+                            connectionState(message.payload()),
+                            text(message.payload(), "firmware"),
+                            text(message.payload(), "model"),
+                            instant(message.payload(), "lastSeen"));
+                    DeviceConnectionState state = connectionState(message.payload());
+                    events.publishEvent(new StaffLiveBroadcast(device.getTenantId(), "DEVICE_STATUS",
+                            Map.of(
+                                    "deviceId", device.getPublicId(),
+                                    "connectionState", state == null ? "" : state.name())));
+                });
                 yield ack(message);
             }
             case DEVICE_EVENT -> {
@@ -122,11 +134,17 @@ public class GatewayMessageService {
                 yield ack(message);
             }
             case DEVICE_ALARM -> {
-                resolveDevice(message).ifPresent(device -> securityEventRepository.save(new SecurityEvent(
-                        device.getTenantId(), device.getId(),
-                        textOr(message.payload(), "type", "DEVICE_ALARM"),
-                        instantOr(message.payload(), "occurredAt", message.timestamp()),
-                        text(message.payload(), "details"))));
+                resolveDevice(message).ifPresent(device -> {
+                    securityEventRepository.save(new SecurityEvent(
+                            device.getTenantId(), device.getId(),
+                            textOr(message.payload(), "type", "DEVICE_ALARM"),
+                            instantOr(message.payload(), "occurredAt", message.timestamp()),
+                            text(message.payload(), "details")));
+                    events.publishEvent(new StaffLiveBroadcast(device.getTenantId(), "SECURITY_ALARM",
+                            Map.of(
+                                    "deviceId", device.getPublicId(),
+                                    "type", textOr(message.payload(), "type", "DEVICE_ALARM"))));
+                });
                 yield ack(message);
             }
             case SYNC_RESULT -> {

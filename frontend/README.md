@@ -18,4 +18,5 @@ Dev users from the backend seeder include `admin` / `ChangeMe123!`.
 
 ## Out of scope here
 
-Public website, reports, notifications, user/role admin, live WebSocket. Those are Phase 6.
+Public website, reports, notifications, user/role admin, and live WebSocket are in Phase 6 (`docs/PHASE-6.md`).
+

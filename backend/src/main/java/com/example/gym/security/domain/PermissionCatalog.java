@@ -2,7 +2,7 @@ package com.example.gym.security.domain;
 
 /**
  * Canonical list of permissions used in {@code @PreAuthorize("hasAuthority('...')")} checks and
- * seeded into the {@code permission} table. Keep in sync with migration {@code V1__baseline.sql}.
+ * seeded into the {@code permission} table. Keep in sync with Flyway permission inserts.
  */
 public enum PermissionCatalog {
 
@@ -28,7 +28,9 @@ public enum PermissionCatalog {
     USER_MANAGE("Manage admin users"),
     ROLE_MANAGE("Manage roles"),
     AUDIT_VIEW("View audit log"),
-    SETTINGS_MANAGE("Manage settings");
+    SETTINGS_MANAGE("Manage settings"),
+    ENQUIRY_VIEW("View public enquiries"),
+    ENQUIRY_MANAGE("Update public enquiries");
 
     private final String description;
 

@@ -3,6 +3,7 @@ package com.example.gym.membership;
 import com.example.gym.membership.dto.MembershipRequests.CancelMembership;
 import com.example.gym.membership.dto.MembershipRequests.CreateMembership;
 import com.example.gym.membership.dto.MembershipRequests.RenewMembership;
+import com.example.gym.membership.dto.MembershipRequests.UpdateMembershipDates;
 import com.example.gym.membership.dto.MembershipResponse;
 import com.example.gym.security.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
@@ -15,6 +16,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -56,6 +58,16 @@ public class MembershipController {
     public MembershipResponse create(@Valid @RequestBody CreateMembership request) {
         return MembershipResponse.from(
                 membershipService.create(request, SecurityUtils.currentTenantId()), LocalDate.now());
+    }
+
+    @PutMapping("/memberships/{id}/dates")
+    @PreAuthorize("hasAuthority('MEMBERSHIP_UPDATE')")
+    @Operation(summary = "Change a membership's start and end dates")
+    public MembershipResponse updateDates(@PathVariable String id,
+                                          @Valid @RequestBody UpdateMembershipDates request) {
+        return MembershipResponse.from(
+                membershipService.updateDates(id, request, SecurityUtils.currentTenantId()),
+                LocalDate.now());
     }
 
     @PostMapping("/memberships/{id}/renew")

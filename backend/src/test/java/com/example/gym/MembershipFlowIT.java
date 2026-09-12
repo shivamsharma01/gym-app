@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
+import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -111,6 +112,38 @@ class MembershipFlowIT extends AbstractIntegrationTest {
 
         mockMvc.perform(get("/api/v1/members/" + memberId).header("Authorization", "Bearer " + otherToken))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void customDatesCanBeSetOnCreateAndUpdated() throws Exception {
+        token = tokenFor("flow-admin");
+        String planId = readJson(post("/api/v1/plans",
+                "{\"name\":\"Custom\",\"price\":500.00,\"currency\":\"INR\",\"durationDays\":30}")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        String memberId = readJson(post("/api/v1/members",
+                "{\"firstName\":\"Dated\"}")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+
+        LocalDate start = LocalDate.now().minusDays(3);
+        LocalDate end = start.plusDays(45);
+        String membershipId = readJson(post("/api/v1/memberships",
+                "{\"memberId\":\"" + memberId + "\",\"planId\":\"" + planId
+                        + "\",\"startDate\":\"" + start + "\",\"endDate\":\"" + end + "\"}")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.startDate").value(start.toString()))
+                .andExpect(jsonPath("$.endDate").value(end.toString()))
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+
+        LocalDate newEnd = end.plusDays(10);
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .put("/api/v1/memberships/" + membershipId + "/dates")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"startDate\":\"" + start + "\",\"endDate\":\"" + newEnd + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.endDate").value(newEnd.toString()));
     }
 
     // --- helpers ---------------------------------------------------------------------------------

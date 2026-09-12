@@ -7,6 +7,7 @@ import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
 import com.example.gym.membership.dto.MembershipRequests.CreateMembership;
 import com.example.gym.membership.dto.MembershipRequests.RenewMembership;
+import com.example.gym.membership.dto.MembershipRequests.UpdateMembershipDates;
 import com.example.gym.plan.MembershipPlan;
 import com.example.gym.plan.PlanService;
 import com.example.gym.plan.PlanStatus;
@@ -71,7 +72,8 @@ public class MembershipService {
         Member member = memberService.getByPublicId(request.memberId(), tenantId);
         MembershipPlan plan = planService.requireActive(request.planId(), tenantId);
         LocalDate start = request.startDate() != null ? request.startDate() : LocalDate.now();
-        Membership membership = build(tenantId, member.getId(), plan, start);
+        LocalDate end = resolveEnd(start, request.endDate(), plan);
+        Membership membership = build(tenantId, member.getId(), plan, start, end);
         Membership saved = membershipRepository.save(membership);
 
         auditService.record(AuditActions.MEMBERSHIP_CREATED, AuditActions.RESULT_SUCCESS,
@@ -95,7 +97,8 @@ public class MembershipService {
         }
 
         // History is preserved: the old membership row is left untouched; a new one is created.
-        Membership renewal = build(tenantId, current.getMemberId(), plan, start);
+        Membership renewal = build(tenantId, current.getMemberId(), plan, start,
+                start.plusDays(Math.max(plan.getDurationDays() - 1, 0)));
         Membership saved = membershipRepository.save(renewal);
 
         auditService.record(AuditActions.MEMBERSHIP_RENEWED, AuditActions.RESULT_SUCCESS,
@@ -160,18 +163,58 @@ public class MembershipService {
         return saved;
     }
 
+    @Transactional
+    public Membership updateDates(String membershipPublicId, UpdateMembershipDates request, Long tenantId) {
+        Membership membership = getByPublicId(membershipPublicId, tenantId);
+        if (membership.getStatus() == MembershipStatus.CANCELLED
+                || membership.getStatus() == MembershipStatus.FROZEN) {
+            throw CommonExceptions.badRequest("Cannot change dates on a frozen or cancelled membership");
+        }
+        LocalDate start = request.startDate();
+        LocalDate end = request.endDate();
+        requireEndOnOrAfterStart(start, end);
+        membership.setStartDate(start);
+        membership.setEndDate(end);
+        LocalDate today = LocalDate.now();
+        if (start.isAfter(today)) {
+            membership.setStatus(MembershipStatus.PENDING);
+        } else if (today.isAfter(end)) {
+            membership.setStatus(MembershipStatus.EXPIRED);
+        } else {
+            membership.setStatus(MembershipStatus.ACTIVE);
+        }
+        Membership saved = membershipRepository.save(membership);
+        auditService.record(AuditActions.MEMBERSHIP_DATES_UPDATED, AuditActions.RESULT_SUCCESS,
+                "Membership", saved.getPublicId(),
+                Map.of("startDate", start.toString(), "endDate", end.toString()));
+        publish(saved, ChangeType.DATES_UPDATED);
+        return saved;
+    }
+
     private void publish(Membership membership, ChangeType type) {
         eventPublisher.publishEvent(new MembershipChangedEvent(
                 membership.getTenantId(), membership.getMemberId(), membership.getId(), type));
     }
 
-    private Membership build(Long tenantId, Long memberId, MembershipPlan plan, LocalDate start) {
-        // End date is inclusive: a 30-day plan starting on the 1st is valid through the 30th.
-        LocalDate end = start.plusDays(Math.max(plan.getDurationDays() - 1, 0));
+    private Membership build(Long tenantId, Long memberId, MembershipPlan plan, LocalDate start, LocalDate end) {
+        requireEndOnOrAfterStart(start, end);
         LocalDate today = LocalDate.now();
         MembershipStatus status = start.isAfter(today) ? MembershipStatus.PENDING : MembershipStatus.ACTIVE;
         return new Membership(tenantId, memberId, plan.getId(), plan.getName(), plan.getPrice(),
                 plan.getCurrency(), start, end, status);
+    }
+
+    private static LocalDate resolveEnd(LocalDate start, LocalDate requestedEnd, MembershipPlan plan) {
+        if (requestedEnd != null) {
+            return requestedEnd;
+        }
+        return start.plusDays(Math.max(plan.getDurationDays() - 1, 0));
+    }
+
+    private static void requireEndOnOrAfterStart(LocalDate start, LocalDate end) {
+        if (end.isBefore(start)) {
+            throw CommonExceptions.badRequest("End date must be on or after start date");
+        }
     }
 
     private MembershipPlan resolveRenewalPlan(Membership current, String requestedPlanPublicId,

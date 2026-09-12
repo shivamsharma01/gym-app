@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1")
 @Tag(name = "Roles & Permissions")
-@PreAuthorize("hasAuthority('ROLE_MANAGE')")
 public class RoleController {
 
     private final RoleRepository roleRepository;
@@ -28,6 +27,7 @@ public class RoleController {
     }
 
     @GetMapping("/roles")
+    @PreAuthorize("hasAnyAuthority('ROLE_MANAGE', 'USER_MANAGE')")
     @Transactional(readOnly = true)
     @Operation(summary = "List roles available to the current tenant (system + tenant-defined)")
     public List<RoleResponse> roles() {
@@ -38,6 +38,7 @@ public class RoleController {
     }
 
     @GetMapping("/permissions")
+    @PreAuthorize("hasAuthority('ROLE_MANAGE')")
     @Transactional(readOnly = true)
     @Operation(summary = "List all permissions in the catalogue")
     public List<PermissionResponse> permissions() {

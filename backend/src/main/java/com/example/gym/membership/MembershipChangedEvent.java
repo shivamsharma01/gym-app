@@ -12,6 +12,7 @@ public record MembershipChangedEvent(Long tenantId, Long memberId, Long membersh
         RENEWED,
         FROZEN,
         UNFROZEN,
-        CANCELLED
+        CANCELLED,
+        DATES_UPDATED
     }
 }

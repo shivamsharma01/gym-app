@@ -1,6 +1,7 @@
 package com.example.gym.membership.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 
@@ -14,7 +15,14 @@ public final class MembershipRequests {
             @NotBlank String memberId,
             @NotBlank String planId,
             /** Optional; defaults to today. */
-            LocalDate startDate) {
+            LocalDate startDate,
+            /** Optional; defaults to start plus the plan duration (inclusive). */
+            LocalDate endDate) {
+    }
+
+    public record UpdateMembershipDates(
+            @NotNull LocalDate startDate,
+            @NotNull LocalDate endDate) {
     }
 
     public record RenewMembership(

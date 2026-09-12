@@ -130,6 +130,10 @@ public class Membership extends TenantAwareEntity {
         return startDate;
     }
 
+    public void setStartDate(LocalDate startDate) {
+        this.startDate = startDate;
+    }
+
     public LocalDate getEndDate() {
         return endDate;
     }

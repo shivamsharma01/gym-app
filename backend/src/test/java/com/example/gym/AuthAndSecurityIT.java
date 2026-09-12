@@ -41,6 +41,21 @@ class AuthAndSecurityIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void gymAdminCanListRolesForUserAssignment() throws Exception {
+        String token = login("acme-admin", DEFAULT_PASSWORD);
+        mockMvc.perform(get("/api/v1/roles").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.name=='STAFF')]").isNotEmpty());
+    }
+
+    @Test
+    void gymAdminCannotListPermissions() throws Exception {
+        String token = login("acme-admin", DEFAULT_PASSWORD);
+        mockMvc.perform(get("/api/v1/permissions").header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void frontDeskWithoutUserManageIsForbidden() throws Exception {
         String token = login("acme-frontdesk", DEFAULT_PASSWORD);
         mockMvc.perform(get("/api/v1/users").header("Authorization", "Bearer " + token))

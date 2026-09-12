@@ -47,6 +47,7 @@ public final class AuditActions {
     public static final String ENQUIRY_RECEIVED = "ENQUIRY_RECEIVED";
     public static final String ENQUIRY_UPDATED = "ENQUIRY_UPDATED";
     public static final String SETTINGS_UPDATED = "SETTINGS_UPDATED";
+    public static final String TENANT_ENROLLED = "TENANT_ENROLLED";
     public static final String NOTIFICATION_QUEUED = "NOTIFICATION_QUEUED";
     public static final String ANNOUNCEMENT_CREATED = "ANNOUNCEMENT_CREATED";
 

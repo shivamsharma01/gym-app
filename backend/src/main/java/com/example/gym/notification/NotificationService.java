@@ -12,7 +12,9 @@ import com.example.gym.membership.MembershipStatus;
 import com.example.gym.notification.dto.CreateAnnouncement;
 import com.example.gym.notification.dto.SendNotification;
 import com.example.gym.notification.dto.UpsertTemplate;
+import com.example.gym.settings.GymProfileRepository;
 import com.example.gym.tenant.TenantGuard;
+import com.example.gym.tenant.TenantRepository;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +34,8 @@ public class NotificationService {
     private final MembershipRepository membershipRepository;
     private final MockNotificationAdapter mockAdapter;
     private final AuditService auditService;
+    private final TenantRepository tenantRepository;
+    private final GymProfileRepository profileRepository;
 
     public NotificationService(NotificationTemplateRepository templateRepository,
                                OutboundNotificationRepository outboundRepository,
@@ -40,7 +44,9 @@ public class NotificationService {
                                MemberRepository memberRepository,
                                MembershipRepository membershipRepository,
                                MockNotificationAdapter mockAdapter,
-                               AuditService auditService) {
+                               AuditService auditService,
+                               TenantRepository tenantRepository,
+                               GymProfileRepository profileRepository) {
         this.templateRepository = templateRepository;
         this.outboundRepository = outboundRepository;
         this.announcementRepository = announcementRepository;
@@ -49,6 +55,8 @@ public class NotificationService {
         this.membershipRepository = membershipRepository;
         this.mockAdapter = mockAdapter;
         this.auditService = auditService;
+        this.tenantRepository = tenantRepository;
+        this.profileRepository = profileRepository;
     }
 
     @Transactional(readOnly = true)
@@ -138,8 +146,8 @@ public class NotificationService {
                                                  String templateKey, NotificationChannel channel,
                                                  String subjectTemplate, String bodyTemplate) {
         String recipient = recipientFor(member, channel);
-        String body = render(bodyTemplate, member, membership);
-        String subject = subjectTemplate == null ? null : render(subjectTemplate, member, membership);
+        String body = render(bodyTemplate, member, membership, tenantId);
+        String subject = subjectTemplate == null ? null : render(subjectTemplate, member, membership, tenantId);
         OutboundNotification outbound = outboundRepository.save(new OutboundNotification(
                 tenantId, channel, templateKey, recipient, subject, body, member.getId()));
         try {
@@ -155,7 +163,7 @@ public class NotificationService {
         return outbound;
     }
 
-    private String render(String template, Member member, Membership membership) {
+    private String render(String template, Member member, Membership membership, Long tenantId) {
         if (template == null) {
             return null;
         }
@@ -163,9 +171,20 @@ public class NotificationService {
                 : String.valueOf(Math.max(0, membership.getEndDate().toEpochDay() - LocalDate.now().toEpochDay()));
         return template
                 .replace("{{memberName}}", member.getFullName())
-                .replace("{{gymName}}", "True Gym")
+                .replace("{{gymName}}", gymDisplayName(tenantId))
                 .replace("{{expiryDate}}", membership == null ? "" : membership.getEndDate().toString())
                 .replace("{{daysRemaining}}", days);
+    }
+
+    private String gymDisplayName(Long tenantId) {
+        if (tenantId == null) {
+            return "Gym";
+        }
+        return profileRepository.findByTenantId(tenantId)
+                .map(p -> p.getDisplayName())
+                .filter(n -> n != null && !n.isBlank())
+                .or(() -> tenantRepository.findById(tenantId).map(t -> t.getName()))
+                .orElse("Gym");
     }
 
     private String recipientFor(Member member, NotificationChannel channel) {

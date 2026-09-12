@@ -3,6 +3,7 @@ import {
   Activity,
   BarChart3,
   Bell,
+  Building2,
   ClipboardList,
   CreditCard,
   Inbox,
@@ -17,8 +18,11 @@ import {
   X,
 } from 'lucide-react'
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
+import { brandDisplayName, brandLogo, type PublicSite } from '@/lib/brand'
+import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useStaffLive } from '@/lib/live'
 
@@ -44,7 +48,23 @@ export function AppShell() {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const live = useStaffLive()
-  const visible = links.filter((l) => !l.perm || has(l.perm))
+  const isPlatform = user?.tenantId == null && user?.roles.includes('SUPER_ADMIN')
+  const settings = useQuery({
+    queryKey: ['settings', 'shell'],
+    queryFn: () => api<PublicSite>('/api/v1/settings'),
+    enabled: Boolean(user?.tenantId),
+  })
+  const brand = isPlatform ? 'Platform' : brandDisplayName(settings.data, 'Gym')
+  const logo = isPlatform ? null : brandLogo(settings.data)
+  const visible = [
+    ...(isPlatform
+      ? [{ to: '/app/platform/gyms', label: 'Gyms', icon: Building2, perm: null as string | null }]
+      : []),
+    ...links.filter((l) => {
+      if (isPlatform && (l.to === '/app/settings' || l.perm === 'SETTINGS_MANAGE')) return false
+      return !l.perm || has(l.perm)
+    }),
+  ]
 
   async function onLogout() {
     await logout()
@@ -54,7 +74,10 @@ export function AppShell() {
   return (
     <div className="min-h-screen bg-canvas text-ink">
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-panel/90 px-4 py-3 backdrop-blur md:hidden">
-        <span className="font-extrabold tracking-tight">True Gym</span>
+        <span className="flex items-center gap-2 font-extrabold tracking-tight">
+          {logo ? <img src={logo} alt="" className="h-7 w-7 rounded-md object-cover" /> : null}
+          {brand}
+        </span>
         <button type="button" aria-label="Open menu" onClick={() => setOpen(true)}>
           <Menu className="h-5 w-5" />
         </button>
@@ -66,8 +89,11 @@ export function AppShell() {
             className="h-full w-[min(18rem,88vw)] overflow-y-auto bg-panel p-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-6 flex items-center justify-between">
-              <span className="font-extrabold">True Gym</span>
+            <div className="mb-6 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 font-extrabold">
+                {logo ? <img src={logo} alt="" className="h-7 w-7 rounded-md object-cover" /> : null}
+                {brand}
+              </span>
               <button type="button" aria-label="Close menu" onClick={() => setOpen(false)}>
                 <X className="h-5 w-5" />
               </button>
@@ -96,13 +122,16 @@ export function AppShell() {
         </div>
       ) : null}
 
-      {/* Full-bleed shell: sidebar flush to the viewport edge (no centered max-width gutter). */}
       <div className="flex min-h-screen w-full">
         <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-line bg-panel p-3 md:flex lg:w-60 lg:p-4 xl:w-64">
           <div className="px-2 pb-6 pt-2">
-            <div className="text-lg font-extrabold tracking-tight">True Gym</div>
-            <div className="text-xs text-muted">
-              Operations · live {live === 'live' ? 'on' : live === 'down' ? 'reconnecting' : 'off'}
+            <div className="flex items-center gap-2">
+              {logo ? <img src={logo} alt="" className="h-8 w-8 rounded-md object-cover" /> : null}
+              <div className="min-w-0 text-lg font-extrabold tracking-tight leading-tight">{brand}</div>
+            </div>
+            <div className="mt-1 text-xs text-muted">
+              {isPlatform ? 'Super admin' : 'Operations'} · live{' '}
+              {live === 'live' ? 'on' : live === 'down' ? 'reconnecting' : 'off'}
             </div>
           </div>
           <NavItems items={visible} />
@@ -130,7 +159,7 @@ function NavItems({
   items,
   onClick,
 }: {
-  items: typeof links
+  items: { to: string; label: string; icon: typeof LayoutDashboard; perm: string | null }[]
   onClick?: () => void
 }) {
   return (

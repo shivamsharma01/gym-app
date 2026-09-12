@@ -3,8 +3,10 @@ import { useMutation } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { Button, FieldError, Input, Label, Select, Textarea } from '@/components/ui'
-import { api } from '@/lib/api'
 import { QueryError } from '@/components/QueryError'
+import { brandDisplayName } from '@/lib/brand'
+import { useGymSlug } from '@/lib/GymSlug'
+import { publicApi } from '@/lib/publicApi'
 import { usePublicPlans, usePublicSite } from '@/public/HomePage'
 
 const schema = z.object({
@@ -18,6 +20,7 @@ const schema = z.object({
 type Form = z.infer<typeof schema>
 
 export function ContactPage() {
+  const slug = useGymSlug()
   const site = usePublicSite()
   const plans = usePublicPlans()
   const form = useForm<Form>({
@@ -26,7 +29,7 @@ export function ContactPage() {
   })
   const send = useMutation({
     mutationFn: (body: Form) =>
-      api('/api/v1/public/enquiries', {
+      publicApi(slug, '/api/v1/public/enquiries', {
         method: 'POST',
         body: JSON.stringify({
           name: body.name,
@@ -41,17 +44,19 @@ export function ContactPage() {
   return (
     <main className="mx-auto grid max-w-6xl gap-12 px-4 py-16 md:grid-cols-2">
       <div>
-        <h1 className="text-4xl font-extrabold">Contact</h1>
+        <h1 className="text-4xl font-extrabold">Contact {brandDisplayName(site.data)}</h1>
         <p className="mt-4 text-white/60">
           {site.data?.address || 'Visit the floor'} · {site.data?.hours || 'Hours on the door'}
         </p>
         <p className="mt-2 text-white/60">
           {site.data?.phone || ''} {site.data?.email || ''}
         </p>
-        <p className="mt-6 text-sm text-white/40">This form creates a real enquiry in the gym inbox. It does not send email until a provider is wired.</p>
+        <p className="mt-6 text-sm text-white/40">
+          This form creates a real enquiry in the gym inbox. It does not send email until a provider is wired.
+        </p>
       </div>
       <form
-        className="space-y-4 rounded-3xl border border-white/10 p-6"
+        className="space-y-4 border border-white/10 p-6"
         onSubmit={form.handleSubmit((v) => send.mutate(v))}
       >
         <div>

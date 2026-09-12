@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" fill="none">
+  <rect width="1200" height="800" fill="#121612"/>
+  <rect x="80" y="120" width="480" height="560" rx="24" fill="#1e231f" stroke="#2c332e"/>
+  <rect x="640" y="200" width="480" height="400" rx="24" fill="#1a2214" stroke="#c8f542" stroke-opacity="0.35"/>
+  <text x="120" y="180" fill="#c8f542" font-family="system-ui,sans-serif" font-size="28" font-weight="700">TRAINING</text>
+  <text x="680" y="280" fill="#f3f6f1" font-family="system-ui,sans-serif" font-size="36" font-weight="800">Coached sessions</text>
+  <text x="680" y="330" fill="#9aa394" font-family="system-ui,sans-serif" font-size="20">Default image  replace anytime</text>
+</svg>

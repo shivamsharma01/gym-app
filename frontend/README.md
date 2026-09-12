@@ -1,4 +1,8 @@
-# True Gym frontend
+# Gym frontend (staff app + multi-gym public site)
+
+Public marketing pages live under `/g/{slug}` (see Phase 9). Staff app is `/app/*`.
+Platform SUPER_ADMIN enrolls gyms at `/app/platform/gyms`.
+
 
 Operations UI for the Spring Boot API. Tokens are held in memory only — a full refresh requires sign-in again.
 

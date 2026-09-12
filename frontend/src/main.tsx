@@ -23,6 +23,7 @@ import { AnnouncementsPage, NotificationTemplatesPage, NotificationsPage } from 
 import { NotFoundPage } from '@/features/NotFoundPage'
 import { PaymentsPage } from '@/features/payments/PaymentsPage'
 import { PlansPage } from '@/features/plans/PlansPage'
+import { PlatformGymsPage } from '@/features/platform/PlatformGymsPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
 import { DeviceReportPage, MembershipReportPage, ReportsPage } from '@/features/reports/ReportsPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
@@ -30,6 +31,8 @@ import { RolesPage } from '@/features/users/RolesPage'
 import { UsersPage } from '@/features/users/UsersPage'
 import { ApiError } from '@/lib/api'
 import { AuthProvider } from '@/lib/auth'
+import { DEFAULT_GYM_SLUG } from '@/lib/brand'
+import { GymSlugFromRoute } from '@/lib/GymSlug'
 import { AboutPage, FacilitiesPage, ServicesPage } from '@/public/ContentPages'
 import { ContactPage } from '@/public/ContactPage'
 import { HomePage } from '@/public/HomePage'
@@ -49,18 +52,25 @@ const queryClient = new QueryClient({
   },
 })
 
+const publicChildren = [
+  { index: true, element: <HomePage /> },
+  { path: 'about', element: <AboutPage /> },
+  { path: 'services', element: <ServicesPage /> },
+  { path: 'facilities', element: <FacilitiesPage /> },
+  { path: 'membership-plans', element: <MembershipPlansPage /> },
+  { path: 'contact', element: <ContactPage /> },
+]
+
 const router = createBrowserRouter([
+  { path: '/', element: <Navigate to={`/g/${DEFAULT_GYM_SLUG}`} replace /> },
   {
-    path: '/',
-    element: <PublicLayout />,
-    children: [
-      { index: true, element: <HomePage /> },
-      { path: 'about', element: <AboutPage /> },
-      { path: 'services', element: <ServicesPage /> },
-      { path: 'facilities', element: <FacilitiesPage /> },
-      { path: 'membership-plans', element: <MembershipPlansPage /> },
-      { path: 'contact', element: <ContactPage /> },
-    ],
+    path: '/g/:gymSlug',
+    element: (
+      <GymSlugFromRoute>
+        <PublicLayout />
+      </GymSlugFromRoute>
+    ),
+    children: publicChildren,
   },
   { path: '/app/login', element: <LoginPage /> },
   { path: '/app/forgot-password', element: <ForgotPasswordPage /> },
@@ -73,6 +83,7 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="dashboard" replace /> },
           { path: 'dashboard', element: <DashboardPage /> },
+          { path: 'platform/gyms', element: <PlatformGymsPage /> },
           { path: 'members', element: <MembersPage /> },
           { path: 'members/new', element: <MemberNewPage /> },
           { path: 'members/:id', element: <MemberDetailPage /> },

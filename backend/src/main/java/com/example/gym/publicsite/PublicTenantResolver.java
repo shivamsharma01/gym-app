@@ -4,31 +4,91 @@ import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.tenant.Tenant;
 import com.example.gym.tenant.TenantRepository;
 import com.example.gym.tenant.TenantStatus;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
- * Resolves the gym shown on the unauthenticated website. This deployment is one gym; the slug is
- * configured, not guessed from the browser origin.
+ * Resolves which gym the unauthenticated website belongs to.
+ * Order: {@code X-Gym-Slug} header → {@code slug} query → subdomain of
+ * {@code app.public.base-domain} → {@code app.public.tenant-slug} fallback.
  */
 @Component
 public class PublicTenantResolver {
 
+    public static final String SLUG_HEADER = "X-Gym-Slug";
+
     private final TenantRepository tenantRepository;
-    private final String slug;
+    private final String fallbackSlug;
+    private final String baseDomain;
 
     public PublicTenantResolver(TenantRepository tenantRepository,
-                                @Value("${app.public.tenant-slug:downtown-fitness}") String slug) {
+                                @Value("${app.public.tenant-slug:downtown-fitness}") String fallbackSlug,
+                                @Value("${app.public.base-domain:}") String baseDomain) {
         this.tenantRepository = tenantRepository;
-        this.slug = slug;
+        this.fallbackSlug = fallbackSlug;
+        this.baseDomain = baseDomain == null ? "" : baseDomain.trim().toLowerCase();
     }
 
     public Tenant require() {
+        return require(currentRequest());
+    }
+
+    public Tenant require(HttpServletRequest request) {
+        String slug = resolveSlug(request);
         return tenantRepository.findBySlug(slug)
                 .filter(t -> t.getStatus() == TenantStatus.ACTIVE)
-                .or(() -> tenantRepository.findAll().stream()
-                        .filter(t -> t.getStatus() == TenantStatus.ACTIVE)
-                        .findFirst())
                 .orElseThrow(() -> CommonExceptions.notFound("Gym"));
+    }
+
+    public String resolveSlug(HttpServletRequest request) {
+        if (request != null) {
+            String header = request.getHeader(SLUG_HEADER);
+            if (header != null && !header.isBlank()) {
+                return normalizeSlug(header);
+            }
+            String query = request.getParameter("slug");
+            if (query != null && !query.isBlank()) {
+                return normalizeSlug(query);
+            }
+            String fromHost = slugFromHost(request.getServerName());
+            if (fromHost != null) {
+                return fromHost;
+            }
+        }
+        return normalizeSlug(fallbackSlug);
+    }
+
+    private String slugFromHost(String host) {
+        if (host == null || host.isBlank() || baseDomain.isEmpty()) {
+            return null;
+        }
+        String h = host.toLowerCase();
+        if (h.equals(baseDomain) || h.equals("www." + baseDomain)) {
+            return null;
+        }
+        String suffix = "." + baseDomain;
+        if (!h.endsWith(suffix)) {
+            return null;
+        }
+        String sub = h.substring(0, h.length() - suffix.length());
+        if (sub.isEmpty() || sub.contains(".") || "www".equals(sub) || "api".equals(sub) || "app".equals(sub)) {
+            return null;
+        }
+        return normalizeSlug(sub);
+    }
+
+    private static String normalizeSlug(String raw) {
+        return raw.trim().toLowerCase();
+    }
+
+    private static HttpServletRequest currentRequest() {
+        var attrs = RequestContextHolder.getRequestAttributes();
+        if (attrs instanceof ServletRequestAttributes servlet) {
+            return servlet.getRequest();
+        }
+        return null;
     }
 }

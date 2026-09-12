@@ -39,12 +39,21 @@ public class SettingsService {
         tenantRepository.save(tenant);
         GymProfile profile = profileRepository.findByTenantId(tenant.getId())
                 .orElseGet(() -> new GymProfile(tenant.getId()));
+        profile.setDisplayName(blankToNull(request.displayName()));
         profile.setTagline(blankToNull(request.tagline()));
         profile.setAbout(blankToNull(request.about()));
         profile.setPhone(blankToNull(request.phone()));
         profile.setEmail(blankToNull(request.email()));
         profile.setAddress(blankToNull(request.address()));
         profile.setHours(blankToNull(request.hours()));
+        profile.setLogoUrl(blankToNull(request.logoUrl()));
+        profile.setHeroImageUrl(blankToNull(request.heroImageUrl()));
+        profile.setTrainingImageUrl(blankToNull(request.trainingImageUrl()));
+        profile.setFacilitiesImageUrl(blankToNull(request.facilitiesImageUrl()));
+        profile.setSectionTrainingTitle(blankToNull(request.sectionTrainingTitle()));
+        profile.setSectionTrainingBody(blankToNull(request.sectionTrainingBody()));
+        profile.setSectionFacilitiesTitle(blankToNull(request.sectionFacilitiesTitle()));
+        profile.setSectionFacilitiesBody(blankToNull(request.sectionFacilitiesBody()));
         profileRepository.save(profile);
         auditService.record(AuditActions.SETTINGS_UPDATED, AuditActions.RESULT_SUCCESS,
                 "GymProfile", profile.getPublicId(), Map.of("name", tenant.getName()));
@@ -52,16 +61,28 @@ public class SettingsService {
     }
 
     public GymSettingsView toView(Tenant tenant, GymProfile profile) {
+        String displayName = profile != null && profile.getDisplayName() != null && !profile.getDisplayName().isBlank()
+                ? profile.getDisplayName()
+                : tenant.getName();
         return new GymSettingsView(
                 tenant.getPublicId(),
                 tenant.getName(),
                 tenant.getSlug(),
+                displayName,
                 profile == null ? null : profile.getTagline(),
                 profile == null ? null : profile.getAbout(),
                 profile == null ? null : profile.getPhone(),
                 profile == null ? null : profile.getEmail(),
                 profile == null ? null : profile.getAddress(),
-                profile == null ? null : profile.getHours());
+                profile == null ? null : profile.getHours(),
+                profile == null ? null : profile.getLogoUrl(),
+                profile == null ? null : profile.getHeroImageUrl(),
+                profile == null ? null : profile.getTrainingImageUrl(),
+                profile == null ? null : profile.getFacilitiesImageUrl(),
+                profile == null ? null : profile.getSectionTrainingTitle(),
+                profile == null ? null : profile.getSectionTrainingBody(),
+                profile == null ? null : profile.getSectionFacilitiesTitle(),
+                profile == null ? null : profile.getSectionFacilitiesBody());
     }
 
     private Tenant requireTenant(Long tenantId) {

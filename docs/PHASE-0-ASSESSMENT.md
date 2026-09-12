@@ -476,6 +476,7 @@ reconcile · reboot · (guarded) firmwareUpgrade.
 | 6 | Reports, notifications, settings, live WebSocket, mobile polish, public website, enquiries. |
 | 7 | Tests (unit/integration/E2E), security review, performance, accessibility. |
 | 8 | Docker, deployment, documentation, production hardening. |
+| 9 | Multi-gym white-label: SUPER_ADMIN enrolls gyms, per-gym branded public site (see [PHASE-9.md](PHASE-9.md)). |
 
 **Next action (Phase 1):** scaffold `backend/` (Spring Boot 4.1, Java 21), add Flyway baseline
 migration, tenant + security + RBAC + audit foundations, then build/test before Phase 2.

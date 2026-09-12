@@ -70,8 +70,11 @@ app:
       max-backoff: PT10M
       jitter: PT1S
   public:
-    # Which gym the unauthenticated website/enquiry APIs belong to (this deployment is one gym).
+    # Fallback gym slug when X-Gym-Slug / subdomain do not resolve a tenant.
     tenant-slug: ${APP_PUBLIC_TENANT_SLUG:downtown-fitness}
+    # Production: set to the apex domain so {slug}.example.com maps to that gym (e.g. gym.example.com).
+    # Leave empty for local/dev — use path /g/{slug} and the X-Gym-Slug header instead.
+    base-domain: ${APP_PUBLIC_BASE_DOMAIN:}
 
 logging:
   level:

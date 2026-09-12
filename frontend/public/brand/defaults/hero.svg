@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="none">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a2214"/>
+      <stop offset="55%" stop-color="#0b0c0b"/>
+      <stop offset="100%" stop-color="#14180f"/>
+    </linearGradient>
+    <radialGradient id="r" cx="70%" cy="30%" r="50%">
+      <stop offset="0%" stop-color="#c8f542" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#c8f542" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#g)"/>
+  <rect width="1600" height="900" fill="url(#r)"/>
+  <g opacity="0.35" stroke="#c8f542" stroke-width="2">
+    <path d="M120 720h360M180 640v160M420 640v160"/>
+    <rect x="560" y="560" width="200" height="240" rx="8"/>
+    <rect x="820" y="480" width="160" height="320" rx="8"/>
+    <path d="M1100 720c80-120 160-120 240 0"/>
+  </g>
+  <text x="120" y="200" fill="#f3f6f1" font-family="system-ui,sans-serif" font-size="64" font-weight="800">DEFAULT HERO</text>
+  <text x="120" y="260" fill="#9aa394" font-family="system-ui,sans-serif" font-size="28">Replace in Settings ’ Hero image URL</text>
+</svg>

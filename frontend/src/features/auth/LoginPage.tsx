@@ -35,9 +35,11 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-md rounded-2xl border border-line bg-panel p-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">True Gym</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Staff</p>
         <h1 className="mt-2 text-3xl font-extrabold">Sign in</h1>
-        <p className="mt-2 text-sm text-muted">Staff access only. Tokens stay in memory — closing the tab signs you out.</p>
+        <p className="mt-2 text-sm text-muted">
+          Gym admins and platform super-admins. Tokens stay in memory — closing the tab signs you out.
+        </p>
         <form className="mt-8 space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
           <div>
             <Label htmlFor="usernameOrEmail">Username or email</Label>

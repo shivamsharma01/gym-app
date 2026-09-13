@@ -42,7 +42,7 @@ export function HomePage() {
   const facilities = brandFacilitiesCopy(site.data)
 
   return (
-    <main>
+    <div>
       {/* Hero — one composition: brand, headline, support, CTAs, full-bleed image */}
       <section className="relative min-h-[88vh] overflow-hidden">
         <img
@@ -168,6 +168,6 @@ export function HomePage() {
           </Link>
         </div>
       </section>
-    </main>
+    </div>
   )
 }

@@ -73,12 +73,24 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen bg-canvas text-ink">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-2 focus:text-accent-ink"
+      >
+        Skip to main content
+      </a>
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-panel/90 px-4 py-3 backdrop-blur md:hidden">
         <span className="flex items-center gap-2 font-extrabold tracking-tight">
           {logo ? <img src={logo} alt="" className="h-7 w-7 rounded-md object-cover" /> : null}
           {brand}
         </span>
-        <button type="button" aria-label="Open menu" onClick={() => setOpen(true)}>
+        <button
+          type="button"
+          aria-label="Open menu"
+          aria-expanded={open}
+          aria-controls="mobile-nav"
+          onClick={() => setOpen(true)}
+        >
           <Menu className="h-5 w-5" />
         </button>
       </header>
@@ -86,6 +98,8 @@ export function AppShell() {
       {open ? (
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setOpen(false)}>
           <nav
+            id="mobile-nav"
+            aria-label="Staff"
             className="h-full w-[min(18rem,88vw)] overflow-y-auto bg-panel p-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
@@ -123,7 +137,10 @@ export function AppShell() {
       ) : null}
 
       <div className="flex min-h-screen w-full">
-        <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-line bg-panel p-3 md:flex lg:w-60 lg:p-4 xl:w-64">
+        <aside
+          aria-label="Staff"
+          className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-line bg-panel p-3 md:flex lg:w-60 lg:p-4 xl:w-64"
+        >
           <div className="px-2 pb-6 pt-2">
             <div className="flex items-center gap-2">
               {logo ? <img src={logo} alt="" className="h-8 w-8 rounded-md object-cover" /> : null}
@@ -145,7 +162,7 @@ export function AppShell() {
             </Button>
           </div>
         </aside>
-        <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 md:px-8 lg:py-6 xl:px-10">
+        <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 px-4 py-5 sm:px-6 md:px-8 lg:py-6 xl:px-10">
           <div className="mx-auto w-full max-w-[90rem]">
             <Outlet />
           </div>

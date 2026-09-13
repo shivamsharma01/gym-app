@@ -8,7 +8,7 @@ export function MembershipPlansPage() {
   const slug = useGymSlug()
   const plans = usePublicPlans()
   return (
-    <main className="mx-auto max-w-6xl px-4 py-16">
+    <div className="mx-auto max-w-6xl px-4 py-16">
       <h1 className="text-4xl font-extrabold">Membership plans</h1>
       <p className="mt-3 text-white/60">Prices come from the gym’s live plan list. Nothing here is invented for the brochure.</p>
       <div className="mt-10 grid gap-4 md:grid-cols-3">
@@ -25,6 +25,6 @@ export function MembershipPlansPage() {
         ))}
       </div>
       {plans.data?.length === 0 ? <p className="mt-6 text-white/50">No active plans yet.</p> : null}
-    </main>
+    </div>
   )
 }

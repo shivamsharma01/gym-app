@@ -42,7 +42,7 @@ export function ContactPage() {
   })
 
   return (
-    <main className="mx-auto grid max-w-6xl gap-12 px-4 py-16 md:grid-cols-2">
+    <div className="mx-auto grid max-w-6xl gap-12 px-4 py-16 md:grid-cols-2">
       <div>
         <h1 className="text-4xl font-extrabold">Contact {brandDisplayName(site.data)}</h1>
         <p className="mt-4 text-white/60">
@@ -95,6 +95,6 @@ export function ContactPage() {
           Send
         </Button>
       </form>
-    </main>
+    </div>
   )
 }

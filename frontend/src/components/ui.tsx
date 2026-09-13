@@ -84,7 +84,11 @@ export function Badge({ children, tone = 'muted' }: { children: ReactNode; tone?
 
 export function FieldError({ message }: { message?: string }) {
   if (!message) return null
-  return <p className="mt-1 text-xs text-danger">{message}</p>
+  return (
+    <p className="mt-1 text-xs text-danger" role="alert">
+      {message}
+    </p>
+  )
 }
 
 export function EmptyState({ title, body }: { title: string; body: string }) {

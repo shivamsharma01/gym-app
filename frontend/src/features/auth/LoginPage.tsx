@@ -34,7 +34,7 @@ export function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
-      <div className="w-full max-w-md rounded-2xl border border-line bg-panel p-8">
+      <main className="w-full max-w-md rounded-2xl border border-line bg-panel p-8">
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Staff</p>
         <h1 className="mt-2 text-3xl font-extrabold">Sign in</h1>
         <p className="mt-2 text-sm text-muted">
@@ -51,7 +51,11 @@ export function LoginPage() {
             <Input id="password" type="password" autoComplete="current-password" {...form.register('password')} />
             <FieldError message={form.formState.errors.password?.message} />
           </div>
-          {formError ? <p className="text-sm text-danger">{formError}</p> : null}
+          {formError ? (
+            <p className="text-sm text-danger" role="alert">
+              {formError}
+            </p>
+          ) : null}
           <Button className="w-full" type="submit" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? 'Signing in…' : 'Continue'}
           </Button>
@@ -61,7 +65,7 @@ export function LoginPage() {
             Forgot password
           </Link>
         </p>
-      </div>
+      </main>
     </div>
   )
 }

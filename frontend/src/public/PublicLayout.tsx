@@ -25,13 +25,19 @@ export function PublicLayout() {
 
   return (
     <div className="min-h-screen bg-[#0b0c0b] text-[#f4f1ea]">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-[#c8f542] focus:px-3 focus:py-2 focus:text-[#14180f]"
+      >
+        Skip to main content
+      </a>
       <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0b0c0b]/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
-          <Link to={gymPath(slug)} className="flex items-center gap-3 min-w-0">
+          <Link to={gymPath(slug)} className="flex min-w-0 items-center gap-3">
             <img src={logo} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" />
             <span className="truncate text-lg font-extrabold tracking-tight md:text-xl">{name}</span>
           </Link>
-          <nav className="hidden flex-wrap items-center gap-5 text-sm font-medium text-white/70 md:flex">
+          <nav aria-label="Primary" className="hidden flex-wrap items-center gap-5 text-sm font-medium text-white/70 md:flex">
             {linkDefs.map(([rest, label]) => (
               <NavLink
                 key={rest || 'home'}
@@ -50,7 +56,7 @@ export function PublicLayout() {
             Staff sign in
           </Link>
         </div>
-        <nav className="flex gap-4 overflow-x-auto px-4 pb-3 text-sm text-white/70 md:hidden">
+        <nav aria-label="Mobile" className="flex gap-4 overflow-x-auto px-4 pb-3 text-sm text-white/70 md:hidden">
           {linkDefs.map(([rest, label]) => (
             <NavLink
               key={rest || 'home-m'}
@@ -63,7 +69,9 @@ export function PublicLayout() {
           ))}
         </nav>
       </header>
-      <Outlet />
+      <main id="main-content" tabIndex={-1}>
+        <Outlet />
+      </main>
       <footer className="border-t border-white/10 px-4 py-10 text-sm text-white/50">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 sm:flex-row sm:justify-between">
           <div>

@@ -37,7 +37,7 @@ class Phase9IT extends AbstractIntegrationTest {
                                   "ownerUsername":"h13owner",
                                   "ownerEmail":"owner@h13.local",
                                   "ownerFullName":"H13 Owner",
-                                  "ownerPassword":"ChangeMe123!"
+                                  "ownerPassword":"Password123!"
                                 }
                                 """))
                 .andExpect(status().isCreated())
@@ -64,7 +64,7 @@ class Phase9IT extends AbstractIntegrationTest {
                                   "username":"h13staff",
                                   "email":"staff@h13.local",
                                   "fullName":"H13 Staff",
-                                  "password":"ChangeMe123!",
+                                  "password":"Password123!",
                                   "roles":["STAFF"]
                                 }
                                 """))
@@ -80,7 +80,7 @@ class Phase9IT extends AbstractIntegrationTest {
                                 {
                                   "name":"Temp Gym","slug":"temp-gym","displayName":"Temp",
                                   "ownerUsername":"tempowner","ownerEmail":"temp@gym.local",
-                                  "ownerFullName":"Temp Owner","ownerPassword":"ChangeMe123!"
+                                  "ownerFullName":"Temp Owner","ownerPassword":"Password123!"
                                 }
                                 """))
                 .andExpect(status().isCreated());
@@ -92,7 +92,7 @@ class Phase9IT extends AbstractIntegrationTest {
                         .content("""
                                 {
                                   "name":"Nope","slug":"nope","ownerUsername":"x","ownerEmail":"x@x.local",
-                                  "ownerFullName":"X","ownerPassword":"ChangeMe123!"
+                                  "ownerFullName":"X","ownerPassword":"Password123!"
                                 }
                                 """))
                 .andExpect(status().isForbidden());

@@ -16,14 +16,14 @@ export function AboutPage() {
   const site = usePublicSite()
   const name = brandDisplayName(site.data)
   return (
-    <main className="mx-auto max-w-3xl px-4 py-16">
+    <div className="mx-auto max-w-3xl px-4 py-16">
       <h1 className="text-4xl font-extrabold">About {name}</h1>
       <p className="mt-6 text-lg text-white/70">{brandAbout(site.data)}</p>
       <p className="mt-4 text-white/50">Hours: {site.data?.hours || 'Ask at reception'}</p>
       <Link to={gymPath(slug, '/contact')} className="mt-8 inline-block font-bold text-[#c8f542]">
         Talk to us
       </Link>
-    </main>
+    </div>
   )
 }
 
@@ -31,7 +31,7 @@ export function ServicesPage() {
   const site = usePublicSite()
   const training = brandTrainingCopy(site.data)
   return (
-    <main className="mx-auto max-w-6xl px-4 py-16">
+    <div className="mx-auto max-w-6xl px-4 py-16">
       <h1 className="text-4xl font-extrabold">Services</h1>
       <p className="mt-4 max-w-2xl text-white/60">{training.body}</p>
       <div className="mt-10 grid gap-6 md:grid-cols-2">
@@ -48,7 +48,7 @@ export function ServicesPage() {
         ))}
       </div>
       <img src={brandTrainingImage(site.data)} alt="" className="mt-12 aspect-[21/9] w-full object-cover" />
-    </main>
+    </div>
   )
 }
 
@@ -56,7 +56,7 @@ export function FacilitiesPage() {
   const site = usePublicSite()
   const facilities = brandFacilitiesCopy(site.data)
   return (
-    <main className="mx-auto max-w-6xl px-4 py-16">
+    <div className="mx-auto max-w-6xl px-4 py-16">
       <h1 className="text-4xl font-extrabold">Facilities</h1>
       <p className="mt-4 max-w-2xl text-white/60">{facilities.body}</p>
       <img src={brandFacilitiesImage(site.data)} alt="" className="mt-10 aspect-[21/9] w-full object-cover" />
@@ -70,6 +70,6 @@ export function FacilitiesPage() {
           </div>
         ))}
       </div>
-    </main>
+    </div>
   )
 }

@@ -2,7 +2,7 @@
 
 **Status:** Delivered  
 **Depends on:** Phases 0–6  
-**Still remaining after this:** Phase 7 (quality/E2E/security review), Phase 8 (Docker/deploy/hardening)
+**Still remaining after this:** Phase 8 (Docker/deploy/hardening). Phase 7 quality reviews are in [PHASE-7.md](PHASE-7.md).
 
 ## Bootstrap model
 
@@ -44,4 +44,4 @@ Frontend: `/` is a platform landing (or redirects if `VITE_DEFAULT_GYM_SLUG` is 
 | `VITE_DEFAULT_GYM_SLUG` | Optional redirect target for `/` |
 
 ## Out of scope (later)
-- Custom domains, CDN uploads, email invites, Phase 7 E2E, Phase 8 production Docker/DNS.
+- Custom domains, CDN uploads, email invites, Phase 8 production Docker/DNS.

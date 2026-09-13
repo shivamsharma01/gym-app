@@ -1,16 +1,28 @@
-# Local development dependencies for the Smart Gym backend.
-# Usage: docker compose -f deploy/docker-compose.yml up -d
+# Smart Gym stack — MySQL + backend + SPA (nginx).
+#
+# Dev DB only (legacy):
+#   docker compose -f deploy/docker-compose.yml up -d mysql
+#
+# Full local stack (build images):
+#   cp deploy/.env.example deploy/.env   # edit secrets
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+#
+# The Windows TrueFace gateway is NOT in this compose file — it runs on the gym LAN PC
+# and dials out to wss://<host>/gateway (see docs/PHASE-8.md).
+
+name: gym
+
 services:
   mysql:
     image: mysql:8.4
     container_name: gym-mysql
     environment:
-      MYSQL_DATABASE: gym
-      MYSQL_USER: gym
-      MYSQL_PASSWORD: gym
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-gym}
+      MYSQL_USER: ${MYSQL_USER:-gym}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-gym}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
     ports:
-      - "3306:3306"
+      - "${MYSQL_PORT:-3306}:3306"
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
@@ -21,6 +33,66 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      - gym-net
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    image: gym-backend:local
+    container_name: gym-backend
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      SERVER_PORT: "8080"
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-gym}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USERNAME: ${MYSQL_USER:-gym}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-gym}
+      APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET:-}
+      APP_JWT_ACCESS_TTL: ${APP_JWT_ACCESS_TTL:-PT15M}
+      APP_JWT_REFRESH_TTL: ${APP_JWT_REFRESH_TTL:-P7D}
+      APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088}
+      APP_GATEWAY_SHARED_TOKEN: ${APP_GATEWAY_SHARED_TOKEN:-}
+      APP_GATEWAY_OUTBOX_DISPATCHER_ENABLED: ${APP_GATEWAY_OUTBOX_DISPATCHER_ENABLED:-true}
+      APP_GATEWAY_SIMULATOR_ENABLED: ${APP_GATEWAY_SIMULATOR_ENABLED:-false}
+      APP_PUBLIC_TENANT_SLUG: ${APP_PUBLIC_TENANT_SLUG:-}
+      APP_PUBLIC_BASE_DOMAIN: ${APP_PUBLIC_BASE_DOMAIN:-}
+    ports:
+      # Optional direct API access (prefer nginx :8088 in full stack)
+      - "${BACKEND_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/actuator/health/liveness"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    networks:
+      - gym-net
+    profiles:
+      - full
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    image: gym-frontend:local
+    container_name: gym-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8088}:80"
+    networks:
+      - gym-net
+    profiles:
+      - full
 
 volumes:
   gym-mysql-data:
+
+networks:
+  gym-net:
+    driver: bridge

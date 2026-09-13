@@ -1,0 +1,17 @@
+# Activated with SPRING_PROFILES_ACTIVE=prod (compose full stack / real deploys).
+# DevDataSeeder does not run. OpenAPI UI is off. JWT secret is validated at startup.
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+app:
+  gateway:
+    simulator-enabled: false
+
+logging:
+  level:
+    root: INFO
+    org.springframework.security: WARN

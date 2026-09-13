@@ -2,7 +2,7 @@
 
 **Status:** Delivered  
 **Depends on:** Phases 0–6  
-**Still remaining after this:** Phase 8 (Docker/deploy/hardening). Phase 7 quality reviews are in [PHASE-7.md](PHASE-7.md).
+**Still remaining after this:** None on the numbered roadmap ([PHASE-8.md](PHASE-8.md) delivered). Phase 7 quality reviews are in [PHASE-7.md](PHASE-7.md).
 
 ## Bootstrap model
 

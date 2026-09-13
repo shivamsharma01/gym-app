@@ -2,7 +2,7 @@
 
 **Status:** Delivered  
 **Depends on:** Phases 0–6, 9  
-**Still remaining:** Phase 8 (Docker/deploy/production hardening)
+**Still remaining:** None on the numbered roadmap (Phase 8 delivered — see [PHASE-8.md](PHASE-8.md)).
 
 ## Deliverables
 
@@ -37,9 +37,9 @@ Optional live E2E against a running API:
 E2E_API=1 npm run test:e2e
 ```
 
-## Explicit gaps left for Phase 8 / later
+## Explicit gaps left for later
 
 - Full CI matrix (browsers × OS) and production load tests
 - Penetration test by a third party
-- Real notification delivery and payment-provider hardening (product, not Phase 7)
-- Docker multi-service compose (Phase 8)
+- Real notification delivery and payment-provider hardening (product)
+- Edge rate limits (ops; noted in [PHASE-8.md](PHASE-8.md))

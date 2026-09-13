@@ -475,7 +475,7 @@ reconcile · reboot · (guarded) firmwareUpgrade.
 | 5 | React design system + app shell + auth + dashboard/members/memberships/attendance/devices. |
 | 6 | Reports, notifications, settings, live WebSocket, mobile polish, public website, enquiries. |
 | 7 | Tests (unit/integration/E2E), security review, performance, accessibility (see [PHASE-7.md](PHASE-7.md)). |
-| 8 | Docker, deployment, documentation, production hardening. |
+| 8 | Docker, deployment, documentation, production hardening (see [PHASE-8.md](PHASE-8.md)). |
 | 9 | Multi-gym white-label: SUPER_ADMIN enrolls gyms, per-gym branded public site (see [PHASE-9.md](PHASE-9.md)). |
 
-**Next action (Phase 8):** Dockerfiles, full compose, `.env.example`, production hardening docs.
+**Roadmap complete** for numbered phases 0–9. Remaining work is product/ops follow-ups (gateway event listen, real notifications, edge rate limits, etc.).

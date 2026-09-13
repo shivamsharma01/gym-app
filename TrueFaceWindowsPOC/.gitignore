@@ -1,5 +1,9 @@
 bin/
 obj/
+# Live run logs often contain full device member rosters (PII).
+# Keep sanitized extracts under docs/evidence/ with visit-*-redacted.log names.
 poc-run-*.log
+poc-run-*.log.txt
+cmd.txt
 *.user
 .vs/

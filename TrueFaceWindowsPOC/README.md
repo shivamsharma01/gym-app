@@ -7,6 +7,8 @@ Printable runbook: [docs/GYM-VISIT.html](docs/GYM-VISIT.html).
 ## Quick commands
 
 ```bat
+Gym-visit evidence (2026-09-13): [docs/GYM-VISIT-2026-09-13.md](docs/GYM-VISIT-2026-09-13.md)
+
 REM Live tablet (Windows, IAS closed):
 set TRUEFACE_IP=192.168.x.x
 set TRUEFACE_USERNAME=admin

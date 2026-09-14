@@ -75,6 +75,17 @@ app:
     # Production: set to the apex domain so {slug}.example.com maps to that gym.
     # Leave empty for local/dev — use path /g/{slug} and the X-Gym-Slug header instead.
     base-domain: ${APP_PUBLIC_BASE_DOMAIN:}
+  bootstrap:
+    superadmin:
+      username: ${APP_BOOTSTRAP_SUPERADMIN_USERNAME:superadmin}
+      email: ${APP_BOOTSTRAP_SUPERADMIN_EMAIL:superadmin@platform.local}
+      full-name: ${APP_BOOTSTRAP_SUPERADMIN_FULL_NAME:Platform Super Admin}
+      # Prod only: set once to create the first SUPER_ADMIN, then clear from env.
+      password: ${APP_BOOTSTRAP_SUPERADMIN_PASSWORD:}
+  rate-limit:
+    enabled: ${APP_RATE_LIMIT_ENABLED:true}
+    login-per-minute: ${APP_RATE_LIMIT_LOGIN_PER_MINUTE:20}
+    enquiry-per-minute: ${APP_RATE_LIMIT_ENQUIRY_PER_MINUTE:10}
 
 logging:
   level:

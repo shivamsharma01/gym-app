@@ -62,8 +62,17 @@ public class AccessEventWaiterTests
         var deny = await waiter.WaitForAsync("POC-1", granted: false, TimeSpan.FromSeconds(1), CancellationToken.None);
         Assert.NotNull(deny);
         Assert.False(deny!.Granted);
+    }
 
-        var missing = await waiter.WaitForAsync("POC-1", granted: true, TimeSpan.FromMilliseconds(400), CancellationToken.None);
-        Assert.Null(missing);
+    [Fact]
+    public async Task WaitForMatchesUserIdCaseInsensitive()
+    {
+        var waiter = new AccessEventWaiter();
+        waiter.Inject(new NormalizedDeviceEvent(
+            "ACCESS", "poc-1", DateTimeOffset.UtcNow, "FACE", true, 9, null, null));
+
+        var grant = await waiter.WaitForAsync("POC-1", granted: true, TimeSpan.FromSeconds(1), CancellationToken.None);
+        Assert.NotNull(grant);
+        Assert.True(grant!.Granted);
     }
 }

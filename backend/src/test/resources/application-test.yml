@@ -5,3 +5,5 @@ app:
     simulator-enabled: false
     outbox:
       dispatcher-enabled: false
+  rate-limit:
+    enabled: false

@@ -301,6 +301,8 @@ internal static class Program
             PromptEnter(log, "Press Enter when on-device face enroll for the POC user is done (or Ctrl+C to abort)...");
         }
 
+        var walkStartedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+
         log.Step("GRANT WALK (expect ACCESS granted=true)");
         if (adapter is MockDeviceAdapter mockGrant)
         {
@@ -311,16 +313,10 @@ internal static class Program
             PromptEnter(log, $"Press Enter, then have the test person face the door as {pocUserId}...");
         }
 
-        var grant = await waiter.WaitForAsync(
-            pocUserId, granted: true, TimeSpan.FromSeconds(options.DoorWaitSeconds), CancellationToken.None)
+        var grant = await WaitGrantOrOperatorAsync(
+                log, waiter, adapter, pocUserId, granted: true, options, walkStartedAt, "first grant")
             .ConfigureAwait(false);
-        if (grant == null)
-        {
-            log.Error($"No ACCESS granted=true event for {pocUserId} within {options.DoorWaitSeconds}s");
-            throw new InvalidOperationException("Grant walk evidence missing");
-        }
-
-        log.Ok($"Grant event: user={grant.DeviceUserId} method={grant.Method} at={grant.OccurredAt:O} recNo={grant.RecNo}");
+        log.Ok($"Grant evidence: user={grant.DeviceUserId} method={grant.Method} at={grant.OccurredAt:O} recNo={grant.RecNo} note={grant.Details ?? "live"}");
 
         log.Step("DISABLE USER");
         AssertOk(log, adapter.DisableUser(pocUserId), "DisableUser");
@@ -338,7 +334,8 @@ internal static class Program
         }
 
         var deny = await waiter.WaitForAsync(
-            pocUserId, granted: false, TimeSpan.FromSeconds(options.DoorWaitSeconds), CancellationToken.None)
+                pocUserId, granted: false, TimeSpan.FromSeconds(options.DoorWaitSeconds), CancellationToken.None,
+                adapter is MockDeviceAdapter ? null : adapter, walkStartedAt)
             .ConfigureAwait(false);
         if (deny != null)
         {
@@ -346,13 +343,11 @@ internal static class Program
         }
         else
         {
-            log.Warn("No ACCESS granted=false event received (some firmwares stay silent when locked)");
+            log.Warn("No ACCESS granted=false event/poll match (some firmwares stay silent when locked)");
+            DumpAccessDebug(log, waiter);
             if (adapter is not MockDeviceAdapter)
             {
-                Console.Write("Did the door stay locked / access denied? type YES or NO: ");
-                var answer = (Console.ReadLine() ?? "").Trim();
-                log.Info($"Operator deny observation: {answer}");
-                if (!string.Equals(answer, "YES", StringComparison.OrdinalIgnoreCase))
+                if (!ConfirmYesNo(log, "Did the door stay locked / access denied? type YES or NO: "))
                 {
                     log.Warn("Deny walk marked UNVERIFIED");
                 }
@@ -380,16 +375,79 @@ internal static class Program
             PromptEnter(log, "Press Enter, then have the test person walk again (should be allowed)...");
         }
 
-        var grant2 = await waiter.WaitForAsync(
-            pocUserId, granted: true, TimeSpan.FromSeconds(options.DoorWaitSeconds), CancellationToken.None)
+        var grant2 = await WaitGrantOrOperatorAsync(
+                log, waiter, adapter, pocUserId, granted: true, options, walkStartedAt, "second grant")
             .ConfigureAwait(false);
-        if (grant2 == null)
+        log.Ok($"Second grant evidence: user={grant2.DeviceUserId} at={grant2.OccurredAt:O} note={grant2.Details ?? "live"}");
+    }
+
+    private static async Task<NormalizedDeviceEvent> WaitGrantOrOperatorAsync(
+        PocLogger log,
+        AccessEventWaiter waiter,
+        IDeviceAdapter adapter,
+        string pocUserId,
+        bool granted,
+        PocOptions options,
+        DateTimeOffset pollFromUtc,
+        string label)
+    {
+        var evt = await waiter.WaitForAsync(
+                pocUserId, granted, TimeSpan.FromSeconds(options.DoorWaitSeconds), CancellationToken.None,
+                adapter is MockDeviceAdapter ? null : adapter, pollFromUtc)
+            .ConfigureAwait(false);
+        if (evt != null)
         {
-            log.Error("Second grant walk: no ACCESS granted=true event");
-            throw new InvalidOperationException("Second grant evidence missing");
+            return evt;
         }
 
-        log.Ok($"Second grant event: user={grant2.DeviceUserId} at={grant2.OccurredAt:O}");
+        log.Warn($"No ACCESS granted={granted} for {pocUserId} within {options.DoorWaitSeconds}s ({label})");
+        DumpAccessDebug(log, waiter);
+        if (adapter is MockDeviceAdapter)
+        {
+            throw new InvalidOperationException($"{label} evidence missing");
+        }
+
+        if (!ConfirmYesNo(log, $"Did the door {(granted ? "ALLOW" : "DENY")} for the POC user? type YES or NO: "))
+        {
+            throw new InvalidOperationException($"{label} evidence missing (no event and operator did not confirm)");
+        }
+
+        log.Ok($"Operator confirmed {label}");
+        return new NormalizedDeviceEvent(
+            "ACCESS", pocUserId, DateTimeOffset.UtcNow, "OPERATOR", granted, null, null, "operator-confirmed");
+    }
+
+    private static void DumpAccessDebug(PocLogger log, AccessEventWaiter waiter)
+    {
+        var lines = waiter.DebugLines;
+        if (lines.Count == 0)
+        {
+            log.Info("ACCESS debug: no ACCESS callbacks/poll matches captured");
+            return;
+        }
+
+        log.Info($"ACCESS debug ({lines.Count} lines):");
+        foreach (var line in lines.TakeLast(20))
+        {
+            log.Info("  " + line);
+        }
+    }
+
+    private static bool ConfirmYesNo(PocLogger log, string prompt)
+    {
+        Console.Write(prompt);
+        var answer = (Console.ReadLine() ?? "").Trim();
+        log.Info($"Operator observation: {answer}");
+        return string.Equals(answer, "YES", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void PromptEnter(PocLogger log, string message)
+    {
+        log.Info(message);
+        Console.Write("> ");
+        // Click the console window if Enter appears stuck (Windows Quick Edit selection mode).
+        Console.Out.Flush();
+        Console.ReadLine();
     }
 
     private static async Task BestEffortCleanupAsync(
@@ -493,13 +551,6 @@ internal static class Program
         }
 
         log.Ok($"{op} succeeded");
-    }
-
-    private static void PromptEnter(PocLogger log, string message)
-    {
-        log.Info(message);
-        Console.Write("> ");
-        Console.ReadLine();
     }
 
     private static void OnCancel(object? sender, ConsoleCancelEventArgs e)

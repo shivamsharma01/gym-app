@@ -478,4 +478,4 @@ reconcile · reboot · (guarded) firmwareUpgrade.
 | 8 | Docker, deployment, documentation, production hardening (see [PHASE-8.md](PHASE-8.md)). |
 | 9 | Multi-gym white-label: SUPER_ADMIN enrolls gyms, per-gym branded public site (see [PHASE-9.md](PHASE-9.md)). |
 
-**Roadmap complete** for numbered phases 0–9. Remaining work is product/ops follow-ups (gateway event listen, real notifications, edge rate limits, etc.).
+**Roadmap complete** for numbered phases 0–9. Follow-ups: [PRODUCT-FOLLOWUPS.md](PRODUCT-FOLLOWUPS.md), [deploy/GO-LIVE.md](../deploy/GO-LIVE.md).

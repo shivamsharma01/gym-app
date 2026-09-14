@@ -40,10 +40,10 @@ docker compose -f deploy/docker-compose.yml up -d mysql
 4. Restrict `APP_CORS_ORIGINS` to real SPA origins (HTTPS in production).
 5. Terminate TLS at a reverse proxy / load balancer; forward `X-Forwarded-*` (nginx config already passes them).
 6. Change MySQL passwords; do not expose `3306` publicly.
-7. Bootstrap: create the first `SUPER_ADMIN` out-of-band (SQL or a one-shot admin job) — prod does not seed `ChangeMe123!`.
+7. Bootstrap: set `APP_BOOTSTRAP_SUPERADMIN_PASSWORD` once under `prod`, then clear it ([GO-LIVE.md](../deploy/GO-LIVE.md)).
 8. Point the Windows gym gateway at `wss://<public-host>/gateway` with a per-gateway token from the staff UI.
 9. Optional: set `APP_PUBLIC_BASE_DOMAIN` for `{slug}.yourdomain.com` public sites.
-10. Rate-limit `/api/v1/auth/login` and public enquiry at the edge (deferred product work; document as ops).
+10. Rate limits: in-app defaults for login/enquiry; add edge WAF for multi-node.
 
 ## What is intentionally not in Compose
 
@@ -66,6 +66,8 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile ful
 
 ## Follow-ups outside the phase list
 
-- Gym-visit ACCESS event listen gap ([GYM-VISIT-2026-09-13.md](../TrueFaceWindowsPOC/docs/GYM-VISIT-2026-09-13.md))
+Documented in [PRODUCT-FOLLOWUPS.md](PRODUCT-FOLLOWUPS.md) and [deploy/GO-LIVE.md](../deploy/GO-LIVE.md):
+
+- Remote enroll multi-device validation
+- ACCESS listen / poll / operator fallback (POC updated)
 - Real notification / payment providers
-- Edge rate limits and third-party pen-test

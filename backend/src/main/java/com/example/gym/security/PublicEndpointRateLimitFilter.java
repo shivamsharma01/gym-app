@@ -1,6 +1,5 @@
 package com.example.gym.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,6 +16,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Simple in-memory sliding-window limits for public auth login and public enquiries.
@@ -29,18 +29,18 @@ public class PublicEndpointRateLimitFilter extends OncePerRequestFilter {
     private final boolean enabled;
     private final int loginPerMinute;
     private final int enquiryPerMinute;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
     private final Map<String, Deque<Long>> windows = new ConcurrentHashMap<>();
 
     public PublicEndpointRateLimitFilter(
             @Value("${app.rate-limit.enabled:true}") boolean enabled,
             @Value("${app.rate-limit.login-per-minute:20}") int loginPerMinute,
             @Value("${app.rate-limit.enquiry-per-minute:10}") int enquiryPerMinute,
-            ObjectMapper objectMapper) {
+            JsonMapper jsonMapper) {
         this.enabled = enabled;
         this.loginPerMinute = Math.max(1, loginPerMinute);
         this.enquiryPerMinute = Math.max(1, enquiryPerMinute);
-        this.objectMapper = objectMapper;
+        this.jsonMapper = jsonMapper;
     }
 
     @Override
@@ -70,10 +70,10 @@ public class PublicEndpointRateLimitFilter extends OncePerRequestFilter {
         if (!allow(key, limit)) {
             response.setStatus(429);
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-            objectMapper.writeValue(response.getWriter(), Map.of(
+            response.getWriter().write(jsonMapper.writeValueAsString(Map.of(
                     "error", "RATE_LIMITED",
                     "message", "Too many requests — try again shortly",
-                    "timestamp", Instant.now().toString()));
+                    "timestamp", Instant.now().toString())));
             return;
         }
 

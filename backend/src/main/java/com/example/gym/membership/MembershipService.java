@@ -14,6 +14,8 @@ import com.example.gym.plan.PlanStatus;
 import com.example.gym.plan.MembershipPlanRepository;
 import com.example.gym.tenant.TenantGuard;
 import com.example.gym.membership.MembershipChangedEvent.ChangeType;
+
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -55,7 +57,7 @@ public class MembershipService {
 
     @Transactional(readOnly = true)
     public Membership getByPublicId(String publicId, Long tenantId) {
-        Membership membership = membershipRepository.findByPublicId(publicId)
+        Membership membership = membershipRepository.findByPublicIdAndDeletedFalse(publicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Membership"));
         TenantGuard.check(membership.getTenantId(), tenantId, "Membership");
         return membership;
@@ -64,7 +66,7 @@ public class MembershipService {
     @Transactional(readOnly = true)
     public List<Membership> listForMember(String memberPublicId, Long tenantId) {
         Member member = memberService.getByPublicId(memberPublicId, tenantId);
-        return membershipRepository.findByMemberIdOrderByStartDateDesc(member.getId());
+        return membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId());
     }
 
     @Transactional
@@ -84,28 +86,122 @@ public class MembershipService {
     }
 
     @Transactional
-    public Membership renew(String membershipPublicId, RenewMembership request, Long tenantId) {
-        Membership current = getByPublicId(membershipPublicId, tenantId);
-        MembershipPlan plan = resolveRenewalPlan(current, request.planId(), tenantId);
+    public Membership renew(
+            String membershipPublicId,
+            RenewMembership request,
+            Long tenantId
+    ) {
+        Membership current =
+                getByPublicId(membershipPublicId, tenantId);
 
-        LocalDate today = LocalDate.now();
-        LocalDate start;
-        if (request.startDate() != null) {
-            start = request.startDate();
-        } else {
-            start = current.getEndDate().isBefore(today) ? today : current.getEndDate().plusDays(1);
+        MembershipPlan plan =
+                resolveRenewalPlan(
+                        current,
+                        Long.valueOf(request.planId()),
+                        tenantId
+                );
+
+        LocalDate start = request.startDate();
+
+        if (request.endDate().isBefore(start)) {
+            throw CommonExceptions.badRequest(
+                    "End date cannot be before start date"
+            );
         }
 
-        // History is preserved: the old membership row is left untouched; a new one is created.
-        Membership renewal = build(tenantId, current.getMemberId(), plan, start,
-                start.plusDays(Math.max(plan.getDurationDays() - 1, 0)));
-        Membership saved = membershipRepository.save(renewal);
+        /*
+         * Current plan credit is allowed only when:
+         *
+         * 1. Renewal starts on the current membership's
+         *    original start date
+         *
+         * OR
+         *
+         * 2. Renewal starts exactly one day after the
+         *    current membership ends.
+         *
+         * Any later start date means there is a gap,
+         * so there is NO credit for the previous plan.
+         */
+        boolean qualifiesForCredit =
+                start.equals(current.getStartDate())
+                        || start.equals(
+                        current.getEndDate().plusDays(1)
+                );
 
-        auditService.record(AuditActions.MEMBERSHIP_RENEWED, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(),
-                Map.of("renewedFrom", current.getPublicId(), "plan", plan.getName()));
+        BigDecimal amountToCollect;
+
+        if (qualifiesForCredit) {
+            amountToCollect = plan.getPrice()
+                    .subtract(current.getPrice())
+                    .max(BigDecimal.ZERO);
+        } else {
+            amountToCollect = plan.getPrice();
+        }
+
+        Membership renewal = build(
+                tenantId,
+                current.getMemberId(),
+                plan,
+                start,
+                request.endDate()
+        );
+
+        renewal.setAmountPaid(BigDecimal.ZERO);
+
+        renewal.setPaymentStatus(
+                amountToCollect.compareTo(BigDecimal.ZERO) == 0
+                        ? MembershipPaymentStatus.PAID
+                        : MembershipPaymentStatus.UNPAID
+        );
+
+        Membership saved =
+                membershipRepository.save(renewal);
+
+        auditService.record(
+                AuditActions.MEMBERSHIP_RENEWED,
+                AuditActions.RESULT_SUCCESS,
+                "Membership",
+                saved.getPublicId(),
+                Map.of(
+                        "renewedFrom", current.getPublicId(),
+                        "plan", plan.getName()
+                )
+        );
+
         publish(saved, ChangeType.RENEWED);
+
         return saved;
+    }
+
+    private MembershipPlan resolveRenewalPlan(
+            Membership current,
+            Long requestedPlanId,
+            Long tenantId
+    ) {
+        if (requestedPlanId == null) {
+            if (current.getPlanId() == null) {
+                throw CommonExceptions.badRequest(
+                        "Current membership has no plan"
+                );
+            }
+
+            return planRepository.findById(current.getPlanId())
+                    .filter(plan -> plan.getTenantId().equals(tenantId))
+                    .orElseThrow(() ->
+                            CommonExceptions.notFound(
+                                    "Membership plan not found"
+                            )
+                    );
+        }
+
+        return planRepository.findById(requestedPlanId)
+                .filter(plan -> plan.getTenantId().equals(tenantId))
+                .orElseThrow(() ->
+                        CommonExceptions.notFound(
+                                "Membership plan not found"
+                        )
+                );
     }
 
     @Transactional
@@ -191,6 +287,37 @@ public class MembershipService {
         return saved;
     }
 
+    @Transactional
+    public void delete(String membershipPublicId, Long tenantId) {
+        Membership membership = getByPublicId(membershipPublicId, tenantId);
+
+        if (membership.getStatus() != MembershipStatus.PENDING && membership.getStatus() != MembershipStatus.ACTIVE) {
+            throw CommonExceptions.badRequest(
+                    "Only pending/active memberships can be deleted");
+        }
+
+        if (membership.getPaymentStatus() != MembershipPaymentStatus.UNPAID) {
+            throw CommonExceptions.badRequest(
+                    "A membership with payment history cannot be deleted");
+        }
+
+        if (membership.getDeviceSyncState() != DeviceSyncState.NOT_SYNCED) {
+            throw CommonExceptions.badRequest(
+                    "A members");
+        }
+
+        membership.setDeleted(true);
+        membershipRepository.save(membership);
+
+        auditService.record(
+                AuditActions.MEMBERSHIP_DELETED,
+                AuditActions.RESULT_SUCCESS,
+                "Membership",
+                membership.getPublicId(),
+                null
+        );
+    }
+
     private void publish(Membership membership, ChangeType type) {
         eventPublisher.publishEvent(new MembershipChangedEvent(
                 membership.getTenantId(), membership.getMemberId(), membership.getId(), type));
@@ -215,23 +342,5 @@ public class MembershipService {
         if (end.isBefore(start)) {
             throw CommonExceptions.badRequest("End date must be on or after start date");
         }
-    }
-
-    private MembershipPlan resolveRenewalPlan(Membership current, String requestedPlanPublicId,
-                                              Long tenantId) {
-        if (StringUtils.hasText(requestedPlanPublicId)) {
-            return planService.requireActive(requestedPlanPublicId, tenantId);
-        }
-        if (current.getPlanId() == null) {
-            throw CommonExceptions.badRequest("Original plan is unavailable; specify a plan to renew with");
-        }
-        MembershipPlan plan = planRepository.findById(current.getPlanId())
-                .filter(p -> p.getTenantId().equals(tenantId))
-                .orElseThrow(() -> CommonExceptions.badRequest(
-                        "Original plan is unavailable; specify a plan to renew with"));
-        if (plan.getStatus() != PlanStatus.ACTIVE) {
-            throw CommonExceptions.badRequest("Original plan is archived; specify a plan to renew with");
-        }
-        return plan;
     }
 }

@@ -51,11 +51,11 @@ public class ReportService {
         Instant toInstant = end.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
 
         LocalDate today = LocalDate.now();
-        long expiring = membershipRepository.findByTenantId(tenantId).stream()
+        long expiring = membershipRepository.findByTenantIdAndDeletedFalse(tenantId).stream()
                 .filter(m -> m.getStatus() == MembershipStatus.ACTIVE)
                 .filter(m -> !m.getEndDate().isBefore(today) && !m.getEndDate().isAfter(today.plusDays(7)))
                 .count();
-        long expired = membershipRepository.findByTenantId(tenantId).stream()
+        long expired = membershipRepository.findByTenantIdAndDeletedFalse(tenantId).stream()
                 .filter(m -> m.getStatus() == MembershipStatus.EXPIRED
                         || (m.getStatus() == MembershipStatus.ACTIVE && m.getEndDate().isBefore(today)))
                 .count();
@@ -67,7 +67,7 @@ public class ReportService {
         return new ReportSummary(
                 memberRepository.countByTenantId(tenantId),
                 memberRepository.countByTenantIdAndStatus(tenantId, MemberStatus.ACTIVE),
-                membershipRepository.countByTenantIdAndStatus(tenantId, MembershipStatus.ACTIVE),
+                membershipRepository.countByTenantIdAndStatusAndDeletedFalse(tenantId, MembershipStatus.ACTIVE),
                 expiring,
                 expired,
                 paymentRepository.sumCompletedBetween(tenantId, start, end),
@@ -83,7 +83,7 @@ public class ReportService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> memberships(Long tenantId) {
         requireTenant(tenantId);
-        return membershipRepository.findByTenantId(tenantId).stream()
+        return membershipRepository.findByTenantIdAndDeletedFalse(tenantId).stream()
                 .map(this::membershipRow)
                 .toList();
     }

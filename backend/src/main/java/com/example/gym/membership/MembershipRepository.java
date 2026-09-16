@@ -6,11 +6,13 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface MembershipRepository extends JpaRepository<Membership, Long> {
 
-    Optional<Membership> findByPublicId(String publicId);
+    Optional<Membership> findByPublicIdAndDeletedFalse(String publicId);
 
-    List<Membership> findByMemberIdOrderByStartDateDesc(Long memberId);
+    List<Membership> findByMemberIdAndDeletedFalseOrderByStartDateDesc(Long memberId);
 
-    List<Membership> findByTenantId(Long tenantId);
+    List<Membership> findByTenantIdAndDeletedFalse(Long tenantId);
 
-    long countByTenantIdAndStatus(Long tenantId, MembershipStatus status);
+    long countByTenantIdAndStatusAndDeletedFalse(
+            Long tenantId,
+            MembershipStatus status);
 }

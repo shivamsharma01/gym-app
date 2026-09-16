@@ -27,9 +27,10 @@ public final class MembershipRequests {
 
     public record RenewMembership(
             /** Optional; reuse the current membership's plan when omitted. */
-            String planId,
+            @NotBlank String planId,
             /** Optional; defaults to the day after the current end date (or today if already past). */
-            LocalDate startDate) {
+            @NotNull LocalDate startDate,
+            @NotNull LocalDate endDate) {
     }
 
     public record CancelMembership(

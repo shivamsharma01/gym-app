@@ -205,7 +205,7 @@ public class DeviceService {
 
     private java.util.Optional<Membership> currentMembership(Long memberId) {
         LocalDate today = LocalDate.now();
-        return membershipRepository.findByMemberIdOrderByStartDateDesc(memberId).stream()
+        return membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(memberId).stream()
                 .filter(m -> m.getStatus() != MembershipStatus.CANCELLED)
                 .filter(m -> m.coversDate(today))
                 .findFirst();

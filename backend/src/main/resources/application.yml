@@ -1,6 +1,8 @@
 spring:
   application:
     name: gym-backend
+  profiles:
+    active: dev
   # Activate a profile via SPRING_PROFILES_ACTIVE (e.g. "dev") or -Dspring-boot.run.profiles=dev.
   # Intentionally not defaulted here so tests (@ActiveProfiles("test")) are never polluted by "dev".
   datasource:

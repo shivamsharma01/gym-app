@@ -94,7 +94,7 @@ public class NotificationService {
         LocalDate today = LocalDate.now();
         LocalDate until = today.plusDays(7);
         int queued = 0;
-        for (Membership membership : membershipRepository.findByTenantId(tenantId)) {
+        for (Membership membership : membershipRepository.findByTenantIdAndDeletedFalse(tenantId)) {
             if (membership.getStatus() != MembershipStatus.ACTIVE
                     || membership.getEndDate().isBefore(today)
                     || membership.getEndDate().isAfter(until)) {

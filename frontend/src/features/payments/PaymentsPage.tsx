@@ -4,18 +4,12 @@ import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { ConfirmDialog } from '@/components/Dialog'
-import { MemberPicker } from '@/components/MemberPicker'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
   Button,
-  Card,
   EmptyState,
-  FieldError,
-  Input,
-  Label,
   PageHeader,
-  Select,
   Skeleton,
   Table,
   TableShell,
@@ -26,7 +20,6 @@ import {
 } from '@/components/ui'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { CURRENCIES } from '@/lib/catalog'
 import { formatDate, money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
 import type { Member, Membership, PageResponse, Payment } from '@/lib/types'
@@ -64,9 +57,7 @@ export function PaymentsPage() {
   })
   const membershipId = form.watch('membershipId')
   const selectedMembership = memberships.data?.find((m) => m.id === membershipId)
-  const currencyOptions = selectedMembership
-    ? Array.from(new Set([selectedMembership.currency, ...CURRENCIES]))
-    : [...CURRENCIES]
+
 
   useEffect(() => {
     if (!member) {
@@ -87,29 +78,6 @@ export function PaymentsPage() {
     form.setValue('currency', selectedMembership.currency)
   }, [selectedMembership, form])
 
-  const record = useMutation({
-    mutationFn: (body: Form) => {
-      if (!member) throw new Error('Pick a member')
-      return api<Payment>('/api/v1/payments', {
-        method: 'POST',
-        body: JSON.stringify({
-          memberId: member.id,
-          membershipId: body.membershipId || null,
-          amount: Number(body.amount),
-          currency: body.currency.toUpperCase(),
-          method: body.method,
-          reference: body.reference || null,
-          paidOn: body.paidOn || null,
-          notes: body.notes || null,
-        }),
-      })
-    },
-    onSuccess: () => {
-      setMember(null)
-      form.reset({ amount: '', currency: 'INR', method: 'CASH', reference: '', paidOn: '', notes: '', membershipId: '' })
-      void qc.invalidateQueries({ queryKey: ['payments'] })
-    },
-  })
   const refund = useMutation({
     mutationFn: (id: string) => api<Payment>(`/api/v1/payments/${id}/refund`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['payments'] }),
@@ -182,69 +150,6 @@ export function PaymentsPage() {
           refund.mutate(refundId, { onSettled: () => setRefundId(null) })
         }}
       />
-      {has('PAYMENT_CREATE') ? (
-        <Card>
-          <h2 className="mb-1 text-sm font-semibold tracking-tight">Record payment</h2>
-          <p className="mb-4 text-xs text-muted">Link to a membership when collecting plan dues.</p>
-          <form className="space-y-3" onSubmit={form.handleSubmit((v) => record.mutate(v))}>
-            <div>
-              <Label>Member</Label>
-              <MemberPicker value={member} onChange={setMember} />
-            </div>
-            <div>
-              <Label>Membership</Label>
-              <Select {...form.register('membershipId')} disabled={!member || memberships.isLoading}>
-                <option value="">Not linked to a membership</option>
-                {(memberships.data ?? [])
-                  .filter((m) => m.status !== 'CANCELLED')
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.planName} · {m.paymentStatus} · {money(m.amountPaid, m.currency)} of{' '}
-                      {money(m.price, m.currency)}
-                    </option>
-                  ))}
-              </Select>
-            </div>
-            <div>
-              <Label>Amount</Label>
-              <Input type="number" step="0.01" {...form.register('amount')} />
-              <FieldError message={form.formState.errors.amount?.message} />
-            </div>
-            <div>
-              <Label>Currency</Label>
-              <Select {...form.register('currency')} disabled={Boolean(selectedMembership)}>
-                {currencyOptions.map((code) => (
-                  <option key={code} value={code}>
-                    {code}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div>
-              <Label>Method</Label>
-              <Select {...form.register('method')}>
-                <option value="CASH">Cash</option>
-                <option value="CARD">Card</option>
-                <option value="UPI">UPI</option>
-                <option value="BANK_TRANSFER">Bank transfer</option>
-                <option value="OTHER">Other</option>
-              </Select>
-            </div>
-            <div>
-              <Label>Reference</Label>
-              <Input {...form.register('reference')} />
-            </div>
-            <div>
-              <Label>Paid on</Label>
-              <Input type="date" {...form.register('paidOn')} />
-            </div>
-            {record.error ? <QueryError error={record.error} /> : null}
-            <Button type="submit" disabled={record.isPending || !member}>
-              Record
-            </Button>
-          </form>
-        </Card>
-      ) : null}
     </div>
   )
 }

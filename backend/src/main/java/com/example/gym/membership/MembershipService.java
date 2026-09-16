@@ -73,16 +73,78 @@ public class MembershipService {
     public Membership create(CreateMembership request, Long tenantId) {
         Member member = memberService.getByPublicId(request.memberId(), tenantId);
         MembershipPlan plan = planService.requireActive(request.planId(), tenantId);
-        LocalDate start = request.startDate() != null ? request.startDate() : LocalDate.now();
-        LocalDate end = resolveEnd(start, request.endDate(), plan);
-        Membership membership = build(tenantId, member.getId(), plan, start, end);
+
+        LocalDate start =
+                request.startDate() != null
+                        ? request.startDate()
+                        : LocalDate.now();
+
+        LocalDate end =
+                resolveEnd(start, request.endDate(), plan);
+
+        requireNoOverlappingMembership(
+                member.getId(),
+                start,
+                end,
+                null
+        );
+
+        Membership membership =
+                build(tenantId, member.getId(), plan, start, end);
+
         Membership saved = membershipRepository.save(membership);
 
-        auditService.record(AuditActions.MEMBERSHIP_CREATED, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(),
-                Map.of("memberId", member.getPublicId(), "plan", plan.getName()));
+        auditService.record(
+                AuditActions.MEMBERSHIP_CREATED,
+                AuditActions.RESULT_SUCCESS,
+                "Membership",
+                saved.getPublicId(),
+                Map.of(
+                        "memberId", member.getPublicId(),
+                        "plan", plan.getName()
+                )
+        );
+
         publish(saved, ChangeType.CREATED);
         return saved;
+    }
+
+    private void requireNoOverlappingMembership(
+            Long memberId,
+            LocalDate start,
+            LocalDate end,
+            Long excludeMembershipId
+    ) {
+        boolean overlaps;
+
+        if (excludeMembershipId == null) {
+            overlaps =
+                    membershipRepository
+                            .existsByMemberIdAndDeletedFalseAndStatusNotAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                                    memberId,
+                                    MembershipStatus.CANCELLED,
+                                    end,
+                                    start
+                            );
+        } else {
+            overlaps =
+                    membershipRepository
+                            .findByMemberIdAndDeletedFalseOrderByStartDateDesc(memberId)
+                            .stream()
+                            .anyMatch(existing ->
+                                    !existing.getId().equals(excludeMembershipId)
+                                            && existing.getStatus() != MembershipStatus.CANCELLED
+                                            && !existing.getStartDate().isAfter(end)
+                                            && !existing.getEndDate().isBefore(start)
+                            );
+        }
+
+        if (overlaps) {
+            throw CommonExceptions.badRequest(
+                    "Membership dates overlap with an existing membership. "
+                            + "Cancel the existing membership before creating another one."
+            );
+        }
     }
 
     @Transactional
@@ -97,11 +159,37 @@ public class MembershipService {
         MembershipPlan plan =
                 resolveRenewalPlan(
                         current,
-                        Long.valueOf(request.planId()),
+                        request.planId(),
                         tenantId
                 );
 
+
         LocalDate start = request.startDate();
+
+        if (start == null) {
+            start = current.getEndDate().plusDays(1);
+        }
+
+        if (!start.isAfter(current.getEndDate())) {
+            throw CommonExceptions.badRequest(
+                    "Renewal can only start after the current membership end date"
+            );
+        }
+
+        LocalDate end = request.endDate();
+
+        if (end.isBefore(start)) {
+            throw CommonExceptions.badRequest(
+                    "End date cannot be before start date"
+            );
+        }
+
+        requireNoOverlappingMembership(
+                current.getMemberId(),
+                start,
+                end,
+                current.getId()
+        );
 
         if (request.endDate().isBefore(start)) {
             throw CommonExceptions.badRequest(
@@ -144,7 +232,7 @@ public class MembershipService {
                 current.getMemberId(),
                 plan,
                 start,
-                request.endDate()
+                end
         );
 
         renewal.setAmountPaid(BigDecimal.ZERO);
@@ -176,7 +264,7 @@ public class MembershipService {
 
     private MembershipPlan resolveRenewalPlan(
             Membership current,
-            Long requestedPlanId,
+            String requestedPlanId,
             Long tenantId
     ) {
         if (requestedPlanId == null) {
@@ -195,7 +283,7 @@ public class MembershipService {
                     );
         }
 
-        return planRepository.findById(requestedPlanId)
+        return planRepository.findByPublicId(requestedPlanId)
                 .filter(plan -> plan.getTenantId().equals(tenantId))
                 .orElseThrow(() ->
                         CommonExceptions.notFound(
@@ -268,7 +356,21 @@ public class MembershipService {
         }
         LocalDate start = request.startDate();
         LocalDate end = request.endDate();
+
         requireEndOnOrAfterStart(start, end);
+
+        if (membershipRepository.existsOverlappingMembership(
+                membership.getMemberId(),
+                membership.getPublicId(),
+                start,
+                end
+        )) {
+            throw CommonExceptions.badRequest(
+                    "Membership dates overlap with an existing membership. " +
+                            "Cancel the existing membership before changing these dates."
+            );
+        }
+
         membership.setStartDate(start);
         membership.setEndDate(end);
         LocalDate today = LocalDate.now();

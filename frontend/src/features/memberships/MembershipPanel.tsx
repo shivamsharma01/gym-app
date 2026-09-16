@@ -64,11 +64,19 @@ export function MembershipPanel({
   const [renewPlanId, setRenewPlanId] = useState('');
   const [renewStartDate, setRenewStartDate] = useState('');
   const [renewEndDate, setRenewEndDate] = useState('');
-
+// Record payment
+  const [paymentMembershipId, setPaymentMembershipId] = useState<string | null>(null)
+  const [paymentAmount, setPaymentAmount] = useState('')
+  const [paymentCurrency, setPaymentCurrency] = useState('INR')
+  const [paymentMethod, setPaymentMethod] = useState('CASH')
+  const [paymentReference, setPaymentReference] = useState('')
+  const [paymentDate, setPaymentDate] = useState(todayIso())
   const selectedPlan = (plans.data?.content ?? []).find((p) => p.id === planId);
 
   const renewingMembership = rows.find((row) => row.id === renewingId);
-
+  const paymentMembership = rows.find(
+      (row) => row.id === paymentMembershipId,
+  )
   const currentPlan = (plans.data?.content ?? []).find(
     (p) => p.name === renewingMembership?.planName,
   );
@@ -78,14 +86,6 @@ export function MembershipPanel({
   const selectedRenewPlan = (plans.data?.content ?? []).find(
     (p) => p.id === renewPlanId,
   );
-
-  const additionalAmount =
-    selectedRenewPlan && renewingMembership
-      ? renewStartDate === renewingMembership.startDate ||
-        renewStartDate === addDays(renewingMembership.endDate, 1)
-        ? Math.max(selectedRenewPlan.price - currentPlanPrice, 0)
-        : selectedRenewPlan.price
-      : 0;
 
   function applyPlan(id: string) {
     setPlanId(id);
@@ -110,15 +110,27 @@ export function MembershipPanel({
   }
 
   function openRenewal(row: Membership) {
-    const today = todayIso();
-
-    const start =
-      row.endDate >= today ? row.startDate : addDays(row.endDate, 1);
+    const start = addDays(row.endDate, 1);
 
     setRenewingId(row.id);
     setRenewPlanId('');
     setRenewStartDate(start);
     setRenewEndDate('');
+  }
+
+  function openRecordPayment(row: Membership) {
+    setPaymentMembershipId(row.id)
+
+    const remainingAmount = Math.max(
+        Number(row.price) - Number(row.amountPaid ?? 0),
+        0,
+    )
+
+    setPaymentAmount(String(remainingAmount))
+    setPaymentCurrency(row.currency || 'INR')
+    setPaymentMethod('CASH')
+    setPaymentReference('')
+    setPaymentDate(todayIso())
   }
 
   function closeRenewal() {
@@ -267,6 +279,39 @@ export function MembershipPanel({
     },
   });
 
+  const recordPayment = useMutation({
+    mutationFn: () =>
+        api('/api/v1/payments', {
+          method: 'POST',
+          body: JSON.stringify({
+            memberId,
+            membershipId: paymentMembershipId,
+            amount: Number(paymentAmount),
+            currency: paymentCurrency,
+            method: paymentMethod,
+            reference: paymentReference || null,
+            paidOn: paymentDate,
+          }),
+        }),
+
+    onSuccess: () => {
+      setPaymentMembershipId(null)
+      setPaymentAmount('')
+      setPaymentCurrency('INR')
+      setPaymentMethod('CASH')
+      setPaymentReference('')
+      setPaymentDate(todayIso())
+
+      void qc.invalidateQueries({
+        queryKey: ['memberships', memberId],
+      })
+
+      void qc.invalidateQueries({
+        queryKey: ['access', memberId],
+      })
+    },
+  })
+
   const activePlans = (plans.data?.content ?? []).filter(
     (p) => p.status === 'ACTIVE',
   );
@@ -355,8 +400,29 @@ export function MembershipPanel({
       ) : null}
 
       {/* MEMBERSHIPS */}
-      {rows.map((row) => (
-        <Card key={row.id} className="space-y-2">
+      {[...rows]
+          .sort((a, b) => {
+            const order = {
+              ACTIVE: 1,
+              PENDING: 2,
+              FROZEN: 3,
+              CANCELLED: 4,
+            }
+
+            return (
+                (order[a.status as keyof typeof order] ?? 99) -
+                (order[b.status as keyof typeof order] ?? 99)
+            )
+          })
+          .map((row) => (
+              <Card
+                  key={row.id}
+                  className={`space-y-2 ${
+                      row.status === 'ACTIVE'
+                          ? 'border-green-500/60 bg-green-500/5 ring-1 ring-green-500/20'
+                          : ''
+                  }`}
+              >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="font-semibold">{row.planName}</div>
 
@@ -473,6 +539,22 @@ export function MembershipPanel({
               </Button>
             ) : null}
 
+            {has('PAYMENT_CREATE') &&
+            (row.status === 'ACTIVE' || row.status === 'PENDING') ? (
+                <Button
+                    variant="outline"
+                    type="button"
+                    className="border-green-500 text-green-500 hover:bg-green-500 hover:text-white"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      openRecordPayment(row)
+                    }}
+                >
+                  Record Payment
+                </Button>
+            ) : null}
+
             {/* CANCEL */}
             {has('MEMBERSHIP_CANCEL') && row.status !== 'CANCELLED' ? (
               <Button
@@ -480,7 +562,8 @@ export function MembershipPanel({
                 type="button"
                 onClick={() => {
                   const reason =
-                    window.prompt('Cancel reason (optional)') ?? '';
+                    window.prompt('Cancel reason (optional)');
+                  if(reason === null) return;
 
                   act.mutate({
                     id: row.id,
@@ -596,11 +679,12 @@ export function MembershipPanel({
                   </Label>
 
                   <Input
-                    id="renew-start"
-                    type="date"
-                    value={renewStartDate}
-                    onChange={(e) => applyRenewStart(e.target.value)}
-                    className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                      id="renew-start"
+                      type="date"
+                      value={renewStartDate}
+                      min={renewingMembership ? addDays(renewingMembership.endDate, 1) : undefined}
+                      onChange={(e) => applyRenewStart(e.target.value)}
+                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
                   />
                 </div>
 
@@ -619,49 +703,6 @@ export function MembershipPanel({
                   />
                 </div>
               </div>
-
-              {/* Payment Summary */}
-              {selectedRenewPlan && renewingMembership ? (
-                <div className="space-y-2 rounded-lg border border-[#29322d] bg-[#101512] p-4">
-                  <p className="text-sm font-medium text-[#f1f5f2]">
-                    Payment Summary
-                  </p>
-
-                  <div className="flex justify-between text-sm">
-                    <span className="text-[#91a39a]">New Plan Price</span>
-
-                    <span className="text-[#f1f5f2]">
-                      {money(
-                        selectedRenewPlan.price,
-                        selectedRenewPlan.currency,
-                      )}
-                    </span>
-                  </div>
-
-                  {renewStartDate === renewingMembership.startDate ||
-                  renewStartDate === addDays(renewingMembership.endDate, 1) ? (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-[#91a39a]">
-                        Current Plan Credit
-                      </span>
-
-                      <span className="text-[#f1f5f2]">
-                        −{money(currentPlanPrice, renewingMembership.currency)}
-                      </span>
-                    </div>
-                  ) : null}
-
-                  <div className="flex justify-between border-t border-[#29322d] pt-2">
-                    <span className="font-medium text-[#f1f5f2]">
-                      Amount to Collect
-                    </span>
-
-                    <span className="font-semibold text-orange-400">
-                      {money(additionalAmount, selectedRenewPlan.currency)}
-                    </span>
-                  </div>
-                </div>
-              ) : null}
 
               {/* Error */}
               {renew.error && (
@@ -701,6 +742,137 @@ export function MembershipPanel({
           </Card>
         </div>
       )}
+
+      {/* RECORD PAYMENT MODAL */}
+      {paymentMembershipId && paymentMembership ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+            <Card className="w-full max-w-md overflow-hidden border border-[#29322d] bg-[#151a17] text-[#f1f5f2] shadow-2xl">
+              <div className="border-b border-[#29322d] px-6 py-4">
+                <h2 className="text-lg font-semibold">Record Payment</h2>
+                <p className="mt-1 text-sm text-[#91a39a]">
+                  {paymentMembership.planName}
+                </p>
+              </div>
+
+              <div className="space-y-4 px-6 py-5">
+                <div className="space-y-2">
+                  <Label htmlFor="payment-amount">Amount</Label>
+                  <Input
+                      id="payment-amount"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="payment-currency">Currency</Label>
+                  <Select
+                      id="payment-currency"
+                      value={paymentCurrency}
+                      onChange={(e) => setPaymentCurrency(e.target.value)}
+                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                  >
+                    <option value="INR">INR</option>
+                    <option value="USD">USD</option>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="payment-method">Payment Method</Label>
+                  <Select
+                      id="payment-method"
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value)}
+                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                  >
+                    <option value="CASH">Cash</option>
+                    <option value="UPI">UPI</option>
+                    <option value="CARD">Card</option>
+                    <option value="BANK_TRANSFER">Bank Transfer</option>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="payment-reference">Reference</Label>
+                  <Input
+                      id="payment-reference"
+                      value={paymentReference}
+                      onChange={(e) => setPaymentReference(e.target.value)}
+                      placeholder="Optional"
+                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="payment-date">Paid On</Label>
+                  <Input
+                      id="payment-date"
+                      type="date"
+                      value={paymentDate}
+                      onChange={(e) => setPaymentDate(e.target.value)}
+                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                  />
+                </div>
+
+                {recordPayment.error ? (
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+                      {recordPayment.error instanceof Error
+                          ? recordPayment.error.message
+                          : 'Unable to record payment.'}
+                    </div>
+                ) : null}
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-[#29322d] bg-[#101512] px-6 py-4">
+                <Button
+                    variant="outline"
+                    type="button"
+                    className="border-[#29322d] bg-transparent text-[#d5ddd8] hover:bg-[#1d2520]"
+                    onClick={() => setPaymentMembershipId(null)}
+                >
+                  Cancel
+                </Button>
+
+                <Button
+                    type="button"
+                    disabled={
+                        recordPayment.isPending ||
+                        !paymentAmount ||
+                        Number(paymentAmount) <= 0 ||
+                        !paymentDate
+                    }
+                    className="bg-green-500 text-white hover:bg-green-600 disabled:bg-green-500/40"
+                    onClick={() => {
+                      const paidAmount = Number(paymentMembership?.amountPaid ?? 0)
+                      const enteredAmount = Number(paymentAmount)
+                      const membershipAmount = Number(paymentMembership?.price ?? 0)
+
+                      if (paidAmount + enteredAmount > membershipAmount) {
+                        const confirmed = window.confirm(
+                            `Payment exceeds the membership amount by ${money(
+                                paidAmount + enteredAmount - membershipAmount,
+                                paymentMembership?.currency ?? 'INR',
+                            )}. Do you still want to record this payment?`,
+                        )
+
+                        if (!confirmed) {
+                          return
+                        }
+                      }
+
+                      recordPayment.mutate()
+                    }}
+                >
+                  {recordPayment.isPending ? 'Recording...' : 'Record Payment'}
+                </Button>
+              </div>
+            </Card>
+          </div>
+      ) : null}
     </div>
   );
 }

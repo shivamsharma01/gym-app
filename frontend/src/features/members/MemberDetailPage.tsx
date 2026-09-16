@@ -1,8 +1,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { Badge, Button, Card, EmptyState, Label, PageHeader, Select, Skeleton } from '@/components/ui'
+import { ConfirmDialog } from '@/components/Dialog'
 import { QueryError } from '@/components/QueryError'
+import { Badge, Button, Card, EmptyState, Label, PageHeader, SectionTitle, Select, Skeleton } from '@/components/ui'
 import { MembershipPanel } from '@/features/memberships/MembershipPanel'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -34,6 +35,7 @@ export function MemberDetailPage() {
     queryFn: () => api<Payment[]>(`/api/v1/members/${id}/payments`),
     enabled: has('PAYMENT_VIEW'),
   })
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false)
   const deactivate = useMutation({
     mutationFn: () => api(`/api/v1/members/${id}`, { method: 'DELETE' }),
     onSuccess: () => navigate('/app/members'),
@@ -56,12 +58,7 @@ export function MemberDetailPage() {
               </Link>
             ) : null}
             {has('MEMBER_DELETE') && m.status === 'ACTIVE' ? (
-              <Button
-                variant="danger"
-                onClick={() => {
-                  if (confirm('Deactivate this member? History is kept.')) deactivate.mutate()
-                }}
-              >
+              <Button variant="danger" onClick={() => setConfirmDeactivate(true)}>
                 Deactivate
               </Button>
             ) : null}
@@ -78,27 +75,23 @@ export function MemberDetailPage() {
       </div>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Overview</h2>
-        <Card className="grid gap-3 text-sm sm:grid-cols-2">
+        <SectionTitle title="Overview" />
+        <Card className="grid gap-4 text-sm sm:grid-cols-2">
           <div>
-            Email
-            <br />
-            <span className="text-muted">{m.email ?? '—'}</span>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Email</div>
+            <div className="mt-1">{m.email ?? '—'}</div>
           </div>
           <div>
-            Phone
-            <br />
-            <span className="text-muted">{m.phone ?? '—'}</span>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Phone</div>
+            <div className="mt-1">{m.phone ?? '—'}</div>
           </div>
           <div>
-            Date of birth
-            <br />
-            <span className="text-muted">{formatDate(m.dateOfBirth)}</span>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Date of birth</div>
+            <div className="mt-1">{formatDate(m.dateOfBirth)}</div>
           </div>
           <div>
-            Gender
-            <br />
-            <span className="text-muted">{m.gender}</span>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Gender</div>
+            <div className="mt-1">{m.gender}</div>
           </div>
           <div className="sm:col-span-2">
             Notes
@@ -110,7 +103,7 @@ export function MemberDetailPage() {
 
       {has('MEMBERSHIP_VIEW') ? (
         <section>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Membership</h2>
+          <SectionTitle title="Membership" />
           {memberships.error ? <QueryError error={memberships.error} /> : null}
           <MembershipPanel memberId={m.id} rows={memberships.data ?? []} />
         </section>
@@ -118,26 +111,26 @@ export function MemberDetailPage() {
 
       {has('PAYMENT_VIEW') ? (
         <section>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Payments</h2>
+          <SectionTitle title="Payments" />
           {!payments.data?.length ? (
             <EmptyState
               title="No payments"
               body="This list is history only. Record cash/UPI/card on Payments, pick this member, and link the membership."
             />
           ) : (
-            <ul className="divide-y divide-line rounded-xl border border-line">
+            <Card padded={false} className="divide-y divide-line overflow-hidden">
               {payments.data.map((p) => (
-                <li key={p.id} className="flex justify-between px-4 py-3 text-sm">
+                <div key={p.id} className="flex justify-between gap-3 px-4 py-3 text-sm">
                   <span>
                     {money(p.amount, p.currency)} · {p.method}
                   </span>
                   <Badge tone={statusTone(p.status)}>{p.status}</Badge>
-                </li>
+                </div>
               ))}
-            </ul>
+            </Card>
           )}
           {has('PAYMENT_CREATE') ? (
-            <Link to="/app/payments" className="mt-3 inline-block text-sm underline">
+            <Link to="/app/payments" className="mt-3 inline-block text-sm font-medium text-accent hover:underline">
               Record a payment
             </Link>
           ) : null}
@@ -146,25 +139,36 @@ export function MemberDetailPage() {
 
       {has('ATTENDANCE_VIEW') ? (
         <section>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Attendance</h2>
+          <SectionTitle title="Attendance" />
           {!attendance.data?.content.length ? (
             <p className="text-sm text-muted">No attendance for this member yet.</p>
           ) : (
-            <ul className="divide-y divide-line rounded-xl border border-line">
+            <Card padded={false} className="divide-y divide-line overflow-hidden">
               {attendance.data.content.map((row) => (
-                <li key={row.id} className="flex justify-between px-4 py-3 text-sm">
+                <div key={row.id} className="flex justify-between gap-3 px-4 py-3 text-sm">
                   <span>{formatDateTime(row.occurredAt)}</span>
                   <span className="text-muted">
                     {row.result} · {row.method}
                   </span>
-                </li>
+                </div>
               ))}
-            </ul>
+            </Card>
           )}
         </section>
       ) : null}
 
       {has('DEVICE_MANAGE') ? <EnrollmentPanel memberId={m.id} memberCode={m.memberCode} /> : null}
+
+      <ConfirmDialog
+        open={confirmDeactivate}
+        onClose={() => setConfirmDeactivate(false)}
+        title="Deactivate this member?"
+        description="History is kept. They will lose door access once memberships and device sync catch up."
+        confirmLabel="Deactivate"
+        danger
+        busy={deactivate.isPending}
+        onConfirm={() => deactivate.mutate()}
+      />
     </div>
   )
 }
@@ -185,7 +189,7 @@ function EnrollmentPanel({ memberId, memberCode }: { memberId: string; memberCod
   const registered = devices.data?.content ?? []
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Device enrolment</h2>
+      <SectionTitle title="Device enrolment" />
       <Card className="space-y-3">
         <p className="text-sm text-muted">
           Powering on a tablet does not fill this list. Register the terminal under Devices first (name, entrance/exit,

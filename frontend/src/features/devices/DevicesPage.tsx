@@ -1,8 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { MonitorSmartphone } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { Badge, Button, Card, EmptyState, Input, Label, PageHeader, Skeleton } from '@/components/ui'
+import { Dialog } from '@/components/Dialog'
 import { QueryError } from '@/components/QueryError'
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  Label,
+  PageHeader,
+  SectionTitle,
+  Skeleton,
+  Table,
+  TableShell,
+  THead,
+  Th,
+  Td,
+  Tr,
+} from '@/components/ui'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDateTime } from '@/lib/cn'
@@ -35,7 +53,7 @@ export function DevicesPage() {
     <div className="space-y-10">
       <PageHeader
         title="Devices"
-        description="This website registers the gateway and TrueFace terminals. The Windows PC still has to run the gateway/ agent with the one-time token — the tablet does not enrol itself."
+        description="Register gateways and TrueFace terminals here. The Windows PC still runs the gateway agent with the one-time token."
         actions={
           has('DEVICE_MANAGE') ? (
             <Link to="/app/devices/new">
@@ -46,66 +64,73 @@ export function DevicesPage() {
       />
 
       {devices.isLoading ? <Skeleton className="h-32" /> : null}
-      {devices.error ? <QueryError error={devices.error} /> : null}
+      {devices.error ? <QueryError error={devices.error} onRetry={() => void devices.refetch()} /> : null}
       {devices.data && devices.data.content.length === 0 ? (
-        <EmptyState title="No devices" body="Create a gateway first, then register the TrueFace terminal against it." />
+        <EmptyState
+          title="No devices"
+          body="Create a gateway first, then register the TrueFace terminal against it."
+          icon={<MonitorSmartphone className="h-5 w-5" />}
+        />
       ) : null}
       {devices.data && devices.data.content.length > 0 ? (
-        <div className="overflow-x-auto rounded-xl border border-line">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="bg-raised text-xs uppercase tracking-wide text-muted">
+        <TableShell>
+          <Table>
+            <THead>
               <tr>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Role</th>
-                <th className="px-4 py-3">Host</th>
-                <th className="px-4 py-3">Connection</th>
-                <th className="px-4 py-3">Gateway</th>
+                <Th>Name</Th>
+                <Th>Role</Th>
+                <Th>Host</Th>
+                <Th>Connection</Th>
+                <Th>Gateway</Th>
               </tr>
-            </thead>
+            </THead>
             <tbody>
               {devices.data.content.map((d) => (
-                <tr key={d.id} className="border-t border-line hover:bg-raised/60">
-                  <td className="px-4 py-3">
-                    <Link className="font-semibold hover:underline" to={`/app/devices/${d.id}`}>
+                <Tr key={d.id}>
+                  <Td>
+                    <Link className="font-semibold hover:text-accent" to={`/app/devices/${d.id}`}>
                       {d.name}
                     </Link>
-                  </td>
-                  <td className="px-4 py-3 text-muted">{d.role}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{d.host ? `${d.host}:${d.port ?? ''}` : '—'}</td>
-                  <td className="px-4 py-3">
+                  </Td>
+                  <Td className="text-muted">{d.role}</Td>
+                  <Td className="font-mono text-xs text-muted">{d.host ? `${d.host}:${d.port ?? ''}` : '—'}</Td>
+                  <Td>
                     <Badge tone={statusTone(d.connectionState)}>{d.connectionState}</Badge>
-                  </td>
-                  <td className="px-4 py-3 text-muted">{d.gatewayAssigned ? 'Assigned' : 'None'}</td>
-                </tr>
+                  </Td>
+                  <Td className="text-muted">{d.gatewayAssigned ? 'Assigned' : 'None'}</Td>
+                </Tr>
               ))}
             </tbody>
-          </table>
-        </div>
+          </Table>
+        </TableShell>
       ) : null}
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Gateways</h2>
-        {gateways.error ? <QueryError error={gateways.error} /> : null}
+        <SectionTitle title="Gateways" description="Windows agents that bridge tablets to this backend" />
+        {gateways.error ? <QueryError error={gateways.error} onRetry={() => void gateways.refetch()} /> : null}
         <div className="grid gap-3 sm:grid-cols-2">
           {gateways.data?.content.map((g) => (
-            <Card key={g.id}>
-              <div className="font-semibold">{g.name}</div>
-              <p className="mt-1 text-sm text-muted">
-                {g.status} · last heartbeat {formatDateTime(g.lastHeartbeatAt)}
-              </p>
-              <p className="mt-2 font-mono text-xs text-muted">id {g.id}</p>
+            <Card key={g.id} className="p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-semibold tracking-tight">{g.name}</div>
+                <Badge tone={statusTone(g.status)}>{g.status}</Badge>
+              </div>
+              <p className="mt-2 text-sm text-muted">Last heartbeat {formatDateTime(g.lastHeartbeatAt)}</p>
+              <p className="mt-2 font-mono text-[11px] text-muted">id {g.id}</p>
             </Card>
           ))}
         </div>
         {has('DEVICE_MANAGE') ? (
           <Card className="mt-4 max-w-lg space-y-3">
-            <h3 className="text-sm font-semibold">Create gateway</h3>
-            <p className="text-sm text-muted">
+            <h3 className="text-sm font-semibold tracking-tight">Create gateway</h3>
+            <p className="text-sm leading-relaxed text-muted">
               The plaintext token is shown once. Put it on the Windows agent as GYM_GATEWAY_TOKEN. It is never stored
               in this browser and will not be returned again.
             </p>
-            <Label>Name</Label>
-            <Input value={gwName} onChange={(e) => setGwName(e.target.value)} placeholder="Front desk PC" />
+            <div>
+              <Label htmlFor="gw-name">Name</Label>
+              <Input id="gw-name" value={gwName} onChange={(e) => setGwName(e.target.value)} placeholder="Front desk PC" />
+            </div>
             {createGateway.error ? <QueryError error={createGateway.error} /> : null}
             <Button disabled={!gwName.trim() || createGateway.isPending} onClick={() => createGateway.mutate()}>
               Issue token
@@ -114,32 +139,28 @@ export function DevicesPage() {
         ) : null}
       </section>
 
-      {issued ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
-          <Card className="w-full max-w-lg space-y-4">
-            <h2 className="text-lg font-extrabold">Gateway token (shown once)</h2>
-            <p className="text-sm text-muted">
-              Copy this into the Windows gateway config now. Closing this dialog means you cannot retrieve it from the
-              app.
-            </p>
-            <p className="break-all rounded-md bg-raised p-3 font-mono text-xs">{issued.token}</p>
+      <Dialog
+        open={Boolean(issued)}
+        onClose={() => setIssued(null)}
+        title="Gateway token (shown once)"
+        description="Copy this into the Windows gateway config now. Closing means you cannot retrieve it from the app."
+        className="max-w-lg"
+      >
+        {issued ? (
+          <div className="space-y-4">
+            <p className="break-all rounded-lg bg-raised p-3 font-mono text-xs leading-relaxed">{issued.token}</p>
             <p className="font-mono text-xs text-muted">gateway id {issued.id}</p>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                onClick={() => {
-                  void navigator.clipboard.writeText(issued.token)
-                }}
-              >
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => void navigator.clipboard.writeText(issued.token)}>
                 Copy token
               </Button>
               <Button variant="outline" onClick={() => setIssued(null)}>
                 I have saved it
               </Button>
             </div>
-          </Card>
-        </div>
-      ) : null}
+          </div>
+        ) : null}
+      </Dialog>
     </div>
   )
 }

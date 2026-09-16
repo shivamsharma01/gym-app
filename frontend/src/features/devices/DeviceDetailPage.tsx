@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { NavLink, useNavigate, useParams } from 'react-router'
-import { Badge, Button, Card, Input, Label, PageHeader, Select, Skeleton, Textarea } from '@/components/ui'
+import { Badge, Button, Card, Input, Label, PageHeader, Select, Skeleton, Table, TableShell, Textarea, THead, Th, Td, Tr } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -39,7 +39,10 @@ export function DeviceDetailPage() {
             to={key === 'overview' ? `/app/devices/${d.id}` : `/app/devices/${d.id}/${key}`}
             end={key === 'overview'}
             className={({ isActive }) =>
-              cn('rounded-md px-3 py-1.5', isActive ? 'bg-raised font-semibold' : 'text-muted hover:text-ink')
+              cn(
+                'rounded-lg px-3 py-1.5 transition',
+                isActive ? 'bg-raised font-semibold text-ink shadow-[inset_0_-2px_0_0_var(--color-accent)]' : 'text-muted hover:text-ink',
+              )
             }
           >
             {label}
@@ -158,45 +161,45 @@ function Sync({ deviceId }: { deviceId: string }) {
   if (commands.error) return <QueryError error={commands.error} />
   if (!commands.data?.content.length) return <p className="text-sm text-muted">No sync commands for this device.</p>
   return (
-    <div className="overflow-x-auto rounded-xl border border-line">
-      <table className="w-full min-w-[720px] text-left text-sm">
-        <thead className="bg-raised text-xs uppercase tracking-wide text-muted">
+    <TableShell>
+      <Table className="min-w-[720px]">
+        <THead>
           <tr>
-            <th className="px-4 py-3">Type</th>
-            <th className="px-4 py-3">State</th>
-            <th className="px-4 py-3">Attempts</th>
-            <th className="px-4 py-3">Last error</th>
-            <th className="px-4 py-3" />
+            <Th>Type</Th>
+            <Th>State</Th>
+            <Th>Attempts</Th>
+            <Th>Last error</Th>
+            <Th />
           </tr>
-        </thead>
+        </THead>
         <tbody>
           {commands.data.content.map((c) => (
-            <tr key={c.id} className="border-t border-line">
-              <td className="px-4 py-3">{c.type}</td>
-              <td className="px-4 py-3">
+            <Tr key={c.id}>
+              <Td className="font-medium">{c.type}</Td>
+              <Td>
                 <Badge tone={statusTone(c.state)}>{c.state}</Badge>
-              </td>
-              <td className="px-4 py-3 text-muted">
+              </Td>
+              <Td className="text-muted">
                 {c.attemptCount}/{c.maxAttempts}
-              </td>
-              <td className="max-w-xs truncate px-4 py-3 text-xs text-muted">{c.lastError ?? '—'}</td>
-              <td className="px-4 py-3">
+              </Td>
+              <Td className="max-w-xs truncate text-xs text-muted">{c.lastError ?? '—'}</Td>
+              <Td>
                 {has('DEVICE_SYNC') ? (
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => retry.mutate(c.id)}>
+                    <Button variant="outline" size="sm" onClick={() => retry.mutate(c.id)}>
                       Retry
                     </Button>
-                    <Button variant="ghost" onClick={() => cancel.mutate(c.id)}>
+                    <Button variant="ghost" size="sm" onClick={() => cancel.mutate(c.id)}>
                       Cancel
                     </Button>
                   </div>
                 ) : null}
-              </td>
-            </tr>
+              </Td>
+            </Tr>
           ))}
         </tbody>
-      </table>
-    </div>
+      </Table>
+    </TableShell>
   )
 }
 

@@ -3,9 +3,27 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
+import { ConfirmDialog } from '@/components/Dialog'
 import { MemberPicker } from '@/components/MemberPicker'
-import { Badge, Button, Card, EmptyState, FieldError, Input, Label, PageHeader, Select, Skeleton } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  FieldError,
+  Input,
+  Label,
+  PageHeader,
+  Select,
+  Skeleton,
+  Table,
+  TableShell,
+  THead,
+  Th,
+  Td,
+  Tr,
+} from '@/components/ui'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { CURRENCIES } from '@/lib/catalog'
@@ -30,6 +48,7 @@ export function PaymentsPage() {
   const qc = useQueryClient()
   const [page, setPage] = useState(0)
   const [member, setMember] = useState<Member | null>(null)
+  const [refundId, setRefundId] = useState<string | null>(null)
   const payments = useQuery({
     queryKey: ['payments', page],
     queryFn: () => api<PageResponse<Payment>>(`/api/v1/payments?page=${page}&size=20`),
@@ -106,43 +125,38 @@ export function PaymentsPage() {
           <EmptyState title="No payments" body="Record a cash, UPI, or card payment for a member." />
         ) : null}
         {payments.data && payments.data.content.length > 0 ? (
-          <div className="overflow-x-auto rounded-xl border border-line">
-            <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="bg-raised text-xs uppercase tracking-wide text-muted">
+          <TableShell>
+            <Table>
+              <THead>
                 <tr>
-                  <th className="px-4 py-3">Paid on</th>
-                  <th className="px-4 py-3">Amount</th>
-                  <th className="px-4 py-3">Method</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3" />
+                  <Th>Paid on</Th>
+                  <Th>Amount</Th>
+                  <Th>Method</Th>
+                  <Th>Status</Th>
+                  <Th className="text-right">Actions</Th>
                 </tr>
-              </thead>
+              </THead>
               <tbody>
                 {payments.data.content.map((p) => (
-                  <tr key={p.id} className="border-t border-line">
-                    <td className="px-4 py-3">{formatDate(p.paidOn)}</td>
-                    <td className="px-4 py-3">{money(p.amount, p.currency)}</td>
-                    <td className="px-4 py-3 text-muted">{p.method}</td>
-                    <td className="px-4 py-3">
+                  <Tr key={p.id}>
+                    <Td>{formatDate(p.paidOn)}</Td>
+                    <Td className="font-medium tabular-nums">{money(p.amount, p.currency)}</Td>
+                    <Td className="text-muted">{p.method}</Td>
+                    <Td>
                       <Badge tone={statusTone(p.status)}>{p.status}</Badge>
-                    </td>
-                    <td className="px-4 py-3 text-right">
+                    </Td>
+                    <Td className="text-right">
                       {has('PAYMENT_CREATE') && p.status === 'COMPLETED' ? (
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            if (confirm('Refund this payment?')) refund.mutate(p.id)
-                          }}
-                        >
+                        <Button variant="outline" size="sm" onClick={() => setRefundId(p.id)}>
                           Refund
                         </Button>
                       ) : null}
-                    </td>
-                  </tr>
+                    </Td>
+                  </Tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+            </Table>
+          </TableShell>
         ) : null}
         {payments.data && payments.data.totalPages > 1 ? (
           <div className="mt-4 flex gap-2">
@@ -155,9 +169,23 @@ export function PaymentsPage() {
           </div>
         ) : null}
       </div>
+      <ConfirmDialog
+        open={Boolean(refundId)}
+        onClose={() => setRefundId(null)}
+        title="Refund payment?"
+        description="This marks the payment as refunded. Only continue if you have already processed the money return."
+        confirmLabel="Refund"
+        danger
+        busy={refund.isPending}
+        onConfirm={() => {
+          if (!refundId) return
+          refund.mutate(refundId, { onSettled: () => setRefundId(null) })
+        }}
+      />
       {has('PAYMENT_CREATE') ? (
         <Card>
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Record payment</h2>
+          <h2 className="mb-1 text-sm font-semibold tracking-tight">Record payment</h2>
+          <p className="mb-4 text-xs text-muted">Link to a membership when collecting plan dues.</p>
           <form className="space-y-3" onSubmit={form.handleSubmit((v) => record.mutate(v))}>
             <div>
               <Label>Member</Label>

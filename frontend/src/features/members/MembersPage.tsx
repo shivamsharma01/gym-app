@@ -1,8 +1,23 @@
 import { useQuery } from '@tanstack/react-query'
+import { Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { QueryError } from '@/components/QueryError'
-import { Badge, Button, EmptyState, Input, PageHeader, Skeleton } from '@/components/ui'
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Input,
+  PageHeader,
+  Skeleton,
+  Table,
+  TableShell,
+  THead,
+  Th,
+  Td,
+  Tr,
+  Toolbar,
+} from '@/components/ui'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { statusTone } from '@/lib/status'
@@ -36,41 +51,61 @@ export function MembersPage() {
           ) : null
         }
       />
-      <Input placeholder="Search members" value={q} onChange={(e) => setQ(e.target.value)} className="mb-6 max-w-md" />
+      <Toolbar>
+        <Input
+          placeholder="Search members…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="max-w-md"
+          aria-label="Search members"
+        />
+      </Toolbar>
       {members.isLoading ? <Skeleton className="h-48" /> : null}
-      {members.error ? <QueryError error={members.error} /> : null}
+      {members.error ? <QueryError error={members.error} onRetry={() => void members.refetch()} /> : null}
       {members.data && members.data.content.length === 0 ? (
-        <EmptyState title="No members" body="Add a member to start memberships, payments, and device access." />
+        <EmptyState
+          title="No members"
+          body="Add a member to start memberships, payments, and device access."
+          icon={<Users className="h-5 w-5" />}
+          action={
+            has('MEMBER_CREATE') ? (
+              <Link to="/app/members/new">
+                <Button size="sm">Add member</Button>
+              </Link>
+            ) : undefined
+          }
+        />
       ) : null}
       {members.data && members.data.content.length > 0 ? (
-        <div className="overflow-x-auto rounded-xl border border-line">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="bg-raised text-xs uppercase tracking-wide text-muted">
+        <TableShell>
+          <Table>
+            <THead>
               <tr>
-                <th className="px-4 py-3">Code</th>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Phone</th>
-                <th className="px-4 py-3">Status</th>
+                <Th>Member</Th>
+                <Th>Code</Th>
+                <Th>Phone</Th>
+                <Th>Status</Th>
               </tr>
-            </thead>
+            </THead>
             <tbody>
               {members.data.content.map((m) => (
-                <tr key={m.id} className="border-t border-line hover:bg-raised/60">
-                  <td className="px-4 py-3 font-mono text-xs">{m.memberCode}</td>
-                  <td className="px-4 py-3">
-                    <Link className="font-semibold hover:underline" to={`/app/members/${m.id}`}>
+                <Tr key={m.id}>
+                  <Td>
+                    <Link className="font-semibold text-ink hover:text-accent" to={`/app/members/${m.id}`}>
                       {m.fullName}
                     </Link>
-                  </td>
-                  <td className="px-4 py-3 text-muted">{m.phone ?? '—'}</td>
-                  <td className="px-4 py-3">
+                    {m.email ? <div className="mt-0.5 text-xs text-muted">{m.email}</div> : null}
+                  </Td>
+                  <Td className="font-mono text-xs text-muted">{m.memberCode}</Td>
+                  <Td className="text-muted">{m.phone ?? '—'}</Td>
+                  <Td>
                     <Badge tone={statusTone(m.status)}>{m.status}</Badge>
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               ))}
             </tbody>
-          </table>
-        </div>
+          </Table>
+        </TableShell>
       ) : null}
     </div>
   )

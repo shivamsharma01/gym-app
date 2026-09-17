@@ -1,6 +1,7 @@
-package com.example.gym.notification;
+package com.example.gym.notification.controller;
 
 import com.example.gym.common.web.PageResponse;
+import com.example.gym.notification.NotificationService;
 import com.example.gym.notification.dto.AnnouncementView;
 import com.example.gym.notification.dto.CreateAnnouncement;
 import com.example.gym.notification.dto.OutboundView;

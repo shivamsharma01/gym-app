@@ -1,6 +1,7 @@
 package com.example.gym.notification.dto;
 
-import com.example.gym.notification.NotificationChannel;
+import com.example.gym.notification.channel.NotificationChannel;
+
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;

@@ -13,6 +13,9 @@ import com.example.gym.plan.PlanService;
 import com.example.gym.plan.PlanStatus;
 import com.example.gym.plan.MembershipPlanRepository;
 import com.example.gym.tenant.TenantGuard;
+
+import lombok.extern.slf4j.Slf4j;
+
 import com.example.gym.membership.MembershipChangedEvent.ChangeType;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -24,214 +27,319 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
- * Membership lifecycle: create, renew (preserving history), freeze/unfreeze (pausing validity),
- * and cancel. Device I/O is not performed here — a {@link MembershipChangedEvent} is published
- * in the same transaction so the outbox can enqueue authorization commands. Results stay
- * {@code NOT_SYNCED}/{@code PENDING} until the gateway reports {@code SYNC_RESULT}.
+ * Membership lifecycle: create, renew (preserving history), freeze/unfreeze
+ * (pausing validity), and cancel. Device I/O is not performed here — a
+ * {@link MembershipChangedEvent} is published in the same transaction so the
+ * outbox can enqueue authorization commands. Results stay
+ * {@code NOT_SYNCED}/{@code PENDING} until the gateway reports
+ * {@code SYNC_RESULT}.
  */
+@Slf4j
 @Service
 public class MembershipService {
 
-    private final MembershipRepository membershipRepository;
-    private final MembershipPlanRepository planRepository;
-    private final MemberService memberService;
-    private final PlanService planService;
-    private final AuditService auditService;
-    private final ApplicationEventPublisher eventPublisher;
+	private final MembershipRepository membershipRepository;
+	private final MembershipPlanRepository planRepository;
+	private final MemberService memberService;
+	private final PlanService planService;
+	private final AuditService auditService;
+	private final ApplicationEventPublisher eventPublisher;
 
-    public MembershipService(MembershipRepository membershipRepository,
-                             MembershipPlanRepository planRepository,
-                             MemberService memberService,
-                             PlanService planService,
-                             AuditService auditService,
-                             ApplicationEventPublisher eventPublisher) {
-        this.membershipRepository = membershipRepository;
-        this.planRepository = planRepository;
-        this.memberService = memberService;
-        this.planService = planService;
-        this.auditService = auditService;
-        this.eventPublisher = eventPublisher;
-    }
+	public MembershipService(MembershipRepository membershipRepository, MembershipPlanRepository planRepository,
+			MemberService memberService, PlanService planService, AuditService auditService,
+			ApplicationEventPublisher eventPublisher) {
+		this.membershipRepository = membershipRepository;
+		this.planRepository = planRepository;
+		this.memberService = memberService;
+		this.planService = planService;
+		this.auditService = auditService;
+		this.eventPublisher = eventPublisher;
+	}
 
-    @Transactional(readOnly = true)
-    public Membership getByPublicId(String publicId, Long tenantId) {
-        Membership membership = membershipRepository.findByPublicId(publicId)
-                .orElseThrow(() -> CommonExceptions.notFound("Membership"));
-        TenantGuard.check(membership.getTenantId(), tenantId, "Membership");
-        return membership;
-    }
+	@Transactional(readOnly = true)
+	public Membership getByPublicId(String publicId, Long tenantId) {
 
-    @Transactional(readOnly = true)
-    public List<Membership> listForMember(String memberPublicId, Long tenantId) {
-        Member member = memberService.getByPublicId(memberPublicId, tenantId);
-        return membershipRepository.findByMemberIdOrderByStartDateDesc(member.getId());
-    }
+		log.debug("Fetching membership: publicId={}, tenantId={}", publicId, tenantId);
 
-    @Transactional
-    public Membership create(CreateMembership request, Long tenantId) {
-        Member member = memberService.getByPublicId(request.memberId(), tenantId);
-        MembershipPlan plan = planService.requireActive(request.planId(), tenantId);
-        LocalDate start = request.startDate() != null ? request.startDate() : LocalDate.now();
-        LocalDate end = resolveEnd(start, request.endDate(), plan);
-        Membership membership = build(tenantId, member.getId(), plan, start, end);
-        Membership saved = membershipRepository.save(membership);
+		Membership membership = membershipRepository.findByPublicId(publicId)
+				.orElseThrow(() -> CommonExceptions.notFound("Membership"));
+		TenantGuard.check(membership.getTenantId(), tenantId, "Membership");
 
-        auditService.record(AuditActions.MEMBERSHIP_CREATED, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(),
-                Map.of("memberId", member.getPublicId(), "plan", plan.getName()));
-        publish(saved, ChangeType.CREATED);
-        return saved;
-    }
+		log.debug("Membership fetched successfully: publicId={}, tenantId={}", publicId, tenantId);
 
-    @Transactional
-    public Membership renew(String membershipPublicId, RenewMembership request, Long tenantId) {
-        Membership current = getByPublicId(membershipPublicId, tenantId);
-        MembershipPlan plan = resolveRenewalPlan(current, request.planId(), tenantId);
+		return membership;
+	}
 
-        LocalDate today = LocalDate.now();
-        LocalDate start;
-        if (request.startDate() != null) {
-            start = request.startDate();
-        } else {
-            start = current.getEndDate().isBefore(today) ? today : current.getEndDate().plusDays(1);
-        }
+	@Transactional(readOnly = true)
+	public List<Membership> listForMember(String memberPublicId, Long tenantId) {
 
-        // History is preserved: the old membership row is left untouched; a new one is created.
-        Membership renewal = build(tenantId, current.getMemberId(), plan, start,
-                start.plusDays(Math.max(plan.getDurationDays() - 1, 0)));
-        Membership saved = membershipRepository.save(renewal);
+		log.debug("Listing memberships for member: memberPublicId={}, tenantId={}", memberPublicId, tenantId);
 
-        auditService.record(AuditActions.MEMBERSHIP_RENEWED, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(),
-                Map.of("renewedFrom", current.getPublicId(), "plan", plan.getName()));
-        publish(saved, ChangeType.RENEWED);
-        return saved;
-    }
+		Member member = memberService.getByPublicId(memberPublicId, tenantId);
+		List<Membership> memberships = membershipRepository.findByMemberIdOrderByStartDateDesc(member.getId());
 
-    @Transactional
-    public Membership freeze(String membershipPublicId, Long tenantId) {
-        Membership membership = getByPublicId(membershipPublicId, tenantId);
-        LocalDate today = LocalDate.now();
-        if (membership.effectiveStatus(today) != MembershipStatus.ACTIVE) {
-            throw CommonExceptions.badRequest("Only an active membership can be frozen");
-        }
-        membership.setStatus(MembershipStatus.FROZEN);
-        membership.setFrozenOn(today);
-        Membership saved = membershipRepository.save(membership);
-        auditService.record(AuditActions.MEMBERSHIP_FROZEN, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(), null);
-        publish(saved, ChangeType.FROZEN);
-        return saved;
-    }
+		log.debug("Memberships fetched: memberPublicId={}, tenantId={}, count={}", memberPublicId, tenantId,
+				memberships.size());
 
-    @Transactional
-    public Membership unfreeze(String membershipPublicId, Long tenantId) {
-        Membership membership = getByPublicId(membershipPublicId, tenantId);
-        if (membership.getStatus() != MembershipStatus.FROZEN || membership.getFrozenOn() == null) {
-            throw CommonExceptions.badRequest("Membership is not frozen");
-        }
-        LocalDate today = LocalDate.now();
-        int frozenDays = (int) ChronoUnit.DAYS.between(membership.getFrozenOn(), today);
-        if (frozenDays > 0) {
-            // Extend validity by the frozen duration so members don't lose paid time.
-            membership.setEndDate(membership.getEndDate().plusDays(frozenDays));
-            membership.setFreezeDaysAccumulated(membership.getFreezeDaysAccumulated() + frozenDays);
-        }
-        membership.setFrozenOn(null);
-        membership.setStatus(today.isAfter(membership.getEndDate())
-                ? MembershipStatus.EXPIRED : MembershipStatus.ACTIVE);
-        Membership saved = membershipRepository.save(membership);
-        auditService.record(AuditActions.MEMBERSHIP_UNFROZEN, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(), Map.of("extendedDays", frozenDays));
-        publish(saved, ChangeType.UNFROZEN);
-        return saved;
-    }
+		return memberships;
+	}
 
-    @Transactional
-    public Membership cancel(String membershipPublicId, String reason, Long tenantId) {
-        Membership membership = getByPublicId(membershipPublicId, tenantId);
-        if (membership.getStatus() == MembershipStatus.CANCELLED) {
-            throw CommonExceptions.badRequest("Membership is already cancelled");
-        }
-        membership.setStatus(MembershipStatus.CANCELLED);
-        membership.setCancelledOn(LocalDate.now());
-        membership.setCancelReason(StringUtils.hasText(reason) ? reason : null);
-        Membership saved = membershipRepository.save(membership);
-        auditService.record(AuditActions.MEMBERSHIP_CANCELLED, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(), reason == null ? null : Map.of("reason", reason));
-        publish(saved, ChangeType.CANCELLED);
-        return saved;
-    }
+	@Transactional
+	public Membership create(CreateMembership request, Long tenantId) {
 
-    @Transactional
-    public Membership updateDates(String membershipPublicId, UpdateMembershipDates request, Long tenantId) {
-        Membership membership = getByPublicId(membershipPublicId, tenantId);
-        if (membership.getStatus() == MembershipStatus.CANCELLED
-                || membership.getStatus() == MembershipStatus.FROZEN) {
-            throw CommonExceptions.badRequest("Cannot change dates on a frozen or cancelled membership");
-        }
-        LocalDate start = request.startDate();
-        LocalDate end = request.endDate();
-        requireEndOnOrAfterStart(start, end);
-        membership.setStartDate(start);
-        membership.setEndDate(end);
-        LocalDate today = LocalDate.now();
-        if (start.isAfter(today)) {
-            membership.setStatus(MembershipStatus.PENDING);
-        } else if (today.isAfter(end)) {
-            membership.setStatus(MembershipStatus.EXPIRED);
-        } else {
-            membership.setStatus(MembershipStatus.ACTIVE);
-        }
-        Membership saved = membershipRepository.save(membership);
-        auditService.record(AuditActions.MEMBERSHIP_DATES_UPDATED, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(),
-                Map.of("startDate", start.toString(), "endDate", end.toString()));
-        publish(saved, ChangeType.DATES_UPDATED);
-        return saved;
-    }
+		log.info("Creating membership: memberPublicId={}, planPublicId={}, tenantId={}", request.memberId(),
+				request.planId(), tenantId);
+		Member member = memberService.getByPublicId(request.memberId(), tenantId);
+		MembershipPlan plan = planService.requireActive(request.planId(), tenantId);
+		LocalDate start = request.startDate() != null ? request.startDate() : LocalDate.now();
+		LocalDate end = resolveEnd(start, request.endDate(), plan);
+		Membership membership = build(tenantId, member.getId(), plan, start, end);
+		Membership saved = membershipRepository.save(membership);
 
-    private void publish(Membership membership, ChangeType type) {
-        eventPublisher.publishEvent(new MembershipChangedEvent(
-                membership.getTenantId(), membership.getMemberId(), membership.getId(), type));
-    }
+		log.info("Membership created successfully: publicId={}, memberId={}, tenantId={}", saved.getPublicId(),
+				member.getId(), tenantId);
 
-    private Membership build(Long tenantId, Long memberId, MembershipPlan plan, LocalDate start, LocalDate end) {
-        requireEndOnOrAfterStart(start, end);
-        LocalDate today = LocalDate.now();
-        MembershipStatus status = start.isAfter(today) ? MembershipStatus.PENDING : MembershipStatus.ACTIVE;
-        return new Membership(tenantId, memberId, plan.getId(), plan.getName(), plan.getPrice(),
-                plan.getCurrency(), start, end, status);
-    }
+		auditService.record(AuditActions.MEMBERSHIP_CREATED, AuditActions.RESULT_SUCCESS, "Membership",
+				saved.getPublicId(), Map.of("memberId", member.getPublicId(), "plan", plan.getName()));
+		publish(saved, ChangeType.CREATED);
+		return saved;
+	}
 
-    private static LocalDate resolveEnd(LocalDate start, LocalDate requestedEnd, MembershipPlan plan) {
-        if (requestedEnd != null) {
-            return requestedEnd;
-        }
-        return start.plusDays(Math.max(plan.getDurationDays() - 1, 0));
-    }
+	@Transactional
+	public Membership renew(String membershipPublicId, RenewMembership request, Long tenantId) {
 
-    private static void requireEndOnOrAfterStart(LocalDate start, LocalDate end) {
-        if (end.isBefore(start)) {
-            throw CommonExceptions.badRequest("End date must be on or after start date");
-        }
-    }
+		log.info("Renewing membership: publicId={}, requestedPlan={}, tenantId={}", membershipPublicId,
+				request.planId(), tenantId);
 
-    private MembershipPlan resolveRenewalPlan(Membership current, String requestedPlanPublicId,
-                                              Long tenantId) {
-        if (StringUtils.hasText(requestedPlanPublicId)) {
-            return planService.requireActive(requestedPlanPublicId, tenantId);
-        }
-        if (current.getPlanId() == null) {
-            throw CommonExceptions.badRequest("Original plan is unavailable; specify a plan to renew with");
-        }
-        MembershipPlan plan = planRepository.findById(current.getPlanId())
-                .filter(p -> p.getTenantId().equals(tenantId))
-                .orElseThrow(() -> CommonExceptions.badRequest(
-                        "Original plan is unavailable; specify a plan to renew with"));
-        if (plan.getStatus() != PlanStatus.ACTIVE) {
-            throw CommonExceptions.badRequest("Original plan is archived; specify a plan to renew with");
-        }
-        return plan;
-    }
+		Membership current = getByPublicId(membershipPublicId, tenantId);
+		MembershipPlan plan = resolveRenewalPlan(current, request.planId(), tenantId);
+
+		LocalDate today = LocalDate.now();
+		LocalDate start;
+		if (request.startDate() != null) {
+			start = request.startDate();
+		} else {
+			start = current.getEndDate().isBefore(today) ? today : current.getEndDate().plusDays(1);
+		}
+
+		// History is preserved: the old membership row is left untouched; a new one is
+		// created.
+
+		LocalDate end = start.plusDays(Math.max(plan.getDurationDays() - 1, 0));
+
+		log.debug("Renewal dates resolved: currentMembership={}, start={}, end={}, plan={}", membershipPublicId, start,
+				end, plan.getName());
+
+		Membership renewal = build(tenantId, current.getMemberId(), plan, start, end);
+		Membership saved = membershipRepository.save(renewal);
+
+		log.info("Membership renewed successfully: oldPublicId={}, newPublicId={}, tenantId={}", membershipPublicId,
+				saved.getPublicId(), tenantId);
+
+		auditService.record(AuditActions.MEMBERSHIP_RENEWED, AuditActions.RESULT_SUCCESS, "Membership",
+				saved.getPublicId(), Map.of("renewedFrom", current.getPublicId(), "plan", plan.getName()));
+		publish(saved, ChangeType.RENEWED);
+		return saved;
+	}
+
+	@Transactional
+	public Membership freeze(String membershipPublicId, Long tenantId) {
+
+		log.info("Freezing membership: publicId={}, tenantId={}", membershipPublicId, tenantId);
+
+		Membership membership = getByPublicId(membershipPublicId, tenantId);
+		LocalDate today = LocalDate.now();
+
+		MembershipStatus currentStatus = membership.effectiveStatus(today);
+		log.debug("Membership status before freeze: publicId={}, status={}", membershipPublicId, currentStatus);
+
+		if (membership.effectiveStatus(today) != MembershipStatus.ACTIVE) {
+			log.warn("Cannot freeze membership because it is not active: publicId={}, status={}", membershipPublicId,
+					currentStatus);
+			throw CommonExceptions.badRequest("Only an active membership can be frozen");
+		}
+		membership.setStatus(MembershipStatus.FROZEN);
+		membership.setFrozenOn(today);
+		Membership saved = membershipRepository.save(membership);
+
+		log.info("Membership frozen successfully: publicId={}, frozenOn={}, tenantId={}", saved.getPublicId(), today,
+				tenantId);
+		auditService.record(AuditActions.MEMBERSHIP_FROZEN, AuditActions.RESULT_SUCCESS, "Membership",
+				saved.getPublicId(), null);
+		publish(saved, ChangeType.FROZEN);
+		return saved;
+	}
+
+	@Transactional
+	public Membership unfreeze(String membershipPublicId, Long tenantId) {
+
+		log.info("Unfreezing membership: publicId={}, tenantId={}", membershipPublicId, tenantId);
+
+		Membership membership = getByPublicId(membershipPublicId, tenantId);
+		if (membership.getStatus() != MembershipStatus.FROZEN || membership.getFrozenOn() == null) {
+			log.warn("Cannot unfreeze membership because it is not frozen: publicId={}, status={}", membershipPublicId,
+					membership.getStatus());
+			throw CommonExceptions.badRequest("Membership is not frozen");
+		}
+		LocalDate today = LocalDate.now();
+		int frozenDays = (int) ChronoUnit.DAYS.between(membership.getFrozenOn(), today);
+
+		log.debug("Freeze duration calculated: publicId={}, frozenOn={}, today={}, frozenDays={}", membershipPublicId,
+				membership.getFrozenOn(), today, frozenDays);
+
+		if (frozenDays > 0) {
+			// Extend validity by the frozen duration so members don't lose paid time.
+			membership.setEndDate(membership.getEndDate().plusDays(frozenDays));
+			membership.setFreezeDaysAccumulated(membership.getFreezeDaysAccumulated() + frozenDays);
+		}
+		membership.setFrozenOn(null);
+		membership
+				.setStatus(today.isAfter(membership.getEndDate()) ? MembershipStatus.EXPIRED : MembershipStatus.ACTIVE);
+		Membership saved = membershipRepository.save(membership);
+
+		log.info("Membership unfrozen successfully: publicId={}, extendedDays={}, newEndDate={}, status={}",
+				saved.getPublicId(), frozenDays, saved.getEndDate(), saved.getStatus());
+
+		auditService.record(AuditActions.MEMBERSHIP_UNFROZEN, AuditActions.RESULT_SUCCESS, "Membership",
+				saved.getPublicId(), Map.of("extendedDays", frozenDays));
+		publish(saved, ChangeType.UNFROZEN);
+		return saved;
+	}
+
+	@Transactional
+	public Membership cancel(String membershipPublicId, String reason, Long tenantId) {
+
+		log.info("Cancelling membership: publicId={}, tenantId={}", membershipPublicId, tenantId);
+
+		Membership membership = getByPublicId(membershipPublicId, tenantId);
+		if (membership.getStatus() == MembershipStatus.CANCELLED) {
+			log.warn("Membership is already cancelled: publicId={}", membershipPublicId);
+			throw CommonExceptions.badRequest("Membership is already cancelled");
+		}
+		membership.setStatus(MembershipStatus.CANCELLED);
+		membership.setCancelledOn(LocalDate.now());
+		membership.setCancelReason(StringUtils.hasText(reason) ? reason : null);
+		Membership saved = membershipRepository.save(membership);
+
+		log.info("Membership cancelled successfully: publicId={}, cancelledOn={}, tenantId={}", saved.getPublicId(),
+				saved.getCancelledOn(), tenantId);
+		auditService.record(AuditActions.MEMBERSHIP_CANCELLED, AuditActions.RESULT_SUCCESS, "Membership",
+				saved.getPublicId(), reason == null ? null : Map.of("reason", reason));
+		publish(saved, ChangeType.CANCELLED);
+		return saved;
+	}
+
+	@Transactional
+	public Membership updateDates(String membershipPublicId, UpdateMembershipDates request, Long tenantId) {
+
+		log.info("Updating membership dates: publicId={}, tenantId={}", membershipPublicId, tenantId);
+
+		Membership membership = getByPublicId(membershipPublicId, tenantId);
+		if (membership.getStatus() == MembershipStatus.CANCELLED || membership.getStatus() == MembershipStatus.FROZEN) {
+
+			log.warn("Cannot update membership dates: publicId={}, status={}", membershipPublicId,
+					membership.getStatus());
+			throw CommonExceptions.badRequest("Cannot change dates on a frozen or cancelled membership");
+		}
+		LocalDate start = request.startDate();
+		LocalDate end = request.endDate();
+		requireEndOnOrAfterStart(start, end);
+		membership.setStartDate(start);
+		membership.setEndDate(end);
+		LocalDate today = LocalDate.now();
+		if (start.isAfter(today)) {
+			membership.setStatus(MembershipStatus.PENDING);
+		} else if (today.isAfter(end)) {
+			membership.setStatus(MembershipStatus.EXPIRED);
+		} else {
+			membership.setStatus(MembershipStatus.ACTIVE);
+		}
+		Membership saved = membershipRepository.save(membership);
+
+		log.info("Membership dates updated successfully: publicId={}, start={}, end={}, status={}", saved.getPublicId(),
+				saved.getStartDate(), saved.getEndDate(), saved.getStatus());
+
+		auditService.record(AuditActions.MEMBERSHIP_DATES_UPDATED, AuditActions.RESULT_SUCCESS, "Membership",
+				saved.getPublicId(), Map.of("startDate", start.toString(), "endDate", end.toString()));
+		publish(saved, ChangeType.DATES_UPDATED);
+		return saved;
+	}
+
+	private void publish(Membership membership, ChangeType type) {
+
+		log.debug("Publishing membership change event: publicId={}, memberId={}, tenantId={}, changeType={}",
+				membership.getPublicId(), membership.getMemberId(), membership.getTenantId(), type);
+
+		eventPublisher.publishEvent(new MembershipChangedEvent(membership.getTenantId(), membership.getMemberId(),
+				membership.getId(), type));
+	}
+
+	private Membership build(Long tenantId, Long memberId, MembershipPlan plan, LocalDate start, LocalDate end) {
+
+		log.debug("Building membership: tenantId={}, memberId={}, planId={}, start={}, end={}", tenantId, memberId,
+				plan.getId(), start, end);
+
+		requireEndOnOrAfterStart(start, end);
+		LocalDate today = LocalDate.now();
+		MembershipStatus status = start.isAfter(today) ? MembershipStatus.PENDING : MembershipStatus.ACTIVE;
+
+		log.debug("Membership status determined: memberId={}, status={}", memberId, status);
+
+		return new Membership(tenantId, memberId, plan.getId(), plan.getName(), plan.getPrice(), plan.getCurrency(),
+				start, end, status);
+	}
+
+	private static LocalDate resolveEnd(LocalDate start, LocalDate requestedEnd, MembershipPlan plan) {
+		if (requestedEnd != null) {
+			log.debug("Using requested membership end date: start={}, end={}", start, requestedEnd);
+			return requestedEnd;
+		}
+		LocalDate calculatedEnd = start.plusDays(Math.max(plan.getDurationDays() - 1, 0));
+
+		log.debug("Calculated membership end date from plan duration: start={}, durationDays={}, end={}", start,
+				plan.getDurationDays(), calculatedEnd);
+
+		return calculatedEnd;
+	}
+
+	private static void requireEndOnOrAfterStart(LocalDate start, LocalDate end) {
+		if (end.isBefore(start)) {
+			log.warn("Invalid membership dates: start={}, end={}", start, end);
+			throw CommonExceptions.badRequest("End date must be on or after start date");
+		}
+	}
+
+	private MembershipPlan resolveRenewalPlan(Membership current, String requestedPlanPublicId, Long tenantId) {
+
+		log.debug("Resolving renewal plan: membershipPublicId={}, requestedPlan={}, tenantId={}", current.getPublicId(),
+				requestedPlanPublicId, tenantId);
+
+		if (StringUtils.hasText(requestedPlanPublicId)) {
+
+			log.debug("Using explicitly requested renewal plan: membershipPublicId={}, planPublicId={}",
+					current.getPublicId(), requestedPlanPublicId);
+
+			return planService.requireActive(requestedPlanPublicId, tenantId);
+		}
+		if (current.getPlanId() == null) {
+
+			log.warn("Original plan unavailable for renewal: membershipPublicId={}", current.getPublicId());
+
+			throw CommonExceptions.badRequest("Original plan is unavailable; specify a plan to renew with");
+		}
+		MembershipPlan plan = planRepository.findById(current.getPlanId()).filter(p -> p.getTenantId().equals(tenantId))
+				.orElseThrow(() -> {
+					log.warn("Original plan not found for renewal: membershipPublicId={}, planId={}, tenantId={}",
+							current.getPublicId(), current.getPlanId(), tenantId);
+					return CommonExceptions.badRequest("Original plan is unavailable; specify a plan to renew with");
+				});
+		if (plan.getStatus() != PlanStatus.ACTIVE) {
+
+			log.warn("Original plan is not active for renewal: membershipPublicId={}, planId={}, status={}",
+					current.getPublicId(), plan.getId(), plan.getStatus());
+
+			throw CommonExceptions.badRequest("Original plan is archived; specify a plan to renew with");
+		}
+		return plan;
+	}
 }

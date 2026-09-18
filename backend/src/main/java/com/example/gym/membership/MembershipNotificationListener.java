@@ -14,6 +14,9 @@ import com.example.gym.notification.channel.NotificationChannel;
 import com.example.gym.notification.template.NotificationTemplateKeys;
 import com.example.gym.notification.utils.NotificationVariableBuilder;
 
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
 @Component
 public class MembershipNotificationListener {
 
@@ -34,19 +37,37 @@ public class MembershipNotificationListener {
 	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
 	public void onMembershipChanged(MembershipChangedEvent event) {
 
+		log.info("Membership notification event received: tenantId={}, memberId={}, membershipId={}, type={}",
+				event.tenantId(), event.memberId(), event.membershipId(), event.type());
+
 		Membership membership = membershipRepository.findById(event.membershipId()).orElse(null);
 
 		if (membership == null) {
+			log.warn("Membership notification skipped: membership not found. tenantId={}, membershipId={}",
+					event.tenantId(), event.membershipId());
 			return;
 		}
+
+		log.debug("Membership found for notification: membershipId={}, memberId={}, status={}", membership.getId(),
+				membership.getMemberId(), membership.getStatus());
 
 		Member member = memberRepository.findById(event.memberId()).orElse(null);
 
 		if (member == null) {
+
+			log.warn("Membership notification skipped: member not found. tenantId={}, memberId={}, membershipId={}",
+					event.tenantId(), event.memberId(), event.membershipId());
 			return;
 		}
 
+		log.debug("Member found for membership notification: memberId={}, membershipId={}, hasPhone={}, hasEmail={}",
+				member.getId(), membership.getId(), StringUtils.hasText(member.getPhone()),
+				StringUtils.hasText(member.getEmail()));
+
 		Map<String, Object> variables = variableBuilder.membershipVariables(member, membership);
+
+		log.debug("Membership notification variables built: tenantId={}, memberId={}, membershipId={}, variableKeys={}",
+				event.tenantId(), event.memberId(), event.membershipId(), variables.keySet());
 
 		String templateKey = switch (event.type()) {
 
@@ -63,21 +84,43 @@ public class MembershipNotificationListener {
 		case DATES_UPDATED -> NotificationTemplateKeys.MEMBERSHIP_DATES_UPDATED;
 		};
 
+		log.info(
+				"Membership notification template selected: tenantId={}, memberId={}, membershipId={}, eventType={}, templateKey={}",
+				event.tenantId(), event.memberId(), event.membershipId(), event.type(), templateKey);
+
 		send(event, member, templateKey, variables);
 	}
 
 	private void send(MembershipChangedEvent event, Member member, String templateKey, Map<String, Object> variables) {
 
-//		if (StringUtils.hasText(member.getEmail())) {
-//
-//			notificationService.queueAndDeliver(event.tenantId(), event.memberId(), NotificationChannel.EMAIL,
-//					templateKey, member.getEmail(), variables);
-//		}
+		if (!StringUtils.hasText(member.getPhone())) {
 
-		if (StringUtils.hasText(member.getPhone())) {
+			log.warn(
+					"Membership WhatsApp notification skipped: member has no phone. tenantId={}, memberId={}, membershipId={}, templateKey={}",
+					event.tenantId(), event.memberId(), event.membershipId(), templateKey);
 
-			notificationService.queueAndDeliver(event.tenantId(), event.memberId(),event.membershipId(), NotificationChannel.WHATSAPP,
-					templateKey, member.getPhone(), variables);
+			return;
+		}
+
+		log.info("Queueing membership WhatsApp notification: tenantId={}, memberId={}, membershipId={}, templateKey={}",
+				event.tenantId(), event.memberId(), event.membershipId(), templateKey);
+
+		try {
+
+			notificationService.queueAndDeliver(event.tenantId(), event.memberId(), event.membershipId(),
+					NotificationChannel.WHATSAPP, templateKey, member.getPhone(), variables);
+
+			log.info(
+					"Membership WhatsApp notification queued/delivered successfully: tenantId={}, memberId={}, membershipId={}, templateKey={}",
+					event.tenantId(), event.memberId(), event.membershipId(), templateKey);
+
+		} catch (Exception ex) {
+
+			log.error(
+					"Membership WhatsApp notification failed: tenantId={}, memberId={}, membershipId={}, templateKey={}, error={}",
+					event.tenantId(), event.memberId(), event.membershipId(), templateKey, ex.getMessage(), ex);
+
+			throw ex;
 		}
 	}
 }

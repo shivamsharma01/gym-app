@@ -6,6 +6,9 @@ import java.util.regex.Pattern;
 
 import com.example.gym.notification.outbound.OutboundNotification;
 
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
 public record WhatsAppTemplateRequest(String messaging_product, String to, String type, Template template) {
 
 	public record Template(String name, Language language, List<Component> components) {
@@ -37,8 +40,15 @@ public record WhatsAppTemplateRequest(String messaging_product, String to, Strin
 
 	public static WhatsAppTemplateRequest from(OutboundNotification notification) {
 
+		log.debug(
+				"Building WhatsApp template request: notificationId={}, tenantId={}, memberId={}, membershipId={}, templateKey={}",
+				notification.getPublicId(), notification.getTenantId(), notification.getMemberId(),
+				notification.getMembershipId(), notification.getTemplateKey());
+
 		if (notification.getWhatsappTemplateName() == null || notification.getWhatsappTemplateName().isBlank()) {
 
+			log.error("WhatsApp template name missing: notificationId={}, templateKey={}", notification.getPublicId(),
+					notification.getTemplateKey());
 			throw new IllegalStateException(
 					"WhatsApp template name is not configured for template " + notification.getTemplateKey());
 		}
@@ -71,6 +81,10 @@ public record WhatsAppTemplateRequest(String messaging_product, String to, Strin
 
 		List<Component> components = parameters.isEmpty() ? new ArrayList<>()
 				: new ArrayList<>(List.of(new Component("body", parameters)));
+
+		log.info("WhatsApp request prepared: notificationId={}, templateName={}, language={}, parameterCount={}",
+				notification.getPublicId(), notification.getWhatsappTemplateName(), language, parameters.size());
+
 		return new WhatsAppTemplateRequest("whatsapp", normalizePhoneNumber(notification.getRecipient()), "template",
 				new Template(notification.getWhatsappTemplateName(), new Language(language), components));
 	}
@@ -88,20 +102,32 @@ public record WhatsAppTemplateRequest(String messaging_product, String to, Strin
 		 *
 		 * This method is intentionally empty until parameter storage is added.
 		 */
+		log.debug("No WhatsApp template parameters extracted: notificationId={}, templateKey={}",
+				notification.getPublicId(), notification.getTemplateKey());
+
 		return List.of();
 	}
 
 	private static String normalizePhoneNumber(String phone) {
 
 		if (phone == null || phone.isBlank()) {
+
+			log.error("WhatsApp recipient phone number is missing");
+
 			throw new IllegalArgumentException("WhatsApp recipient phone number is required");
 		}
 
-		/*
-		 * Meta expects the phone number in international format, generally without '+'.
-		 *
-		 * Example: +919876543210 -> 919876543210
-		 */
-		return phone.trim().replaceAll("[^0-9]", "");
+		String normalized = phone.trim().replaceAll("[^0-9]", "");
+
+		if (normalized.isBlank()) {
+
+			log.error("WhatsApp recipient phone number contains no digits");
+
+			throw new IllegalArgumentException("WhatsApp recipient phone number is invalid");
+		}
+
+		log.debug("WhatsApp phone number normalized successfully");
+
+		return normalized;
 	}
 }

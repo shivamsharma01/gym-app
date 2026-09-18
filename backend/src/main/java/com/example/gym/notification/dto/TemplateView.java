@@ -4,16 +4,11 @@ import java.time.Instant;
 
 import com.example.gym.notification.template.NotificationTemplate;
 
-public record TemplateView(
-        String id,
-        String templateKey,
-        String channel,
-        String subject,
-        String body,
-        Instant createdAt) {
+public record TemplateView(String id, String templateKey, String channel, String subject, String body,
+		Instant createdAt) {
 
-    public static TemplateView from(NotificationTemplate t) {
-        return new TemplateView(t.getPublicId(), t.getTemplateKey(), t.getChannel().name(),
-                t.getSubject(), t.getBody(), t.getCreatedAt());
-    }
+	public static TemplateView from(NotificationTemplate t) {
+		return new TemplateView(t.getPublicId(), t.getTemplateKey(), t.getChannel().name(), t.getSubject(), t.getBody(),
+				t.getCreatedAt());
+	}
 }

@@ -10,11 +10,11 @@ import lombok.Setter;
 @Setter
 public class WhatsAppProperties {
 
-    private String baseUrl = "https://graph.facebook.com";
+	private String baseUrl = "https://graph.facebook.com";
 
-    private String apiVersion;
+	private String apiVersion;
 
-    private String phoneNumberId;
+	private String phoneNumberId;
 
-    private String accessToken;
+	private String accessToken;
 }

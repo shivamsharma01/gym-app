@@ -13,6 +13,9 @@ import com.example.gym.member.Member;
 import com.example.gym.membership.Membership;
 import com.example.gym.platform.PlatformTenantService;
 
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
 @Component
 public class NotificationVariableBuilder {
 
@@ -25,6 +28,9 @@ public class NotificationVariableBuilder {
 
 	public Map<String, Object> membershipVariables(Member member, Membership membership) {
 
+		log.info("Building membership variables for memberCode={}, membershipPlan={}", member.getMemberCode(),
+				membership.getPlanName());
+
 		LocalDate today = LocalDate.now();
 
 		long daysRemaining = ChronoUnit.DAYS.between(today, membership.getEndDate());
@@ -32,7 +38,7 @@ public class NotificationVariableBuilder {
 		String fullName = Stream.of(member.getFirstName(), member.getLastName()).filter(StringUtils::hasText)
 				.collect(Collectors.joining(" "));
 
-		return Map.ofEntries(Map.entry("memberName", fullName),
+		Map<String, Object> variables = Map.ofEntries(Map.entry("memberName", fullName),
 
 				Map.entry("memberCode", member.getMemberCode()),
 
@@ -53,5 +59,9 @@ public class NotificationVariableBuilder {
 				Map.entry("amountPaid", membership.getAmountPaid()),
 
 				Map.entry("membershipStatus", membership.effectiveStatus(today).name()));
+
+		log.info("Membership variables built successfully for memberCode={}", member.getMemberCode());
+
+		return variables;
 	}
 }

@@ -7,7 +7,9 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,12 +42,19 @@ import com.example.gym.settings.GymProfileRepository;
 import com.example.gym.tenant.Tenant;
 import com.example.gym.tenant.TenantGuard;
 import com.example.gym.tenant.TenantRepository;
+import com.example.gym.tenant.TenantStatus;
 
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
 public class NotificationService {
+
+	@Value("${notification.scheduler.max-retry-attempts:3}")
+	private int maxRetryAttempts;
+
+	@Value("${notification.scheduler.batch-size:50}")
+	private int batchSize;
 
 	private final NotificationTemplateRepository templateRepository;
 	private final OutboundNotificationRepository outboundRepository;
@@ -444,7 +453,7 @@ public class NotificationService {
 		log.info("Starting expiry reminder job for all tenants");
 
 		int total = 0;
-		List<Tenant> tenants = tenantRepository.findAll();
+		List<Tenant> tenants = tenantRepository.findByStatus(TenantStatus.ACTIVE);
 
 		log.info("Tenants found for expiry reminder job: count={}", tenants.size());
 
@@ -475,7 +484,7 @@ public class NotificationService {
 		log.info("Starting failed notification retry job for all tenants");
 
 		int totalRetried = 0;
-		List<Tenant> tenants = tenantRepository.findAll();
+		List<Tenant> tenants = tenantRepository.findByStatus(TenantStatus.ACTIVE);
 
 		for (Tenant tenant : tenants) {
 			log.info("Retrying failed notifications for tenant: tenantId={}, tenantName={}", tenant.getId(),
@@ -504,14 +513,13 @@ public class NotificationService {
 		log.info("Starting failed notification retry: tenantId={}", tenantId);
 
 		requireTenant(tenantId);
-
-		int maxAttempts = 3;
+		PageRequest pageLimit = PageRequest.of(0, this.batchSize);
 
 		List<OutboundNotification> failed = outboundRepository.findByTenantIdAndStatusAndAttemptCountLessThan(tenantId,
-				NotificationStatus.FAILED, maxAttempts);
+				NotificationStatus.FAILED, this.maxRetryAttempts, pageLimit);
 
-		log.info("Failed notifications eligible for retry: tenantId={}, count={}, maxAttempts={}", tenantId,
-				failed.size(), maxAttempts);
+		log.info("Failed notifications eligible for retry: tenantId={}, count={}, maxAttempts={}, batchSize={}",
+				tenantId, failed.size(), this.maxRetryAttempts, this.batchSize);
 
 		int retried = 0;
 

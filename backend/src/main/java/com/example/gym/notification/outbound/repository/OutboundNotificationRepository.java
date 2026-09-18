@@ -27,7 +27,7 @@ public interface OutboundNotificationRepository extends JpaRepository<OutboundNo
 			NotificationChannel channel);
 
 	List<OutboundNotification> findByTenantIdAndStatusAndAttemptCountLessThan(Long tenantId, NotificationStatus status,
-			int maxAttempts);
+			int maxAttempts,Pageable pageable);
 
 	boolean existsByTenantIdAndMemberIdAndTemplateKeyAndChannelAndBody(Long tenantId, Long id, String announcement,
 			NotificationChannel whatsapp, String body);

@@ -31,6 +31,7 @@ public enum PermissionCatalog {
     AUDIT_VIEW("View audit log"),
     SETTINGS_MANAGE("Manage settings"),
     ENQUIRY_VIEW("View public enquiries"),
+    MEMBERSHIP_DISCOUNT_APPROVE("Approve membership discounts"),
     ENQUIRY_MANAGE("Update public enquiries");
 
     private final String description;

@@ -7,6 +7,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
@@ -75,6 +76,50 @@ public class Membership extends TenantAwareEntity {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    @Column(name = "discount_amount", nullable = false, precision = 12, scale = 2)
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
+    @Column(name = "discount_approved_by_user_id")
+    private Long discountApprovedByUserId;
+
+    @Column(name = "discount_approved_by_username", length = 100)
+    private String discountApprovedByUsername;
+
+    public BigDecimal getDiscountAmount() {
+        return discountAmount;
+    }
+
+    public void setDiscountAmount(BigDecimal discountAmount) {
+        this.discountAmount = discountAmount;
+    }
+
+    public Long getDiscountApprovedByUserId() {
+        return discountApprovedByUserId;
+    }
+
+    public void setDiscountApprovedByUserId(Long discountApprovedByUserId) {
+        this.discountApprovedByUserId = discountApprovedByUserId;
+    }
+
+    public String getDiscountApprovedByUsername() {
+        return discountApprovedByUsername;
+    }
+
+    public void setDiscountApprovedByUsername(String discountApprovedByUsername) {
+        this.discountApprovedByUsername = discountApprovedByUsername;
+    }
+
+    public Instant getDiscountApprovedAt() {
+        return discountApprovedAt;
+    }
+
+    public void setDiscountApprovedAt(Instant discountApprovedAt) {
+        this.discountApprovedAt = discountApprovedAt;
+    }
+
+    @Column(name = "discount_approved_at")
+    private Instant discountApprovedAt;
 
     protected Membership() {
     }
@@ -243,5 +288,9 @@ public class Membership extends TenantAwareEntity {
 
     public void setDeletedAt(LocalDateTime deletedAt) {
         this.deletedAt = deletedAt;
+    }
+
+    public BigDecimal getNetAmount() {
+        return price.subtract(discountAmount).max(BigDecimal.ZERO);
     }
 }

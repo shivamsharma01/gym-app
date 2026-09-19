@@ -1,8 +1,5 @@
-import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { z } from 'zod'
+import { useState } from 'react'
 import { ConfirmDialog } from '@/components/Dialog'
 import { QueryError } from '@/components/QueryError'
 import {
@@ -22,61 +19,17 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
-import type { Member, Membership, PageResponse, Payment } from '@/lib/types'
-
-const schema = z.object({
-  amount: z.string().min(1, 'Required'),
-  currency: z.string().length(3),
-  method: z.string(),
-  reference: z.string().optional(),
-  paidOn: z.string().optional(),
-  notes: z.string().optional(),
-  membershipId: z.string().optional(),
-})
-
-type Form = z.infer<typeof schema>
+import type { PageResponse, Payment } from '@/lib/types'
 
 export function PaymentsPage() {
   const { has } = useAuth()
   const qc = useQueryClient()
   const [page, setPage] = useState(0)
-  const [member, setMember] = useState<Member | null>(null)
   const [refundId, setRefundId] = useState<string | null>(null)
   const payments = useQuery({
     queryKey: ['payments', page],
     queryFn: () => api<PageResponse<Payment>>(`/api/v1/payments?page=${page}&size=20`),
   })
-  const form = useForm<Form>({
-    resolver: zodResolver(schema),
-    defaultValues: { amount: '', currency: 'INR', method: 'CASH', reference: '', paidOn: '', notes: '', membershipId: '' },
-  })
-  const memberships = useQuery({
-    queryKey: ['memberships', member?.id],
-    queryFn: () => api<Membership[]>(`/api/v1/members/${member!.id}/memberships`),
-    enabled: Boolean(member),
-  })
-  const membershipId = form.watch('membershipId')
-  const selectedMembership = memberships.data?.find((m) => m.id === membershipId)
-
-
-  useEffect(() => {
-    if (!member) {
-      form.setValue('membershipId', '')
-      form.setValue('amount', '')
-      form.setValue('currency', 'INR')
-      return
-    }
-    if (!memberships.data) return
-    const unpaid = memberships.data.find((m) => m.status !== 'CANCELLED' && m.paymentStatus !== 'PAID')
-    form.setValue('membershipId', unpaid?.id ?? '')
-  }, [member, memberships.data, form])
-
-  useEffect(() => {
-    if (!selectedMembership) return
-    const remaining = Number(selectedMembership.price) - Number(selectedMembership.amountPaid)
-    if (remaining > 0) form.setValue('amount', remaining.toFixed(2))
-    form.setValue('currency', selectedMembership.currency)
-  }, [selectedMembership, form])
 
   const refund = useMutation({
     mutationFn: (id: string) => api<Payment>(`/api/v1/payments/${id}/refund`, { method: 'POST' }),

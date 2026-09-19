@@ -12,6 +12,10 @@ import java.time.Instant;
  * A device gateway process running on a gym LAN. It is the only component that speaks the native
  * SDK; it connects outbound to the backend over WSS. The backend stores no device credentials —
  * those live with the gateway on the LAN.
+ *
+ * <p>Staff create a gateway and receive a one-time enrollment token. The Windows agent exchanges
+ * that for a long-lived operational credential ({@code tokenHash}), which may be rotated via
+ * {@code nextTokenHash} without locking the agent out.
  */
 @Entity
 @Table(name = "gateway")
@@ -33,9 +37,25 @@ public class Gateway extends TenantAwareEntity {
     @Column(name = "agent_version", length = 40)
     private String agentVersion;
 
-    /** SHA-256 hex of the gateway's authentication token. The plaintext is shown once at create. */
+    /** SHA-256 hex of the current operational credential. Placeholder until first enrollment. */
     @Column(name = "token_hash", nullable = false, length = 64)
     private String tokenHash;
+
+    @Column(name = "enrollment_token_hash", length = 64)
+    private String enrollmentTokenHash;
+
+    @Column(name = "enrollment_expires_at")
+    private Instant enrollmentExpiresAt;
+
+    @Column(name = "enrollment_consumed_at")
+    private Instant enrollmentConsumedAt;
+
+    @Column(name = "token_expires_at")
+    private Instant tokenExpiresAt;
+
+    /** SHA-256 hex of a pending rotated credential; promoted on first successful auth with it. */
+    @Column(name = "next_token_hash", length = 64)
+    private String nextTokenHash;
 
     protected Gateway() {
     }
@@ -89,5 +109,49 @@ public class Gateway extends TenantAwareEntity {
 
     public String getTokenHash() {
         return tokenHash;
+    }
+
+    public void setTokenHash(String tokenHash) {
+        this.tokenHash = tokenHash;
+    }
+
+    public String getEnrollmentTokenHash() {
+        return enrollmentTokenHash;
+    }
+
+    public void setEnrollmentTokenHash(String enrollmentTokenHash) {
+        this.enrollmentTokenHash = enrollmentTokenHash;
+    }
+
+    public Instant getEnrollmentExpiresAt() {
+        return enrollmentExpiresAt;
+    }
+
+    public void setEnrollmentExpiresAt(Instant enrollmentExpiresAt) {
+        this.enrollmentExpiresAt = enrollmentExpiresAt;
+    }
+
+    public Instant getEnrollmentConsumedAt() {
+        return enrollmentConsumedAt;
+    }
+
+    public void setEnrollmentConsumedAt(Instant enrollmentConsumedAt) {
+        this.enrollmentConsumedAt = enrollmentConsumedAt;
+    }
+
+    public Instant getTokenExpiresAt() {
+        return tokenExpiresAt;
+    }
+
+    public void setTokenExpiresAt(Instant tokenExpiresAt) {
+        this.tokenExpiresAt = tokenExpiresAt;
+    }
+
+    public String getNextTokenHash() {
+        return nextTokenHash;
+    }
+
+    public void setNextTokenHash(String nextTokenHash) {
+        this.nextTokenHash = nextTokenHash;
     }
 }

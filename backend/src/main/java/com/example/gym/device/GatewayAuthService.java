@@ -8,18 +8,20 @@ import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
- * Per-gateway authentication (Phase 3 decision): each gateway is issued a random token at create
- * time. Only the SHA-256 hash is stored. An optional deployment-wide shared token can also be
- * accepted. Tokens are never logged.
+ * Per-gateway authentication: operational credentials (and pending rotated credentials) are stored
+ * only as SHA-256 hashes. An optional deployment-wide shared token can also be accepted for the
+ * local simulator. Enrollment tokens are never accepted here — use {@link GatewayCredentialService}.
+ * Tokens are never logged.
  */
 @Service
 public class GatewayAuthService {
 
     public enum Kind {
-        /** Identified a specific gateway via its per-gateway token. */
+        /** Identified a specific gateway via its operational (or just-promoted) credential. */
         GATEWAY,
         /** Deployment shared token (or anonymous-dev) — gateway id is bound on REGISTER. */
         SHARED
@@ -54,11 +56,24 @@ public class GatewayAuthService {
         }
     }
 
+    /**
+     * Authenticates a presented operational credential. Matching {@code next_token_hash} promotes
+     * that hash to current (rotation confirm) within this transaction.
+     */
+    @Transactional
     public Optional<Outcome> authenticate(String presented) {
         if (StringUtils.hasText(presented)) {
-            Optional<Gateway> byHash = gatewayRepository.findByTokenHash(hash(presented));
+            String hashed = hash(presented);
+            Optional<Gateway> byHash = gatewayRepository.findByTokenHash(hashed);
             if (byHash.isPresent()) {
                 return Optional.of(new Outcome(Kind.GATEWAY, byHash.get()));
+            }
+            Optional<Gateway> byNext = gatewayRepository.findByNextTokenHash(hashed);
+            if (byNext.isPresent()) {
+                Gateway gateway = byNext.get();
+                gateway.setTokenHash(hashed);
+                gateway.setNextTokenHash(null);
+                return Optional.of(new Outcome(Kind.GATEWAY, gatewayRepository.save(gateway)));
             }
             String shared = properties.getSharedToken();
             if (StringUtils.hasText(shared) && constantTimeEquals(shared, presented)) {

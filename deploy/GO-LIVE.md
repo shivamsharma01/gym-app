@@ -44,27 +44,20 @@ Disable with `APP_RATE_LIMIT_ENABLED=false` only for local debugging. For multi-
 
 ## 4. Windows TrueFace gateway cutover
 
-The device gateway is **not** in Docker. Run it on the gym LAN Windows PC.
+The device gateway is **not** in Docker. Install it on the gym LAN Windows PC.
 
 1. Stop Interactive Attendance (IAS) completely (no tray residual).
-2. In staff UI: create a Gateway, copy token; create/register the Device with LAN IP `37777`.
-3. On the Windows PC (with `gateway/` + `native/win-x64`):
-
-```bat
-set GYM_BACKEND=https://gym.example.com
-set GYM_GATEWAY_ID=...
-set GYM_GATEWAY_TOKEN=...
-set GYM_ADAPTER=TrueFace
-set GYM_DEVICE_ID=...
-set GYM_DEVICE_IP=192.168.x.x
-set GYM_DEVICE_PORT=37777
-set GYM_DEVICE_USERNAME=admin
-set GYM_DEVICE_PASSWORD=...
-dotnet run --project src\Gym.Gateway -c Release
-```
-
-4. Confirm backend shows gateway online / heartbeats; never run IAS and gateway together.
+2. In staff UI: create a **Gateway** (and devices with LAN IPs). Copy the **one-time enrollment token** shown at create (or **Reissue enrollment** if replacing a PC). Token TTL is ~24 hours; it is **not** the long-lived service credential.
+3. Install `GymGateway-*-win-x64.msi` from CI (`gateway-msi` workflow). Run **Gym Gateway Configurator** as Administrator:
+   - Backend URL (e.g. `https://gym.example.com`), Gateway ID, enrollment token → Enroll
+   - Confirm device IPs / ports / tablet passwords → optional TrueFace connect test
+   - Save config & start service (DPAPI config under `%ProgramData%\GymGateway\`)
+4. Confirm backend shows gateway online / heartbeats; never run IAS and the Gym Gateway service together.
 5. Enroll members via staff UI; prefer on-device face enroll until remote INSERT is validated on more devices ([PRODUCT-FOLLOWUPS.md](../docs/PRODUCT-FOLLOWUPS.md)).
+
+**Dev-only alternative** (no MSI): env vars + `dotnet run` / published `Gym.Gateway.exe` with an **operational** credential from `POST /internal/gateway/enroll` (not the enrollment token after consume).
+
+Linux hosts can run `gateway/scripts/publish-win.sh` to cross-publish the worker; they **cannot** build the MSI or WPF configurator.
 
 ## 5. Checklist
 
@@ -73,5 +66,5 @@ dotnet run --project src\Gym.Gateway -c Release
 - [ ] Bootstrap password cleared after first SUPER_ADMIN
 - [ ] TLS terminated; CORS locked
 - [ ] MySQL not public
-- [ ] Gateway dials `wss://…/gateway` with per-gateway token
+- [ ] Gateway dials `wss://…/gateway` with per-gateway **operational** credential (enrolled via MSI configurator)
 - [ ] IAS stopped on cutover day

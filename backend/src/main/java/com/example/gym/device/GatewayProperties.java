@@ -22,6 +22,12 @@ public class GatewayProperties {
      */
     private boolean simulatorEnabled = false;
 
+    /** How long a one-time enrollment token remains usable after gateway create/reissue. */
+    private Duration enrollmentTtl = Duration.ofHours(24);
+
+    /** Lifetime of an operational gateway credential after enroll or rotate. */
+    private Duration credentialTtl = Duration.ofDays(90);
+
     private final Outbox outbox = new Outbox();
 
     public String getSharedToken() {
@@ -46,6 +52,22 @@ public class GatewayProperties {
 
     public void setSimulatorEnabled(boolean simulatorEnabled) {
         this.simulatorEnabled = simulatorEnabled;
+    }
+
+    public Duration getEnrollmentTtl() {
+        return enrollmentTtl;
+    }
+
+    public void setEnrollmentTtl(Duration enrollmentTtl) {
+        this.enrollmentTtl = enrollmentTtl;
+    }
+
+    public Duration getCredentialTtl() {
+        return credentialTtl;
+    }
+
+    public void setCredentialTtl(Duration credentialTtl) {
+        this.credentialTtl = credentialTtl;
     }
 
     public Outbox getOutbox() {

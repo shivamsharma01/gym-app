@@ -5,6 +5,7 @@ import { ConfirmDialog } from '@/components/Dialog'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, EmptyState, Input, Label, PageHeader, Select, Skeleton } from '@/components/ui'
 import { api } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { STAFF_ROLES } from '@/lib/catalog'
 import { statusTone } from '@/lib/status'
 import type { PageResponse } from '@/lib/types'
@@ -25,6 +26,7 @@ function roleLabel(name: string) {
 }
 
 export function UsersPage() {
+  const { user: current } = useAuth()
   const qc = useQueryClient()
   const users = useQuery({
     queryKey: ['users'],
@@ -92,7 +94,7 @@ export function UsersPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge tone={statusTone(u.status)}>{u.status}</Badge>
-                  {u.status === 'ACTIVE' ? (
+                  {u.status === 'ACTIVE' && u.id !== current?.id ? (
                     <Button variant="danger" size="sm" onClick={() => setDisableId(u.id)}>
                       Disable
                     </Button>

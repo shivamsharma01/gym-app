@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="Gym Gateway"
+           Manufacturer="Gym"
+           Version="$(ProductVersion)"
+           UpgradeCode="A7C3E9F1-4B2D-4E8A-9C1F-6D5A8B0E2F34"
+           Scope="perMachine"
+           Language="1033">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Gym Gateway is already installed."
+                  Schedule="afterInstallInitialize" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Leave ProgramData config on uninstall unless PURGE_CONFIG=1 -->
+    <Property Id="PURGE_CONFIG" Value="0" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Gym Gateway" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="GatewayDataFolder" Name="GymGateway">
+        <Directory Id="GatewayLogsFolder" Name="logs" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Gym Gateway" Level="1">
+      <ComponentGroupRef Id="GatewayPayload" />
+      <ComponentRef Id="GatewayService" />
+      <ComponentRef Id="GatewayDataDirs" />
+    </Feature>
+
+    <!-- All published files except the service binary (owned by GatewayService component) -->
+    <ComponentGroup Id="GatewayPayload" Directory="INSTALLFOLDER">
+      <Files Include="!(bindpath.PublishDir)**">
+        <Exclude Files="!(bindpath.PublishDir)Gym.Gateway.exe" />
+        <Exclude Files="!(bindpath.PublishDir)**\*.pdb" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="GatewayService" Directory="INSTALLFOLDER" Guid="C2D3E4F5-6789-4ABC-DEF0-1234567890AB">
+      <File Id="GatewayExe" Source="!(bindpath.PublishDir)Gym.Gateway.exe" KeyPath="yes">
+        <ServiceInstall Id="GymGatewayServiceInstall"
+                        Name="Gym Gateway"
+                        DisplayName="Gym Gateway"
+                        Description="Gym device gateway connecting TrueFace tablets to the backend."
+                        Start="auto"
+                        Type="ownProcess"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Vital="yes" />
+        <ServiceControl Id="GymGatewayServiceControl"
+                        Name="Gym Gateway"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+      </File>
+      <util:ServiceConfig ServiceName="Gym Gateway"
+                          FirstFailureActionType="restart"
+                          SecondFailureActionType="restart"
+                          ThirdFailureActionType="restart"
+                          RestartServiceDelayInSeconds="5" />
+    </Component>
+
+    <Component Id="GatewayDataDirs" Directory="GatewayDataFolder" Guid="B1C2D3E4-5F67-489A-BCDE-F01234567890">
+      <CreateFolder>
+        <util:PermissionEx User="Users" GenericRead="yes" GenericWrite="yes" />
+        <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+      </CreateFolder>
+      <RemoveFolder Id="RemoveGatewayDataOnUninstall" On="uninstall" Condition="PURGE_CONFIG=&quot;1&quot;" />
+      <RegistryValue Root="HKLM" Key="Software\Gym\Gateway" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+  </Package>
+</Wix>

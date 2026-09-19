@@ -1,7 +1,9 @@
 package com.example.gym;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -96,5 +98,59 @@ class Phase9IT extends AbstractIntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void superAdminCanSetGymStaffPasswordWithoutOldPassword() throws Exception {
+        String created = mockMvc.perform(post("/api/v1/platform/tenants")
+                        .header("Authorization", "Bearer " + superToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name":"Reset Gym","slug":"reset-gym","displayName":"Reset",
+                                  "ownerUsername":"resetowner","ownerEmail":"reset@gym.local",
+                                  "ownerFullName":"Reset Owner","ownerPassword":"Password123!"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String tenantId = jsonMapper.readTree(created).get("tenant").get("id").asString();
+
+        mockMvc.perform(get("/api/v1/platform/tenants/" + tenantId + "/users")
+                        .header("Authorization", "Bearer " + superToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.username=='resetowner')]").exists());
+
+        mockMvc.perform(put("/api/v1/platform/tenants/" + tenantId + "/users/resetowner/password")
+                        .header("Authorization", "Bearer " + superToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"newPassword\":\"HandedOver123!\"}"))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usernameOrEmail\":\"resetowner\",\"password\":\"Password123!\"}"))
+                .andExpect(status().isUnauthorized());
+        tokenForWithPassword("resetowner", "HandedOver123!");
+    }
+
+    @Test
+    void superAdminCannotDisableOwnAccount() throws Exception {
+        String me = mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer " + superToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String id = jsonMapper.readTree(me).get("id").asString();
+        mockMvc.perform(delete("/api/v1/users/" + id).header("Authorization", "Bearer " + superToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("your own account")));
+    }
+
+    private String tokenForWithPassword(String username, String password) throws Exception {
+        String body = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usernameOrEmail\":\"" + username + "\",\"password\":\"" + password + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return jsonMapper.readTree(body).get("accessToken").asString();
     }
 }

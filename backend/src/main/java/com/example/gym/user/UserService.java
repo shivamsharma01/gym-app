@@ -4,6 +4,7 @@ import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.auth.RefreshTokenRepository;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.security.SecurityUtils;
 import com.example.gym.security.domain.Role;
 import com.example.gym.security.domain.RoleRepository;
 import com.example.gym.tenant.Tenant;
@@ -119,12 +120,73 @@ public class UserService {
     @Transactional
     public void disable(String publicId, Long currentTenantId) {
         AdminUser user = getByPublicId(publicId, currentTenantId);
+        if (user.getId().equals(SecurityUtils.currentUserId())) {
+            throw CommonExceptions.badRequest("You cannot disable your own account");
+        }
         user.setStatus(UserStatus.DISABLED);
         userRepository.save(user);
         // Revoke active sessions immediately.
         refreshTokenRepository.revokeAllForUser(user.getId());
         auditService.record(AuditActions.USER_DISABLED, AuditActions.RESULT_SUCCESS,
                 "AdminUser", user.getPublicId(), null);
+    }
+
+    @Transactional
+    public void changeOwnPassword(Long userId, String currentPassword, String newPassword) {
+        AdminUser user = userRepository.findById(userId)
+                .orElseThrow(() -> CommonExceptions.unauthorized("No authenticated user"));
+        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            throw CommonExceptions.badRequest("Current password is incorrect");
+        }
+        if (passwordEncoder.matches(newPassword, user.getPasswordHash())) {
+            throw CommonExceptions.badRequest("New password must be different from the current password");
+        }
+        applyPassword(user, newPassword);
+        auditService.record(AuditActions.USER_PASSWORD_CHANGED, AuditActions.RESULT_SUCCESS,
+                "AdminUser", user.getPublicId(), null);
+    }
+
+    /**
+     * Sets a gym staff password without knowing the old one. Platform callers may target any tenant
+     * user; gym callers may only target users in their own tenant. Platform SUPER_ADMIN accounts
+     * (no tenant) cannot be reset this way.
+     */
+    @Transactional
+    public AdminUser resetPassword(String publicId, String newPassword, Long currentTenantId) {
+        AdminUser user = getByPublicId(publicId, currentTenantId);
+        if (user.getTenantId() == null) {
+            throw CommonExceptions.badRequest("Platform accounts cannot be reset this way");
+        }
+        if (user.getId().equals(SecurityUtils.currentUserId())) {
+            throw CommonExceptions.badRequest("Use your profile to change your own password");
+        }
+        applyPassword(user, newPassword);
+        auditService.record(AuditActions.USER_PASSWORD_SET, AuditActions.RESULT_SUCCESS,
+                "AdminUser", user.getPublicId(), Map.of("username", user.getUsername()));
+        return user;
+    }
+
+    @Transactional(readOnly = true)
+    public List<AdminUser> listStaffForTenant(String tenantPublicId) {
+        Tenant tenant = tenantRepository.findByPublicId(tenantPublicId)
+                .orElseThrow(() -> CommonExceptions.notFound("Tenant"));
+        return userRepository.findByTenantIdOrderByUsernameAsc(tenant.getId());
+    }
+
+    @Transactional(readOnly = true)
+    public AdminUser getByTenantAndUsername(String tenantPublicId, String username) {
+        Tenant tenant = tenantRepository.findByPublicId(tenantPublicId)
+                .orElseThrow(() -> CommonExceptions.notFound("Tenant"));
+        return userRepository.findByTenantIdAndUsername(tenant.getId(), username)
+                .orElseThrow(() -> CommonExceptions.notFound("User"));
+    }
+
+    private void applyPassword(AdminUser user, String rawPassword) {
+        user.setPasswordHash(passwordEncoder.encode(rawPassword));
+        user.setFailedLoginAttempts(0);
+        user.setLockedUntil(null);
+        userRepository.save(user);
+        refreshTokenRepository.revokeAllForUser(user.getId());
     }
 
     private Long resolveTargetTenant(String requestedTenantPublicId, Long currentTenantId) {

@@ -143,7 +143,10 @@ export type Gateway = {
   createdAt: string
 }
 
-export type GatewayCreated = Gateway & { token: string }
+export type GatewayCreated = Gateway & {
+  token: string
+  enrollmentExpiresAt: string | null
+}
 
 export type SyncCommand = {
   id: string

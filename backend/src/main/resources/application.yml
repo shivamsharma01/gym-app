@@ -58,9 +58,11 @@ app:
     allowed-origins: ${APP_CORS_ORIGINS:http://localhost:5173}
   gateway:
     # Per-deployment shared token the device gateway may present at the WSS handshake
-    # (optional; per-gateway tokens issued at create time are preferred).
+    # (optional; per-gateway operational credentials after enrollment are preferred).
     shared-token: ${APP_GATEWAY_SHARED_TOKEN:}
     heartbeat-timeout-seconds: 90
+    enrollment-ttl: ${APP_GATEWAY_ENROLLMENT_TTL:PT24H}
+    credential-ttl: ${APP_GATEWAY_CREDENTIAL_TTL:P90D}
     # In-process mock gateway. Never enable in production — it is not hardware.
     simulator-enabled: ${APP_GATEWAY_SIMULATOR_ENABLED:false}
     outbox:

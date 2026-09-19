@@ -50,7 +50,14 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         gatewayId = readJson(createdGateway).get("id").asString();
-        gatewayToken = readJson(createdGateway).get("token").asString();
+        String enrollmentToken = readJson(createdGateway).get("token").asString();
+        String enrolled = mockMvc.perform(post("/internal/gateway/enroll")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"gatewayId\":\"" + gatewayId + "\",\"enrollmentToken\":\""
+                                + enrollmentToken + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        gatewayToken = readJson(enrolled).get("credential").asString();
 
         String createdDevice = postJson("/api/v1/devices",
                 "{\"name\":\"Entrance\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.10\",\"port\":37777,"

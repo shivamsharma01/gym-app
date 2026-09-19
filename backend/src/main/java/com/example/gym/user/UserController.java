@@ -4,6 +4,7 @@ import com.example.gym.common.web.PageResponse;
 import com.example.gym.security.SecurityUtils;
 import com.example.gym.user.dto.AssignRolesRequest;
 import com.example.gym.user.dto.CreateUserRequest;
+import com.example.gym.user.dto.SetPasswordRequest;
 import com.example.gym.user.dto.UpdateUserRequest;
 import com.example.gym.user.dto.UserResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -83,5 +84,12 @@ public class UserController {
     @Operation(summary = "Disable an admin user and revoke their sessions")
     public void disable(@PathVariable String id) {
         userService.disable(id, SecurityUtils.currentTenantId());
+    }
+
+    @PutMapping("/{id}/password")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Set a staff password without the old one (tenant-scoped)")
+    public void resetPassword(@PathVariable String id, @Valid @RequestBody SetPasswordRequest request) {
+        userService.resetPassword(id, request.newPassword(), SecurityUtils.currentTenantId());
     }
 }

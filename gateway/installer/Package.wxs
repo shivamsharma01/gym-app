@@ -31,6 +31,7 @@
       <ComponentGroupRef Id="GatewayPayload" />
       <ComponentRef Id="GatewayService" />
       <ComponentRef Id="GatewayDataDirs" />
+      <ComponentRef Id="GatewayDataPurge" />
     </Feature>
 
     <!-- All published files except the service binary (owned by GatewayService component) -->
@@ -42,23 +43,22 @@
     </ComponentGroup>
 
     <Component Id="GatewayService" Directory="INSTALLFOLDER" Guid="C2D3E4F5-6789-4ABC-DEF0-1234567890AB">
-      <File Id="GatewayExe" Source="!(bindpath.PublishDir)Gym.Gateway.exe" KeyPath="yes">
-        <ServiceInstall Id="GymGatewayServiceInstall"
-                        Name="Gym Gateway"
-                        DisplayName="Gym Gateway"
-                        Description="Gym device gateway connecting TrueFace tablets to the backend."
-                        Start="auto"
-                        Type="ownProcess"
-                        ErrorControl="normal"
-                        Account="LocalSystem"
-                        Vital="yes" />
-        <ServiceControl Id="GymGatewayServiceControl"
-                        Name="Gym Gateway"
-                        Start="install"
-                        Stop="both"
-                        Remove="uninstall"
-                        Wait="yes" />
-      </File>
+      <File Id="GatewayExe" Source="!(bindpath.PublishDir)Gym.Gateway.exe" KeyPath="yes" />
+      <ServiceInstall Id="GymGatewayServiceInstall"
+                      Name="Gym Gateway"
+                      DisplayName="Gym Gateway"
+                      Description="Gym device gateway connecting TrueFace tablets to the backend."
+                      Start="auto"
+                      Type="ownProcess"
+                      ErrorControl="normal"
+                      Account="LocalSystem"
+                      Vital="yes" />
+      <ServiceControl Id="GymGatewayServiceControl"
+                      Name="Gym Gateway"
+                      Start="install"
+                      Stop="both"
+                      Remove="uninstall"
+                      Wait="yes" />
       <util:ServiceConfig ServiceName="Gym Gateway"
                           FirstFailureActionType="restart"
                           SecondFailureActionType="restart"
@@ -71,8 +71,14 @@
         <util:PermissionEx User="Users" GenericRead="yes" GenericWrite="yes" />
         <util:PermissionEx User="SYSTEM" GenericAll="yes" />
       </CreateFolder>
-      <RemoveFolder Id="RemoveGatewayDataOnUninstall" On="uninstall" Condition="PURGE_CONFIG=&quot;1&quot;" />
       <RegistryValue Root="HKLM" Key="Software\Gym\Gateway" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- Only remove ProgramData when msiexec sets PURGE_CONFIG=1 -->
+    <Component Id="GatewayDataPurge" Directory="GatewayDataFolder" Guid="D3E4F5A6-7890-4BCD-EF01-234567890ABC"
+               Condition="PURGE_CONFIG=&quot;1&quot;">
+      <RemoveFolder Id="RemoveGatewayDataOnUninstall" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="Software\Gym\Gateway" Name="PurgeMarker" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
   </Package>

@@ -3,6 +3,8 @@ package com.example.gym.membership.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /** Request payloads for membership lifecycle operations. */
@@ -17,7 +19,8 @@ public final class MembershipRequests {
             /** Optional; defaults to today. */
             LocalDate startDate,
             /** Optional; defaults to start plus the plan duration (inclusive). */
-            LocalDate endDate) {
+            LocalDate endDate,
+            BigDecimal discountAmount) {
     }
 
     public record UpdateMembershipDates(
@@ -30,7 +33,8 @@ public final class MembershipRequests {
             @NotBlank String planId,
             /** Optional; defaults to the day after the current end date (or today if already past). */
             @NotNull LocalDate startDate,
-            @NotNull LocalDate endDate) {
+            @NotNull LocalDate endDate,
+            BigDecimal discountAmount) {
     }
 
     public record CancelMembership(

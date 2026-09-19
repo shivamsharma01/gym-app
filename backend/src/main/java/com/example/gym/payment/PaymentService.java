@@ -125,7 +125,7 @@ public class PaymentService {
         membership.setAmountPaid(paid);
         if (paid.signum() <= 0) {
             membership.setPaymentStatus(MembershipPaymentStatus.UNPAID);
-        } else if (paid.compareTo(membership.getPrice()) >= 0) {
+        } else if (paid.compareTo(membership.getNetAmount()) >= 0) {
             membership.setPaymentStatus(MembershipPaymentStatus.PAID);
         } else {
             membership.setPaymentStatus(MembershipPaymentStatus.PARTIAL);

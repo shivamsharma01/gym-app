@@ -37,6 +37,9 @@ public final class AuditActions {
 
     // Phase 3: device integration
     public static final String GATEWAY_REGISTERED = "GATEWAY_REGISTERED";
+    public static final String GATEWAY_ENROLLED = "GATEWAY_ENROLLED";
+    public static final String GATEWAY_ENROLLMENT_REISSUED = "GATEWAY_ENROLLMENT_REISSUED";
+    public static final String GATEWAY_CREDENTIAL_ROTATED = "GATEWAY_CREDENTIAL_ROTATED";
     public static final String DEVICE_CREATED = "DEVICE_CREATED";
     public static final String DEVICE_UPDATED = "DEVICE_UPDATED";
     public static final String DEVICE_MAPPING_CREATED = "DEVICE_MAPPING_CREATED";

@@ -1,0 +1,83 @@
+<Window x:Class="Gym.Gateway.Configurator.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Gym Gateway Configurator"
+        Height="720" Width="920"
+        MinHeight="560" MinWidth="760"
+        WindowStartupLocation="CenterScreen">
+  <DockPanel Margin="16">
+    <TextBlock DockPanel.Dock="Top" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,12"
+               Text="Gym Gateway setup"/>
+    <TextBlock DockPanel.Dock="Bottom" x:Name="StatusText" TextWrapping="Wrap" Margin="0,12,0,0"
+               Text="Run as Administrator. Enter the one-time enrollment token from the staff UI."/>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <GroupBox Header="1. Enroll with backend" Padding="12" Margin="0,0,0,12">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="140"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Label Grid.Row="0" Grid.Column="0" Content="Backend URL"/>
+            <TextBox Grid.Row="0" Grid.Column="1" x:Name="BackendUrlBox"/>
+
+            <Label Grid.Row="1" Grid.Column="0" Content="Gateway ID"/>
+            <TextBox Grid.Row="1" Grid.Column="1" x:Name="GatewayIdBox"/>
+
+            <Label Grid.Row="2" Grid.Column="0" Content="Enrollment token"/>
+            <PasswordBox Grid.Row="2" Grid.Column="1" x:Name="EnrollmentTokenBox"/>
+
+            <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,4,0,0">
+              <Button Content="Enroll" Click="Enroll_Click"/>
+              <Button Content="Refresh devices" Click="RefreshDevices_Click"/>
+            </StackPanel>
+          </Grid>
+        </GroupBox>
+
+        <GroupBox Header="2. Devices (LAN)" Padding="12" Margin="0,0,0,12">
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
+              <Button Content="Test TrueFace connect" Click="TestConnect_Click"/>
+            </StackPanel>
+            <DataGrid x:Name="DevicesGrid"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False"
+                      HeadersVisibility="Column"
+                      MinHeight="180"
+                      SelectionMode="Single">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Device ID" Binding="{Binding DeviceId}" IsReadOnly="True" Width="160"/>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" IsReadOnly="True" Width="120"/>
+                <DataGridTextColumn Header="Role" Binding="{Binding Role}" IsReadOnly="True" Width="80"/>
+                <DataGridTextColumn Header="IP" Binding="{Binding Ip, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
+                <DataGridTextColumn Header="Port" Binding="{Binding Port, UpdateSourceTrigger=PropertyChanged}" Width="70"/>
+                <DataGridTextColumn Header="Username" Binding="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Width="100"/>
+                <DataGridTextColumn Header="Password" Binding="{Binding Password, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+              </DataGrid.Columns>
+            </DataGrid>
+          </DockPanel>
+        </GroupBox>
+
+        <GroupBox Header="3. Save &amp; service" Padding="12">
+          <StackPanel>
+            <TextBlock x:Name="ServiceStatusText" Margin="0,0,0,8" Text="Service: —"/>
+            <StackPanel Orientation="Horizontal">
+              <Button Content="Save config &amp; start service" Click="SaveAndStart_Click"/>
+              <Button Content="Refresh status" Click="RefreshStatus_Click"/>
+            </StackPanel>
+            <TextBlock Margin="0,8,0,0" Opacity="0.75" TextWrapping="Wrap"
+                       Text="Config is written to %ProgramData%\GymGateway\config.json with LocalMachine DPAPI. Credentials are never shown again after enroll."/>
+          </StackPanel>
+        </GroupBox>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</Window>

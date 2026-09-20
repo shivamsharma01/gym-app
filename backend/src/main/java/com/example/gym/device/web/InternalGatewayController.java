@@ -6,7 +6,12 @@ import com.example.gym.device.GatewayAuthService.Kind;
 import com.example.gym.device.GatewayAuthService.Outcome;
 import com.example.gym.device.GatewayCommandPollService;
 import com.example.gym.device.GatewayMessageService;
+import com.example.gym.device.GatewayService;
 import com.example.gym.device.domain.Gateway;
+import com.example.gym.device.dto.DeviceResponses.DeviceView;
+import com.example.gym.device.dto.GatewayCredentialResponse;
+import com.example.gym.device.dto.GatewayEnrollRequest;
+import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -20,23 +25,47 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST fallback of the gateway protocol (ingest + command poll). Authenticated with the same
- * per-gateway token as the WSS handshake — never a user JWT. Used by the local simulator.
+ * REST fallback of the gateway protocol (ingest + command poll) plus enrollment and credential
+ * rotation. Authenticated with the per-gateway operational credential (or enrollment for enroll)
+ * — never a user JWT.
  */
 @RestController
 @RequestMapping("/internal/gateway")
 public class InternalGatewayController {
 
     private final GatewayAuthService authService;
+    private final GatewayService gatewayService;
     private final GatewayMessageService messageService;
     private final GatewayCommandPollService pollService;
 
     public InternalGatewayController(GatewayAuthService authService,
+                                     GatewayService gatewayService,
                                      GatewayMessageService messageService,
                                      GatewayCommandPollService pollService) {
         this.authService = authService;
+        this.gatewayService = gatewayService;
         this.messageService = messageService;
         this.pollService = pollService;
+    }
+
+    @PostMapping(value = "/enroll", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public GatewayCredentialResponse enroll(@Valid @RequestBody GatewayEnrollRequest request) {
+        return gatewayService.enroll(request.gatewayId(), request.enrollmentToken());
+    }
+
+    @PostMapping(value = "/credentials/rotate", produces = MediaType.APPLICATION_JSON_VALUE)
+    public GatewayCredentialResponse rotate(
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        Gateway gateway = requireBoundGateway(authorization);
+        return gatewayService.rotate(gateway);
+    }
+
+    @GetMapping(value = "/devices", produces = MediaType.APPLICATION_JSON_VALUE)
+    public List<DeviceView> devices(
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        Gateway gateway = requireBoundGateway(authorization);
+        return gatewayService.listDevicesForGateway(gateway);
     }
 
     @PostMapping(value = "/messages", consumes = MediaType.APPLICATION_JSON_VALUE,
@@ -52,11 +81,16 @@ public class InternalGatewayController {
     @GetMapping("/commands")
     public List<Map<String, Object>> poll(
             @RequestHeader(value = "Authorization", required = false) String authorization) {
+        Gateway gateway = requireBoundGateway(authorization);
+        return pollService.claimDue(gateway);
+    }
+
+    private Gateway requireBoundGateway(String authorization) {
         Gateway gateway = requireGateway(authorization);
         if (gateway == null) {
-            throw CommonExceptions.unauthorized("Per-gateway token required to poll commands");
+            throw CommonExceptions.unauthorized("Per-gateway credential required");
         }
-        return pollService.claimDue(gateway);
+        return gateway;
     }
 
     /** @return the bound gateway, or null when authenticated via the deployment shared token. */

@@ -23,6 +23,12 @@ public sealed class GatewayOptions
 
     public string? NativeDirectory { get; set; }
 
+    /// <summary>When the operational credential expires (UTC). Null when using env-only / permanent legacy tokens.</summary>
+    public DateTimeOffset? CredentialExpiresAt { get; set; }
+
+    /// <summary>Renew when now &gt; expiresAt - renewBefore. Default 7 days.</summary>
+    public TimeSpan RenewBefore { get; set; } = TimeSpan.FromDays(7);
+
     public List<DeviceEndpointOptions> Devices { get; set; } = [];
 
     public void OverlayEnvironment(IDictionary<string, string?> env)

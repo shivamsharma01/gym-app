@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export function QueryError({ error }: { error: unknown }) {
+export function QueryError({ error, onRetry: _onRetry }: { error: unknown; onRetry?: () => void }) {
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {

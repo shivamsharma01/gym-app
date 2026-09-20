@@ -44,6 +44,7 @@ const schema = z.object({
 })
 
 const months = [
+  { value: 0, label: 'All Months' },
   { value: 1, label: 'April' },
   { value: 2, label: 'May' },
   { value: 3, label: 'June' },
@@ -161,62 +162,51 @@ export function PaymentsPage() {
   )
 
   /*
-   * Determine the actual calendar year for
-   * the selected month.
+   * Selected payment period.
    *
-   * Financial year:
-   *
-   * April 2026 -> selectedYear = 2026
-   * May 2026   -> selectedYear = 2026
-   * ...
-   * December 2026 -> selectedYear = 2026
-   *
-   * January 2027 -> selectedYear + 1
-   * February 2027 -> selectedYear + 1
-   * March 2027 -> selectedYear + 1
+   * selectedMonth = 0 means "All Months", so the
+   * complete selected financial year is used.
    */
   const selectedCalendarMonth =
-      selectedMonth <= 9
-          ? selectedMonth + 3
-          : selectedMonth - 9
+      selectedMonth === 0
+          ? null
+          : selectedMonth <= 9
+              ? selectedMonth + 3
+              : selectedMonth - 9
 
   const selectedCalendarYear =
-      selectedMonth <= 9
-          ? selectedYear
-          : selectedYear + 1
+      selectedMonth === 0
+          ? null
+          : selectedMonth <= 9
+              ? selectedYear
+              : selectedYear + 1
 
-  /*
-   * JS Date uses:
-   *
-   * January = 0
-   * February = 1
-   * ...
-   * December = 11
-   */
-
-  const monthStartDate = new Date(
-      selectedCalendarYear,
-      selectedCalendarMonth - 1,
-      1,
-  )
-
-  const monthEndDate = new Date(
-      selectedCalendarYear,
-      selectedCalendarMonth,
-      0,
-  )
+  const monthEndDate =
+      selectedCalendarMonth && selectedCalendarYear
+          ? new Date(
+              selectedCalendarYear,
+              selectedCalendarMonth,
+              0,
+            )
+          : null
 
   const monthStart =
-      `${selectedCalendarYear}-${String(
-          selectedCalendarMonth,
-      ).padStart(2, '0')}-01`
+      selectedCalendarMonth && selectedCalendarYear
+          ? `${selectedCalendarYear}-${String(
+              selectedCalendarMonth,
+          ).padStart(2, '0')}-01`
+          : `${selectedYear}-04-01`
 
   const monthEnd =
-      `${selectedCalendarYear}-${String(
-          selectedCalendarMonth,
-      ).padStart(2, '0')}-${String(
-          monthEndDate.getDate(),
-      ).padStart(2, '0')}`
+      selectedCalendarMonth &&
+      selectedCalendarYear &&
+      monthEndDate
+          ? `${selectedCalendarYear}-${String(
+              selectedCalendarMonth,
+          ).padStart(2, '0')}-${String(
+              monthEndDate.getDate(),
+          ).padStart(2, '0')}`
+          : `${selectedYear + 1}-03-31`
 
   /*
    * Financial year date range.
@@ -271,8 +261,9 @@ export function PaymentsPage() {
   /*
    * Payment list.
    *
-   * Only payments belonging to the selected
-   * financial-year month are displayed.
+   * The table always follows the selected financial year
+   * and month. When "All Months" is selected, the complete
+   * financial year is displayed.
    */
   const payments = useQuery({
     queryKey: [
@@ -280,6 +271,8 @@ export function PaymentsPage() {
       page,
       selectedYear,
       selectedMonth,
+      monthStart,
+      monthEnd,
     ],
 
     queryFn: () =>
@@ -492,12 +485,16 @@ export function PaymentsPage() {
           selectedYear + 1,
       ).slice(-2)}`
 
+  const selectedPeriodLabel =
+      selectedMonth === 0
+          ? selectedFinancialYear
+          : `${selectedMonthLabel} ${selectedCalendarYear}`
+
   return (
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
         <div>
           <PageHeader
               title="Payments"
-              description="Recorded against members. Refunds require PAYMENT_CREATE."
           />
 
           {/* ================================================== */}
@@ -593,12 +590,13 @@ export function PaymentsPage() {
           <Card className="mb-6">
             <div className="mb-4">
               <h2 className="text-sm font-semibold">
-                Monthly Payment Summary
+                {selectedMonth === 0
+                    ? 'Financial Year Payment Summary'
+                    : 'Monthly Payment Summary'}
               </h2>
 
               <p className="mt-1 text-xs text-muted">
-                {selectedMonthLabel}{' '}
-                {selectedCalendarYear}
+                {selectedPeriodLabel}
               </p>
             </div>
 
@@ -773,7 +771,7 @@ export function PaymentsPage() {
           payments.data.content.length === 0 ? (
               <EmptyState
                   title="No payments"
-                  body={`No payments recorded for ${selectedMonthLabel} ${selectedCalendarYear}.`}
+                  body={`No payments recorded for ${selectedPeriodLabel}.`}
               />
           ) : null}
 

@@ -41,11 +41,14 @@ public class PaymentController {
     @Operation(summary = "List payments (most recent first)")
     public PageResponse<PaymentResponse> list(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) LocalDate from,
+            @RequestParam(required = false) LocalDate to) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize);
         return PageResponse.from(
-                paymentService.list(SecurityUtils.currentTenantId(), pageable), PaymentResponse::from);
+                paymentService.list(SecurityUtils.currentTenantId(), pageable, from, to),
+                PaymentResponse::from);
     }
 
     @GetMapping("/members/{memberId}/payments")

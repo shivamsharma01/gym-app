@@ -50,8 +50,30 @@ public class PaymentService {
     }
 
     @Transactional(readOnly = true)
-    public Page<Payment> list(Long tenantId, Pageable pageable) {
-        return paymentRepository.findByTenantIdOrderByPaidOnDescIdDesc(tenantId, pageable);
+    public Page<Payment> list(
+            Long tenantId,
+            Pageable pageable,
+            LocalDate from,
+            LocalDate to) {
+
+        if (from == null && to == null) {
+            return paymentRepository.findByTenantIdOrderByPaidOnDescIdDesc(
+                    tenantId, pageable);
+        }
+
+        if (from == null || to == null) {
+            throw CommonExceptions.badRequest(
+                    "from and to dates must be provided together");
+        }
+
+        if (from.isAfter(to)) {
+            throw CommonExceptions.badRequest(
+                    "from date cannot be after to date");
+        }
+
+        return paymentRepository
+                .findByTenantIdAndPaidOnBetweenOrderByPaidOnDescIdDesc(
+                        tenantId, from, to, pageable);
     }
 
     @Transactional(readOnly = true)

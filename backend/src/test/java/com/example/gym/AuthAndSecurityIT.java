@@ -1,8 +1,10 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -71,6 +73,44 @@ class AuthAndSecurityIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.username").value("acme-admin"))
                 .andExpect(jsonPath("$.roles[0]").value("GYM_ADMIN"))
                 .andExpect(jsonPath("$.permissions").isArray());
+    }
+
+    @Test
+    void userCanChangeOwnPasswordWithCurrentPassword() throws Exception {
+        String token = login("acme-admin", DEFAULT_PASSWORD);
+        mockMvc.perform(post("/api/v1/me/password")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"currentPassword":"wrong-old","newPassword":"NewPassword123!"}
+                                """))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/api/v1/me/password")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"currentPassword":"Password123!","newPassword":"NewPassword123!"}
+                                """))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody("acme-admin", DEFAULT_PASSWORD)))
+                .andExpect(status().isUnauthorized());
+        login("acme-admin", "NewPassword123!");
+    }
+
+    @Test
+    void adminCannotDisableOwnAccount() throws Exception {
+        String token = login("acme-admin", DEFAULT_PASSWORD);
+        String me = mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String id = jsonMapper.readTree(me).get("id").asString();
+        mockMvc.perform(delete("/api/v1/users/" + id).header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("your own account")));
     }
 
     @Test

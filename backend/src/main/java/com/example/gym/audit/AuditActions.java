@@ -16,6 +16,8 @@ public final class AuditActions {
     public static final String USER_UPDATED = "USER_UPDATED";
     public static final String USER_DISABLED = "USER_DISABLED";
     public static final String USER_ROLES_CHANGED = "USER_ROLES_CHANGED";
+    public static final String USER_PASSWORD_CHANGED = "USER_PASSWORD_CHANGED";
+    public static final String USER_PASSWORD_SET = "USER_PASSWORD_SET";
 
     // Phase 2: business domain
     public static final String PLAN_CREATED = "PLAN_CREATED";

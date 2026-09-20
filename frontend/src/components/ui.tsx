@@ -67,7 +67,10 @@ export function Label({
   return (
     <label
       htmlFor={htmlFor}
-      className={cn('mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-muted', className)}
+      className={cn(
+        'mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-muted',
+        className,
+      )}
     >
       {children}
     </label>

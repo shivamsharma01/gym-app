@@ -5,7 +5,7 @@ import type { UserSummary } from '@/lib/types'
 
 type AuthContextValue = {
   user: UserSummary | null
-  login: (usernameOrEmail: string, password: string) => Promise<void>
+  login: (usernameOrEmail: string, password: string) => Promise<UserSummary>
   logout: () => Promise<void>
   has: (permission: string) => boolean
 }
@@ -32,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const tokens = await loginRequest(usernameOrEmail, password)
         setTokens(tokens.accessToken, tokens.refreshToken)
         setUser(tokens.user)
+        return tokens.user
       },
       logout: async () => {
         await logoutRequest()

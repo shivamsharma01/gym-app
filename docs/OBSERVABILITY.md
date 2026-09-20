@@ -26,14 +26,14 @@ We keep Actuator on the **application port** (not a separate management port).
 | Endpoint | Access | Why |
 |----------|--------|-----|
 | `/actuator/health` (+ `/liveness`, `/readiness`) | Public | Compose healthcheck + external uptime monitors |
-| `/actuator/info` | `ROLE_SUPER_ADMIN` | Build/app metadata |
-| `/actuator/metrics` (+ metric names) | `ROLE_SUPER_ADMIN` | JVM, HTTP, Hikari |
-| `/actuator/threaddump` | `ROLE_SUPER_ADMIN` | Occasional thread diagnosis |
+| `/actuator/info` | `ROLE_SUPER_ADMIN` | Build/app metadata — platform SPA **Operations console** |
+| `/actuator/metrics` (+ metric names) | `ROLE_SUPER_ADMIN` | JVM, HTTP, Hikari — platform SPA |
+| `/actuator/threaddump` | `ROLE_SUPER_ADMIN` | Thread diagnosis — platform SPA |
 | `/actuator/env`, `configprops`, `heapdump`, `loggers`, `shutdown` | **denyAll + not exposed** | Secrets / heavy dumps |
 
 `show-details` / `show-components` = `when_authorized` — anonymous health returns status only.
 
-**nginx** proxies only `/actuator/health`. SUPER_ADMIN diagnostics: SSH tunnel or hit backend port on the VPS privately (`BACKEND_PORT`), never publish metrics through the public SPA proxy.
+**nginx** proxies `/actuator/` (Authorization forwarded). SUPER_ADMIN uses the React **Actuator** page at `/app/platform/actuator`. Gym staff and anonymous callers still get 401/403 from Spring for non-health endpoints.
 
 ## Metrics (Micrometer via Actuator)
 

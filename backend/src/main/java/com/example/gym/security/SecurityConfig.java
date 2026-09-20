@@ -28,8 +28,10 @@ import tools.jackson.databind.json.JsonMapper;
  * protection is not applicable and is disabled deliberately (bearer tokens are immune to CSRF).
  * All authorization is enforced server-side via method security ({@code @PreAuthorize}).
  *
- * <p>Actuator: {@code /actuator/health/**} is public (minimal details). All other actuator
- * endpoints require {@code ROLE_SUPER_ADMIN}. Same application port; no separate management port.
+ * <p>Actuator: {@code /actuator/health/**} is public (minimal details). {@code info},
+ * {@code metrics}, and {@code threaddump} require {@code ROLE_SUPER_ADMIN} (proxied via nginx
+ * for the platform SPA). Sensitive endpoints ({@code heapdump}, {@code env}, …) are denyAll.
+ * Same application port; no separate management port.
  */
 @Configuration
 @EnableMethodSecurity

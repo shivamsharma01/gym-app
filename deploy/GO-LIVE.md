@@ -1,37 +1,54 @@
-# Go-live runbook (UI + backend + MySQL + gym gateway)
+# Go-live runbook (Cloudflare SPA + VPS API + MySQL + gym gateway)
 
-## 1. Full Docker stack
+## 1. VPS API stack (no React on the VPS)
 
 ```bash
 cp deploy/.env.example deploy/.env
 # Required: APP_SECURITY_JWT_SECRET=$(openssl rand -base64 48)
 # First boot only: APP_BOOTSTRAP_SUPERADMIN_PASSWORD='your-strong-password'
-# Optional: APP_BOOTSTRAP_SUPERADMIN_USERNAME / EMAIL
+# APP_CORS_ORIGINS=http://localhost:5173 (same-origin prod SPA needs little/no CORS)
+# Edit deploy/nginx.conf server_name to your customer hostnames
 
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile full up -d --build
 ```
 
-- SPA: http://localhost:8088  
-- After first login as SUPER_ADMIN, **remove** `APP_BOOTSTRAP_SUPERADMIN_PASSWORD` from `deploy/.env` and recreate the backend container so the secret is not left in env.
+- API edge: Nginx proxies `/api/`, `/live`, `/gateway`, `/actuator/` → Spring Boot
+- Backend is bound to `127.0.0.1:8080` by default — not public
+- After first SUPER_ADMIN login, **remove** `APP_BOOTSTRAP_SUPERADMIN_PASSWORD` and recreate the backend container
+
+### Same-origin SPA (required for multi-domain SaaS)
+
+Build the React app with **empty** `VITE_API_BASE` (default). One production bundle works on every
+customer hostname (`gym.kainazi.co.in`, `gym.heavyreps.in`, …) because the browser calls:
+
+- `https://<customer-host>/api/...`
+- `wss://<customer-host>/live`
+- `https://<customer-host>/actuator/...` (SUPER_ADMIN UI)
+
+**Cloudflare** terminates public TLS and must route backend paths to the VPS origin while serving
+static assets from Pages/Workers (Workers route / Cloudflare path rules), for example:
+
+| Browser path | Origin |
+|--------------|--------|
+| `/`, `/app/*`, `/g/*`, assets | Cloudflare Pages |
+| `/api/*`, `/live`, `/gateway`, `/actuator/*` | VPS Nginx → Spring Boot |
+
+Flow: `Browser → Cloudflare (HTTPS) → Nginx on VPS → Spring Boot (HTTP on Docker network)`.
+
+Do **not** bake `https://api.kainazi.co.in` (or any API hostname) into the SPA. Optional local SPA
+container: `--profile spa` with empty `VITE_API_BASE`.
+
+Tenant resolution stays JWT-based on the backend — do not add hostname/header tenant overrides in the SPA.
 
 ## 2. TLS (production)
 
 Do not expose MySQL (`3306`) or raw backend (`8080`) on the public internet.
 
-Put a reverse proxy (Caddy, nginx, Traefik, cloud LB) in front of the SPA container (or terminate TLS and proxy to nginx `:80`):
-
-- HTTPS → frontend container
-- Forward `X-Forwarded-Proto`, `X-Forwarded-For`, `Host`
-- WebSocket upgrade for `/live` and `/gateway`
-- Set `APP_CORS_ORIGINS` to the real `https://…` origin(s)
-
-Example Caddy sketch:
-
-```
-gym.example.com {
-  reverse_proxy frontend:80
-}
-```
+1. Point DNS for customer hostnames (e.g. `gym.kainazi.co.in`, `gym.heavyreps.in`) through Cloudflare to the VPS origin used for API paths.
+2. Use real `server_name` values in [`nginx.conf`](nginx.conf) — not `server_name _`.
+3. Prefer Cloudflare Universal SSL for the public hostname; on the VPS use HTTP from Cloudflare to Nginx (Flexible) **or** Full (strict) with [`nginx.api.https.conf.example`](nginx.api.https.conf.example).
+4. Same-origin SPA → API does not need CORS. Keep `APP_CORS_ORIGINS` for local Vite (`http://localhost:5173`) and any intentional cross-origin clients.
+5. WebSocket upgrade for `/live` and `/gateway` is already configured on the edge.
 
 ## 3. Rate limits
 
@@ -47,8 +64,9 @@ Disable with `APP_RATE_LIMIT_ENABLED=false` only for local debugging. For multi-
 
 ## 3b. Observability
 
-- Public: `/actuator/health` (nginx proxies this only).
-- SUPER_ADMIN: `/actuator/metrics`, `/actuator/info`, `/actuator/threaddump` on the backend port (not via public nginx).
+- Public: `/actuator/health` (minimal details).
+- SUPER_ADMIN (JWT): `/actuator/metrics`, `/actuator/info`, `/actuator/threaddump` via nginx + platform UI at `/app/platform/actuator`.
+- Platform SUPER_ADMIN nav is limited to Gyms, Staff passwords, Audit, and Actuator (no gym ops pages).
 - Rolling logs + request correlation: see [docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md).
 - Hostinger monitors VPS CPU/RAM/disk; Spring monitors app/DB/JVM.
 - Point an external uptime check at `https://<host>/actuator/health`.
@@ -75,7 +93,8 @@ Linux hosts can run `gateway/scripts/publish-win.sh` to cross-publish the worker
 - [ ] Strong JWT secret and DB passwords
 - [ ] `SPRING_PROFILES_ACTIVE=prod`
 - [ ] Bootstrap password cleared after first SUPER_ADMIN
-- [ ] TLS terminated; CORS locked
+- [ ] TLS terminated at Cloudflare; origin Nginx proxies /api /live /gateway /actuator
+- [ ] SPA built with empty VITE_API_BASE (same-origin); no hardcoded API host in bundle
 - [ ] MySQL not public
 - [ ] Gateway dials `wss://…/gateway` with per-gateway **operational** credential (enrolled via MSI configurator)
 - [ ] IAS stopped on cutover day

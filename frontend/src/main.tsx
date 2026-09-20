@@ -24,6 +24,7 @@ import { NotFoundPage } from '@/features/NotFoundPage'
 import { PaymentsPage } from '@/features/payments/PaymentsPage'
 import { PlansPage } from '@/features/plans/PlansPage'
 import { PlatformGymsPage } from '@/features/platform/PlatformGymsPage'
+import { PlatformStaffPasswordPage } from '@/features/platform/PlatformStaffPasswordPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
 import { DeviceReportPage, MembershipReportPage, ReportsPage } from '@/features/reports/ReportsPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
@@ -88,6 +89,7 @@ const router = createBrowserRouter([
           { index: true, element: <Navigate to="dashboard" replace /> },
           { path: 'dashboard', element: <DashboardPage /> },
           { path: 'platform/gyms', element: <PlatformGymsPage /> },
+          { path: 'platform/staff-passwords', element: <PlatformStaffPasswordPage /> },
           { path: 'members', element: <MembersPage /> },
           { path: 'members/new', element: <MemberNewPage /> },
           { path: 'members/:id', element: <MemberDetailPage /> },

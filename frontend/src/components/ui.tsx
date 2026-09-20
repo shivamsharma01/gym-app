@@ -55,9 +55,23 @@ export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...props} className={cn(fieldControl, 'min-h-24 resize-y', props.className)} />
 }
 
-export function Label({ children, htmlFor }: { children: ReactNode; htmlFor?: string }) {
+export function Label({
+  children,
+  htmlFor,
+  className,
+}: {
+  children: ReactNode
+  htmlFor?: string
+  className?: string
+}) {
   return (
-    <label htmlFor={htmlFor} className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+    <label
+      htmlFor={htmlFor}
+      className={cn(
+        'mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-muted',
+        className,
+      )}
+    >
       {children}
     </label>
   )

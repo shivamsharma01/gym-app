@@ -10,6 +10,8 @@ import com.example.gym.tenant.Tenant;
 import com.example.gym.tenant.TenantRepository;
 import com.example.gym.user.AdminUser;
 import com.example.gym.user.AdminUserRepository;
+import com.example.gym.user.UserService;
+import com.example.gym.user.dto.ChangeOwnPasswordRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -30,12 +32,14 @@ public class AuthController {
     private final AuthService authService;
     private final AdminUserRepository userRepository;
     private final TenantRepository tenantRepository;
+    private final UserService userService;
 
     public AuthController(AuthService authService, AdminUserRepository userRepository,
-                          TenantRepository tenantRepository) {
+                          TenantRepository tenantRepository, UserService userService) {
         this.authService = authService;
         this.userRepository = userRepository;
         this.tenantRepository = tenantRepository;
+        this.userService = userService;
     }
 
     @PostMapping("/auth/login")
@@ -67,5 +71,13 @@ public class AuthController {
         String tenantPublicId = user.getTenantId() == null ? null
                 : tenantRepository.findById(user.getTenantId()).map(Tenant::getPublicId).orElse(null);
         return UserSummary.from(user, tenantPublicId);
+    }
+
+    @PostMapping("/me/password")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Change the current user's password (requires the current password)")
+    public void changeOwnPassword(@Valid @RequestBody ChangeOwnPasswordRequest request) {
+        userService.changeOwnPassword(
+                SecurityUtils.currentUserId(), request.currentPassword(), request.newPassword());
     }
 }

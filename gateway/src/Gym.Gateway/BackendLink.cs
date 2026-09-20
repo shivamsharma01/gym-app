@@ -29,6 +29,44 @@ public sealed class BackendLink : IAsyncDisposable
 
     public bool WebSocketLive => _websocketLive;
 
+    /// <summary>
+    /// Swap the operational credential (after rotate). Updates Bearer headers and forces a WS reconnect
+    /// so the next handshake uses the new token (and promotes pending on the backend).
+    /// </summary>
+    public void ApplyCredential(string credential)
+    {
+        if (string.IsNullOrWhiteSpace(credential))
+        {
+            throw new ArgumentException("Credential is required", nameof(credential));
+        }
+
+        _options.Token = credential;
+        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", credential);
+        RequestReconnect();
+    }
+
+    /// <summary>Close the current WebSocket so <see cref="RunWebSocketAsync"/> reconnects with the current token.</summary>
+    public void RequestReconnect()
+    {
+        var socket = _socket;
+        if (socket == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (socket.State == WebSocketState.Open || socket.State == WebSocketState.CloseReceived)
+            {
+                socket.Abort();
+            }
+        }
+        catch
+        {
+            // ignore — receive loop will tear down
+        }
+    }
+
     public Uri HttpBase => new(_options.BackendUrl.TrimEnd('/') + "/");
 
     public Uri WebSocketUri

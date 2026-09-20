@@ -1,10 +1,11 @@
 spring:
   application:
     name: gym-backend
-  profiles:
-    active: dev
-  # Activate a profile via SPRING_PROFILES_ACTIVE (e.g. "dev") or -Dspring-boot.run.profiles=dev.
-  # Intentionally not defaulted here so tests (@ActiveProfiles("test")) are never polluted by "dev".
+  # Do not hardcode an active profile here. Set SPRING_PROFILES_ACTIVE (or
+  # -Dspring-boot.run.profiles) explicitly:
+  #   local laptop:  SPRING_PROFILES_ACTIVE=dev
+  #   VPS / compose: SPRING_PROFILES_ACTIVE=prod
+  #   tests:         @ActiveProfiles("test")
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/gym?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
     username: ${DB_USERNAME:gym}

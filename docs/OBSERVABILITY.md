@@ -5,11 +5,11 @@ Practical production setup for a **single Spring Boot service + MySQL + one VPS*
 ## Architecture
 
 ```
-Hostinger VPS dashboard
+VPS host metrics (any provider panel / node exporter)
   │  CPU / RAM / disk / network / VPS uptime
   ▼
-Internet → nginx (SPA :80)
-  │  proxies /api, /live, /gateway, /actuator/health only
+Internet → Cloudflare → nginx API edge (:80)
+  │  proxies /api, /live, /gateway, /actuator/
   ▼
 Spring Boot (:8080)
   ├── Actuator (health public; metrics/info/threaddump = SUPER_ADMIN)
@@ -77,11 +77,11 @@ Account lockout (failed passwords) remains separate (`app.security.lockout`).
 - Probes enabled for liveness/readiness.
 - Unhealthy when MySQL is down (readiness fails).
 
-## Hostinger vs Spring
+## VPS host vs Spring
 
 | Concern | Where |
 |---------|--------|
-| VPS CPU/RAM/disk/network/availability | Hostinger panel |
+| VPS CPU/RAM/disk/network/availability | Provider panel / host metrics |
 | App up/down, DB, JVM, HTTP rates, pool | Spring Actuator + logs |
 | External “site down” | UptimeRobot / Better Stack / similar → `GET https://your.domain/actuator/health` |
 
@@ -94,7 +94,7 @@ Account lockout (failed passwords) remains separate (`app.security.lockout`).
 | HTTP 5xx spike | sustained >2% or burst | P2 | Logs by `requestId`, recent deploy |
 | Hikari pending / exhausted | pending >0 sustained or active≈max | P2 | Slow queries, pool size, leaks |
 | Disk | <15% free | P1 | Log retention, MySQL data, backups |
-| Hostinger CPU/RAM | high >15–30m | P2 | JFR if app-related |
+| Host CPU/RAM | high >15–30m | P2 | JFR if app-related |
 | Backup failure | job failed | P1 | Restore path / storage |
 
 ## Profiling (JFR) — Actuator is not a profiler
@@ -115,7 +115,7 @@ Open `gym.jfr` in JDK Mission Control. Do **not** expose JFR or heap dumps over 
 
 ## Incident sequence
 
-1. Hostinger: VPS up?
+1. VPS host: up?
 2. `curl -fsS https://domain/actuator/health` (and `/healthz` on nginx)
 3. Readiness / DB component (as SUPER_ADMIN if details needed)
 4. MySQL container healthy?

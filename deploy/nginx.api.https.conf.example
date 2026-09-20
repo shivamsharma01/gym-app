@@ -1,9 +1,11 @@
-# Production HTTPS edge (copy over nginx.conf on the VPS after certificates exist).
-# Example:
-#   certbot certonly --webroot -w /var/www/certbot -d gym.kainazi.co.in -d gym.heavyreps.in
+# Production HTTPS edge (optional — Cloudflare often terminates TLS publicly).
+# Prefer Cloudflare Full (strict) with an origin certificate, or certbot on the VPS.
 #
-# Mount certs into the edge container, e.g.:
-#   /etc/letsencrypt:/etc/letsencrypt:ro
+# 1. Issue certs for your hostnames (or use a Cloudflare Origin Cert).
+# 2. Copy this file over nginx.conf (or mount it) and adjust ssl_certificate paths.
+# 3. Map port 443 in docker-compose and mount /etc/letsencrypt (or your cert dir).
+#
+# Portable: server_name _ accepts any Host (multi-domain SaaS behind Cloudflare).
 
 upstream gym_backend {
     server backend:8080;
@@ -11,13 +13,9 @@ upstream gym_backend {
 }
 
 server {
-    listen 80;
-    listen [::]:80;
-    server_name
-        gym.kainazi.co.in
-        gym.heavyreps.in
-        mcart.space
-        api.mcart.space;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -31,16 +29,11 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
+    server_name _;
 
-    server_name
-        gym.kainazi.co.in
-        gym.heavyreps.in
-        mcart.space
-        api.mcart.space;
-
-    # Adjust paths to match certbot / your issuer layout
-    ssl_certificate     /etc/letsencrypt/live/gym.kainazi.co.in/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/gym.kainazi.co.in/privkey.pem;
+    # Replace with your certificate paths (certbot or Cloudflare origin cert).
+    ssl_certificate     /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
     ssl_session_timeout 1d;
     ssl_session_cache shared:SSL:10m;
     ssl_protocols TLSv1.2 TLSv1.3;

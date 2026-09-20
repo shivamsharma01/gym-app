@@ -1,19 +1,24 @@
 # Go-live runbook (Cloudflare SPA + VPS API + MySQL + gym gateway)
 
+> Portable VPS setup, sizing, backups, and vertical scaling: **[VPS.md](VPS.md)**.
+
 ## 1. VPS API stack (no React on the VPS)
 
 ```bash
 cp deploy/.env.example deploy/.env
 # Required: APP_SECURITY_JWT_SECRET=$(openssl rand -base64 48)
 # First boot only: APP_BOOTSTRAP_SUPERADMIN_PASSWORD='your-strong-password'
+# Keep SPRING_PROFILES_ACTIVE=prod
 # APP_CORS_ORIGINS=http://localhost:5173 (same-origin prod SPA needs little/no CORS)
-# Edit deploy/nginx.conf server_name to your customer hostnames
 
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile full up -d --build
+chmod +x deploy/scripts/*.sh
+./deploy/scripts/up.sh --build
+# equivalent:
+# docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile full up -d --build
 ```
 
-- API edge: Nginx proxies `/api/`, `/live`, `/gateway`, `/actuator/` → Spring Boot
-- Backend is bound to `127.0.0.1:8080` by default — not public
+- API edge: Nginx proxies `/api/`, `/live`, `/gateway`, `/actuator/` → Spring Boot (any Host)
+- MySQL bound to `127.0.0.1` only; backend to `127.0.0.1:8080`
 - After first SUPER_ADMIN login, **remove** `APP_BOOTSTRAP_SUPERADMIN_PASSWORD` and recreate the backend container
 
 ### Same-origin SPA (required for multi-domain SaaS)

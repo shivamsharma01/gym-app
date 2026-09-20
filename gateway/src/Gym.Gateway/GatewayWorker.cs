@@ -10,13 +10,19 @@ public sealed class GatewayWorker : BackgroundService
     private readonly GatewayOptions _options;
     private readonly ILogger<GatewayWorker> _log;
     private readonly ILoggerFactory _logFactory;
+    private readonly BackendLink _link;
     private readonly Dictionary<string, IDeviceAdapter> _adapters = new(StringComparer.Ordinal);
     private readonly Channel<OutboundMessage> _outbound = Channel.CreateUnbounded<OutboundMessage>(
         new UnboundedChannelOptions { SingleReader = true });
 
-    public GatewayWorker(GatewayOptions options, ILogger<GatewayWorker> log, ILoggerFactory logFactory)
+    public GatewayWorker(
+        GatewayOptions options,
+        BackendLink link,
+        ILogger<GatewayWorker> log,
+        ILoggerFactory logFactory)
     {
         _options = options;
+        _link = link;
         _log = log;
         _logFactory = logFactory;
     }
@@ -53,17 +59,16 @@ public sealed class GatewayWorker : BackgroundService
         }
 
         var dispatcher = new CommandDispatcher(_adapters, _logFactory.CreateLogger<CommandDispatcher>());
-        await using var link = new BackendLink(_options, _logFactory.CreateLogger<BackendLink>());
 
-        var sendLoop = SendLoopAsync(link, stoppingToken);
-        var wsLoop = link.RunWebSocketAsync(cmd => HandleCommandAsync(link, dispatcher, cmd), stoppingToken);
-        var heartbeat = HeartbeatLoopAsync(link, stoppingToken);
-        var poll = PollLoopAsync(link, dispatcher, stoppingToken);
+        var sendLoop = SendLoopAsync(_link, stoppingToken);
+        var wsLoop = _link.RunWebSocketAsync(cmd => HandleCommandAsync(_link, dispatcher, cmd), stoppingToken);
+        var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
+        var poll = PollLoopAsync(_link, dispatcher, stoppingToken);
 
         await _outbound.Writer.WriteAsync(new OutboundMessage(
             ProtocolTypes.RegisterGateway,
             null,
-            new { agentVersion = "gym-gateway-0.4" },
+            new { agentVersion = "gym-gateway-0.5" },
             null), stoppingToken).ConfigureAwait(false);
 
         await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll).ConfigureAwait(false);

@@ -1,0 +1,15 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.5.0</ProductVersion>
+    <DefineConstants>ProductVersion=$(ProductVersion)</DefineConstants>
+    <GatewayPublishDir Condition="'$(GatewayPublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\win-x64\</GatewayPublishDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <BindPath Include="$(GatewayPublishDir)" BindName="PublishDir" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+</Project>

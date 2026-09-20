@@ -18,12 +18,14 @@ public final class DeviceResponses {
             String id,
             String name,
             String status,
+            /** One-time enrollment token (not the long-lived operational credential). */
             String token,
+            Instant enrollmentExpiresAt,
             Instant createdAt) {
 
-        public static GatewayCreated from(Gateway g, String token) {
-            return new GatewayCreated(g.getPublicId(), g.getName(), g.getStatus().name(), token,
-                    g.getCreatedAt());
+        public static GatewayCreated from(Gateway g, String enrollmentToken) {
+            return new GatewayCreated(g.getPublicId(), g.getName(), g.getStatus().name(), enrollmentToken,
+                    g.getEnrollmentExpiresAt(), g.getCreatedAt());
         }
     }
 

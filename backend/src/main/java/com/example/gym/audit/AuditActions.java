@@ -16,6 +16,8 @@ public final class AuditActions {
     public static final String USER_UPDATED = "USER_UPDATED";
     public static final String USER_DISABLED = "USER_DISABLED";
     public static final String USER_ROLES_CHANGED = "USER_ROLES_CHANGED";
+    public static final String USER_PASSWORD_CHANGED = "USER_PASSWORD_CHANGED";
+    public static final String USER_PASSWORD_SET = "USER_PASSWORD_SET";
 
     // Phase 2: business domain
     public static final String PLAN_CREATED = "PLAN_CREATED";
@@ -37,6 +39,9 @@ public final class AuditActions {
 
     // Phase 3: device integration
     public static final String GATEWAY_REGISTERED = "GATEWAY_REGISTERED";
+    public static final String GATEWAY_ENROLLED = "GATEWAY_ENROLLED";
+    public static final String GATEWAY_ENROLLMENT_REISSUED = "GATEWAY_ENROLLMENT_REISSUED";
+    public static final String GATEWAY_CREDENTIAL_ROTATED = "GATEWAY_CREDENTIAL_ROTATED";
     public static final String DEVICE_CREATED = "DEVICE_CREATED";
     public static final String DEVICE_UPDATED = "DEVICE_UPDATED";
     public static final String DEVICE_MAPPING_CREATED = "DEVICE_MAPPING_CREATED";

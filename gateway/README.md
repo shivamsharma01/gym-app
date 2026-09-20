@@ -1,19 +1,34 @@
-# Gym Device Gateway (Phase 4)
+# Gym Device Gateway
 
-.NET 10 worker that sits on the **gym LAN**, talks to TrueFace3000 over Dahua NetSDK (Windows `dhnetsdk.dll`), and talks to the Spring Boot backend over the Phase 3 protocol (outbound WebSocket `/gateway`, REST fallback `/internal/gateway/*`).
+.NET 10 worker on the **gym LAN** PC. Talks to TrueFace3000 (Dahua NetSDK) and the Spring Boot backend (outbound WebSocket `/gateway`, REST `/internal/gateway/*`).
 
-This is **not** the Linux POC. This gym’s LAN box is Windows. Default adapter on a Linux development host is **Mock**.
+Default adapter on Linux is **Mock**. Production Windows installs via **MSI** (Windows CI) and is configured with the elevated **Gym Gateway Configurator**.
 
-## What it does
+## Production flow (Windows)
 
-- Registers, heartbeats, reports device status
-- Applies outbox commands (`CREATE_USER`, validity, door, reconcile, …)
-- Forwards live attendance events
-- **Never** reports remote face enrolment as success (`ENROLL_FACE` → `GUIDED_PENDING` + `SYNC_RESULT ok:false`)
+1. In staff UI: **Devices → create Gateway**. Copy the **one-time enrollment token** (valid ~24h). This is **not** the long-lived credential.
+2. On the gym PC, install `GymGateway-*-win-x64.msi` (from GitHub Actions artifact).
+3. Run **Gym Gateway Configurator** (Administrator):
+   - Backend URL, Gateway ID, enrollment token → **Enroll**
+   - Set each device IP / port / tablet password (pre-filled from `GET /internal/gateway/devices`)
+   - Optional **Test TrueFace connect**
+   - **Save config & start service** → writes DPAPI-protected `%ProgramData%\GymGateway\config.json` and starts the **Gym Gateway** Windows Service
+4. The service renews credentials automatically before expiry (`POST /internal/gateway/credentials/rotate`). Secrets are never logged.
 
-Native SDK types never leave `TrueFaceDeviceAdapter`.
+### Replacing the gateway PC
+
+Use **Reissue enrollment** in the staff UI (`POST /api/v1/gateways/{id}/enrollment`), then enroll on the new PC with the Configurator. Enroll replaces the operational credential hash, so the old PC can no longer authenticate.
+
+### MSI notes
+
+- Install dir: `Program Files\Gym Gateway\`
+- Data/logs: `%ProgramData%\GymGateway\` (config retained across upgrades)
+- Uninstall leaves ProgramData unless `PURGE_CONFIG=1` is passed to msiexec
+- **Linux cannot build the MSI or WPF configurator** — use [`.github/workflows/gateway-msi.yml`](../.github/workflows/gateway-msi.yml) (`windows-latest`)
 
 ## Develop on Linux (this machine)
+
+Core + tests only (`Gym.Gateway.slnx` — no WPF/WiX):
 
 ```bash
 export DOTNET_ROOT="$HOME/.dotnet"
@@ -22,52 +37,39 @@ cd gateway
 dotnet test Gym.Gateway.slnx -c Release
 ```
 
-Run against a local backend with the mock adapter (no hardware):
+Dev / Mock against a local backend (env overlay; no ProgramData):
 
 ```bash
 export GYM_BACKEND=http://127.0.0.1:8080
-export GYM_GATEWAY_ID=<id from POST /api/v1/gateways>
-export GYM_GATEWAY_TOKEN=<one-time token>
+export GYM_GATEWAY_ID=<id>
+# After POST /api/v1/gateways, call POST /internal/gateway/enroll with the enrollment token
+# and use the returned operational credential here:
+export GYM_GATEWAY_TOKEN=<operational credential>
 export GYM_ADAPTER=Mock
 export GYM_DEVICE_ID=<device public id>
 dotnet run --project src/Gym.Gateway -c Release
 ```
 
-If the WebSocket dispatcher is already consuming the outbox, leave `UseWebSocket` on. For REST-only (like the Python simulator), set `GYM_USE_WEBSOCKET=false` and `APP_GATEWAY_OUTBOX_DISPATCHER_ENABLED=false` on the backend.
+Cross-publish the worker for Windows (no MSI):
 
-## Run on the gym Windows PC (real device)
-
-1. Install .NET 10 SDK.
-2. Copy this `gateway/` folder (it includes `native/win-x64/*.dll`).
-3. Create a gateway + device in the app; put the public ids and token in env vars.
-4. Use the **device** admin user (not gym-app login). Port **37777**.
-
-```bat
-set GYM_BACKEND=https://<backend-host>
-set GYM_GATEWAY_ID=...
-set GYM_GATEWAY_TOKEN=...
-set GYM_ADAPTER=TrueFace
-set GYM_DEVICE_ID=<device public id>
-set GYM_DEVICE_IP=192.168.31.91
-set GYM_DEVICE_PORT=37777
-set GYM_DEVICE_USERNAME=admin
-set GYM_DEVICE_PASSWORD=...
-dotnet run --project src/Gym.Gateway -c Release
+```bash
+./scripts/publish-win.sh
 ```
 
-If Interactive Attendance / another SDK client is already logged in, this login may kick or contend with that session. Cut over; do not run two writers.
-
-Passwords are not logged.
+Windows solution (CI / Windows SDK): `Gym.Gateway.Windows.slnx` includes Configurator + WiX.
 
 ## Layout
 
 ```
 gateway/
-  src/Gym.Gateway/            worker, WSS/REST, command dispatch
-  src/Gym.Gateway.Adapters/   IDeviceAdapter, Mock, TrueFace
-  src/Gym.Gateway.NetSdk/     byte-identical NetSDKCS copies (WINDOWS_X64)
-  native/win-x64/             dhnetsdk.dll and companions
+  src/Gym.Gateway/                 worker, WSS/REST, ProgramData config, rotation, Windows Service host
+  src/Gym.Gateway.Adapters/        IDeviceAdapter, Mock, TrueFace
+  src/Gym.Gateway.NetSdk/          NetSDKCS (WINDOWS_X64)
+  src/Gym.Gateway.Configurator/    WPF setup UI (Windows only)
+  installer/                       WiX MSI (Windows CI only)
+  native/win-x64/                  dhnetsdk.dll and companions
   tests/Gym.Gateway.Tests/
+  scripts/publish-win.sh
 ```
 
-Vendor C# under `TrueFace_SDK/` is not modified.
+Vendor C# under `TrueFace_SDK/` is not modified. Passwords and tokens are never written to logs.

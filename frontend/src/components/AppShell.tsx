@@ -8,6 +8,7 @@ import {
   CreditCard,
   IdCard,
   Inbox,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -77,7 +78,10 @@ export function AppShell() {
     if (isPlatform) {
       result.push({
         label: 'Platform',
-        items: [{ to: '/app/platform/gyms', label: 'Gyms', icon: Building2, perm: null }],
+        items: [
+          { to: '/app/platform/gyms', label: 'Gyms', icon: Building2, perm: null },
+          { to: '/app/platform/staff-passwords', label: 'Staff passwords', icon: KeyRound, perm: null },
+        ],
       })
     }
     const ops = filter(operations)

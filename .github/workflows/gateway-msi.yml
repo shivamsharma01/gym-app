@@ -1,0 +1,89 @@
+name: Gateway MSI (Windows)
+
+on:
+  push:
+    paths:
+      - "gateway/**"
+      - ".github/workflows/gateway-msi.yml"
+  pull_request:
+    paths:
+      - "gateway/**"
+      - ".github/workflows/gateway-msi.yml"
+  workflow_dispatch:
+
+jobs:
+  test-linux-core:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Test core gateway (Linux)
+        run: dotnet test Gym.Gateway.slnx -c Release
+
+  build-msi:
+    runs-on: windows-latest
+    needs: test-linux-core
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.5.0.$env:GITHUB_RUN_NUMBER" }
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Publish gateway (self-contained win-x64)
+        run: >
+          dotnet publish src/Gym.Gateway/Gym.Gateway.csproj
+          -c Release -r win-x64 --self-contained true
+          -o artifacts/win-x64
+          /p:Version=${{ steps.ver.outputs.version }}
+
+      - name: Publish configurator (win-x64)
+        run: >
+          dotnet publish src/Gym.Gateway.Configurator/Gym.Gateway.Configurator.csproj
+          -c Release -r win-x64 --self-contained true
+          -o artifacts/configurator
+          /p:Version=${{ steps.ver.outputs.version }}
+
+      - name: Stage publish folder for MSI
+        shell: pwsh
+        run: |
+          # Merge configurator into gateway publish dir without wiping native DLLs / worker payload
+          Copy-Item -Path artifacts/configurator/* -Destination artifacts/win-x64/ -Recurse -Force
+
+      - name: Build MSI
+        run: >
+          dotnet build installer/Gym.Gateway.Installer.wixproj
+          -c Release
+          -p:ProductVersion=${{ steps.ver.outputs.version }}
+          -p:GatewayPublishDir=$PWD/artifacts/win-x64/
+
+      - name: Stage MSI artifact
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Recurse installer -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw "MSI not found" }
+          New-Item -ItemType Directory -Force artifacts/msi | Out-Null
+          $dest = "artifacts/msi/GymGateway-${{ steps.ver.outputs.version }}-win-x64.msi"
+          Copy-Item $msi.FullName $dest
+          echo "MSI=$dest"
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: GymGateway-${{ steps.ver.outputs.version }}-win-x64
+          path: gateway/artifacts/msi/*.msi
+          if-no-files-found: error

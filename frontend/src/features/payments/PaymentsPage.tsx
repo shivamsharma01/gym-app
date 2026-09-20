@@ -1,8 +1,5 @@
-import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { z } from 'zod'
+import { useState } from 'react'
 import { ConfirmDialog } from '@/components/Dialog'
 import { QueryError } from '@/components/QueryError'
 import {
@@ -61,7 +58,6 @@ const months = [
 const gstRates = [0, 5, 12, 18, 28]
 
 type Form = z.infer<typeof schema>
-
 export function PaymentsPage() {
   const { has } = useAuth()
   const qc = useQueryClient()
@@ -926,5 +922,5 @@ export function PaymentsPage() {
             }}
         />
       </div>
-  )
+     )
 }

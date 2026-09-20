@@ -15,6 +15,10 @@ public interface GatewayRepository extends JpaRepository<Gateway, Long> {
 
     Optional<Gateway> findByTokenHash(String tokenHash);
 
+    Optional<Gateway> findByNextTokenHash(String nextTokenHash);
+
+    Optional<Gateway> findByEnrollmentTokenHash(String enrollmentTokenHash);
+
     Page<Gateway> findByTenantId(Long tenantId, Pageable pageable);
 
     List<Gateway> findByStatusAndLastHeartbeatAtBefore(GatewayStatus status, Instant cutoff);

@@ -785,11 +785,6 @@ export function PaymentsPage() {
                   <h2 className="text-sm font-semibold">
                     Payments
                   </h2>
-
-                  <p className="mt-1 text-xs text-muted">
-                    {selectedMonthLabel}{' '}
-                    {selectedCalendarYear}
-                  </p>
                 </div>
 
                 <TableShell>

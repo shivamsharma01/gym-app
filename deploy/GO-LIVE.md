@@ -38,9 +38,20 @@ gym.example.com {
 Backend applies an in-memory sliding window (single node):
 
 - `POST /api/v1/auth/login` — `APP_RATE_LIMIT_LOGIN_PER_MINUTE` (default 20)
+- `POST /api/v1/auth/refresh` — `APP_RATE_LIMIT_REFRESH_PER_MINUTE` (default 30)
 - `POST /api/v1/public/.../enquiries` — `APP_RATE_LIMIT_ENQUIRY_PER_MINUTE` (default 10)
+- Authenticated `/api/**` — per user+tenant (`APP_RATE_LIMIT_AUTHENTICATED_PER_MINUTE`, default 300)
+- Reports — `APP_RATE_LIMIT_REPORTS_PER_MINUTE` (default 30)
 
-Disable with `APP_RATE_LIMIT_ENABLED=false` only for local debugging. For multi-node production, add edge rate limits (CDN / WAF) as well.
+Disable with `APP_RATE_LIMIT_ENABLED=false` only for local debugging. For multi-node production, add edge rate limits (CDN / WAF) as well. Full matrix: [docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md).
+
+## 3b. Observability
+
+- Public: `/actuator/health` (nginx proxies this only).
+- SUPER_ADMIN: `/actuator/metrics`, `/actuator/info`, `/actuator/threaddump` on the backend port (not via public nginx).
+- Rolling logs + request correlation: see [docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md).
+- Hostinger monitors VPS CPU/RAM/disk; Spring monitors app/DB/JVM.
+- Point an external uptime check at `https://<host>/actuator/health`.
 
 ## 4. Windows TrueFace gateway cutover
 

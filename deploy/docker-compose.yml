@@ -66,10 +66,16 @@ services:
       APP_BOOTSTRAP_SUPERADMIN_PASSWORD: ${APP_BOOTSTRAP_SUPERADMIN_PASSWORD:-}
       APP_RATE_LIMIT_ENABLED: ${APP_RATE_LIMIT_ENABLED:-true}
       APP_RATE_LIMIT_LOGIN_PER_MINUTE: ${APP_RATE_LIMIT_LOGIN_PER_MINUTE:-20}
+      APP_RATE_LIMIT_REFRESH_PER_MINUTE: ${APP_RATE_LIMIT_REFRESH_PER_MINUTE:-30}
       APP_RATE_LIMIT_ENQUIRY_PER_MINUTE: ${APP_RATE_LIMIT_ENQUIRY_PER_MINUTE:-10}
+      APP_RATE_LIMIT_AUTHENTICATED_PER_MINUTE: ${APP_RATE_LIMIT_AUTHENTICATED_PER_MINUTE:-300}
+      APP_RATE_LIMIT_REPORTS_PER_MINUTE: ${APP_RATE_LIMIT_REPORTS_PER_MINUTE:-30}
+      LOG_PATH: /var/log/gym
     ports:
       # Optional direct API access (prefer nginx :8088 in full stack)
       - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - gym-backend-logs:/var/log/gym
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/actuator/health/liveness"]
       interval: 15s
@@ -99,6 +105,7 @@ services:
 
 volumes:
   gym-mysql-data:
+  gym-backend-logs:
 
 networks:
   gym-net:

@@ -47,7 +47,8 @@ public class DevDataSeeder implements CommandLineRunner {
                 passwordEncoder.encode(DEFAULT_PASSWORD), "Platform Super Admin");
         user.setRoles(Set.of(role));
         userRepository.save(user);
-        log.warn("DEV bootstrap: created platform SUPER_ADMIN 'superadmin' with password '{}'. "
-                + "Enroll gyms from /app/platform/gyms — no demo gym is seeded.", DEFAULT_PASSWORD);
+        log.warn("DEV bootstrap: created platform SUPER_ADMIN 'superadmin'. "
+                + "Use the documented default password from DevDataSeeder (not logged). "
+                + "Enroll gyms from /app/platform/gyms — no demo gym is seeded.");
     }
 }

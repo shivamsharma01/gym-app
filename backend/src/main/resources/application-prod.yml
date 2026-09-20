@@ -15,3 +15,7 @@ logging:
   level:
     root: INFO
     org.springframework.security: WARN
+    gym.access: INFO
+  file:
+    # Used by logback-spring.xml (${LOG_PATH}); default under /tmp if unset.
+    path: ${LOG_PATH:/var/log/gym}

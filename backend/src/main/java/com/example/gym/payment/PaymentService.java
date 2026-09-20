@@ -11,6 +11,7 @@ import com.example.gym.membership.MembershipPaymentStatus;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.membership.MembershipService;
 import com.example.gym.payment.dto.PaymentRequests.RecordPayment;
+import com.example.gym.payment.dto.PaymentSummaryResponse;
 import com.example.gym.security.AppUserPrincipal;
 import com.example.gym.security.SecurityUtils;
 import com.example.gym.tenant.TenantGuard;
@@ -151,5 +152,34 @@ public class PaymentService {
         AppUserPrincipal principal = SecurityUtils.currentPrincipal();
         payment.setReceivedByUserId(principal.getUserId());
         payment.setReceivedByUsername(principal.getUsername());
+    }
+
+    @Transactional(readOnly = true)
+    public PaymentSummaryResponse summary(
+            Long tenantId,
+            LocalDate from,
+            LocalDate to) {
+
+        if (from.isAfter(to)) {
+            throw CommonExceptions.badRequest("from date cannot be after to date");
+        }
+
+        BigDecimal total = paymentRepository.sumCompletedBetween(
+                tenantId,
+                from,
+                to
+        );
+
+        long count = paymentRepository.countByTenantIdAndStatusAndPaidOnBetween(
+                tenantId,
+                PaymentStatus.COMPLETED,
+                from,
+                to
+        );
+
+        return new PaymentSummaryResponse(
+                total == null ? BigDecimal.ZERO : total,
+                count
+        );
     }
 }

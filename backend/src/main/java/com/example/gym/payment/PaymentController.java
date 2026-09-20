@@ -3,10 +3,13 @@ package com.example.gym.payment;
 import com.example.gym.common.web.PageResponse;
 import com.example.gym.payment.dto.PaymentRequests.RecordPayment;
 import com.example.gym.payment.dto.PaymentResponse;
+import com.example.gym.payment.dto.PaymentSummaryResponse;
 import com.example.gym.security.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+
+import java.time.LocalDate;
 import java.util.List;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -67,5 +70,19 @@ public class PaymentController {
     @Operation(summary = "Refund a payment")
     public PaymentResponse refund(@PathVariable String id) {
         return PaymentResponse.from(paymentService.refund(id, SecurityUtils.currentTenantId()));
+    }
+
+    @GetMapping("/payments/summary")
+    @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
+    @Operation(summary = "Payment summary for a date range")
+    public PaymentSummaryResponse summary(
+            @RequestParam LocalDate from,
+            @RequestParam LocalDate to) {
+
+        return paymentService.summary(
+                SecurityUtils.currentTenantId(),
+                from,
+                to
+        );
     }
 }

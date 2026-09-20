@@ -72,6 +72,11 @@ export type Membership = {
   netAmount: number | string
 }
 
+export type PaymentSummary = {
+  totalAmount: number | string
+  paymentCount: number
+}
+
 export type AccessStatus = {
   memberId: string
   allowed: boolean

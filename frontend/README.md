@@ -1,6 +1,6 @@
 # Gym frontend (staff app + multi-gym public site)
 
-Public marketing pages live under `/g/{slug}` (see Phase 9). Staff app is `/app/*`.
+Public marketing pages live under `/g/{slug}`. Staff app is `/app/*`.
 Platform SUPER_ADMIN enrolls gyms at `/app/platform/gyms`.
 
 ## Same-origin API (multi-domain SaaS)

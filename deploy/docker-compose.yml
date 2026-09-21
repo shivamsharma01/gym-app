@@ -9,7 +9,7 @@
 #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile spa up -d --build
 #
 # Windows TrueFace gateway is NOT in this file — it runs on the gym LAN and dials
-# wss://<public-host>/gateway (see deploy/GO-LIVE.md).
+# wss://<public-host>/gateway (see deploy/README.md).
 
 name: gym
 

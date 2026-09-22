@@ -84,6 +84,7 @@ export function MembersPage() {
                 <Th>Member</Th>
                 <Th>Code</Th>
                 <Th>Phone</Th>
+                <Th>Source</Th>
                 <Th>Status</Th>
               </tr>
             </THead>
@@ -98,6 +99,11 @@ export function MembersPage() {
                   </Td>
                   <Td className="font-mono text-xs text-muted">{m.memberCode}</Td>
                   <Td className="text-muted">{m.phone ?? '—'}</Td>
+                  <Td>
+                    <Badge tone={m.creationSource === 'DEVICE_IMPORT' ? 'warn' : 'muted'}>
+                      {m.creationSource === 'DEVICE_IMPORT' ? 'Device' : 'Manual'}
+                    </Badge>
+                  </Td>
                   <Td>
                     <Badge tone={statusTone(m.status)}>{m.status}</Badge>
                   </Td>

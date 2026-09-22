@@ -101,7 +101,9 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.deviceConnectionState").value("UNKNOWN"))
                 .andExpect(jsonPath("$.gatewayStatus").value("UNKNOWN"))
                 .andExpect(jsonPath("$.gatewaySessionOnline").value(false))
-                .andExpect(jsonPath("$.pendingCommandCount").value(2));
+                .andExpect(jsonPath("$.pendingCommandCount").value(2))
+                .andExpect(jsonPath("$.failedCommandCount").value(0))
+                .andExpect(jsonPath("$.reconciliationRequired").value(false));
     }
 
     @Test

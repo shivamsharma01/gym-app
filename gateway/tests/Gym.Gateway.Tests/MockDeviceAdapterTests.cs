@@ -21,9 +21,20 @@ public class MockDeviceAdapterTests
     public void ListUsers_and_face_probe_are_available()
     {
         var adapter = Connected();
-        Assert.True(adapter.CreateUser(new DeviceUserMutation("1001", "Ada")).Ok);
+        var from = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var to = new DateTimeOffset(2025, 12, 31, 23, 59, 59, TimeSpan.Zero);
+        Assert.True(adapter.CreateUser(new DeviceUserMutation("1001", "Ada", ValidFrom: from, ValidTo: to)).Ok);
         var listed = adapter.ListUsers();
-        Assert.Contains(listed, u => u.DeviceUserId == "1001" && u.Name == "Ada" && !u.Frozen);
+        Assert.Contains(listed, u =>
+            u.DeviceUserId == "1001"
+            && u.Name == "Ada"
+            && !u.Frozen
+            && u.ValidFrom == from
+            && u.ValidTo == to);
+
+        Assert.True(adapter.CreateUser(new DeviceUserMutation("1002", "NoDates")).Ok);
+        listed = adapter.ListUsers();
+        Assert.Contains(listed, u => u.DeviceUserId == "1002" && u.ValidFrom is null && u.ValidTo is null);
 
         var probe = adapter.ProbeRemoteFaceInsert("1001", [0xFF, 0xD8, 0xFF]);
         Assert.False(probe.SdkCallReturnedTrue);

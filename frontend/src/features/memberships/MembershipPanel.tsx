@@ -432,7 +432,11 @@ export function MembershipPanel({
           </div>
 
           <p className="text-sm text-muted">
-            {formatDate(row.startDate)} → {formatDate(row.endDate)} ·{' '}
+            {formatDate(row.startDate)} → {formatDate(row.endDate)}
+            {row.endDateInferred ? (
+              <span className="ml-1 text-warn"> (end date inferred — review)</span>
+            ) : null}{' '}
+            ·{' '}
             {money(row.price, row.currency)} · paid{' '}
             {money(row.amountPaid, row.currency)} · device {row.deviceSyncState}
           </p>

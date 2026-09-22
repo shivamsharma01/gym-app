@@ -33,4 +33,12 @@ public interface DeviceSyncCommandRepository extends JpaRepository<DeviceSyncCom
     List<DeviceSyncCommand> findByDeviceIdInAndStateInAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
             Collection<Long> deviceIds, Collection<SyncCommandState> states, Instant now,
             Pageable pageable);
+
+    /** Stale DISPATCHED / ACKNOWLEDGED rows that never received SYNC_RESULT. */
+    List<DeviceSyncCommand> findByStateInAndDispatchedAtLessThanEqual(
+            Collection<SyncCommandState> states, Instant cutoff, Pageable pageable);
+
+    boolean existsByDeviceIdAndTypeAndStateIn(
+            Long deviceId, com.example.gym.device.domain.SyncCommandType type,
+            Collection<SyncCommandState> states);
 }

@@ -67,6 +67,9 @@ export function MemberDetailPage() {
       />
       <div className="flex flex-wrap gap-2">
         <Badge tone={statusTone(m.status)}>{m.status}</Badge>
+        <Badge tone={m.creationSource === 'DEVICE_IMPORT' ? 'warn' : 'ok'}>
+          {m.creationSource === 'DEVICE_IMPORT' ? 'Created from device' : 'Created manually'}
+        </Badge>
         {access.data ? (
           <Badge tone={access.data.allowed ? 'ok' : 'danger'}>
             {access.data.allowed ? 'Access allowed' : `Denied: ${access.data.reason}`}

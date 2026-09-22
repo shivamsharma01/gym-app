@@ -86,7 +86,8 @@ app:
       max-failed-attempts: 5
       lock-duration: PT15M
   cors:
-    allowed-origins: ${APP_CORS_ORIGINS:http://localhost:5173}
+    # Overridden by APP_CORS_ORIGINS. Dev profile (application-dev.yml) widens local origins.
+    allowed-origins: ${APP_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:8088,http://127.0.0.1:8088}
   gateway:
     # Per-deployment shared token the device gateway may present at the WSS handshake
     # (optional; per-gateway operational credentials after enrollment are preferred).

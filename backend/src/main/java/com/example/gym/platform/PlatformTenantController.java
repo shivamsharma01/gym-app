@@ -10,7 +10,9 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -52,6 +54,16 @@ public class PlatformTenantController {
     @Operation(summary = "List staff accounts for a gym")
     public List<UserResponse> listUsers(@PathVariable String tenantId) {
         return userService.listStaffForTenant(tenantId).stream().map(UserResponse::from).toList();
+    }
+
+    @GetMapping(value = "/{tenantId}/members/export.csv", produces = "text/csv")
+    @Operation(summary = "Export gym member roster as CSV (no biometrics)")
+    public ResponseEntity<String> exportMembers(@PathVariable String tenantId) {
+        String csv = platformTenantService.exportRosterCsv(tenantId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"members-" + tenantId + ".csv\"")
+                .body(csv);
     }
 
     @GetMapping("/{tenantId}/users/{username}")

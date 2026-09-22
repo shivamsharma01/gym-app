@@ -43,6 +43,10 @@ public class Membership extends TenantAwareEntity {
     @Column(name = "end_date", nullable = false)
     private LocalDate endDate;
 
+    /** True when end_date was inferred (e.g. device validity missing → today+1y), not from device. */
+    @Column(name = "end_date_inferred", nullable = false)
+    private boolean endDateInferred = false;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private MembershipStatus status;
@@ -163,6 +167,14 @@ public class Membership extends TenantAwareEntity {
 
     public void setEndDate(LocalDate endDate) {
         this.endDate = endDate;
+    }
+
+    public boolean isEndDateInferred() {
+        return endDateInferred;
+    }
+
+    public void setEndDateInferred(boolean endDateInferred) {
+        this.endDateInferred = endDateInferred;
     }
 
     public MembershipStatus getStatus() {

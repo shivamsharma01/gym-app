@@ -12,8 +12,10 @@ import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.device.dto.DeviceRequests.CreateDevice;
 import com.example.gym.device.dto.DeviceRequests.UpdateDevice;
+import com.example.gym.device.repo.AttendanceSyncCursorRepository;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
+import com.example.gym.device.domain.AttendanceSyncCursor;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
 import com.example.gym.membership.Membership;
@@ -22,6 +24,7 @@ import com.example.gym.membership.MembershipStatus;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.data.domain.Page;
@@ -39,6 +42,7 @@ public class DeviceService {
     private final MemberService memberService;
     private final MembershipRepository membershipRepository;
     private final DeviceSyncService deviceSyncService;
+    private final AttendanceSyncCursorRepository cursorRepository;
     private final AuditService auditService;
 
     public DeviceService(DeviceRepository deviceRepository,
@@ -47,6 +51,7 @@ public class DeviceService {
                          MemberService memberService,
                          MembershipRepository membershipRepository,
                          DeviceSyncService deviceSyncService,
+                         AttendanceSyncCursorRepository cursorRepository,
                          AuditService auditService) {
         this.deviceRepository = deviceRepository;
         this.gatewayService = gatewayService;
@@ -54,6 +59,7 @@ public class DeviceService {
         this.memberService = memberService;
         this.membershipRepository = membershipRepository;
         this.deviceSyncService = deviceSyncService;
+        this.cursorRepository = cursorRepository;
         this.auditService = auditService;
     }
 
@@ -150,7 +156,7 @@ public class DeviceService {
                 SyncCommandType.CREATE_USER, createPayload);
 
         currentMembership(member.getId()).ifPresent(m -> {
-            boolean enabled = DeviceAuthorizationService.authorizationEnabled(m);
+            boolean enabled = DeviceAuthorizationService.authorizationEnabled(m, member);
             if (enabled) {
                 deviceSyncService.enqueue(tenantId, device.getId(), member.getId(), m.getId(),
                         SyncCommandType.UPDATE_VALIDITY, validityPayload(deviceUserId, m, true));
@@ -165,12 +171,77 @@ public class DeviceService {
     }
 
     @Transactional
+    public void deleteMapping(String devicePublicId, String mappingPublicId, Long tenantId) {
+        Device device = getByPublicId(devicePublicId, tenantId);
+        MemberDeviceMapping mapping = mappingRepository.findByPublicId(mappingPublicId)
+                .orElseThrow(() -> CommonExceptions.notFound("Member-device mapping"));
+        TenantGuard.check(mapping.getTenantId(), tenantId, "Member-device mapping");
+        if (!mapping.getDeviceId().equals(device.getId())) {
+            throw CommonExceptions.notFound("Member-device mapping");
+        }
+        Map<String, Object> removePayload = new LinkedHashMap<>();
+        removePayload.put("deviceUserId", mapping.getDeviceUserId());
+        deviceSyncService.enqueue(tenantId, device.getId(), mapping.getMemberId(), null,
+                SyncCommandType.REMOVE_USER, removePayload);
+        mappingRepository.delete(mapping);
+        auditService.record(AuditActions.DEVICE_MAPPING_REMOVED, AuditActions.RESULT_SUCCESS,
+                "MemberDeviceMapping", mappingPublicId,
+                Map.of("deviceUserId", mapping.getDeviceUserId(), "device", device.getPublicId()));
+    }
+
+    /**
+     * Enqueues RECONCILE_DEVICE with attendance watermark so the gateway pulls history from the
+     * last known point (not a hard-coded 24h window).
+     */
+    @Transactional
     public DeviceSyncCommand reconcile(String devicePublicId, Long tenantId) {
         Device device = getByPublicId(devicePublicId, tenantId);
-        DeviceSyncCommand command = deviceSyncService.enqueue(tenantId, device.getId(), null, null,
-                SyncCommandType.RECONCILE_DEVICE, Map.of());
-        auditService.record(AuditActions.DEVICE_RECONCILE_REQUESTED, AuditActions.RESULT_SUCCESS,
+        return enqueueReconcile(device, tenantId, true);
+    }
+
+    /** Full Sync Now: attendance + user reconciliation via RECONCILE_DEVICE. */
+    @Transactional
+    public DeviceSyncCommand syncNow(String devicePublicId, Long tenantId) {
+        Device device = getByPublicId(devicePublicId, tenantId);
+        DeviceSyncCommand command = enqueueReconcile(device, tenantId, true);
+        auditService.record(AuditActions.DEVICE_SYNC_NOW_REQUESTED, AuditActions.RESULT_SUCCESS,
                 "Device", device.getPublicId(), null);
+        return command;
+    }
+
+    /** Enqueue reconcile if none is already in flight (used on gateway connect / device reconnect). */
+    @Transactional
+    public void enqueueReconcileIfAbsent(Device device) {
+        if (deviceSyncService.hasActiveReconcile(device.getId())) {
+            return;
+        }
+        enqueueReconcile(device, device.getTenantId(), false);
+    }
+
+    private DeviceSyncCommand enqueueReconcile(Device device, Long tenantId, boolean audit) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(device.getId()).orElse(null);
+        if (cursor != null) {
+            if (cursor.getLastRecNo() != null) {
+                payload.put("afterRecNo", cursor.getLastRecNo());
+            }
+            if (cursor.getLastEventAt() != null) {
+                // Small overlap so clock skew / composite→rec upgrade still matches
+                Instant from = cursor.getLastEventAt().minus(5, ChronoUnit.MINUTES);
+                payload.put("fromUtc", from.toString());
+            }
+        }
+        if (!payload.containsKey("fromUtc")) {
+            payload.put("fromUtc", Instant.now().minus(1, ChronoUnit.DAYS).toString());
+        }
+        payload.put("toUtc", Instant.now().plus(1, ChronoUnit.HOURS).toString());
+
+        DeviceSyncCommand command = deviceSyncService.enqueue(tenantId, device.getId(), null, null,
+                SyncCommandType.RECONCILE_DEVICE, payload);
+        if (audit) {
+            auditService.record(AuditActions.DEVICE_RECONCILE_REQUESTED, AuditActions.RESULT_SUCCESS,
+                    "Device", device.getPublicId(), null);
+        }
         return command;
     }
 

@@ -13,14 +13,18 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
 
     boolean existsByTenantIdAndMemberCode(Long tenantId, String memberCode);
 
+    Optional<Member> findByTenantIdAndMemberCode(Long tenantId, String memberCode);
+
     /**
-     * Tenant-scoped search over name/phone/member-code with an optional status filter. All filters
-     * are optional (pass {@code null} to skip). Case-insensitive substring match on the query.
+     * Tenant-scoped search over name/phone/member-code with optional status and creation-source
+     * filters. All filters are optional (pass {@code null} to skip). Case-insensitive substring
+     * match on the query.
      */
     @Query("""
             select m from Member m
             where m.tenantId = :tenantId
               and (:status is null or m.status = :status)
+              and (:creationSource is null or m.creationSource = :creationSource)
               and (:q is null or :q = ''
                    or lower(m.firstName) like lower(concat('%', :q, '%'))
                    or lower(m.lastName) like lower(concat('%', :q, '%'))
@@ -30,6 +34,7 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
     Page<Member> search(@Param("tenantId") Long tenantId,
                         @Param("q") String q,
                         @Param("status") MemberStatus status,
+                        @Param("creationSource") MemberCreationSource creationSource,
                         Pageable pageable);
 
     long countByTenantId(Long tenantId);

@@ -11,6 +11,8 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
 
     List<MemberDeviceMapping> findByMemberId(Long memberId);
 
+    List<MemberDeviceMapping> findByDeviceId(Long deviceId);
+
     Optional<MemberDeviceMapping> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
     boolean existsByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);

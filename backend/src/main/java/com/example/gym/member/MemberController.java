@@ -42,13 +42,14 @@ public class MemberController {
     public PageResponse<MemberResponse> list(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) MemberStatus status,
+            @RequestParam(required = false) MemberCreationSource creationSource,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize,
                 Sort.by(Sort.Direction.DESC, "createdAt"));
         return PageResponse.from(
-                memberService.search(SecurityUtils.currentTenantId(), q, status, pageable),
+                memberService.search(SecurityUtils.currentTenantId(), q, status, creationSource, pageable),
                 MemberResponse::from);
     }
 

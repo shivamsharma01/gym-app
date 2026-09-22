@@ -23,6 +23,9 @@ public class AttendanceSyncCursor extends TenantAwareEntity {
     @Column(name = "last_event_at")
     private Instant lastEventAt;
 
+    @Column(name = "reconciliation_required", nullable = false)
+    private boolean reconciliationRequired = false;
+
     protected AttendanceSyncCursor() {
     }
 
@@ -49,5 +52,13 @@ public class AttendanceSyncCursor extends TenantAwareEntity {
 
     public void setLastEventAt(Instant lastEventAt) {
         this.lastEventAt = lastEventAt;
+    }
+
+    public boolean isReconciliationRequired() {
+        return reconciliationRequired;
+    }
+
+    public void setReconciliationRequired(boolean reconciliationRequired) {
+        this.reconciliationRequired = reconciliationRequired;
     }
 }

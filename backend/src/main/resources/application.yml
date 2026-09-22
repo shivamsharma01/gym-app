@@ -104,6 +104,10 @@ app:
       base-backoff: PT5S
       max-backoff: PT10M
       jitter: PT1S
+      dispatch-timeout: PT2M
+    message-dedupe-ttl: PT24H
+    auto-reconcile-interval: PT15M
+    auto-reconcile-interval-ms: 900000
   public:
     # Optional fallback when X-Gym-Slug / subdomain are absent. Leave empty — no gym is pre-seeded.
     tenant-slug: ${APP_PUBLIC_TENANT_SLUG:}

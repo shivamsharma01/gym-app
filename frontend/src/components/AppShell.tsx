@@ -6,6 +6,7 @@ import {
   Building2,
   ClipboardList,
   CreditCard,
+  Gauge,
   IdCard,
   Inbox,
   KeyRound,
@@ -27,6 +28,7 @@ import { brandDisplayName, brandLogo, type PublicSite } from '@/lib/brand'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useStaffLive } from '@/lib/live'
+import { isPlatformSuperAdmin } from '@/lib/platform'
 
 type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; perm: string | null }
 
@@ -53,12 +55,19 @@ const admin: NavItem[] = [
   { to: '/app/settings', label: 'Settings', icon: Settings, perm: 'SETTINGS_MANAGE' },
 ]
 
+const platformNav: NavItem[] = [
+  { to: '/app/platform/gyms', label: 'Gyms', icon: Building2, perm: null },
+  { to: '/app/platform/staff-passwords', label: 'Staff passwords', icon: KeyRound, perm: null },
+  { to: '/app/audit', label: 'Audit', icon: ClipboardList, perm: null },
+  { to: '/app/platform/actuator', label: 'Actuator', icon: Gauge, perm: null },
+]
+
 export function AppShell() {
   const { user, logout, has } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const live = useStaffLive()
-  const isPlatform = user?.tenantId == null && user?.roles.includes('SUPER_ADMIN')
+  const isPlatform = isPlatformSuperAdmin(user)
   const settings = useQuery({
     queryKey: ['settings', 'shell'],
     queryFn: () => api<PublicSite>('/api/v1/settings'),
@@ -68,22 +77,11 @@ export function AppShell() {
   const logo = isPlatform ? null : brandLogo(settings.data)
 
   const groups = useMemo(() => {
-    const filter = (items: NavItem[]) =>
-      items.filter((l) => {
-        if (isPlatform && (l.to === '/app/settings' || l.perm === 'SETTINGS_MANAGE')) return false
-        return !l.perm || has(l.perm)
-      })
-
-    const result: { label: string; items: NavItem[] }[] = []
     if (isPlatform) {
-      result.push({
-        label: 'Platform',
-        items: [
-          { to: '/app/platform/gyms', label: 'Gyms', icon: Building2, perm: null },
-          { to: '/app/platform/staff-passwords', label: 'Staff passwords', icon: KeyRound, perm: null },
-        ],
-      })
+      return [{ label: 'Platform', items: platformNav }]
     }
+    const filter = (items: NavItem[]) => items.filter((l) => !l.perm || has(l.perm))
+    const result: { label: string; items: NavItem[] }[] = []
     const ops = filter(operations)
     const fac = filter(facility)
     const adm = filter(admin)

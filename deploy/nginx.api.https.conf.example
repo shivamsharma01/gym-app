@@ -1,11 +1,11 @@
-# API edge for the VPS — React SPA is hosted elsewhere (e.g. Cloudflare Pages).
-# Do not serve the SPA from this config.
+# Production HTTPS edge (optional — Cloudflare often terminates TLS publicly).
+# Prefer Cloudflare Full (strict) with an origin certificate, or certbot on the VPS.
 #
-# Portable: accept any Host (Cloudflare customer domains → this origin).
-# Tenant resolution is JWT-based in Spring Boot — not Host / X-Gym-Slug for staff APIs.
+# 1. Issue certs for your hostnames (or use a Cloudflare Origin Cert).
+# 2. Copy this file over nginx.conf (or mount it) and adjust ssl_certificate paths.
+# 3. Map port 443 in docker-compose and mount /etc/letsencrypt (or your cert dir).
 #
-# Flow: Browser → Cloudflare (public TLS) → this Nginx → Spring Boot on Docker network.
-# For origin TLS (Full strict), see nginx.api.https.conf.example.
+# Portable: server_name _ accepts any Host (multi-domain SaaS behind Cloudflare).
 
 upstream gym_backend {
     server backend:8080;
@@ -17,10 +17,26 @@ server {
     listen [::]:80 default_server;
     server_name _;
 
-    # ACME HTTP-01 (uncomment when using certbot webroot on the VPS)
-    # location ^~ /.well-known/acme-challenge/ {
-    #     root /var/www/certbot;
-    # }
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name _;
+
+    # Replace with your certificate paths (certbot or Cloudflare origin cert).
+    ssl_certificate     /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
     location = /healthz {
         add_header Content-Type text/plain;
@@ -33,7 +49,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Gym-Slug $http_x_gym_slug;
         proxy_set_header X-Correlation-Id $http_x_correlation_id;
         proxy_set_header X-Request-Id $http_x_request_id;
@@ -48,7 +64,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto https;
         proxy_read_timeout 3600s;
     }
 
@@ -60,18 +76,17 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto https;
         proxy_read_timeout 3600s;
     }
 
-    # health public; metrics/info/threaddump require SUPER_ADMIN JWT (Spring Security)
     location /actuator/ {
         proxy_pass http://gym_backend/actuator/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto https;
         proxy_set_header Authorization $http_authorization;
         proxy_set_header X-Correlation-Id $http_x_correlation_id;
         proxy_set_header X-Request-Id $http_x_request_id;

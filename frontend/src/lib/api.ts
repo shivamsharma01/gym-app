@@ -1,7 +1,6 @@
+import { apiUrl } from '@/lib/backendUrls'
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from '@/lib/tokens'
 import type { TokenResponse } from '@/lib/types'
-
-const base = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') ?? ''
 
 export class ApiError extends Error {
   status: number
@@ -31,7 +30,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
     headers.set('Authorization', `Bearer ${token}`)
   }
 
-  const res = await fetch(`${base}${path}`, { ...init, headers })
+  const res = await fetch(apiUrl(path), { ...init, headers })
   if (res.status === 401 && !retried && !path.includes('/auth/login') && !path.includes('/auth/refresh')) {
     const ok = refreshHandler ? await refreshHandler() : false
     if (ok) {

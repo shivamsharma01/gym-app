@@ -1,6 +1,6 @@
-# Product follow-ups (post roadmap 0–9)
+# Product follow-ups
 
-Numbered phases are complete. This document records product decisions and remaining go-live work.
+Open product decisions and remaining work after the original 0–9 roadmap.
 
 ## Remote face enroll (decision)
 
@@ -33,4 +33,4 @@ Gateway cutover should use the same defense in depth when wiring attendance to t
 
 ## Ops
 
-See [GO-LIVE.md](../deploy/GO-LIVE.md) for TLS, bootstrap, rate limits, and Windows gateway cutover.
+See [deploy/README.md](../deploy/README.md) for TLS, bootstrap, rate limits, and Windows gateway cutover.

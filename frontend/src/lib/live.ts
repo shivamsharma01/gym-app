@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth'
+import { staffLiveWsUrl } from '@/lib/backendUrls'
 import { getAccessToken } from '@/lib/tokens'
 
 export function useStaffLive() {
@@ -14,8 +15,7 @@ export function useStaffLive() {
       setState('off')
       return
     }
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${window.location.host}/live?access_token=${encodeURIComponent(token)}`)
+    const ws = new WebSocket(staffLiveWsUrl(token))
     ws.onopen = () => setState('live')
     ws.onclose = () => setState('down')
     ws.onerror = () => setState('down')

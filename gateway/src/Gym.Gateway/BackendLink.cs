@@ -8,20 +8,27 @@ namespace Gym.Gateway;
 
 /// <summary>
 /// Outbound backend link: WSS primary, REST poll fallback, reconnect with exponential backoff.
+/// Persists envelopes until backend ACK (or REST 2xx with ACK body) so crashes do not drop events.
 /// </summary>
 public sealed class BackendLink : IAsyncDisposable
 {
     private readonly GatewayOptions _options;
     private readonly ILogger<BackendLink> _log;
     private readonly HttpClient _http;
+    private readonly DurableOutboundStore _outbox;
     private ClientWebSocket? _socket;
     private int _reconnectAttempt;
     private bool _websocketLive;
 
-    public BackendLink(GatewayOptions options, ILogger<BackendLink> log, HttpClient? http = null)
+    public BackendLink(
+        GatewayOptions options,
+        ILogger<BackendLink> log,
+        DurableOutboundStore outbox,
+        HttpClient? http = null)
     {
         _options = options;
         _log = log;
+        _outbox = outbox;
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.Token);
         _http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
@@ -29,10 +36,6 @@ public sealed class BackendLink : IAsyncDisposable
 
     public bool WebSocketLive => _websocketLive;
 
-    /// <summary>
-    /// Swap the operational credential (after rotate). Updates Bearer headers and forces a WS reconnect
-    /// so the next handshake uses the new token (and promotes pending on the backend).
-    /// </summary>
     public void ApplyCredential(string credential)
     {
         if (string.IsNullOrWhiteSpace(credential))
@@ -45,7 +48,6 @@ public sealed class BackendLink : IAsyncDisposable
         RequestReconnect();
     }
 
-    /// <summary>Close the current WebSocket so <see cref="RunWebSocketAsync"/> reconnects with the current token.</summary>
     public void RequestReconnect()
     {
         var socket = _socket;
@@ -63,7 +65,7 @@ public sealed class BackendLink : IAsyncDisposable
         }
         catch
         {
-            // ignore — receive loop will tear down
+            // ignore
         }
     }
 
@@ -86,22 +88,52 @@ public sealed class BackendLink : IAsyncDisposable
 
     public async Task SendAsync(GatewayEnvelope envelope, CancellationToken cancellationToken)
     {
+        _outbox.Persist(envelope);
+        await DeliverAsync(envelope, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Replay any envelopes that survived a crash without an ACK.</summary>
+    public async Task ReplayPendingAsync(CancellationToken cancellationToken)
+    {
+        foreach (var envelope in _outbox.LoadPending())
+        {
+            try
+            {
+                await DeliverAsync(envelope, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to replay outbox message {MessageId}", envelope.MessageId);
+            }
+        }
+    }
+
+    private async Task DeliverAsync(GatewayEnvelope envelope, CancellationToken cancellationToken)
+    {
         var json = JsonSerializer.Serialize(envelope, JsonOptions.Outbound);
         if (_websocketLive && _socket is { State: WebSocketState.Open })
         {
             var bytes = Encoding.UTF8.GetBytes(json);
-            await _socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
+            await _socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken)
+                .ConfigureAwait(false);
+            // ACK arrives asynchronously via receive loop
             return;
         }
 
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
         var response = await _http.PostAsync(new Uri(HttpBase, "internal/gateway/messages"), content, cancellationToken)
             .ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            _log.LogWarning("REST ingest {Type} failed HTTP {Status}: {Body}", envelope.Type, (int)response.StatusCode, body);
+            _log.LogWarning("REST ingest {Type} failed HTTP {Status}: {Body}", envelope.Type,
+                (int)response.StatusCode, body);
+            return;
         }
+
+        // REST reply is the ACK — clear durable entry
+        _outbox.Acknowledge(envelope.MessageId);
+        TryAcknowledgeFromReply(body);
     }
 
     public async Task<IReadOnlyList<GatewayEnvelope>> PollCommandsAsync(CancellationToken cancellationToken)
@@ -146,6 +178,7 @@ public sealed class BackendLink : IAsyncDisposable
                 _websocketLive = true;
                 _reconnectAttempt = 0;
                 _log.LogInformation("WebSocket connected");
+                await ReplayPendingAsync(cancellationToken).ConfigureAwait(false);
                 await ReceiveLoopAsync(socket, onMessage, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -210,7 +243,10 @@ public sealed class BackendLink : IAsyncDisposable
         _http.Dispose();
     }
 
-    private async Task ReceiveLoopAsync(ClientWebSocket socket, Func<GatewayEnvelope, Task> onMessage, CancellationToken cancellationToken)
+    private async Task ReceiveLoopAsync(
+        ClientWebSocket socket,
+        Func<GatewayEnvelope, Task> onMessage,
+        CancellationToken cancellationToken)
     {
         var buffer = new byte[64 * 1024];
         while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
@@ -247,10 +283,57 @@ public sealed class BackendLink : IAsyncDisposable
 
             if (ProtocolTypes.IsBackendReply(envelope.Type))
             {
+                if (envelope.Type is ProtocolTypes.Ack or ProtocolTypes.Registered)
+                {
+                    TryAcknowledgeFromEnvelope(envelope);
+                }
+
                 continue;
             }
 
             await onMessage(envelope).ConfigureAwait(false);
+        }
+    }
+
+    private void TryAcknowledgeFromEnvelope(GatewayEnvelope envelope)
+    {
+        try
+        {
+            if (envelope.Payload.ValueKind == JsonValueKind.Object
+                && envelope.Payload.TryGetProperty("messageId", out var mid)
+                && mid.ValueKind == JsonValueKind.String)
+            {
+                var id = mid.GetString();
+                if (!string.IsNullOrWhiteSpace(id))
+                {
+                    _outbox.Acknowledge(id);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Could not parse ACK payload");
+        }
+    }
+
+    private void TryAcknowledgeFromReply(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body == "{}")
+        {
+            return;
+        }
+
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<GatewayEnvelope>(body, JsonOptions.Inbound);
+            if (envelope != null && envelope.Type == ProtocolTypes.Ack)
+            {
+                TryAcknowledgeFromEnvelope(envelope);
+            }
+        }
+        catch
+        {
+            // ignore
         }
     }
 

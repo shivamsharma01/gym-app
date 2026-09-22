@@ -136,7 +136,10 @@ public sealed class CredentialRotationServiceTests
                 };
             });
 
-            var link = new BackendLink(options, NullLogger<BackendLink>.Instance, new HttpClient(handler));
+            var outbox = new DurableOutboundStore(
+                NullLogger<DurableOutboundStore>.Instance,
+                Path.Combine(Path.GetTempPath(), "gym-outbox-" + Guid.NewGuid().ToString("N")));
+            var link = new BackendLink(options, NullLogger<BackendLink>.Instance, outbox, new HttpClient(handler));
             var client = new GatewayEnrollmentClient(new HttpClient(handler));
             var service = new CredentialRotationService(
                 options, store, link, client, NullLogger<CredentialRotationService>.Instance, TimeSpan.FromHours(1));
@@ -165,7 +168,10 @@ public sealed class CredentialRotationServiceTests
     {
         var path = Path.Combine(Path.GetTempPath(), "gym-gateway-idle-" + Guid.NewGuid().ToString("N"), "config.json");
         var store = new GatewayConfigStore(new PlaintextSecretProtector(), NullLogger<GatewayConfigStore>.Instance, path);
-        var link = new BackendLink(options, NullLogger<BackendLink>.Instance, new HttpClient(handler));
+        var outbox = new DurableOutboundStore(
+            NullLogger<DurableOutboundStore>.Instance,
+            Path.Combine(Path.GetTempPath(), "gym-outbox-" + Guid.NewGuid().ToString("N")));
+        var link = new BackendLink(options, NullLogger<BackendLink>.Instance, outbox, new HttpClient(handler));
         var client = new GatewayEnrollmentClient(new HttpClient(handler));
         return new CredentialRotationService(
             options, store, link, client, NullLogger<CredentialRotationService>.Instance, TimeSpan.FromHours(1));

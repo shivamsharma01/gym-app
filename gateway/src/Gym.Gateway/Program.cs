@@ -76,7 +76,12 @@ try
     builder.Services.AddSingleton(configStore);
     builder.Services.AddSingleton<GatewayEnrollmentClient>();
     builder.Services.AddSingleton(sp =>
-        new BackendLink(options, sp.GetRequiredService<ILoggerFactory>().CreateLogger<BackendLink>()));
+        new DurableOutboundStore(sp.GetRequiredService<ILoggerFactory>().CreateLogger<DurableOutboundStore>()));
+    builder.Services.AddSingleton(sp =>
+        new BackendLink(
+            options,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<BackendLink>(),
+            sp.GetRequiredService<DurableOutboundStore>()));
     builder.Services.AddHostedService<GatewayWorker>();
     builder.Services.AddHostedService<CredentialRotationService>();
 

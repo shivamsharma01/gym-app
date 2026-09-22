@@ -96,6 +96,7 @@ export function DevicesPage() {
                     <Link className="font-semibold hover:text-accent" to={`/app/devices/${d.id}`}>
                       {d.name}
                     </Link>
+                    <div className="mt-0.5 font-mono text-[11px] text-muted">{d.id}</div>
                   </Td>
                   <Td className="text-muted">{d.role}</Td>
                   <Td className="font-mono text-xs text-muted">{d.host ? `${d.host}:${d.port ?? ''}` : '—'}</Td>

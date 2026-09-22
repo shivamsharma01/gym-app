@@ -22,11 +22,26 @@ export function DeviceDetailPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title={d.name} description={`${d.role} · ${d.host ?? 'no host'} · ${d.model ?? 'unknown model'}`} />
-      <div className="flex flex-wrap gap-2">
+      <PageHeader
+        title={d.name}
+        description={`${d.role} · ${d.host ?? 'no host'} · ${d.model ?? 'unknown model'}`}
+      />
+      <div className="flex flex-wrap items-center gap-2">
         <Badge tone={statusTone(d.connectionState)}>{d.connectionState}</Badge>
         <Badge tone={d.gatewayAssigned ? 'ok' : 'warn'}>{d.gatewayAssigned ? 'Gateway assigned' : 'No gateway'}</Badge>
       </div>
+      <p className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted">
+        <span>Device id</span>
+        <code className="rounded bg-raised px-1.5 py-0.5 text-ink">{d.id}</code>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => void navigator.clipboard.writeText(d.id)}
+        >
+          Copy
+        </Button>
+      </p>
       <nav className="flex flex-wrap gap-2 border-b border-line pb-3 text-sm">
         {[
           ['overview', 'Overview'],

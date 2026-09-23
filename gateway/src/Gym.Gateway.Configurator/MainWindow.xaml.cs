@@ -63,12 +63,12 @@ public partial class MainWindow : Window
             if (_devices.Count == 0)
             {
                 StatusText.Text =
-                    $"Enrolled. Credential expires {_credentialExpiresAt:u}. No devices yet — add device rows in staff UI, then re-enroll list via Refresh devices.";
+                    $"Successfully enrolled. Credential expires {_credentialExpiresAt:u}. No devices yet — add device rows in staff UI, then Refresh devices.";
             }
             else
             {
                 StatusText.Text =
-                    $"Enrolled. Credential expires {_credentialExpiresAt:u}. Configure { _devices.Count } device(s), then Save & start.";
+                    $"Successfully enrolled. Credential expires {_credentialExpiresAt:u}. Configure {_devices.Count} device(s), then Save & start.";
             }
         }
         catch (Exception ex)

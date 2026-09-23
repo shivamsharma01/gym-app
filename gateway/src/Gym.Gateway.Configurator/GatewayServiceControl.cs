@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.ServiceProcess;
+using Microsoft.Win32;
 
 namespace Gym.Gateway.Configurator;
 
@@ -31,13 +32,17 @@ public static class GatewayServiceControl
         var exe = FindGatewayExe();
         if (exe == null)
         {
-            return "Gateway executable not found next to the configurator. Install via MSI or place Gym.Gateway.exe alongside this app.";
+            var tried = string.Join(" | ", CandidateExePaths());
+            return "Gym.Gateway.exe not found. Reinstall the MSI, then run Configurator from " +
+                   @"C:\Program Files\Gym Gateway\. Looked in: " + tried;
         }
 
         try
         {
             using var existing = new ServiceController(ServiceName);
             _ = existing.Status;
+            // Point service at the exe we found (repairs orphaned / wrong binPath installs).
+            RunSc($"config \"{ServiceName}\" binPath= \"{exe}\"");
             return StartExisting(existing);
         }
         catch (InvalidOperationException)
@@ -78,17 +83,38 @@ public static class GatewayServiceControl
         return "Service started.";
     }
 
-    private static string? FindGatewayExe()
+    private static IEnumerable<string> CandidateExePaths()
     {
         var dir = AppContext.BaseDirectory;
-        var candidates = new[]
+        yield return Path.Combine(dir, "Gym.Gateway.exe");
+        yield return Path.Combine(dir, "..", "Gym.Gateway", "Gym.Gateway.exe");
+
+        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        yield return Path.Combine(pf, "Gym Gateway", "Gym.Gateway.exe");
+
+        var pf64 = Environment.GetEnvironmentVariable("ProgramW6432");
+        if (!string.IsNullOrWhiteSpace(pf64))
         {
-            Path.Combine(dir, "Gym.Gateway.exe"),
-            Path.Combine(dir, "..", "Gym.Gateway", "Gym.Gateway.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Gym Gateway", "Gym.Gateway.exe")
-        };
-        return candidates.Select(Path.GetFullPath).FirstOrDefault(File.Exists);
+            yield return Path.Combine(pf64, "Gym Gateway", "Gym.Gateway.exe");
+        }
+
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"Software\Gym\Gateway");
+            var installDir = key?.GetValue("InstallDir") as string;
+            if (!string.IsNullOrWhiteSpace(installDir))
+            {
+                yield return Path.Combine(installDir, "Gym.Gateway.exe");
+            }
+        }
+        catch
+        {
+            // ignore registry miss
+        }
     }
+
+    private static string? FindGatewayExe() =>
+        CandidateExePaths().Select(Path.GetFullPath).FirstOrDefault(File.Exists);
 
     private static int RunSc(string args)
     {
@@ -101,12 +127,7 @@ public static class GatewayServiceControl
             RedirectStandardOutput = true,
             RedirectStandardError = true
         });
-        if (process == null)
-        {
-            return -1;
-        }
-
-        process.WaitForExit(15_000);
-        return process.ExitCode;
+        process?.WaitForExit(15_000);
+        return process?.ExitCode ?? -1;
     }
 }

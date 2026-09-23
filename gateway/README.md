@@ -23,6 +23,9 @@ Use **Reissue enrollment** in the staff UI (`POST /api/v1/gateways/{id}/enrollme
 
 - Install dir: `Program Files\Gym Gateway\`
 - Configurator: `C:\Program Files\Gym Gateway\Gym.Gateway.Configurator.exe` (no Start Menu shortcut — run as Administrator)
+- Service binary must be `C:\Program Files\Gym Gateway\Gym.Gateway.exe` — if `sc qc "Gym Gateway"` shows
+  `!(bindpath.PublishDir)` in the path, that MSI is broken; uninstall and install a build ≥ the WiX
+  `$(PublishDir)` fix.
 - Data/logs: `%ProgramData%\GymGateway\` (config retained across upgrades)
 - MSI registers the Windows Service but **does not start it** (no config yet). Use Configurator → **Save config & start service**.
 - Uninstall leaves ProgramData unless `PURGE_CONFIG=1` is passed to msiexec

@@ -2,6 +2,11 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
+  <!--
+    PublishDir is an MSBuild DefineConstant (compile-time), not !(bindpath.*).
+    Using !(bindpath.PublishDir) on File/@Source made WiX install a service binary named
+    literally "!(bindpath.PublishDir)Gym.Gateway.exe" (see sc qc ImagePath).
+  -->
   <Package Name="Gym Gateway"
            Manufacturer="Gym"
            Version="$(ProductVersion)"
@@ -34,19 +39,21 @@
       <ComponentRef Id="GatewayDataPurge" />
     </Feature>
 
-    <!-- All published files except the service binary (owned by GatewayService component) -->
+    <!-- Payload except the service exe (owned by GatewayService below) -->
     <ComponentGroup Id="GatewayPayload" Directory="INSTALLFOLDER">
-      <Files Include="!(bindpath.PublishDir)**">
-        <Exclude Files="!(bindpath.PublishDir)Gym.Gateway.exe" />
-        <Exclude Files="!(bindpath.PublishDir)**\*.pdb" />
+      <Files Include="$(PublishDir)**">
+        <Exclude Files="$(PublishDir)Gym.Gateway.exe" />
+        <Exclude Files="$(PublishDir)**\*.pdb" />
       </Files>
     </ComponentGroup>
 
     <Component Id="GatewayService" Directory="INSTALLFOLDER" Guid="C2D3E4F5-6789-4ABC-DEF0-1234567890AB">
-      <File Id="GatewayExe" Source="!(bindpath.PublishDir)Gym.Gateway.exe" KeyPath="yes" />
-      <!-- Auto-start type, but do NOT start during MSI: there is no config yet.
-           Configurator enrolls then starts the service. Start="install" caused
-           "failed to start… privileges" and Cancel rolled back the whole install. -->
+      <!-- Name= forces correct ImagePath; do not rely on Source basename with bindpath. -->
+      <File Id="GatewayExe"
+            Source="$(PublishDir)Gym.Gateway.exe"
+            Name="Gym.Gateway.exe"
+            KeyPath="yes" />
+      <!-- Do not Start="install": no config yet; Configurator starts the service after enroll. -->
       <ServiceInstall Id="GymGatewayServiceInstall"
                       Name="Gym Gateway"
                       DisplayName="Gym Gateway"
@@ -66,6 +73,7 @@
                           SecondFailureActionType="restart"
                           ThirdFailureActionType="restart"
                           RestartServiceDelayInSeconds="5" />
+      <RegistryValue Root="HKLM" Key="Software\Gym\Gateway" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
     </Component>
 
     <Component Id="GatewayDataDirs" Directory="GatewayDataFolder" Guid="B1C2D3E4-5F67-489A-BCDE-F01234567890">

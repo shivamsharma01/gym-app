@@ -63,6 +63,9 @@ jobs:
         run: |
           # Merge configurator into gateway publish dir without wiping native DLLs / worker payload
           Copy-Item -Path artifacts/configurator/* -Destination artifacts/win-x64/ -Recurse -Force
+          $exe = Join-Path $PWD "artifacts/win-x64/Gym.Gateway.exe"
+          if (-not (Test-Path $exe)) { throw "Gym.Gateway.exe missing after publish/merge: $exe" }
+          Get-ChildItem artifacts/win-x64 -Filter "*.exe" | Select-Object Name, Length
 
       - name: Build MSI
         run: >
@@ -70,6 +73,23 @@ jobs:
           -c Release
           -p:ProductVersion=${{ steps.ver.outputs.version }}
           -p:GatewayPublishDir=$PWD/artifacts/win-x64/
+
+      - name: Verify MSI contains Gym.Gateway.exe
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Recurse installer -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw "MSI not found" }
+          # WiX cabinets are embedded; use dark or msiexec admin extract
+          $extract = Join-Path $env:RUNNER_TEMP "msi-extract"
+          New-Item -ItemType Directory -Force $extract | Out-Null
+          $p = Start-Process -FilePath msiexec.exe -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=`"$extract`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /a failed: $($p.ExitCode)" }
+          $found = Get-ChildItem -Path $extract -Recurse -Filter "Gym.Gateway.exe" | Select-Object -First 1
+          if (-not $found) {
+            Get-ChildItem -Path $extract -Recurse -Filter "*.exe" | ForEach-Object { $_.FullName }
+            throw "Gym.Gateway.exe not inside MSI payload"
+          }
+          echo "OK: $($found.FullName)"
 
       - name: Stage MSI artifact
         shell: pwsh

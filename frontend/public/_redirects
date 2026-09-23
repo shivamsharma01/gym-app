@@ -1,3 +1,0 @@
-# SPA deep-link fallback (Cloudflare rejects /* → /index.html 200 as a loop).
-/app/*  /index.html  200
-/g/*    /index.html  200

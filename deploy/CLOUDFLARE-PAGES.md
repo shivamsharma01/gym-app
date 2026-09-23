@@ -46,10 +46,10 @@ browsers will use this host.
 5. Save and deploy. Note the `*.pages.dev` URL for a smoke test of static assets only
    (API calls will fail on `pages.dev` until the custom domain + proxy in §4–5).
 
-SPA deep links (`/app/members/...`, `/g/...`) need a fallback. The repo includes
-[`frontend/public/_redirects`](../frontend/public/_redirects) (`/app/*` and `/g/*` →
-`/index.html` 200). Do **not** use `/* → /index.html 200` — Cloudflare rejects it as an
-infinite loop (error 100324). After that lands on `main`, redeploy Pages.
+SPA deep links (`/app/...`, `/g/...`) are handled by Pages automatically: if there is
+**no** top-level `404.html`, unmatched paths are served as the SPA (`index.html`).
+Do **not** add `public/_redirects` with `→ /index.html 200` — Wrangler/API rejects those
+rules as an infinite loop (error 100324) and the deploy fails.
 
 ---
 

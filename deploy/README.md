@@ -31,6 +31,10 @@ Sizing assumes Spring Boot 4 / Java 21, Hikari pool **20**, outbox every 10s, We
 
 ## 1. Prepare the VPS (before `./up.sh`)
 
+**Fresh empty VPS (logged in as root)?** Follow the copy-paste runbook
+[VPS-BOOTSTRAP.md](VPS-BOOTSTRAP.md) (user/group, apt, Docker, clone, `.env`,
+up, backup/restore). Summary of the same steps continues below.
+
 ### 1.1 Update the OS
 
 ```bash
@@ -144,12 +148,15 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile ful
 
 ## 2. Same-origin SPA (Cloudflare)
 
+Step-by-step: **[CLOUDFLARE-PAGES.md](CLOUDFLARE-PAGES.md)** (Pages project, custom domain,
+Worker path proxy to the VPS, smoke tests).
+
 Build with **empty** `VITE_API_BASE`. One bundle works on every customer host:
 
 | Browser path | Origin |
 |--------------|--------|
 | `/`, `/app/*`, `/g/*`, assets | Cloudflare Pages |
-| `/api/*`, `/live`, `/gateway`, `/actuator/*` | VPS Nginx → Spring Boot |
+| `/api/*`, `/live`, `/gateway`, `/actuator/*` | Worker → VPS Nginx → Spring Boot |
 
 Tenant resolution is **JWT-based** — do not add Host/header tenant overrides in the SPA.
 Optional laptop SPA container: `--profile spa` (not for VPS).

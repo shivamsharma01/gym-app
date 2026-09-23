@@ -20,6 +20,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Page<Payment> findByTenantIdOrderByPaidOnDescIdDesc(Long tenantId, Pageable pageable);
 
+    Page<Payment> findByTenantIdAndPaidOnBetweenOrderByPaidOnDescIdDesc(
+            Long tenantId, LocalDate from, LocalDate to, Pageable pageable);
+
     @Query("""
             select coalesce(sum(p.amount), 0) from Payment p
             where p.tenantId = :tenantId

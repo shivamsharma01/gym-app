@@ -16,6 +16,7 @@ import com.example.gym.tenant.TenantGuard;
 import com.example.gym.membership.MembershipChangedEvent.ChangeType;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -24,6 +25,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import com.example.gym.security.SecurityUtils;
 
 /**
  * Membership lifecycle: create, renew (preserving history), freeze/unfreeze (pausing validity),
@@ -91,6 +93,15 @@ public class MembershipService {
 
         Membership membership =
                 build(tenantId, member.getId(), plan, start, end);
+
+        BigDecimal discount =
+                validateAndAuthorizeDiscount(
+                        request.discountAmount(),
+                        plan.getPrice()
+                );
+
+        membership.setDiscountAmount(discount);
+        recordDiscountApproval(membership, discount);
 
         Membership saved = membershipRepository.save(membership);
 
@@ -217,6 +228,12 @@ public class MembershipService {
                         current.getEndDate().plusDays(1)
                 );
 
+        BigDecimal discount =
+                validateAndAuthorizeDiscount(
+                        request.discountAmount(),
+                        plan.getPrice()
+                );
+
         BigDecimal amountToCollect;
 
         if (qualifiesForCredit) {
@@ -227,6 +244,10 @@ public class MembershipService {
             amountToCollect = plan.getPrice();
         }
 
+        amountToCollect = amountToCollect
+                .subtract(discount)
+                .max(BigDecimal.ZERO);
+
         Membership renewal = build(
                 tenantId,
                 current.getMemberId(),
@@ -235,10 +256,14 @@ public class MembershipService {
                 end
         );
 
+
+        renewal.setDiscountAmount(discount);
+        recordDiscountApproval(renewal, discount);
+
         renewal.setAmountPaid(BigDecimal.ZERO);
 
         renewal.setPaymentStatus(
-                amountToCollect.compareTo(BigDecimal.ZERO) == 0
+                renewal.getNetAmount().compareTo(BigDecimal.ZERO) == 0
                         ? MembershipPaymentStatus.PAID
                         : MembershipPaymentStatus.UNPAID
         );
@@ -290,6 +315,18 @@ public class MembershipService {
                                 "Membership plan not found"
                         )
                 );
+    }
+
+    private void recordDiscountApproval(Membership membership, BigDecimal discount) {
+        if (discount == null || discount.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+
+        var principal = SecurityUtils.currentPrincipal();
+
+        membership.setDiscountApprovedByUserId(principal.getUserId());
+        membership.setDiscountApprovedByUsername(principal.getUsername());
+        membership.setDiscountApprovedAt(Instant.now());
     }
 
     @Transactional
@@ -420,6 +457,26 @@ public class MembershipService {
         );
     }
 
+    private BigDecimal validateDiscount(BigDecimal discountAmount, BigDecimal planPrice) {
+        BigDecimal discount = discountAmount == null
+                ? BigDecimal.ZERO
+                : discountAmount;
+
+        if (discount.compareTo(BigDecimal.ZERO) < 0) {
+            throw CommonExceptions.badRequest(
+                    "Discount cannot be negative"
+            );
+        }
+
+        if (discount.compareTo(planPrice) > 0) {
+            throw CommonExceptions.badRequest(
+                    "Discount cannot be greater than the plan amount"
+            );
+        }
+
+        return discount;
+    }
+
     private void publish(Membership membership, ChangeType type) {
         eventPublisher.publishEvent(new MembershipChangedEvent(
                 membership.getTenantId(), membership.getMemberId(), membership.getId(), type));
@@ -438,6 +495,45 @@ public class MembershipService {
             return requestedEnd;
         }
         return start.plusDays(Math.max(plan.getDurationDays() - 1, 0));
+    }
+
+    private BigDecimal validateAndAuthorizeDiscount(
+            BigDecimal discountAmount,
+            BigDecimal planPrice
+    ) {
+        BigDecimal discount = discountAmount == null
+                ? BigDecimal.ZERO
+                : discountAmount;
+
+        if (discount.compareTo(BigDecimal.ZERO) < 0) {
+            throw CommonExceptions.badRequest(
+                    "Discount cannot be negative"
+            );
+        }
+
+        if (discount.compareTo(planPrice) > 0) {
+            throw CommonExceptions.badRequest(
+                    "Discount cannot be greater than the plan amount"
+            );
+        }
+
+        if (discount.compareTo(BigDecimal.ZERO) > 0) {
+            boolean authorized = SecurityUtils.currentPrincipal()
+                    .getAuthorities()
+                    .stream()
+                    .anyMatch(a ->
+                            "MEMBERSHIP_DISCOUNT_APPROVE"
+                                    .equals(a.getAuthority())
+                    );
+
+            if (!authorized) {
+                throw CommonExceptions.forbidden(
+                        "Only an authorized administrator can approve membership discounts"
+                );
+            }
+        }
+
+        return discount;
     }
 
     private static void requireEndOnOrAfterStart(LocalDate start, LocalDate end) {

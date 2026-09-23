@@ -70,6 +70,13 @@ export type Membership = {
   cancelledOn: string | null
   cancelReason: string | null
   createdAt: string
+  discountAmount: number | string
+  netAmount: number | string
+}
+
+export type PaymentSummary = {
+  totalAmount: number | string
+  paymentCount: number
 }
 
 export type AccessStatus = {

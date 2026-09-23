@@ -49,10 +49,12 @@ export function MembershipPanel({
     enabled: has('MEMBERSHIP_CREATE') || has('MEMBERSHIP_UPDATE'),
   });
 
-  // Create membership
+// Create membership
   const [planId, setPlanId] = useState('');
   const [startDate, setStartDate] = useState(todayIso());
   const [endDate, setEndDate] = useState('');
+  const [discountAmount, setDiscountAmount] = useState('');
+  const [discountConfirmed, setDiscountConfirmed] = useState(false);
 
   // Edit membership dates
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -64,6 +66,8 @@ export function MembershipPanel({
   const [renewPlanId, setRenewPlanId] = useState('');
   const [renewStartDate, setRenewStartDate] = useState('');
   const [renewEndDate, setRenewEndDate] = useState('');
+  const [renewDiscountAmount, setRenewDiscountAmount] = useState('');
+  const [renewDiscountConfirmed, setRenewDiscountConfirmed] = useState(false);
 // Record payment
   const [paymentMembershipId, setPaymentMembershipId] = useState<string | null>(null)
   const [paymentAmount, setPaymentAmount] = useState('')
@@ -72,8 +76,18 @@ export function MembershipPanel({
   const [paymentReference, setPaymentReference] = useState('')
   const [paymentDate, setPaymentDate] = useState(todayIso())
   const selectedPlan = (plans.data?.content ?? []).find((p) => p.id === planId);
-
+  const planAmount = Number(selectedPlan?.price ?? 0);
+  const discount = Number(discountAmount) || 0;
+  const netAmount = Math.max(planAmount - discount, 0);
+  const invalidDiscount = discount > planAmount;
   const renewingMembership = rows.find((row) => row.id === renewingId);
+  const renewingPlan = (plans.data?.content ?? []).find(
+      (p) => p.id === renewPlanId
+  );
+
+  const renewDiscount = Number(renewDiscountAmount) || 0;
+  const renewPlanAmount = Number(renewingPlan?.price ?? 0);
+  const invalidRenewDiscount = renewDiscount > renewPlanAmount;
   const paymentMembership = rows.find(
       (row) => row.id === paymentMembershipId,
   )
@@ -122,7 +136,7 @@ export function MembershipPanel({
     setPaymentMembershipId(row.id)
 
     const remainingAmount = Math.max(
-        Number(row.price) - Number(row.amountPaid ?? 0),
+        Number(row.netAmount ?? row.price) - Number(row.amountPaid ?? 0),
         0,
     )
 
@@ -138,6 +152,8 @@ export function MembershipPanel({
     setRenewPlanId('');
     setRenewStartDate('');
     setRenewEndDate('');
+    setRenewDiscountAmount('');
+    setRenewDiscountConfirmed(false);
   }
 
   function applyRenewPlan(id: string) {
@@ -163,21 +179,29 @@ export function MembershipPanel({
   }
 
   const create = useMutation({
-    mutationFn: () =>
-      api<Membership>('/api/v1/memberships', {
-        method: 'POST',
-        body: JSON.stringify({
-          memberId,
-          planId,
-          startDate,
-          endDate,
-        }),
-      }),
+        mutationFn: () => {
+          if (invalidDiscount) {
+            throw new Error('Discount cannot be greater than the plan amount.');
+          }
+
+          return api<Membership>('/api/v1/memberships', {
+            method: 'POST',
+            body: JSON.stringify({
+              memberId,
+              planId,
+              startDate,
+              endDate,
+              discountAmount: Number(discountAmount) || 0,
+            }),
+          });
+        },
 
     onSuccess: () => {
       setPlanId('');
       setStartDate(todayIso());
       setEndDate('');
+      setDiscountAmount('');
+      setDiscountConfirmed(false);
 
       void qc.invalidateQueries({
         queryKey: ['memberships', memberId],
@@ -256,15 +280,24 @@ export function MembershipPanel({
   });
 
   const renew = useMutation({
-    mutationFn: () =>
-      api<Membership>(`/api/v1/memberships/${renewingId}/renew`, {
-        method: 'POST',
-        body: JSON.stringify({
-          planId: renewPlanId,
-          startDate: renewStartDate,
-          endDate: renewEndDate,
-        }),
-      }),
+        mutationFn: () => {
+          if (invalidRenewDiscount) {
+            throw new Error('Discount cannot be greater than the plan amount.');
+          }
+
+          return api<Membership>(
+              `/api/v1/memberships/${renewingId}/renew`,
+              {
+                method: 'POST',
+                body: JSON.stringify({
+                  planId: renewPlanId,
+                  startDate: renewStartDate,
+                  endDate: renewEndDate,
+                  discountAmount: Number(renewDiscountAmount) || 0,
+                }),
+              },
+          );
+        },
 
     onSuccess: () => {
       closeRenewal();
@@ -340,7 +373,43 @@ export function MembershipPanel({
                 </option>
               ))}
             </Select>
+            <div>
+              <Label htmlFor="membership-discount">Discount</Label>
+              <Input
+                  id="membership-discount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={discountAmount}
+                  onChange={(e) => setDiscountAmount(e.target.value)}
+                  placeholder="0"
+                  aria-invalid={invalidDiscount}
+                  disabled={!planId}
+              />
+              {invalidDiscount ? (
+                  <p className="mt-1 text-sm text-red-600">
+                    Discount cannot be greater than the plan amount.
+                  </p>
+              ) : null}
+            </div>
+            {planId ? (
+                <div className="rounded-lg border border-line bg-surface p-3">
+                  <div className="flex justify-between text-sm">
+                    <span>Plan Amount</span>
+                    <span>₹{planAmount.toFixed(2)}</span>
+                  </div>
 
+                  <div className="mt-1 flex justify-between text-sm">
+                    <span>Discount</span>
+                    <span>- ₹{discount.toFixed(2)}</span>
+                  </div>
+
+                  <div className="mt-2 flex justify-between border-t border-line pt-2 font-semibold">
+                    <span>Net Amount</span>
+                    <span>₹{netAmount.toFixed(2)}</span>
+                  </div>
+                </div>
+            ) : null}
             {planId ? (
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
@@ -369,8 +438,32 @@ export function MembershipPanel({
             ) : null}
 
             <Button
-              disabled={!planId || !startDate || !endDate || create.isPending}
-              onClick={() => create.mutate()}
+                disabled={
+                    !planId ||
+                    !startDate ||
+                    !endDate ||
+                    invalidDiscount ||
+                    create.isPending
+                }
+              onClick={() => {
+                const discount = Number(discountAmount) || 0;
+
+                if (discount > 0 && !discountConfirmed) {
+                  const confirmed = window.confirm(
+                      `You are applying a ₹${discount.toFixed(2)} discount.\n\n` +
+                      `Please confirm that this is an approved discount and not an unpaid balance.\n\n` +
+                      `Do you want to record this discount?`,
+                  );
+
+                  if (!confirmed) {
+                    return;
+                  }
+
+                  setDiscountConfirmed(true);
+                }
+
+                create.mutate();
+              }}
             >
               Start membership
             </Button>
@@ -431,15 +524,21 @@ export function MembershipPanel({
             </Badge>
           </div>
 
-          <p className="text-sm text-muted">
-            {formatDate(row.startDate)} → {formatDate(row.endDate)}
-            {row.endDateInferred ? (
-              <span className="ml-1 text-warn"> (end date inferred — review)</span>
-            ) : null}{' '}
-            ·{' '}
-            {money(row.price, row.currency)} · paid{' '}
-            {money(row.amountPaid, row.currency)} · device {row.deviceSyncState}
-          </p>
+                <p className="text-sm text-muted">
+                  {formatDate(row.startDate)} → {formatDate(row.endDate)} ·{' '}
+                  {money(row.price, row.currency)} · discount{' '}
+                  {money(row.discountAmount ?? 0, row.currency)} · paid{' '}
+                  {money(row.amountPaid, row.currency)} · unpaid{' '}
+                  {money(
+                      Math.max(
+                          Number(row.netAmount ?? row.price) - Number(row.amountPaid ?? 0),
+                          0,
+                      ),
+                      row.currency,
+                  )}{' '}
+                  · device {row.deviceSyncState}
+                </p>
+
 
           {/* CHANGE DATES */}
           {editingId === row.id ? (
@@ -670,6 +769,27 @@ export function MembershipPanel({
                     </option>
                   ))}
                 </Select>
+                <div>
+                  <Label htmlFor="renew-discount">Discount</Label>
+
+                  <Input
+                      id="renew-discount"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={renewDiscountAmount}
+                      onChange={(e) => setRenewDiscountAmount(e.target.value)}
+                      placeholder="0"
+                      aria-invalid={invalidRenewDiscount}
+                      disabled={!renewPlanId}
+                  />
+
+                  {invalidRenewDiscount ? (
+                      <p className="mt-1 text-sm text-red-600">
+                        Discount cannot be greater than the plan amount.
+                      </p>
+                  ) : null}
+                </div>
               </div>
 
               {/* Dates */}
@@ -732,13 +852,28 @@ export function MembershipPanel({
               <Button
                 type="button"
                 disabled={
-                  renew.isPending ||
-                  !renewPlanId ||
-                  !renewStartDate ||
-                  !renewEndDate
+                    !renewPlanId ||
+                    !renewStartDate ||
+                    !renewEndDate ||
+                    invalidRenewDiscount ||
+                    renew.isPending
                 }
                 className="bg-orange-500 text-white hover:bg-orange-600 disabled:bg-orange-500/40"
-                onClick={() => renew.mutate()}
+                onClick={() => {
+                  const discount = Number(renewDiscountAmount) || 0;
+
+                  if (discount > 0 && !renewDiscountConfirmed) {
+                    const confirmed = window.confirm(
+                        `You are applying a ₹${discount.toFixed(2)} discount.\n\n` +
+                        `Please confirm that this is an approved discount and not an unpaid balance.`,
+                    );
+
+                    if (!confirmed) return;
+
+                    setRenewDiscountConfirmed(true);
+                  }
+                  renew.mutate();
+                }}
               >
                 {renew.isPending ? 'Renewing...' : 'Renew Membership'}
               </Button>
@@ -759,6 +894,87 @@ export function MembershipPanel({
               </div>
 
               <div className="space-y-4 px-6 py-5">
+                <div className="rounded-lg border border-[#29322d] bg-[#0d110f] p-3 text-sm">
+                  <div className="flex justify-between">
+                    <span>Plan Amount</span>
+                    <span>
+      {money(
+          Number(paymentMembership.price ?? 0),
+          paymentMembership.currency,
+      )}
+    </span>
+                  </div>
+
+                  <div className="mt-1 flex justify-between">
+                    <span>Discount</span>
+                    <span>
+      - {money(
+                        Number(paymentMembership.discountAmount ?? 0),
+                        paymentMembership.currency,
+                    )}
+    </span>
+                  </div>
+
+                  <div className="mt-1 flex justify-between">
+                    <span>Net Amount</span>
+                    <span>
+      {money(
+          Number(
+              paymentMembership.netAmount ??
+              Number(paymentMembership.price ?? 0) -
+              Number(paymentMembership.discountAmount ?? 0),
+          ),
+          paymentMembership.currency,
+      )}
+    </span>
+                  </div>
+
+                  <div className="mt-1 flex justify-between">
+                    <span>Already Paid</span>
+                    <span>
+      {money(
+          Number(paymentMembership.amountPaid ?? 0),
+          paymentMembership.currency,
+      )}
+    </span>
+                  </div>
+
+                  <div className="mt-2 flex justify-between border-t border-[#29322d] pt-2 font-semibold">
+                    <span>Remaining</span>
+                    <span>
+    {money(
+        Math.max(
+            Number(
+                paymentMembership.netAmount ??
+                Number(paymentMembership.price ?? 0) -
+                Number(paymentMembership.discountAmount ?? 0),
+            ) - Number(paymentMembership.amountPaid ?? 0),
+            0,
+        ),
+        paymentMembership.currency,
+    )}
+  </span>
+                  </div>
+
+                  <div className="mt-1 flex justify-between text-xs text-muted">
+                    <span>After this payment</span>
+                    <span>
+    {money(
+        Math.max(
+            Number(
+                paymentMembership.netAmount ??
+                Number(paymentMembership.price ?? 0) -
+                Number(paymentMembership.discountAmount ?? 0),
+            ) -
+            Number(paymentMembership.amountPaid ?? 0) -
+            Number(paymentAmount || 0),
+            0,
+        ),
+        paymentMembership.currency,
+    )}
+  </span>
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="payment-amount">Amount</Label>
                   <Input
@@ -853,19 +1069,44 @@ export function MembershipPanel({
                     onClick={() => {
                       const paidAmount = Number(paymentMembership?.amountPaid ?? 0)
                       const enteredAmount = Number(paymentAmount)
-                      const membershipAmount = Number(paymentMembership?.price ?? 0)
+                      const membershipAmount = Number(
+                          paymentMembership?.netAmount ?? paymentMembership?.price ?? 0,
+                      )
 
                       if (paidAmount + enteredAmount > membershipAmount) {
+                        const excessAmount =
+                            paidAmount + enteredAmount - membershipAmount
+
                         const confirmed = window.confirm(
-                            `Payment exceeds the membership amount by ${money(
-                                paidAmount + enteredAmount - membershipAmount,
+                            `The payment exceeds the remaining membership amount.\n\n` +
+                            `Plan Amount: ${money(
+                                Number(paymentMembership?.price ?? 0),
                                 paymentMembership?.currency ?? 'INR',
-                            )}. Do you still want to record this payment?`,
+                            )}\n` +
+                            `Discount: ${money(
+                                Number(paymentMembership?.discountAmount ?? 0),
+                                paymentMembership?.currency ?? 'INR',
+                            )}\n` +
+                            `Net Amount: ${money(
+                                membershipAmount,
+                                paymentMembership?.currency ?? 'INR',
+                            )}\n` +
+                            `Already Paid: ${money(
+                                paidAmount,
+                                paymentMembership?.currency ?? 'INR',
+                            )}\n` +
+                            `New Payment: ${money(
+                                enteredAmount,
+                                paymentMembership?.currency ?? 'INR',
+                            )}\n` +
+                            `Excess: ${money(
+                                excessAmount,
+                                paymentMembership?.currency ?? 'INR',
+                            )}\n\n` +
+                            `Do you want to record this payment anyway?`,
                         )
 
-                        if (!confirmed) {
-                          return
-                        }
+                        if (!confirmed) return
                       }
 
                       recordPayment.mutate()

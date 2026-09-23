@@ -22,7 +22,9 @@ Use **Reissue enrollment** in the staff UI (`POST /api/v1/gateways/{id}/enrollme
 ### MSI notes
 
 - Install dir: `Program Files\Gym Gateway\`
+- Configurator: `C:\Program Files\Gym Gateway\Gym.Gateway.Configurator.exe` (no Start Menu shortcut — run as Administrator)
 - Data/logs: `%ProgramData%\GymGateway\` (config retained across upgrades)
+- MSI registers the Windows Service but **does not start it** (no config yet). Use Configurator → **Save config & start service**.
 - Uninstall leaves ProgramData unless `PURGE_CONFIG=1` is passed to msiexec
 - **Linux cannot build the MSI or WPF configurator** — use [`.github/workflows/gateway-msi.yml`](../.github/workflows/gateway-msi.yml) (`windows-latest`)
 

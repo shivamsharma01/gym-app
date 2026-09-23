@@ -44,6 +44,9 @@
 
     <Component Id="GatewayService" Directory="INSTALLFOLDER" Guid="C2D3E4F5-6789-4ABC-DEF0-1234567890AB">
       <File Id="GatewayExe" Source="!(bindpath.PublishDir)Gym.Gateway.exe" KeyPath="yes" />
+      <!-- Auto-start type, but do NOT start during MSI: there is no config yet.
+           Configurator enrolls then starts the service. Start="install" caused
+           "failed to start… privileges" and Cancel rolled back the whole install. -->
       <ServiceInstall Id="GymGatewayServiceInstall"
                       Name="Gym Gateway"
                       DisplayName="Gym Gateway"
@@ -55,7 +58,6 @@
                       Vital="yes" />
       <ServiceControl Id="GymGatewayServiceControl"
                       Name="Gym Gateway"
-                      Start="install"
                       Stop="both"
                       Remove="uninstall"
                       Wait="yes" />

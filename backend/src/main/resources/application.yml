@@ -1,14 +1,23 @@
 spring:
   application:
     name: gym-backend
-  profiles:
-    active: dev
-  # Activate a profile via SPRING_PROFILES_ACTIVE (e.g. "dev") or -Dspring-boot.run.profiles=dev.
-  # Intentionally not defaulted here so tests (@ActiveProfiles("test")) are never polluted by "dev".
+  # Do not hardcode an active profile here. Set SPRING_PROFILES_ACTIVE (or
+  # -Dspring-boot.run.profiles) explicitly:
+  #   local laptop:  SPRING_PROFILES_ACTIVE=dev
+  #   VPS / compose: SPRING_PROFILES_ACTIVE=prod
+  #   tests:         @ActiveProfiles("test")
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/gym?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
     username: ${DB_USERNAME:gym}
     password: ${DB_PASSWORD:gym}
+    hikari:
+      pool-name: gym-hikari
+      maximum-pool-size: ${DB_POOL_MAX:20}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
+      connection-timeout: 5000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
   jpa:
     open-in-view: false
     hibernate:
@@ -32,12 +41,34 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        # health: public (minimal). info/metrics/threaddump: SUPER_ADMIN only.
+        # Do NOT expose env, configprops, heapdump, loggers remotely.
+        include: health,info,metrics,threaddump
   endpoint:
     health:
       probes:
         enabled: true
       show-details: when_authorized
+      show-components: when_authorized
+    heapdump:
+      enabled: false
+    env:
+      enabled: false
+    configprops:
+      enabled: false
+    loggers:
+      enabled: false
+  info:
+    env:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+info:
+  app:
+    name: gym-backend
+    description: Gym SaaS API
 
 springdoc:
   swagger-ui:
@@ -55,7 +86,8 @@ app:
       max-failed-attempts: 5
       lock-duration: PT15M
   cors:
-    allowed-origins: ${APP_CORS_ORIGINS:http://localhost:5173}
+    # Overridden by APP_CORS_ORIGINS. Dev profile (application-dev.yml) widens local origins.
+    allowed-origins: ${APP_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:8088,http://127.0.0.1:8088}
   gateway:
     # Per-deployment shared token the device gateway may present at the WSS handshake
     # (optional; per-gateway operational credentials after enrollment are preferred).
@@ -73,6 +105,10 @@ app:
       base-backoff: PT5S
       max-backoff: PT10M
       jitter: PT1S
+      dispatch-timeout: PT2M
+    message-dedupe-ttl: PT24H
+    auto-reconcile-interval: PT15M
+    auto-reconcile-interval-ms: 900000
   public:
     # Optional fallback when X-Gym-Slug / subdomain are absent. Leave empty — no gym is pre-seeded.
     tenant-slug: ${APP_PUBLIC_TENANT_SLUG:}
@@ -89,8 +125,14 @@ app:
   rate-limit:
     enabled: ${APP_RATE_LIMIT_ENABLED:true}
     login-per-minute: ${APP_RATE_LIMIT_LOGIN_PER_MINUTE:20}
+    refresh-per-minute: ${APP_RATE_LIMIT_REFRESH_PER_MINUTE:30}
     enquiry-per-minute: ${APP_RATE_LIMIT_ENQUIRY_PER_MINUTE:10}
+    password-change-per-minute: ${APP_RATE_LIMIT_PASSWORD_CHANGE_PER_MINUTE:10}
+    authenticated-per-minute: ${APP_RATE_LIMIT_AUTHENTICATED_PER_MINUTE:300}
+    reports-per-minute: ${APP_RATE_LIMIT_REPORTS_PER_MINUTE:30}
+    retry-after-seconds: ${APP_RATE_LIMIT_RETRY_AFTER_SECONDS:60}
 
 logging:
   level:
     org.springframework.security: INFO
+    gym.access: INFO

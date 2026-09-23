@@ -49,7 +49,13 @@ public final class AuditActions {
     public static final String DEVICE_SYNC_RETRIED = "DEVICE_SYNC_RETRIED";
     public static final String DEVICE_SYNC_CANCELLED = "DEVICE_SYNC_CANCELLED";
     public static final String DEVICE_RECONCILE_REQUESTED = "DEVICE_RECONCILE_REQUESTED";
+    public static final String DEVICE_SYNC_NOW_REQUESTED = "DEVICE_SYNC_NOW_REQUESTED";
+    public static final String DEVICE_MAPPING_REMOVED = "DEVICE_MAPPING_REMOVED";
     public static final String DEVICE_REMOTE_DOOR = "DEVICE_REMOTE_DOOR";
+    public static final String RECONCILIATION_CONFLICT_OPENED = "RECONCILIATION_CONFLICT_OPENED";
+    public static final String RECONCILIATION_CONFLICT_RESOLVED = "RECONCILIATION_CONFLICT_RESOLVED";
+    public static final String RECONCILIATION_REPAIR_ENQUEUED = "RECONCILIATION_REPAIR_ENQUEUED";
+    public static final String DEVICE_USERS_IMPORTED = "DEVICE_USERS_IMPORTED";
 
     public static final String ENQUIRY_RECEIVED = "ENQUIRY_RECEIVED";
     public static final String ENQUIRY_UPDATED = "ENQUIRY_UPDATED";

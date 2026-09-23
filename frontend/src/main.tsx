@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router'
 import { AppShell } from '@/components/AppShell'
 import { RequireAuth } from '@/components/RequireAuth'
+import { RequireGymTenant, RequirePlatform } from '@/components/RequireTenant'
 import { AuditPage } from '@/features/audit/AuditPage'
 import { AttendanceLivePage } from '@/features/attendance/AttendanceLivePage'
 import { AttendancePage } from '@/features/attendance/AttendancePage'
@@ -23,6 +24,7 @@ import { AnnouncementsPage, NotificationTemplatesPage, NotificationsPage } from 
 import { NotFoundPage } from '@/features/NotFoundPage'
 import { PaymentsPage } from '@/features/payments/PaymentsPage'
 import { PlansPage } from '@/features/plans/PlansPage'
+import { PlatformActuatorPage } from '@/features/platform/PlatformActuatorPage'
 import { PlatformGymsPage } from '@/features/platform/PlatformGymsPage'
 import { PlatformStaffPasswordPage } from '@/features/platform/PlatformStaffPasswordPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
@@ -31,9 +33,10 @@ import { SettingsPage } from '@/features/settings/SettingsPage'
 import { RolesPage } from '@/features/users/RolesPage'
 import { UsersPage } from '@/features/users/UsersPage'
 import { ApiError } from '@/lib/api'
-import { AuthProvider } from '@/lib/auth'
+import { AuthProvider, useAuth } from '@/lib/auth'
 import { DEFAULT_GYM_SLUG } from '@/lib/brand'
 import { GymSlugFromRoute } from '@/lib/GymSlug'
+import { isPlatformSuperAdmin, platformHomePath } from '@/lib/platform'
 import { AboutPage, FacilitiesPage, ServicesPage } from '@/public/ContentPages'
 import { ContactPage } from '@/public/ContactPage'
 import { HomePage } from '@/public/HomePage'
@@ -54,6 +57,14 @@ const queryClient = new QueryClient({
   },
 })
 
+function AppIndexRedirect() {
+  const { user } = useAuth()
+  if (isPlatformSuperAdmin(user)) {
+    return <Navigate to={platformHomePath()} replace />
+  }
+  return <Navigate to="dashboard" replace />
+}
+
 const publicChildren = [
   { index: true, element: <HomePage /> },
   { path: 'about', element: <AboutPage /> },
@@ -61,6 +72,35 @@ const publicChildren = [
   { path: 'facilities', element: <FacilitiesPage /> },
   { path: 'membership-plans', element: <MembershipPlansPage /> },
   { path: 'contact', element: <ContactPage /> },
+]
+
+const gymChildren = [
+  { path: 'dashboard', element: <DashboardPage /> },
+  { path: 'members', element: <MembersPage /> },
+  { path: 'members/new', element: <MemberNewPage /> },
+  { path: 'members/:id', element: <MemberDetailPage /> },
+  { path: 'members/:id/edit', element: <MemberEditPage /> },
+  { path: 'plans', element: <PlansPage /> },
+  { path: 'memberships', element: <MembershipsPage /> },
+  { path: 'payments', element: <PaymentsPage /> },
+  { path: 'attendance', element: <AttendancePage /> },
+  { path: 'attendance/live', element: <AttendanceLivePage /> },
+  { path: 'devices', element: <DevicesPage /> },
+  { path: 'devices/new', element: <DeviceNewPage /> },
+  { path: 'devices/:id', element: <DeviceDetailPage /> },
+  { path: 'devices/:id/:section', element: <DeviceDetailPage /> },
+  { path: 'enquiries', element: <EnquiriesPage /> },
+  { path: 'reports', element: <ReportsPage /> },
+  { path: 'reports/memberships', element: <MembershipReportPage /> },
+  { path: 'reports/attendance', element: <Navigate to="/app/attendance" replace /> },
+  { path: 'reports/payments', element: <Navigate to="/app/payments" replace /> },
+  { path: 'reports/devices', element: <DeviceReportPage /> },
+  { path: 'notifications', element: <NotificationsPage /> },
+  { path: 'notifications/templates', element: <NotificationTemplatesPage /> },
+  { path: 'announcements', element: <AnnouncementsPage /> },
+  { path: 'users', element: <UsersPage /> },
+  { path: 'roles', element: <RolesPage /> },
+  { path: 'settings', element: <SettingsPage /> },
 ]
 
 const router = createBrowserRouter([
@@ -86,37 +126,22 @@ const router = createBrowserRouter([
       {
         element: <AppShell />,
         children: [
-          { index: true, element: <Navigate to="dashboard" replace /> },
-          { path: 'dashboard', element: <DashboardPage /> },
-          { path: 'platform/gyms', element: <PlatformGymsPage /> },
-          { path: 'platform/staff-passwords', element: <PlatformStaffPasswordPage /> },
-          { path: 'members', element: <MembersPage /> },
-          { path: 'members/new', element: <MemberNewPage /> },
-          { path: 'members/:id', element: <MemberDetailPage /> },
-          { path: 'members/:id/edit', element: <MemberEditPage /> },
-          { path: 'plans', element: <PlansPage /> },
-          { path: 'memberships', element: <MembershipsPage /> },
-          { path: 'payments', element: <PaymentsPage /> },
-          { path: 'attendance', element: <AttendancePage /> },
-          { path: 'attendance/live', element: <AttendanceLivePage /> },
-          { path: 'devices', element: <DevicesPage /> },
-          { path: 'devices/new', element: <DeviceNewPage /> },
-          { path: 'devices/:id', element: <DeviceDetailPage /> },
-          { path: 'devices/:id/:section', element: <DeviceDetailPage /> },
-          { path: 'enquiries', element: <EnquiriesPage /> },
-          { path: 'reports', element: <ReportsPage /> },
-          { path: 'reports/memberships', element: <MembershipReportPage /> },
-          { path: 'reports/attendance', element: <Navigate to="/app/attendance" replace /> },
-          { path: 'reports/payments', element: <Navigate to="/app/payments" replace /> },
-          { path: 'reports/devices', element: <DeviceReportPage /> },
-          { path: 'notifications', element: <NotificationsPage /> },
-          { path: 'notifications/templates', element: <NotificationTemplatesPage /> },
-          { path: 'announcements', element: <AnnouncementsPage /> },
-          { path: 'users', element: <UsersPage /> },
-          { path: 'roles', element: <RolesPage /> },
+          { index: true, element: <AppIndexRedirect /> },
+          {
+            element: <RequirePlatform />,
+            children: [
+              { path: 'platform/gyms', element: <PlatformGymsPage /> },
+              { path: 'platform/staff-passwords', element: <PlatformStaffPasswordPage /> },
+              { path: 'platform/actuator', element: <PlatformActuatorPage /> },
+            ],
+          },
+          // Audit is useful for both platform (all tenants) and gym admins.
           { path: 'audit', element: <AuditPage /> },
-          { path: 'settings', element: <SettingsPage /> },
           { path: 'profile', element: <ProfilePage /> },
+          {
+            element: <RequireGymTenant />,
+            children: gymChildren,
+          },
         ],
       },
     ],

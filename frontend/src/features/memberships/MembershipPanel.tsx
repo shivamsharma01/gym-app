@@ -539,6 +539,7 @@ export function MembershipPanel({
                   · device {row.deviceSyncState}
                 </p>
 
+
           {/* CHANGE DATES */}
           {editingId === row.id ? (
             <div className="grid gap-3 sm:grid-cols-2">

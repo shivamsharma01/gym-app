@@ -14,6 +14,13 @@ public interface AttendanceEventRepository extends JpaRepository<AttendanceEvent
 
     boolean existsByTenantIdAndDeviceIdAndFingerprint(Long tenantId, Long deviceId, String fingerprint);
 
+    Optional<AttendanceEvent> findByTenantIdAndDeviceIdAndFingerprint(
+            Long tenantId, Long deviceId, String fingerprint);
+
+    Optional<AttendanceEvent> findFirstByTenantIdAndDeviceIdAndDeviceUserIdAndOccurredAtAndMethodAndResultAndDeviceRecNoIsNull(
+            Long tenantId, Long deviceId, String deviceUserId, Instant occurredAt, String method,
+            AccessResult result);
+
     Page<AttendanceEvent> findByTenantIdOrderByOccurredAtDesc(Long tenantId, Pageable pageable);
 
     Page<AttendanceEvent> findByTenantIdAndMemberIdOrderByOccurredAtDesc(

@@ -1,64 +1,64 @@
 package com.example.gym.security;
 
+import com.example.gym.security.ratelimit.RateLimitProperties;
+import com.example.gym.security.ratelimit.RateLimitResponses;
+import com.example.gym.security.ratelimit.RateLimitStore;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.time.Instant;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Simple in-memory sliding-window limits for public auth login and public enquiries.
- * Suitable for single-node deploy; put a real edge limiter in front for multi-node production.
+ * IP-based limits for unauthenticated / public auth surfaces (login, refresh, public enquiries).
+ * Runs before JWT. Single-node in-memory store; edge nginx can add coarse IP protection.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
 public class PublicEndpointRateLimitFilter extends OncePerRequestFilter {
 
-    private final boolean enabled;
-    private final int loginPerMinute;
-    private final int enquiryPerMinute;
-    private final JsonMapper jsonMapper;
-    private final Map<String, Deque<Long>> windows = new ConcurrentHashMap<>();
+    private static final long WINDOW_MS = 60_000L;
 
-    public PublicEndpointRateLimitFilter(
-            @Value("${app.rate-limit.enabled:true}") boolean enabled,
-            @Value("${app.rate-limit.login-per-minute:20}") int loginPerMinute,
-            @Value("${app.rate-limit.enquiry-per-minute:10}") int enquiryPerMinute,
-            JsonMapper jsonMapper) {
-        this.enabled = enabled;
-        this.loginPerMinute = Math.max(1, loginPerMinute);
-        this.enquiryPerMinute = Math.max(1, enquiryPerMinute);
+    private final RateLimitProperties properties;
+    private final RateLimitStore store;
+    private final JsonMapper jsonMapper;
+
+    public PublicEndpointRateLimitFilter(RateLimitProperties properties,
+                                         RateLimitStore store,
+                                         JsonMapper jsonMapper) {
+        this.properties = properties;
+        this.store = store;
         this.jsonMapper = jsonMapper;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        if (!enabled || !"POST".equalsIgnoreCase(request.getMethod())) {
+        if (!properties.isEnabled() || !"POST".equalsIgnoreCase(request.getMethod())) {
             filterChain.doFilter(request, response);
             return;
         }
 
         String path = request.getRequestURI();
         Integer limit = null;
+        String bucket = null;
         if ("/api/v1/auth/login".equals(path)) {
-            limit = loginPerMinute;
+            limit = Math.max(1, properties.getLoginPerMinute());
+            bucket = "login";
+        } else if ("/api/v1/auth/refresh".equals(path)) {
+            limit = Math.max(1, properties.getRefreshPerMinute());
+            bucket = "refresh";
         } else if (path != null && path.startsWith("/api/v1/public/") && path.endsWith("/enquiries")) {
-            limit = enquiryPerMinute;
+            limit = Math.max(1, properties.getEnquiryPerMinute());
+            bucket = "enquiry";
         } else if ("/api/v1/public/enquiries".equals(path)) {
-            limit = enquiryPerMinute;
+            limit = Math.max(1, properties.getEnquiryPerMinute());
+            bucket = "enquiry";
         }
 
         if (limit == null) {
@@ -66,42 +66,12 @@ public class PublicEndpointRateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        String key = path + "|" + clientKey(request);
-        if (!allow(key, limit)) {
-            response.setStatus(429);
-            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-            response.getWriter().write(jsonMapper.writeValueAsString(Map.of(
-                    "error", "RATE_LIMITED",
-                    "message", "Too many requests — try again shortly",
-                    "timestamp", Instant.now().toString())));
+        String key = bucket + "|ip|" + RateLimitResponses.clientIp(request);
+        if (!store.tryConsume(key, limit, WINDOW_MS)) {
+            RateLimitResponses.writeTooManyRequests(request, response, jsonMapper, properties.getRetryAfterSeconds());
             return;
         }
 
         filterChain.doFilter(request, response);
-    }
-
-    private boolean allow(String key, int limit) {
-        long now = System.currentTimeMillis();
-        long cutoff = now - 60_000L;
-        Deque<Long> q = windows.computeIfAbsent(key, k -> new ArrayDeque<>());
-        synchronized (q) {
-            while (!q.isEmpty() && q.peekFirst() < cutoff) {
-                q.removeFirst();
-            }
-            if (q.size() >= limit) {
-                return false;
-            }
-            q.addLast(now);
-            return true;
-        }
-    }
-
-    private static String clientKey(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            int comma = forwarded.indexOf(',');
-            return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
-        }
-        return request.getRemoteAddr() == null ? "unknown" : request.getRemoteAddr();
     }
 }

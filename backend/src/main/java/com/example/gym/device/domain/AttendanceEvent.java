@@ -50,12 +50,24 @@ public class AttendanceEvent extends TenantAwareEntity {
     @Column(name = "fingerprint", nullable = false, length = 120)
     private String fingerprint;
 
+    /** Device nErrorCode / deny reason when result is DENIED; null for grants. */
+    @Column(name = "deny_reason", length = 64)
+    private String denyReason;
+
     protected AttendanceEvent() {
     }
 
     public AttendanceEvent(Long tenantId, Long deviceId, Long memberId, String deviceUserId,
                            Instant occurredAt, AccessDirection direction, String method,
                            AccessResult result, Long deviceRecNo, String fingerprint) {
+        this(tenantId, deviceId, memberId, deviceUserId, occurredAt, direction, method, result,
+                deviceRecNo, fingerprint, null);
+    }
+
+    public AttendanceEvent(Long tenantId, Long deviceId, Long memberId, String deviceUserId,
+                           Instant occurredAt, AccessDirection direction, String method,
+                           AccessResult result, Long deviceRecNo, String fingerprint,
+                           String denyReason) {
         setTenantId(tenantId);
         this.deviceId = deviceId;
         this.memberId = memberId;
@@ -66,6 +78,7 @@ public class AttendanceEvent extends TenantAwareEntity {
         this.result = result;
         this.deviceRecNo = deviceRecNo;
         this.fingerprint = fingerprint;
+        this.denyReason = denyReason;
     }
 
     public Long getDeviceId() {
@@ -102,5 +115,21 @@ public class AttendanceEvent extends TenantAwareEntity {
 
     public String getFingerprint() {
         return fingerprint;
+    }
+
+    public String getDenyReason() {
+        return denyReason;
+    }
+
+    public void setDeviceRecNo(Long deviceRecNo) {
+        this.deviceRecNo = deviceRecNo;
+    }
+
+    public void setFingerprint(String fingerprint) {
+        this.fingerprint = fingerprint;
+    }
+
+    public void setDenyReason(String denyReason) {
+        this.denyReason = denyReason;
     }
 }

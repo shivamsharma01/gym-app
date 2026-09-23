@@ -53,5 +53,5 @@ public interface IDeviceAdapter : IDisposable
 
     DeviceCommandResult SynchronizeTime(DateTimeOffset utcNow);
 
-    DeviceReconciliationResult Reconcile();
+    DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null);
 }

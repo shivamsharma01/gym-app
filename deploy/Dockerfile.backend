@@ -1,21 +1,38 @@
 # syntax=docker/dockerfile:1
-# Multi-stage build for gym-backend (Spring Boot 4 / Java 21).
+# Multi-stage production image for gym-backend (Spring Boot 4 / Java 21).
 # Build context: repository root.
+#
+# Vertical scale: set JAVA_OPTS / container memory in compose (.env), not here.
+
 FROM maven:3.9.9-eclipse-temurin-21-alpine AS build
 WORKDIR /workspace
 COPY backend/pom.xml ./
+# Warm the dependency cache before copying sources (faster rebuilds).
+RUN mvn -q -B -DskipTests dependency:go-offline
 COPY backend/src ./src
-RUN mvn -q -DskipTests package \
+RUN mvn -q -B -DskipTests package \
   && mv target/gym-backend-*.jar /workspace/app.jar
 
 FROM eclipse-temurin:21-jre-alpine AS runtime
 WORKDIR /app
+
 RUN apk add --no-cache wget \
-  && addgroup -S gym && adduser -S gym -G gym
+  && addgroup -S gym && adduser -S gym -G gym \
+  && mkdir -p /var/log/gym \
+  && chown -R gym:gym /var/log/gym
+
 COPY --from=build /workspace/app.jar /app/app.jar
 USER gym
+
 EXPOSE 8080
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
+
+# Container-aware heap: leave ~25% for metaspace, threads, direct buffers, WebSockets.
+# Override via JAVA_OPTS in compose for larger/smaller VPS sizes.
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" \
+    LOG_PATH=/var/log/gym \
+    SPRING_PROFILES_ACTIVE=prod
+
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=10 \
   CMD wget -qO- http://127.0.0.1:8080/actuator/health/liveness | grep -q UP || exit 1
+
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

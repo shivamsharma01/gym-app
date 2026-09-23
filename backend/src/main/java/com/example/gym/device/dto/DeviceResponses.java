@@ -110,8 +110,42 @@ public final class DeviceResponses {
             Instant lastSeenAt,
             Instant lastSuccessfulSyncAt,
             long pendingCommandCount,
+            long failedCommandCount,
+            boolean reconciliationRequired,
+            Instant lastAttendanceSyncAt,
+            long openConflictCount,
             Long attendanceLastRecNo,
             Instant attendanceLastEventAt) {
+    }
+
+    public record ConflictView(
+            String id,
+            String deviceUserId,
+            String conflictType,
+            String details,
+            String status,
+            Instant createdAt,
+            Instant resolvedAt) {
+
+        public static ConflictView from(com.example.gym.device.domain.ReconciliationConflict c) {
+            return new ConflictView(c.getPublicId(), c.getDeviceUserId(), c.getConflictType().name(),
+                    c.getDetails(), c.getStatus().name(), c.getCreatedAt(), c.getResolvedAt());
+        }
+    }
+
+    public record ImportUsersResult(
+            int created,
+            int mapped,
+            int skipped,
+            int inactiveFrozen,
+            int inferredEndDates,
+            int deviceUsersSeen) {
+
+        public static ImportUsersResult from(com.example.gym.device.DeviceUserImportService.ImportResult r) {
+            return new ImportUsersResult(
+                    r.created(), r.mapped(), r.skipped(), r.inactiveFrozen(),
+                    r.inferredEndDates(), r.deviceUsersSeen());
+        }
     }
 
     public record AttendanceView(
@@ -122,13 +156,14 @@ public final class DeviceResponses {
             String result,
             String deviceUserId,
             Long deviceRecNo,
+            String denyReason,
             boolean memberLinked,
             Instant createdAt) {
 
         public static AttendanceView from(AttendanceEvent e) {
             return new AttendanceView(e.getPublicId(), e.getOccurredAt(), e.getDirection().name(),
                     e.getMethod(), e.getResult().name(), e.getDeviceUserId(), e.getDeviceRecNo(),
-                    e.getMemberId() != null, e.getCreatedAt());
+                    e.getDenyReason(), e.getMemberId() != null, e.getCreatedAt());
         }
     }
 

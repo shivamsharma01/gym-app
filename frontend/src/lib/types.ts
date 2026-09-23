@@ -39,6 +39,7 @@ export type Member = {
   status: string
   joinedOn: string
   notes: string | null
+  creationSource: string
   createdAt: string
 }
 
@@ -60,6 +61,7 @@ export type Membership = {
   currency: string
   startDate: string
   endDate: string
+  endDateInferred: boolean
   status: string
   effectiveStatus: string
   paymentStatus: string
@@ -136,8 +138,31 @@ export type DeviceHealth = {
   lastSeenAt: string | null
   lastSuccessfulSyncAt: string | null
   pendingCommandCount: number
+  failedCommandCount: number
+  reconciliationRequired: boolean
+  lastAttendanceSyncAt: string | null
+  openConflictCount: number
   attendanceLastRecNo: number | null
   attendanceLastEventAt: string | null
+}
+
+export type ReconciliationConflict = {
+  id: string
+  deviceUserId: string
+  conflictType: string
+  details: string | null
+  status: string
+  createdAt: string
+  resolvedAt: string | null
+}
+
+export type ImportUsersResult = {
+  created: number
+  mapped: number
+  skipped: number
+  inactiveFrozen: number
+  inferredEndDates: number
+  deviceUsersSeen: number
 }
 
 export type Gateway = {

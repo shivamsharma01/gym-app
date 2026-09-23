@@ -14,4 +14,6 @@ public interface MembershipPlanRepository extends JpaRepository<MembershipPlan, 
     Page<MembershipPlan> findByTenantIdAndStatus(Long tenantId, PlanStatus status, Pageable pageable);
 
     boolean existsByTenantIdAndNameIgnoreCase(Long tenantId, String name);
+
+    Optional<MembershipPlan> findFirstByTenantIdAndNameIgnoreCase(Long tenantId, String name);
 }

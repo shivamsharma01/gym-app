@@ -110,6 +110,18 @@ public sealed class GatewayWorker : BackgroundService
                     command.CorrelationId),
                 CancellationToken.None).ConfigureAwait(false);
         }
+        else if (outcome.ResultType == ProtocolTypes.ReconciliationResult)
+        {
+            // Complete the outbox command — RECONCILIATION_RESULT alone left commands DISPATCHED forever.
+            await link.SendAsync(
+                GatewayEnvelope.Create(
+                    _options.Id,
+                    ProtocolTypes.SyncResult,
+                    new { ok = true },
+                    command.DeviceId,
+                    command.CorrelationId),
+                CancellationToken.None).ConfigureAwait(false);
+        }
     }
 
     private async Task SendLoopAsync(BackendLink link, CancellationToken stoppingToken)
@@ -249,9 +261,28 @@ public sealed class GatewayWorker : BackgroundService
                     occurredAt = Format(evt.OccurredAt),
                     method = evt.Method,
                     granted = evt.Granted,
-                    recNo = evt.RecNo
+                    recNo = evt.RecNo,
+                    errorCode = evt.ErrorCode,
+                    denyReason = MapDeny(evt.ErrorCode, evt.Granted)
                 },
                 null));
+        }
+
+        private static string? MapDeny(int? errorCode, bool granted)
+        {
+            if (granted || errorCode is null or 0)
+            {
+                return null;
+            }
+
+            return errorCode.Value switch
+            {
+                0x10 => "UNAUTHORIZED",
+                0x14 => "VALIDITY_PERIOD",
+                0x20 or 0x21 => "PERIOD_ERROR",
+                0x23 => "OVERDUE",
+                _ => "ERR_0x" + errorCode.Value.ToString("X")
+            };
         }
 
         private static string Format(DateTimeOffset value) =>

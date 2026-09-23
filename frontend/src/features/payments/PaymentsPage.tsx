@@ -90,8 +90,7 @@ export function PaymentsPage() {
 
   const [page, setPage] = useState(0)
 
-  const [member, setMember] =
-      useState<Member | null>(null)
+  const [member] = useState<Member | null>(null)
 
   const [refundId, setRefundId] =
       useState<string | null>(null)

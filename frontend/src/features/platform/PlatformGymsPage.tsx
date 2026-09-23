@@ -4,7 +4,9 @@ import { Link } from 'react-router'
 import { Button, Input, Label, PageHeader, Skeleton } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { apiUrl } from '@/lib/backendUrls'
 import { gymPath } from '@/lib/brand'
+import { getAccessToken } from '@/lib/tokens'
 
 type TenantSummary = {
   id: string
@@ -80,9 +82,32 @@ export function PlatformGymsPage() {
                   {g.name} · <code className="text-xs">{g.slug}</code> · {g.status}
                 </div>
               </div>
-              <Link to={gymPath(g.slug)} className="font-semibold text-accent hover:underline">
-                Public site
-              </Link>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  className="font-semibold text-accent hover:underline"
+                  onClick={() => {
+                    void (async () => {
+                      const res = await fetch(apiUrl(`/api/v1/platform/tenants/${g.id}/members/export.csv`), {
+                        headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
+                      })
+                      if (!res.ok) return
+                      const blob = await res.blob()
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `members-${g.slug}.csv`
+                      a.click()
+                      URL.revokeObjectURL(url)
+                    })()
+                  }}
+                >
+                  Export members CSV
+                </button>
+                <Link to={gymPath(g.slug)} className="font-semibold text-accent hover:underline">
+                  Public site
+                </Link>
+              </div>
             </li>
           ))}
         </ul>

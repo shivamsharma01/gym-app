@@ -1,31 +1,43 @@
-# Smart Gym stack — MySQL + backend + SPA (nginx).
+# Portable production stack — MySQL + Spring Boot + Nginx API edge.
+# React SPA is NOT on the VPS (host on Cloudflare Pages or any static CDN).
 #
-# Dev DB only (legacy):
-#   docker compose -f deploy/docker-compose.yml up -d mysql
-#
-# Full local stack (build images):
+# Quick start (from repo root):
 #   cp deploy/.env.example deploy/.env   # edit secrets
-#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile full up -d --build
 #
-# The Windows TrueFace gateway is NOT in this compose file — it runs on the gym LAN PC
-# and dials out to wss://<host>/gateway (see docs/PHASE-8.md).
+# Optional local SPA+proxy (laptop only, not for VPS):
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile spa up -d --build
+#
+# Windows TrueFace gateway is NOT in this file — it runs on the gym LAN and dials
+# wss://<public-host>/gateway (see deploy/README.md).
 
 name: gym
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
 
 services:
   mysql:
     image: mysql:8.4
     container_name: gym-mysql
+    restart: unless-stopped
     environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-gym}
-      MYSQL_USER: ${MYSQL_USER:-gym}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-gym}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?set MYSQL_DATABASE in deploy/.env}
+      MYSQL_USER: ${MYSQL_USER:?set MYSQL_USER in deploy/.env}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in deploy/.env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in deploy/.env}
+    # Localhost-only admin access. Backend reaches MySQL on gym-net (no public bind).
+    # Set MYSQL_HOST_PORT= empty and remove this ports block to hide MySQL from the host entirely.
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3306}:3306"
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
+      - --max_connections=${MYSQL_MAX_CONNECTIONS:-100}
+      - --innodb_buffer_pool_size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-256M}
     volumes:
       - gym-mysql-data:/var/lib/mysql
     healthcheck:
@@ -33,28 +45,41 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
     networks:
       - gym-net
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${MYSQL_MEMORY_LIMIT:-1g}
+          cpus: "${MYSQL_CPUS:-1.0}"
+        reservations:
+          memory: ${MYSQL_MEMORY_RESERVATION:-256m}
 
   backend:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.backend
-    image: gym-backend:local
+    image: gym-backend:${IMAGE_TAG:-local}
     container_name: gym-backend
+    restart: unless-stopped
+    stop_grace_period: 30s
     depends_on:
       mysql:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
       SERVER_PORT: "8080"
-      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-gym}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
-      DB_USERNAME: ${MYSQL_USER:-gym}
-      DB_PASSWORD: ${MYSQL_PASSWORD:-gym}
-      APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET:-}
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USERNAME: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_POOL_MAX: ${DB_POOL_MAX:-20}
+      DB_POOL_MIN_IDLE: ${DB_POOL_MIN_IDLE:-5}
+      APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET:?set APP_SECURITY_JWT_SECRET in deploy/.env}
       APP_JWT_ACCESS_TTL: ${APP_JWT_ACCESS_TTL:-PT15M}
       APP_JWT_REFRESH_TTL: ${APP_JWT_REFRESH_TTL:-P7D}
-      APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088}
+      APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8088,http://127.0.0.1:8088,http://localhost:4173,http://127.0.0.1:4173}
       APP_GATEWAY_SHARED_TOKEN: ${APP_GATEWAY_SHARED_TOKEN:-}
       APP_GATEWAY_OUTBOX_DISPATCHER_ENABLED: ${APP_GATEWAY_OUTBOX_DISPATCHER_ENABLED:-true}
       APP_GATEWAY_SIMULATOR_ENABLED: ${APP_GATEWAY_SIMULATOR_ENABLED:-false}
@@ -66,10 +91,18 @@ services:
       APP_BOOTSTRAP_SUPERADMIN_PASSWORD: ${APP_BOOTSTRAP_SUPERADMIN_PASSWORD:-}
       APP_RATE_LIMIT_ENABLED: ${APP_RATE_LIMIT_ENABLED:-true}
       APP_RATE_LIMIT_LOGIN_PER_MINUTE: ${APP_RATE_LIMIT_LOGIN_PER_MINUTE:-20}
+      APP_RATE_LIMIT_REFRESH_PER_MINUTE: ${APP_RATE_LIMIT_REFRESH_PER_MINUTE:-30}
       APP_RATE_LIMIT_ENQUIRY_PER_MINUTE: ${APP_RATE_LIMIT_ENQUIRY_PER_MINUTE:-10}
+      APP_RATE_LIMIT_AUTHENTICATED_PER_MINUTE: ${APP_RATE_LIMIT_AUTHENTICATED_PER_MINUTE:-300}
+      APP_RATE_LIMIT_REPORTS_PER_MINUTE: ${APP_RATE_LIMIT_REPORTS_PER_MINUTE:-30}
+      APP_RATE_LIMIT_PASSWORD_CHANGE_PER_MINUTE: ${APP_RATE_LIMIT_PASSWORD_CHANGE_PER_MINUTE:-10}
+      LOG_PATH: /var/log/gym
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError}
+    # Prefer the edge (:80/:443). Keep 8080 on loopback for debugging / SSH tunnels.
     ports:
-      # Optional direct API access (prefer nginx :8088 in full stack)
-      - "${BACKEND_PORT:-8080}:8080"
+      - "${BACKEND_PORT:-127.0.0.1:8080}:8080"
+    volumes:
+      - gym-backend-logs:/var/log/gym
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/actuator/health/liveness"]
       interval: 15s
@@ -78,15 +111,59 @@ services:
       start_period: 90s
     networks:
       - gym-net
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${BACKEND_MEMORY_LIMIT:-2g}
+          cpus: "${BACKEND_CPUS:-2.0}"
+        reservations:
+          memory: ${BACKEND_MEMORY_RESERVATION:-512m}
     profiles:
       - full
 
+  edge:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.edge
+    image: gym-edge:${IMAGE_TAG:-local}
+    container_name: gym-edge
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${EDGE_HTTP_PORT:-80}:80"
+      # Cloudflare Full (strict): uncomment after Origin Cert is in /etc/nginx/ssl/
+      - "${EDGE_HTTPS_PORT:-443}:443"
+    volumes:
+      # Host Origin Cert + key (origin.crt / origin.key). Read-only.
+      - /etc/nginx/ssl:/etc/nginx/ssl:ro
+      # Use HTTPS nginx config (copy example → nginx.conf on the VPS, or mount the example):
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - gym-net
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${EDGE_MEMORY_LIMIT:-128m}
+          cpus: "${EDGE_CPUS:-0.5}"
+        reservations:
+          memory: 32m
+    profiles:
+      - full
+
+  # Optional: local SPA image (do not use on VPS — host React on Cloudflare instead)
   frontend:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
-    image: gym-frontend:local
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-}
+    image: gym-frontend:${IMAGE_TAG:-local}
     container_name: gym-frontend
+    restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
@@ -94,12 +171,15 @@ services:
       - "${FRONTEND_PORT:-8088}:80"
     networks:
       - gym-net
+    logging: *default-logging
     profiles:
-      - full
+      - spa
 
 volumes:
   gym-mysql-data:
+  gym-backend-logs:
 
 networks:
   gym-net:
     driver: bridge
+    name: gym-net

@@ -31,8 +31,9 @@ public class MemberService {
     }
 
     @Transactional(readOnly = true)
-    public Page<Member> search(Long tenantId, String query, MemberStatus status, Pageable pageable) {
-        return memberRepository.search(tenantId, query, status, pageable);
+    public Page<Member> search(Long tenantId, String query, MemberStatus status,
+                               MemberCreationSource creationSource, Pageable pageable) {
+        return memberRepository.search(tenantId, query, status, creationSource, pageable);
     }
 
     @Transactional(readOnly = true)
@@ -59,6 +60,7 @@ public class MemberService {
         member.setDateOfBirth(request.dateOfBirth());
         member.setGender(request.gender());
         member.setNotes(request.notes());
+        member.setCreationSource(MemberCreationSource.MANUAL);
         Member saved = memberRepository.save(member);
 
         auditService.record(AuditActions.MEMBER_CREATED, AuditActions.RESULT_SUCCESS,

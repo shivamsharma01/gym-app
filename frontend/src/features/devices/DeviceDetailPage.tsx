@@ -8,7 +8,7 @@ import { useAuth } from '@/lib/auth'
 import { DEVICE_MODELS } from '@/lib/catalog'
 import { cn, formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
-import type { Device, DeviceHealth, Gateway, PageResponse, SecurityEvent, SyncCommand } from '@/lib/types'
+import type { Device, DeviceHealth, Gateway, ImportUsersResult, PageResponse, ReconciliationConflict, SecurityEvent, SyncCommand } from '@/lib/types'
 
 export function DeviceDetailPage() {
   const { id, section } = useParams()
@@ -22,11 +22,26 @@ export function DeviceDetailPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title={d.name} description={`${d.role} · ${d.host ?? 'no host'} · ${d.model ?? 'unknown model'}`} />
-      <div className="flex flex-wrap gap-2">
+      <PageHeader
+        title={d.name}
+        description={`${d.role} · ${d.host ?? 'no host'} · ${d.model ?? 'unknown model'}`}
+      />
+      <div className="flex flex-wrap items-center gap-2">
         <Badge tone={statusTone(d.connectionState)}>{d.connectionState}</Badge>
         <Badge tone={d.gatewayAssigned ? 'ok' : 'warn'}>{d.gatewayAssigned ? 'Gateway assigned' : 'No gateway'}</Badge>
       </div>
+      <p className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted">
+        <span>Device id</span>
+        <code className="rounded bg-raised px-1.5 py-0.5 text-ink">{d.id}</code>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => void navigator.clipboard.writeText(d.id)}
+        >
+          Copy
+        </Button>
+      </p>
       <nav className="flex flex-wrap gap-2 border-b border-line pb-3 text-sm">
         {[
           ['overview', 'Overview'],
@@ -64,8 +79,32 @@ function Overview({ device }: { device: Device }) {
     queryKey: ['device-health', device.id],
     queryFn: () => api<DeviceHealth>(`/api/v1/devices/${device.id}/health`),
   })
+  const conflicts = useQuery({
+    queryKey: ['device-conflicts', device.id],
+    queryFn: () => api<PageResponse<ReconciliationConflict>>(`/api/v1/devices/${device.id}/conflicts?size=20`),
+  })
   const reconcile = useMutation({
     mutationFn: () => api<SyncCommand>(`/api/v1/devices/${device.id}/reconcile`, { method: 'POST' }),
+  })
+  const syncNow = useMutation({
+    mutationFn: () => api<SyncCommand>(`/api/v1/devices/${device.id}/sync-now`, { method: 'POST' }),
+  })
+  const importUsers = useMutation({
+    mutationFn: () => api<ImportUsersResult>(`/api/v1/devices/${device.id}/import-users`, { method: 'POST' }),
+    onSuccess: () => {
+      void health.refetch()
+      void conflicts.refetch()
+    },
+  })
+  const resolveConflict = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: string }) =>
+      api<ReconciliationConflict>(`/api/v1/devices/${device.id}/conflicts/${id}/resolve?action=${action}`, {
+        method: 'POST',
+      }),
+    onSuccess: () => {
+      void health.refetch()
+      void conflicts.refetch()
+    },
   })
 
   return (
@@ -83,32 +122,113 @@ function Overview({ device }: { device: Device }) {
             <div className="text-xs uppercase text-muted">Gateway</div>
             <div className="mt-1 font-semibold">{health.data.gatewayStatus ?? '—'}</div>
             <p className="mt-2 text-sm text-muted">
-              Session {health.data.gatewaySessionOnline ? 'online' : 'offline'} · pending {health.data.pendingCommandCount}
+              Session {health.data.gatewaySessionOnline ? 'online' : 'offline'} · pending{' '}
+              {health.data.pendingCommandCount} · failed {health.data.failedCommandCount}
             </p>
           </Card>
           <Card>
-            <div className="text-xs uppercase text-muted">Last successful sync</div>
+            <div className="text-xs uppercase text-muted">Last successful auth sync</div>
             <div className="mt-1 font-semibold">{formatDateTime(health.data.lastSuccessfulSyncAt)}</div>
           </Card>
           <Card>
-            <div className="text-xs uppercase text-muted">Attendance cursor</div>
-            <div className="mt-1 font-semibold">{health.data.attendanceLastRecNo ?? '—'}</div>
-            <p className="mt-2 text-sm text-muted">{formatDateTime(health.data.attendanceLastEventAt)}</p>
+            <div className="text-xs uppercase text-muted">Attendance</div>
+            <div className="mt-1 font-semibold">
+              cursor {health.data.attendanceLastRecNo ?? '—'}
+              {health.data.reconciliationRequired ? (
+                <span className="ml-2">
+                  <Badge tone="warn">Reconcile required</Badge>
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-2 text-sm text-muted">
+              Last sync {formatDateTime(health.data.lastAttendanceSyncAt ?? health.data.attendanceLastEventAt)} ·
+              conflicts {health.data.openConflictCount}
+            </p>
           </Card>
         </div>
       ) : null}
       {has('DEVICE_SYNC') ? (
-        <Button disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
-          Request attendance reconcile
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={syncNow.isPending} onClick={() => syncNow.mutate()}>
+            Sync Now
+          </Button>
+          <Button variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
+            Request attendance reconcile
+          </Button>
+        </div>
+      ) : null}
+      {has('DEVICE_MANAGE') ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            disabled={importUsers.isPending}
+            onClick={() => importUsers.mutate()}
+          >
+            Import device users
+          </Button>
+          <span className="text-xs text-muted">
+            Creates Members from the last synced device roster (idempotent). Run Sync Now first if empty.
+          </span>
+        </div>
+      ) : null}
+      {syncNow.isSuccess ? (
+        <p className="text-sm text-ok">Queued {syncNow.data.type} · {syncNow.data.state}</p>
       ) : null}
       {reconcile.isSuccess ? (
         <p className="text-sm text-ok">Queued {reconcile.data.type} · {reconcile.data.state}</p>
       ) : null}
+      {importUsers.isSuccess ? (
+        <p className="text-sm text-ok">
+          Import: created {importUsers.data.created}, mapped {importUsers.data.mapped}, skipped{' '}
+          {importUsers.data.skipped}, frozen→inactive {importUsers.data.inactiveFrozen}, inferred end dates{' '}
+          {importUsers.data.inferredEndDates} (saw {importUsers.data.deviceUsersSeen} device users)
+        </p>
+      ) : null}
+      {syncNow.error ? <QueryError error={syncNow.error} /> : null}
       {reconcile.error ? <QueryError error={reconcile.error} /> : null}
+      {importUsers.error ? <QueryError error={importUsers.error} /> : null}
+      {conflicts.data && conflicts.data.content.length > 0 ? (
+        <Card className="space-y-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+            Reconciliation conflicts ({conflicts.data.content.length})
+          </h2>
+          <ul className="divide-y divide-line">
+            {conflicts.data.content.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-start justify-between gap-2 py-2 text-sm">
+                <div>
+                  <div className="font-semibold">
+                    {c.conflictType} · {c.deviceUserId}
+                  </div>
+                  <p className="text-muted">{c.details ?? '—'}</p>
+                </div>
+                {has('DEVICE_SYNC') ? (
+                  <div className="flex gap-2">
+                    {c.conflictType === 'EXTRA_DEVICE_USER' || c.conflictType === 'AUTH_MISMATCH' ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => resolveConflict.mutate({ id: c.id, action: 'REMOVE' })}
+                      >
+                        Remove from device
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => resolveConflict.mutate({ id: c.id, action: 'DISMISS' })}
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
       <p className="text-sm text-muted">
-        Health is not a single online/offline lamp. Device, gateway session, last sync, and pending outbox are separate
-        facts.
+        Health is not a single online/offline lamp. Device, gateway session, last sync, pending/failed outbox, and
+        reconciliation conflicts are separate facts.
       </p>
     </div>
   )

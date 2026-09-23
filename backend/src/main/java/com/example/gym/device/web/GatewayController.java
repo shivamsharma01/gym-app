@@ -58,8 +58,16 @@ public class GatewayController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
-    @Operation(summary = "Register a gateway (returns its id to configure on the LAN agent)")
+    @Operation(summary = "Register a gateway (returns a one-time enrollment token)")
     public GatewayCreated create(@Valid @RequestBody CreateGateway request) {
         return gatewayService.create(request.name(), SecurityUtils.currentTenantId());
+    }
+
+    @PostMapping("/{id}/enrollment")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
+    @Operation(summary = "Reissue a one-time enrollment token (e.g. replacement PC)")
+    public GatewayCreated reissueEnrollment(@PathVariable String id) {
+        return gatewayService.reissueEnrollment(id, SecurityUtils.currentTenantId());
     }
 }

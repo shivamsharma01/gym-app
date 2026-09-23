@@ -27,8 +27,7 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Processes inbound gateway messages (§37). Idempotent and defensive: unknown/replayed messages are
  * ignored rather than throwing, and handler errors are returned as an ERROR reply so the gateway
- * link stays healthy. This is the backend side of the protocol; the .NET gateway (Phase 4) is the
- * only component that performs native SDK calls.
+ * link stays healthy.
  */
 @Service
 public class GatewayMessageService {
@@ -41,6 +40,8 @@ public class GatewayMessageService {
     private final DeviceService deviceService;
     private final AttendanceIngestionService attendanceIngestionService;
     private final DeviceSyncService deviceSyncService;
+    private final DeviceReconciliationService reconciliationService;
+    private final GatewayMessageDedupeService dedupeService;
     private final SecurityEventRepository securityEventRepository;
     private final MemberDeviceMappingRepository mappingRepository;
     private final JsonMapper jsonMapper;
@@ -52,6 +53,8 @@ public class GatewayMessageService {
                                  DeviceService deviceService,
                                  AttendanceIngestionService attendanceIngestionService,
                                  DeviceSyncService deviceSyncService,
+                                 DeviceReconciliationService reconciliationService,
+                                 GatewayMessageDedupeService dedupeService,
                                  SecurityEventRepository securityEventRepository,
                                  MemberDeviceMappingRepository mappingRepository,
                                  JsonMapper jsonMapper,
@@ -62,13 +65,14 @@ public class GatewayMessageService {
         this.deviceService = deviceService;
         this.attendanceIngestionService = attendanceIngestionService;
         this.deviceSyncService = deviceSyncService;
+        this.reconciliationService = reconciliationService;
+        this.dedupeService = dedupeService;
         this.securityEventRepository = securityEventRepository;
         this.mappingRepository = mappingRepository;
         this.jsonMapper = jsonMapper;
         this.events = events;
     }
 
-    /** Parses and handles a raw inbound message; returns an optional reply to send back. */
     public Optional<String> process(String raw) {
         return process(raw, null);
     }
@@ -85,6 +89,10 @@ public class GatewayMessageService {
                 && !boundGatewayId.equals(message.gatewayId())) {
             return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
                     Map.of("error", "gateway identity mismatch")));
+        }
+        if (!dedupeService.claim(message.messageId(), message.gatewayId())) {
+            log.debug("Ignoring duplicate gateway messageId {}", message.messageId());
+            return ack(message);
         }
         try {
             return handle(message);
@@ -106,8 +114,11 @@ public class GatewayMessageService {
 
         return switch (type) {
             case REGISTER_GATEWAY -> {
-                gatewayService.markRegistered(message.gatewayId(), text(message.payload(), "agentVersion"));
-                yield Optional.of(reply(GatewayMessageType.REGISTERED, message.correlationId(), Map.of()));
+                Gateway gateway = gatewayService.markRegistered(
+                        message.gatewayId(), text(message.payload(), "agentVersion"));
+                events.publishEvent(new GatewayConnectedEvent(gateway.getPublicId(), gateway.getId()));
+                yield Optional.of(reply(GatewayMessageType.REGISTERED, message.correlationId(),
+                        Map.of("messageId", message.messageId() == null ? "" : message.messageId())));
             }
             case HEARTBEAT -> {
                 gatewayService.recordHeartbeat(message.gatewayId());
@@ -115,6 +126,7 @@ public class GatewayMessageService {
             }
             case DEVICE_STATUS, DEVICE_METADATA -> {
                 resolveDevice(message).ifPresent(device -> {
+                    DeviceConnectionState previous = device.getConnectionState();
                     deviceService.updateConnection(device,
                             connectionState(message.payload()),
                             text(message.payload(), "firmware"),
@@ -125,6 +137,14 @@ public class GatewayMessageService {
                             Map.of(
                                     "deviceId", device.getPublicId(),
                                     "connectionState", state == null ? "" : state.name())));
+                    if (state == DeviceConnectionState.ONLINE
+                            && previous != DeviceConnectionState.ONLINE) {
+                        deviceService.enqueueReconcileIfAbsent(device);
+                    }
+                    String details = text(message.payload(), "details");
+                    if (details != null && details.toLowerCase().contains("reconnect")) {
+                        deviceService.enqueueReconcileIfAbsent(device);
+                    }
                 });
                 yield ack(message);
             }
@@ -154,9 +174,25 @@ public class GatewayMessageService {
             }
             case RECONCILIATION_RESULT -> {
                 resolveDevice(message).ifPresent(device -> {
-                    JsonNode events = message.payload() == null ? null : message.payload().get("events");
-                    if (events != null && events.isArray()) {
-                        events.forEach(e -> ingestEvent(device, e, message.timestamp()));
+                    boolean ok = message.payload() == null || !message.payload().has("ok")
+                            || message.payload().get("ok").asBoolean();
+                    if (!ok) {
+                        attendanceIngestionService.markReconciliationRequired(
+                                device.getTenantId(), device.getId(), true);
+                    } else {
+                        JsonNode eventNodes = message.payload() == null ? null
+                                : message.payload().get("events");
+                        if (eventNodes != null && eventNodes.isArray()) {
+                            eventNodes.forEach(e -> ingestEvent(device, e, message.timestamp()));
+                        }
+                        reconciliationService.applyDeviceUserSnapshot(device, message.payload());
+                        attendanceIngestionService.markReconciliationRequired(
+                                device.getTenantId(), device.getId(), false);
+                    }
+                    // Complete the outbox command even when the gateway also sent SYNC_RESULT
+                    if (message.correlationId() != null) {
+                        deviceSyncService.handleResult(message.correlationId(), ok,
+                                text(message.payload(), "error"));
                     }
                 });
                 yield ack(message);
@@ -183,9 +219,27 @@ public class GatewayMessageService {
         String method = textOr(payload, "method", "UNKNOWN");
         boolean granted = payload.has("granted") ? payload.get("granted").asBoolean()
                 : "GRANTED".equalsIgnoreCase(text(payload, "result"));
-        Long recNo = payload.has("recNo") && !payload.get("recNo").isNull()
-                ? payload.get("recNo").asLong() : null;
-        attendanceIngestionService.ingest(device, deviceUserId, occurredAt, method, granted, recNo);
+        Long recNo = null;
+        if (payload.has("recNo") && !payload.get("recNo").isNull()) {
+            recNo = payload.get("recNo").asLong();
+        }
+        String denyReason = text(payload, "denyReason");
+        if (denyReason == null && payload.has("errorCode") && !payload.get("errorCode").isNull()) {
+            denyReason = mapErrorCode(payload.get("errorCode").asInt());
+        }
+        attendanceIngestionService.ingest(device, deviceUserId, occurredAt, method, granted, recNo,
+                denyReason);
+    }
+
+    private static String mapErrorCode(int code) {
+        return switch (code) {
+            case 0x00 -> null;
+            case 0x10 -> "UNAUTHORIZED";
+            case 0x14 -> "VALIDITY_PERIOD";
+            case 0x20, 0x21 -> "PERIOD_ERROR";
+            case 0x23 -> "OVERDUE";
+            default -> "ERR_0x" + Integer.toHexString(code).toUpperCase();
+        };
     }
 
     private void applyEnrollmentResult(Device device, JsonNode payload) {
@@ -213,7 +267,6 @@ public class GatewayMessageService {
         mappingRepository.save(mapping);
     }
 
-    /** Resolves the device referenced by the message, verifying it belongs to the sending gateway's tenant. */
     private Optional<Device> resolveDevice(GatewayMessage message) {
         if (message.deviceId() == null) {
             return Optional.empty();
@@ -229,7 +282,8 @@ public class GatewayMessageService {
     }
 
     private Optional<String> ack(GatewayMessage message) {
-        return Optional.of(reply(GatewayMessageType.ACK, message.correlationId(), Map.of()));
+        return Optional.of(reply(GatewayMessageType.ACK, message.correlationId(),
+                Map.of("messageId", message.messageId() == null ? "" : message.messageId())));
     }
 
     private String reply(GatewayMessageType type, String correlationId, Map<String, Object> payload) {
@@ -241,8 +295,6 @@ public class GatewayMessageService {
         envelope.put("payload", payload);
         return jsonMapper.writeValueAsString(envelope);
     }
-
-    // --- JSON helpers ----------------------------------------------------------------------------
 
     private String text(JsonNode node, String field) {
         if (node == null) {

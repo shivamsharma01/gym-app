@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { Button, FieldError, Input, Label } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { isPlatformSuperAdmin, platformHomePath } from '@/lib/platform'
 
 const schema = z.object({
   usernameOrEmail: z.string().min(1, 'Required'),
@@ -20,13 +21,15 @@ export function LoginPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const form = useForm<Form>({ resolver: zodResolver(schema), defaultValues: { usernameOrEmail: '', password: '' } })
 
-  if (user) return <Navigate to="/app/dashboard" replace />
+  if (user) {
+    return <Navigate to={isPlatformSuperAdmin(user) ? platformHomePath() : '/app/dashboard'} replace />
+  }
 
   async function onSubmit(values: Form) {
     setFormError(null)
     try {
-      await login(values.usernameOrEmail, values.password)
-      navigate('/app/dashboard', { replace: true })
+      const loggedIn = await login(values.usernameOrEmail, values.password)
+      navigate(isPlatformSuperAdmin(loggedIn) ? platformHomePath() : '/app/dashboard', { replace: true })
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'Sign in failed')
     }

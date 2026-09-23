@@ -1,34 +1,24 @@
-import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui'
 
-export function QueryError({ error }: { error: unknown }) {
-  const [visible, setVisible] = useState(true);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setVisible(false);
-    }, 5000);
-
-    return () => window.clearTimeout(timer);
-  }, [error]);
-
-  if (!visible) {
-    return null;
-  }
-
+export function QueryError({
+  error,
+  onRetry,
+}: {
+  error: unknown
+  onRetry?: () => void
+}) {
   const message =
-      error instanceof Error
-          ? error.message
-          : 'Something went wrong. Please try again.';
+    error instanceof Error ? error.message : 'Something went wrong. Please try again.'
 
   return (
-      <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-red-300 shadow-lg">
-        <div className="font-semibold">
-          Unable to complete the request
-        </div>
-
-        <div className="mt-1 text-sm text-red-300/90">
-          {message}
-        </div>
-      </div>
-  );
+    <div className="rounded-xl border border-danger/30 bg-danger/10 px-5 py-4 text-danger">
+      <div className="font-semibold">Unable to complete the request</div>
+      <div className="mt-1 text-sm text-danger/90">{message}</div>
+      {onRetry ? (
+        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onRetry}>
+          Try again
+        </Button>
+      ) : null}
+    </div>
+  )
 }

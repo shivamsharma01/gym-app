@@ -1,5 +1,8 @@
 package com.example.gym.security;
 
+import com.example.gym.common.web.RequestLoggingFilter;
+import com.example.gym.security.ratelimit.RateLimitProperties;
+import com.example.gym.security.ratelimit.RateLimitStore;
 import java.util.List;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -18,15 +21,21 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Stateless, token-based security. There is no server session and no auth cookie, so CSRF
  * protection is not applicable and is disabled deliberately (bearer tokens are immune to CSRF).
  * All authorization is enforced server-side via method security ({@code @PreAuthorize}).
+ *
+ * <p>Actuator: {@code /actuator/health/**} is public (minimal details). {@code info},
+ * {@code metrics}, and {@code threaddump} require {@code ROLE_SUPER_ADMIN} (proxied via nginx
+ * for the platform SPA). Sensitive endpoints ({@code heapdump}, {@code env}, …) are denyAll.
+ * Same application port; no separate management port.
  */
 @Configuration
 @EnableMethodSecurity
-@EnableConfigurationProperties({SecurityProperties.class, CorsProperties.class})
+@EnableConfigurationProperties({SecurityProperties.class, CorsProperties.class, RateLimitProperties.class})
 public class SecurityConfig {
 
     private static final String[] PUBLIC_PATHS = {
@@ -37,7 +46,6 @@ public class SecurityConfig {
             "/swagger-ui.html",
             "/actuator/health",
             "/actuator/health/**",
-            "/actuator/info",
             "/error",
             // Device-gateway WSS + REST fallback authenticate with a per-gateway token
             // (or optional deployment shared token), not the user JWT filter.
@@ -52,21 +60,36 @@ public class SecurityConfig {
     private final RestAuthenticationEntryPoint authenticationEntryPoint;
     private final RestAccessDeniedHandler accessDeniedHandler;
     private final CorsProperties corsProperties;
+    private final RateLimitProperties rateLimitProperties;
+    private final RateLimitStore rateLimitStore;
+    private final JsonMapper jsonMapper;
+    private final RequestLoggingFilter requestLoggingFilter;
 
     public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter,
                           PublicEndpointRateLimitFilter publicEndpointRateLimitFilter,
                           RestAuthenticationEntryPoint authenticationEntryPoint,
                           RestAccessDeniedHandler accessDeniedHandler,
-                          CorsProperties corsProperties) {
+                          CorsProperties corsProperties,
+                          RateLimitProperties rateLimitProperties,
+                          RateLimitStore rateLimitStore,
+                          JsonMapper jsonMapper,
+                          RequestLoggingFilter requestLoggingFilter) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.publicEndpointRateLimitFilter = publicEndpointRateLimitFilter;
         this.authenticationEntryPoint = authenticationEntryPoint;
         this.accessDeniedHandler = accessDeniedHandler;
         this.corsProperties = corsProperties;
+        this.rateLimitProperties = rateLimitProperties;
+        this.rateLimitStore = rateLimitStore;
+        this.jsonMapper = jsonMapper;
+        this.requestLoggingFilter = requestLoggingFilter;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        AuthenticatedRateLimitFilter authenticatedRateLimitFilter =
+                new AuthenticatedRateLimitFilter(rateLimitProperties, rateLimitStore, jsonMapper);
+
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable())
@@ -74,6 +97,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(PUBLIC_PATHS).permitAll()
+                        .requestMatchers(
+                                "/actuator/heapdump",
+                                "/actuator/env",
+                                "/actuator/configprops",
+                                "/actuator/loggers",
+                                "/actuator/shutdown").denyAll()
+                        .requestMatchers("/actuator/**").hasRole("SUPER_ADMIN")
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)
@@ -82,7 +112,9 @@ public class SecurityConfig {
                         .frameOptions(frame -> frame.deny())
                         .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'")))
                 .addFilterBefore(publicEndpointRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(authenticatedRateLimitFilter, JwtAuthenticationFilter.class)
+                .addFilterAfter(requestLoggingFilter, AuthenticatedRateLimitFilter.class);
         return http.build();
     }
 
@@ -105,8 +137,9 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(corsProperties.getAllowedOrigins());
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Correlation-Id", "X-Gym-Slug"));
-        config.setExposedHeaders(List.of("X-Correlation-Id"));
+        config.setAllowedHeaders(List.of(
+                "Authorization", "Content-Type", "X-Correlation-Id", "X-Request-Id", "X-Gym-Slug"));
+        config.setExposedHeaders(List.of("X-Correlation-Id", "X-Request-Id", "Retry-After"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

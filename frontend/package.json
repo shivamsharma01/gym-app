@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "test:urls": "node --experimental-strip-types src/lib/backendUrls.selftest.ts",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:install": "playwright install chromium"
   },
@@ -35,6 +37,7 @@
     "oxlint": "^1.81.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "wrangler": "^4.136.3"
   }
 }

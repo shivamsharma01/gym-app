@@ -48,6 +48,11 @@ export function DevicesPage() {
       void qc.invalidateQueries({ queryKey: ['gateways'] })
     },
   })
+  const reissueEnrollment = useMutation({
+    mutationFn: (id: string) =>
+      api<GatewayCreated>(`/api/v1/gateways/${id}/enrollment`, { method: 'POST' }),
+    onSuccess: (created) => setIssued(created),
+  })
 
   return (
     <div className="space-y-10">
@@ -91,6 +96,7 @@ export function DevicesPage() {
                     <Link className="font-semibold hover:text-accent" to={`/app/devices/${d.id}`}>
                       {d.name}
                     </Link>
+                    <div className="mt-0.5 font-mono text-[11px] text-muted">{d.id}</div>
                   </Td>
                   <Td className="text-muted">{d.role}</Td>
                   <Td className="font-mono text-xs text-muted">{d.host ? `${d.host}:${d.port ?? ''}` : '—'}</Td>
@@ -117,6 +123,17 @@ export function DevicesPage() {
               </div>
               <p className="mt-2 text-sm text-muted">Last heartbeat {formatDateTime(g.lastHeartbeatAt)}</p>
               <p className="mt-2 font-mono text-[11px] text-muted">id {g.id}</p>
+              {has('DEVICE_MANAGE') ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  disabled={reissueEnrollment.isPending}
+                  onClick={() => reissueEnrollment.mutate(g.id)}
+                >
+                  Reissue enrollment
+                </Button>
+              ) : null}
             </Card>
           ))}
         </div>
@@ -124,8 +141,8 @@ export function DevicesPage() {
           <Card className="mt-4 max-w-lg space-y-3">
             <h3 className="text-sm font-semibold tracking-tight">Create gateway</h3>
             <p className="text-sm leading-relaxed text-muted">
-              The plaintext token is shown once. Put it on the Windows agent as GYM_GATEWAY_TOKEN. It is never stored
-              in this browser and will not be returned again.
+              Issues a one-time enrollment token for the Windows Gateway Configurator. It is shown
+              once, expires soon, and is not the long-lived credential the service stores.
             </p>
             <div>
               <Label htmlFor="gw-name">Name</Label>
@@ -133,7 +150,7 @@ export function DevicesPage() {
             </div>
             {createGateway.error ? <QueryError error={createGateway.error} /> : null}
             <Button disabled={!gwName.trim() || createGateway.isPending} onClick={() => createGateway.mutate()}>
-              Issue token
+              Issue enrollment token
             </Button>
           </Card>
         ) : null}
@@ -142,14 +159,17 @@ export function DevicesPage() {
       <Dialog
         open={Boolean(issued)}
         onClose={() => setIssued(null)}
-        title="Gateway token (shown once)"
-        description="Copy this into the Windows gateway config now. Closing means you cannot retrieve it from the app."
+        title="Enrollment token (shown once)"
+        description="Enter the gateway id and this token in the Windows Gateway Configurator. Closing means you cannot retrieve the token from the app."
         className="max-w-lg"
       >
         {issued ? (
           <div className="space-y-4">
             <p className="break-all rounded-lg bg-raised p-3 font-mono text-xs leading-relaxed">{issued.token}</p>
             <p className="font-mono text-xs text-muted">gateway id {issued.id}</p>
+            {issued.enrollmentExpiresAt ? (
+              <p className="text-sm text-muted">Expires {formatDateTime(issued.enrollmentExpiresAt)}</p>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <Button type="button" onClick={() => void navigator.clipboard.writeText(issued.token)}>
                 Copy token

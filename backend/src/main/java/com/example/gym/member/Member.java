@@ -52,6 +52,10 @@ public class Member extends TenantAwareEntity {
     @Column(name = "notes", length = 1000)
     private String notes;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "creation_source", nullable = false, length = 16)
+    private MemberCreationSource creationSource = MemberCreationSource.MANUAL;
+
     protected Member() {
     }
 
@@ -60,6 +64,7 @@ public class Member extends TenantAwareEntity {
         this.memberCode = memberCode;
         this.firstName = firstName;
         this.joinedOn = LocalDate.now();
+        this.creationSource = MemberCreationSource.MANUAL;
     }
 
     public String getMemberCode() {
@@ -140,6 +145,14 @@ public class Member extends TenantAwareEntity {
 
     public void setNotes(String notes) {
         this.notes = notes;
+    }
+
+    public MemberCreationSource getCreationSource() {
+        return creationSource;
+    }
+
+    public void setCreationSource(MemberCreationSource creationSource) {
+        this.creationSource = creationSource == null ? MemberCreationSource.MANUAL : creationSource;
     }
 
     public String getFullName() {

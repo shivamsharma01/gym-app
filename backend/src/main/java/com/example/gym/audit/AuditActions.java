@@ -16,6 +16,8 @@ public final class AuditActions {
     public static final String USER_UPDATED = "USER_UPDATED";
     public static final String USER_DISABLED = "USER_DISABLED";
     public static final String USER_ROLES_CHANGED = "USER_ROLES_CHANGED";
+    public static final String USER_PASSWORD_CHANGED = "USER_PASSWORD_CHANGED";
+    public static final String USER_PASSWORD_SET = "USER_PASSWORD_SET";
 
     // Phase 2: business domain
     public static final String PLAN_CREATED = "PLAN_CREATED";
@@ -37,6 +39,9 @@ public final class AuditActions {
 
     // Phase 3: device integration
     public static final String GATEWAY_REGISTERED = "GATEWAY_REGISTERED";
+    public static final String GATEWAY_ENROLLED = "GATEWAY_ENROLLED";
+    public static final String GATEWAY_ENROLLMENT_REISSUED = "GATEWAY_ENROLLMENT_REISSUED";
+    public static final String GATEWAY_CREDENTIAL_ROTATED = "GATEWAY_CREDENTIAL_ROTATED";
     public static final String DEVICE_CREATED = "DEVICE_CREATED";
     public static final String DEVICE_UPDATED = "DEVICE_UPDATED";
     public static final String DEVICE_MAPPING_CREATED = "DEVICE_MAPPING_CREATED";
@@ -44,7 +49,13 @@ public final class AuditActions {
     public static final String DEVICE_SYNC_RETRIED = "DEVICE_SYNC_RETRIED";
     public static final String DEVICE_SYNC_CANCELLED = "DEVICE_SYNC_CANCELLED";
     public static final String DEVICE_RECONCILE_REQUESTED = "DEVICE_RECONCILE_REQUESTED";
+    public static final String DEVICE_SYNC_NOW_REQUESTED = "DEVICE_SYNC_NOW_REQUESTED";
+    public static final String DEVICE_MAPPING_REMOVED = "DEVICE_MAPPING_REMOVED";
     public static final String DEVICE_REMOTE_DOOR = "DEVICE_REMOTE_DOOR";
+    public static final String RECONCILIATION_CONFLICT_OPENED = "RECONCILIATION_CONFLICT_OPENED";
+    public static final String RECONCILIATION_CONFLICT_RESOLVED = "RECONCILIATION_CONFLICT_RESOLVED";
+    public static final String RECONCILIATION_REPAIR_ENQUEUED = "RECONCILIATION_REPAIR_ENQUEUED";
+    public static final String DEVICE_USERS_IMPORTED = "DEVICE_USERS_IMPORTED";
 
     public static final String ENQUIRY_RECEIVED = "ENQUIRY_RECEIVED";
     public static final String ENQUIRY_UPDATED = "ENQUIRY_UPDATED";

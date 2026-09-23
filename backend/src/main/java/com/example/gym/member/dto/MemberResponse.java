@@ -17,6 +17,7 @@ public record MemberResponse(
         String status,
         LocalDate joinedOn,
         String notes,
+        String creationSource,
         Instant createdAt) {
 
     public static MemberResponse from(Member m) {
@@ -33,6 +34,7 @@ public record MemberResponse(
                 m.getStatus().name(),
                 m.getJoinedOn(),
                 m.getNotes(),
+                m.getCreationSource().name(),
                 m.getCreatedAt());
     }
 }

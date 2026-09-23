@@ -52,13 +52,14 @@ public sealed record DeviceAttendanceRecord(
     DateTimeOffset OccurredAt,
     string Method,
     bool Granted,
-    long? RecNo);
+    long? RecNo,
+    int? ErrorCode = null);
 
 public sealed record DeviceReconciliationResult(
     bool Ok,
     string? Error,
     IReadOnlyList<DeviceAttendanceRecord> Events,
-    IReadOnlyList<string> DeviceUserIds);
+    IReadOnlyList<DeviceUserSnapshot> Users);
 
 public sealed record NormalizedDeviceEvent(
     string Kind,
@@ -68,10 +69,16 @@ public sealed record NormalizedDeviceEvent(
     bool Granted,
     long? RecNo,
     string? AlarmType,
-    string? Details);
+    string? Details,
+    int? ErrorCode = null);
 
 /// <summary>Device-side access user as returned by enumeration (no biometrics).</summary>
-public sealed record DeviceUserSnapshot(string DeviceUserId, string? Name, bool Frozen);
+public sealed record DeviceUserSnapshot(
+    string DeviceUserId,
+    string? Name,
+    bool Frozen,
+    DateTimeOffset? ValidFrom = null,
+    DateTimeOffset? ValidTo = null);
 
 /// <summary>
 /// Raw evidence from a remote face INSERT attempt. Never treat as product success —

@@ -51,6 +51,20 @@ SPA deep links (`/app/...`, `/g/...`) are handled by Pages automatically: if the
 Do **not** add `public/_redirects` with `→ /index.html 200` — Wrangler/API rejects those
 rules as an infinite loop (error 100324) and the deploy fails.
 
+### API proxy via Pages Functions (preferred with this repo)
+
+With Pages root directory `frontend`, Cloudflare picks up `frontend/functions/`
+automatically. This project uses:
+
+- [`frontend/functions/[[path]].js`](../frontend/functions/[[path]].js) — must export
+  `onRequest` (Pages Functions API). Do **not** use Worker-style
+  `export default { fetch }` — that is ignored and `/api` POSTs stay on static Pages
+  (**405 Method Not Allowed**).
+- [`frontend/public/_routes.json`](../frontend/public/_routes.json) — limits Functions to
+  `/api`, `/live`, `/gateway`, `/actuator` so the SPA is untouched.
+
+Upstream is `https://app.kainazi.com` (VPS). After changing Functions, redeploy Pages.
+
 ---
 
 ## 3. Attach the custom domain to Pages

@@ -46,9 +46,10 @@ browsers will use this host.
 5. Save and deploy. Note the `*.pages.dev` URL for a smoke test of static assets only
    (API calls will fail on `pages.dev` until the custom domain + proxy in §4–5).
 
-SPA deep links (`/app/members/...`) need a fallback. The repo includes
-[`frontend/public/_redirects`](../frontend/public/_redirects) (`/* → /index.html 200`).
-After that lands on `main`, redeploy Pages.
+SPA deep links (`/app/members/...`, `/g/...`) need a fallback. The repo includes
+[`frontend/public/_redirects`](../frontend/public/_redirects) (`/app/*` and `/g/*` →
+`/index.html` 200). Do **not** use `/* → /index.html 200` — Cloudflare rejects it as an
+infinite loop (error 100324). After that lands on `main`, redeploy Pages.
 
 ---
 

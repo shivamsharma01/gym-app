@@ -33,6 +33,14 @@ public class ReportController {
         return reportService.summary(SecurityUtils.currentTenantId(), from, to);
     }
 
+    @GetMapping("/operations")
+    @Operation(summary = "Day-to-day gym owner reports")
+    public ReportOperations operations(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return reportService.operations(SecurityUtils.currentTenantId(), from, to);
+    }
+
     @GetMapping("/memberships")
     @Operation(summary = "Membership snapshot (server-side list, not raw event dump)")
     public List<Map<String, Object>> memberships() {

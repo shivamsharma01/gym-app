@@ -1,0 +1,116 @@
+# Production HTTPS edge for Cloudflare Full (strict) + Origin Certificate.
+#
+# On the VPS:
+#   1. Save Cloudflare Origin Cert + key under /etc/nginx/ssl/ (see CLOUDFLARE-PAGES.md / below).
+#   2. Copy this file to deploy/nginx.conf (or keep both and mount this as default.conf).
+#   3. Uncomment 443 + ssl volume in docker-compose.yml edge service.
+#   4. Rebuild/recreate edge; set Cloudflare SSL/TLS to Full (strict).
+#
+# Portable: server_name _ accepts any Host (multi-domain SaaS behind Cloudflare).
+
+upstream gym_backend {
+    server backend:8080;
+    keepalive 32;
+}
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    # Cloudflare speaks HTTPS to origin; keep :80 for health checks / ACME if needed.
+    location = /healthz {
+        add_header Content-Type text/plain;
+        return 200 'ok';
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name _;
+
+    # Cloudflare Origin Certificate (mounted from host /etc/nginx/ssl)
+    ssl_certificate     /etc/nginx/ssl/origin.crt;
+    ssl_certificate_key /etc/nginx/ssl/origin.key;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location = /healthz {
+        add_header Content-Type text/plain;
+        return 200 'ok';
+    }
+
+    location /api/ {
+        proxy_pass http://gym_backend/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Gym-Slug $http_x_gym_slug;
+        proxy_set_header X-Correlation-Id $http_x_correlation_id;
+        proxy_set_header X-Request-Id $http_x_request_id;
+        proxy_set_header Authorization $http_authorization;
+    }
+
+    location /live {
+        proxy_pass http://gym_backend/live;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+    }
+
+    location /gateway {
+        proxy_pass http://gym_backend/gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+    }
+
+    # Windows gateway enroll / devices / rotate / messages / commands
+    location /internal/ {
+        proxy_pass http://gym_backend/internal/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Correlation-Id $http_x_correlation_id;
+        proxy_set_header X-Request-Id $http_x_request_id;
+    }
+
+    location /actuator/ {
+        proxy_pass http://gym_backend/actuator/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Correlation-Id $http_x_correlation_id;
+        proxy_set_header X-Request-Id $http_x_request_id;
+    }
+
+    location / {
+        default_type application/json;
+        return 404 '{"error":"NOT_FOUND","message":"API host — SPA is served elsewhere"}';
+    }
+}

@@ -46,7 +46,10 @@ public class GatewayOptionsTests
             Token = "secret-token",
             BackendUrl = "http://127.0.0.1:8080"
         };
-        var link = new BackendLink(options, NullLogger<BackendLink>.Instance);
+        var outbox = new DurableOutboundStore(
+            NullLogger<DurableOutboundStore>.Instance,
+            Path.Combine(Path.GetTempPath(), "gym-outbox-" + Guid.NewGuid().ToString("N")));
+        var link = new BackendLink(options, NullLogger<BackendLink>.Instance, outbox);
         Assert.Equal("ws", link.WebSocketUri.Scheme);
         Assert.Equal("/gateway", link.WebSocketUri.AbsolutePath);
         Assert.Contains("token=", link.WebSocketUri.Query);

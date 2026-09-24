@@ -1,8 +1,21 @@
 import { useQuery } from '@tanstack/react-query'
+import { Activity } from 'lucide-react'
 import { Link } from 'react-router'
 import { useState } from 'react'
-import { Badge, Button, EmptyState, PageHeader, Skeleton } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
+import {
+  Badge,
+  Button,
+  EmptyState,
+  PageHeader,
+  Skeleton,
+  Table,
+  TableShell,
+  THead,
+  Th,
+  Td,
+  Tr,
+} from '@/components/ui'
 import { api } from '@/lib/api'
 import { formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
@@ -19,7 +32,7 @@ export function AttendancePage() {
     <div>
       <PageHeader
         title="Attendance"
-        description="Events reported by the device gateway. Live WebSocket updates are not in this phase."
+        description="Door events from the device gateway. Open Live view for near-real-time updates over the staff WebSocket."
         actions={
           <Link to="/app/attendance/live">
             <Button variant="outline">Live view</Button>
@@ -27,44 +40,48 @@ export function AttendancePage() {
         }
       />
       {attendance.isLoading ? <Skeleton className="h-40" /> : null}
-      {attendance.error ? <QueryError error={attendance.error} /> : null}
+      {attendance.error ? <QueryError error={attendance.error} onRetry={() => void attendance.refetch()} /> : null}
       {attendance.data && attendance.data.content.length === 0 ? (
-        <EmptyState title="No attendance yet" body="Rows appear after the gateway reports access events or a reconcile." />
+        <EmptyState
+          title="No attendance yet"
+          body="Rows appear after the gateway reports access events or a reconcile."
+          icon={<Activity className="h-5 w-5" />}
+        />
       ) : null}
       {attendance.data && attendance.data.content.length > 0 ? (
-        <div className="overflow-x-auto rounded-xl border border-line">
-          <table className="w-full min-w-[720px] text-left text-sm">
-            <thead className="bg-raised text-xs uppercase tracking-wide text-muted">
+        <TableShell>
+          <Table className="min-w-[720px]">
+            <THead>
               <tr>
-                <th className="px-4 py-3">When</th>
-                <th className="px-4 py-3">Device user</th>
-                <th className="px-4 py-3">Direction</th>
-                <th className="px-4 py-3">Result</th>
-                <th className="px-4 py-3">Member</th>
+                <Th>When</Th>
+                <Th>Device user</Th>
+                <Th>Direction</Th>
+                <Th>Result</Th>
+                <Th>Member</Th>
               </tr>
-            </thead>
+            </THead>
             <tbody>
               {attendance.data.content.map((row) => (
-                <tr key={row.id} className="border-t border-line">
-                  <td className="px-4 py-3">{formatDateTime(row.occurredAt)}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{row.deviceUserId ?? '—'}</td>
-                  <td className="px-4 py-3 text-muted">{row.direction}</td>
-                  <td className="px-4 py-3">
+                <Tr key={row.id}>
+                  <Td className="whitespace-nowrap text-muted">{formatDateTime(row.occurredAt)}</Td>
+                  <Td className="font-mono text-xs">{row.deviceUserId ?? '—'}</Td>
+                  <Td className="text-muted">{row.direction}</Td>
+                  <Td>
                     <Badge tone={statusTone(row.result)}>{row.result}</Badge>
-                  </td>
-                  <td className="px-4 py-3 text-muted">{row.memberLinked ? 'Linked' : 'Unlinked'}</td>
-                </tr>
+                  </Td>
+                  <Td className="text-muted">{row.memberLinked ? 'Linked' : 'Unlinked'}</Td>
+                </Tr>
               ))}
             </tbody>
-          </table>
-        </div>
+          </Table>
+        </TableShell>
       ) : null}
       {attendance.data && attendance.data.totalPages > 1 ? (
         <div className="mt-4 flex gap-2">
-          <Button variant="outline" disabled={attendance.data.first} onClick={() => setPage((n) => Math.max(0, n - 1))}>
+          <Button variant="outline" size="sm" disabled={attendance.data.first} onClick={() => setPage((n) => Math.max(0, n - 1))}>
             Previous
           </Button>
-          <Button variant="outline" disabled={attendance.data.last} onClick={() => setPage((n) => n + 1)}>
+          <Button variant="outline" size="sm" disabled={attendance.data.last} onClick={() => setPage((n) => n + 1)}>
             Next
           </Button>
         </div>

@@ -15,6 +15,7 @@ public enum PermissionCatalog {
     MEMBERSHIP_UPDATE("Update memberships"),
     MEMBERSHIP_FREEZE("Freeze/unfreeze memberships"),
     MEMBERSHIP_CANCEL("Cancel memberships"),
+    MEMBERSHIP_DELETE("Delete memberships"),
     PAYMENT_VIEW("View payments"),
     PAYMENT_CREATE("Record payments"),
     ATTENDANCE_VIEW("View attendance"),
@@ -30,6 +31,7 @@ public enum PermissionCatalog {
     AUDIT_VIEW("View audit log"),
     SETTINGS_MANAGE("Manage settings"),
     ENQUIRY_VIEW("View public enquiries"),
+    MEMBERSHIP_DISCOUNT_APPROVE("Approve membership discounts"),
     ENQUIRY_MANAGE("Update public enquiries");
 
     private final String description;

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, EmptyState, PageHeader, Select, Skeleton } from '@/components/ui'
+import { Inbox } from 'lucide-react'
 import { QueryError } from '@/components/QueryError'
+import { Badge, Card, EmptyState, PageHeader, Select, Skeleton } from '@/components/ui'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDateTime } from '@/lib/cn'
@@ -36,25 +37,34 @@ export function EnquiriesPage() {
     <div>
       <PageHeader title="Enquiries" description="Leads from the public contact form." />
       {list.isLoading ? <Skeleton className="h-32" /> : null}
-      {list.error ? <QueryError error={list.error} /> : null}
+      {list.error ? <QueryError error={list.error} onRetry={() => void list.refetch()} /> : null}
       {list.data && list.data.content.length === 0 ? (
-        <EmptyState title="No enquiries" body="When someone submits the public form, it lands here." />
+        <EmptyState
+          title="No enquiries"
+          body="When someone submits the public form, it lands here."
+          icon={<Inbox className="h-5 w-5" />}
+        />
       ) : null}
       <div className="space-y-3">
         {list.data?.content.map((e) => (
-          <article key={e.id} className="rounded-xl border border-line bg-panel p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-semibold">{e.name}</div>
+          <Card key={e.id} className="p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="font-semibold tracking-tight">{e.name}</div>
+                <p className="mt-1 text-sm text-muted">
+                  {e.email}
+                  {e.phone ? ` · ${e.phone}` : ''} · {formatDateTime(e.createdAt)}
+                </p>
+              </div>
               <Badge tone={statusTone(e.status)}>{e.status}</Badge>
             </div>
-            <p className="mt-1 text-sm text-muted">
-              {e.email} · {e.phone ?? 'no phone'} · {formatDateTime(e.createdAt)}
-            </p>
-            <p className="mt-3 text-sm">{e.message}</p>
+            {e.planInterest ? <p className="mt-2 text-xs font-medium text-accent">Interest: {e.planInterest}</p> : null}
+            <p className="mt-3 text-sm leading-relaxed text-ink/90">{e.message}</p>
             {has('ENQUIRY_MANAGE') ? (
               <Select
-                className="mt-3 max-w-xs"
+                className="mt-4 max-w-xs"
                 value={e.status}
+                aria-label={`Status for ${e.name}`}
                 onChange={(ev) => update.mutate({ id: e.id, status: ev.target.value })}
               >
                 <option value="NEW">NEW</option>
@@ -62,7 +72,7 @@ export function EnquiriesPage() {
                 <option value="CLOSED">CLOSED</option>
               </Select>
             ) : null}
-          </article>
+          </Card>
         ))}
       </div>
     </div>

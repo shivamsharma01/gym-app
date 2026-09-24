@@ -40,7 +40,7 @@ public class AccessService {
         }
 
         List<Membership> memberships = membershipRepository
-                .findByMemberIdOrderByStartDateDesc(member.getId());
+                .findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId());
         if (memberships.isEmpty()) {
             return deny(member, null, today, AccessReason.NO_MEMBERSHIP);
         }

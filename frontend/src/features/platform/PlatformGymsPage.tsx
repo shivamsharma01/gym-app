@@ -4,7 +4,9 @@ import { Link } from 'react-router'
 import { Button, Input, Label, PageHeader, Skeleton } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { apiUrl } from '@/lib/backendUrls'
 import { gymPath } from '@/lib/brand'
+import { getAccessToken } from '@/lib/tokens'
 
 type TenantSummary = {
   id: string
@@ -71,18 +73,41 @@ export function PlatformGymsPage() {
         />
         {gyms.isLoading ? <Skeleton className="h-32" /> : null}
         {gyms.error ? <QueryError error={gyms.error} /> : null}
-        <ul className="divide-y divide-line rounded-xl border border-line">
+        <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-panel shadow-[var(--shadow-panel)]">
           {(gyms.data ?? []).map((g) => (
-            <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+            <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-4 text-sm">
               <div>
-                <div className="text-lg font-extrabold tracking-tight">{g.displayName}</div>
-                <div className="text-muted">
-                  {g.name} · <code>{g.slug}</code> · {g.status}
+                <div className="text-base font-bold tracking-tight">{g.displayName}</div>
+                <div className="mt-0.5 text-muted">
+                  {g.name} · <code className="text-xs">{g.slug}</code> · {g.status}
                 </div>
               </div>
-              <Link to={gymPath(g.slug)} className="font-semibold text-accent hover:underline">
-                Public site
-              </Link>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  className="font-semibold text-accent hover:underline"
+                  onClick={() => {
+                    void (async () => {
+                      const res = await fetch(apiUrl(`/api/v1/platform/tenants/${g.id}/members/export.csv`), {
+                        headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
+                      })
+                      if (!res.ok) return
+                      const blob = await res.blob()
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `members-${g.slug}.csv`
+                      a.click()
+                      URL.revokeObjectURL(url)
+                    })()
+                  }}
+                >
+                  Export members CSV
+                </button>
+                <Link to={gymPath(g.slug)} className="font-semibold text-accent hover:underline">
+                  Public site
+                </Link>
+              </div>
             </li>
           ))}
         </ul>
@@ -90,13 +115,13 @@ export function PlatformGymsPage() {
       </div>
 
       <form
-        className="space-y-3"
+        className="space-y-3 rounded-2xl border border-line bg-panel p-5 shadow-[var(--shadow-panel)]"
         onSubmit={(e) => {
           e.preventDefault()
           enroll.mutate()
         }}
       >
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Enroll a gym</h2>
+        <h2 className="text-sm font-semibold tracking-tight">Enroll a gym</h2>
         <div>
           <Label>Gym name</Label>
           <Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="H13 Gym" />

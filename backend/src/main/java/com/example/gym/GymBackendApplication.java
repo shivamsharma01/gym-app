@@ -9,7 +9,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
  *
  * <p>This service is the authoritative business source of truth (members, memberships,
  * payments, access status, devices, audit). It never links against the native device SDK;
- * all device integration happens through the Device Gateway (see docs/PHASE-0-ASSESSMENT.md).
+ * all device integration happens through the Device Gateway (see docs/device-sdk.md).
  */
 @SpringBootApplication
 @EnableJpaAuditing(auditorAwareRef = "auditorAware")

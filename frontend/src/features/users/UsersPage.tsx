@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { Badge, Button, Input, Label, PageHeader, Select, Skeleton } from '@/components/ui'
+import { ConfirmDialog } from '@/components/Dialog'
 import { QueryError } from '@/components/QueryError'
+import { Badge, Button, Card, EmptyState, Input, Label, PageHeader, Select, Skeleton } from '@/components/ui'
 import { api } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { STAFF_ROLES } from '@/lib/catalog'
 import { statusTone } from '@/lib/status'
 import type { PageResponse } from '@/lib/types'
@@ -24,6 +26,7 @@ function roleLabel(name: string) {
 }
 
 export function UsersPage() {
+  const { user: current } = useAuth()
   const qc = useQueryClient()
   const users = useQuery({
     queryKey: ['users'],
@@ -38,6 +41,7 @@ export function UsersPage() {
   const [fullName, setFullName] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState('STAFF')
+  const [disableId, setDisableId] = useState<string | null>(null)
   const available = new Set((catalog.data ?? []).map((r) => r.name))
   const assignable = STAFF_ROLES.filter((r) => available.has(r.name))
   const selected = STAFF_ROLES.find((r) => r.name === role)
@@ -74,43 +78,49 @@ export function UsersPage() {
           description="Logins for this app only. Gym members are created under Members. The TrueFace tablet never sees these roles."
         />
         {users.isLoading ? <Skeleton className="h-32" /> : null}
-        {users.error ? <QueryError error={users.error} /> : null}
-        <ul className="divide-y divide-line rounded-xl border border-line">
-          {users.data?.content.map((u) => (
-            <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
-              <div>
-                <div className="font-semibold">{u.fullName}</div>
-                <div className="text-muted">
-                  {u.username} · {u.roles.map(roleLabel).join(', ')}
+        {users.error ? <QueryError error={users.error} onRetry={() => void users.refetch()} /> : null}
+        {users.data && users.data.content.length === 0 ? (
+          <EmptyState title="No staff accounts" body="Create a login for front-desk or gym admins." />
+        ) : null}
+        {users.data && users.data.content.length > 0 ? (
+          <Card padded={false} className="divide-y divide-line overflow-hidden">
+            {users.data.content.map((u) => (
+              <div key={u.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3.5 text-sm">
+                <div>
+                  <div className="font-semibold tracking-tight">{u.fullName}</div>
+                  <div className="mt-0.5 text-muted">
+                    {u.username} · {u.roles.map(roleLabel).join(', ')}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge tone={statusTone(u.status)}>{u.status}</Badge>
+                  {u.status === 'ACTIVE' && u.id !== current?.id ? (
+                    <Button variant="danger" size="sm" onClick={() => setDisableId(u.id)}>
+                      Disable
+                    </Button>
+                  ) : null}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Badge tone={statusTone(u.status)}>{u.status}</Badge>
-                {u.status === 'ACTIVE' ? (
-                  <Button variant="danger" onClick={() => disable.mutate(u.id)}>
-                    Disable
-                  </Button>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ul>
+            ))}
+          </Card>
+        ) : null}
       </div>
-      <form
-        className="space-y-3"
-        onSubmit={(e) => {
-          e.preventDefault()
-          create.mutate()
-        }}
-      >
-        <h2 className="text-sm font-semibold uppercase text-muted">New staff login</h2>
-        <p className="text-sm text-muted">
-          To enrol someone on the door, create them as a{' '}
-          <Link className="underline" to="/app/members/new">
-            member
-          </Link>
-          , then map them on the member page.
-        </p>
+      <Card>
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault()
+            create.mutate()
+          }}
+        >
+          <h2 className="text-sm font-semibold tracking-tight">New staff login</h2>
+          <p className="text-sm text-muted">
+            To enrol someone on the door, create them as a{' '}
+            <Link className="font-medium text-accent hover:underline" to="/app/members/new">
+              member
+            </Link>
+            , then map them on the member page.
+          </p>
         <Label>Username</Label>
         <Input value={username} onChange={(e) => setUsername(e.target.value)} />
         <Label>Email</Label>
@@ -134,7 +144,21 @@ export function UsersPage() {
         <Button type="submit" disabled={create.isPending || !role}>
           Create
         </Button>
-      </form>
+        </form>
+      </Card>
+      <ConfirmDialog
+        open={Boolean(disableId)}
+        onClose={() => setDisableId(null)}
+        title="Disable this staff account?"
+        description="They will not be able to sign in until an admin restores access."
+        confirmLabel="Disable"
+        danger
+        busy={disable.isPending}
+        onConfirm={() => {
+          if (!disableId) return
+          disable.mutate(disableId, { onSettled: () => setDisableId(null) })
+        }}
+      />
     </div>
   )
 }

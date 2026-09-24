@@ -3,6 +3,9 @@ package com.example.gym.device;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
+import com.example.gym.member.Member;
+import com.example.gym.member.MemberRepository;
+import com.example.gym.member.MemberStatus;
 import com.example.gym.membership.Membership;
 import com.example.gym.membership.MembershipPaymentStatus;
 import com.example.gym.membership.MembershipStatus;
@@ -22,11 +25,14 @@ public class DeviceAuthorizationService {
 
     private final MemberDeviceMappingRepository mappingRepository;
     private final DeviceSyncService deviceSyncService;
+    private final MemberRepository memberRepository;
 
     public DeviceAuthorizationService(MemberDeviceMappingRepository mappingRepository,
-                                      DeviceSyncService deviceSyncService) {
+                                      DeviceSyncService deviceSyncService,
+                                      MemberRepository memberRepository) {
         this.mappingRepository = mappingRepository;
         this.deviceSyncService = deviceSyncService;
+        this.memberRepository = memberRepository;
     }
 
     @Transactional
@@ -35,7 +41,8 @@ public class DeviceAuthorizationService {
         if (mappings.isEmpty()) {
             return;
         }
-        boolean enabled = authorizationEnabled(membership);
+        Member member = memberRepository.findById(membership.getMemberId()).orElse(null);
+        boolean enabled = authorizationEnabled(membership, member);
         for (MemberDeviceMapping mapping : mappings) {
             if (enabled) {
                 deviceSyncService.enqueue(membership.getTenantId(), mapping.getDeviceId(),
@@ -51,6 +58,13 @@ public class DeviceAuthorizationService {
     }
 
     static boolean authorizationEnabled(Membership membership) {
+        return authorizationEnabled(membership, null);
+    }
+
+    static boolean authorizationEnabled(Membership membership, Member member) {
+        if (member != null && member.getStatus() != MemberStatus.ACTIVE) {
+            return false;
+        }
         LocalDate today = LocalDate.now();
         if (membership.effectiveStatus(today) != MembershipStatus.ACTIVE) {
             return false;

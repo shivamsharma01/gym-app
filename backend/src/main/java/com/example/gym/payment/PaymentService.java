@@ -11,6 +11,7 @@ import com.example.gym.membership.MembershipPaymentStatus;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.membership.MembershipService;
 import com.example.gym.payment.dto.PaymentRequests.RecordPayment;
+import com.example.gym.payment.dto.PaymentSummaryResponse;
 import com.example.gym.security.AppUserPrincipal;
 import com.example.gym.security.SecurityUtils;
 import com.example.gym.tenant.TenantGuard;
@@ -49,8 +50,30 @@ public class PaymentService {
     }
 
     @Transactional(readOnly = true)
-    public Page<Payment> list(Long tenantId, Pageable pageable) {
-        return paymentRepository.findByTenantIdOrderByPaidOnDescIdDesc(tenantId, pageable);
+    public Page<Payment> list(
+            Long tenantId,
+            Pageable pageable,
+            LocalDate from,
+            LocalDate to) {
+
+        if (from == null && to == null) {
+            return paymentRepository.findByTenantIdOrderByPaidOnDescIdDesc(
+                    tenantId, pageable);
+        }
+
+        if (from == null || to == null) {
+            throw CommonExceptions.badRequest(
+                    "from and to dates must be provided together");
+        }
+
+        if (from.isAfter(to)) {
+            throw CommonExceptions.badRequest(
+                    "from date cannot be after to date");
+        }
+
+        return paymentRepository
+                .findByTenantIdAndPaidOnBetweenOrderByPaidOnDescIdDesc(
+                        tenantId, from, to, pageable);
     }
 
     @Transactional(readOnly = true)
@@ -125,7 +148,7 @@ public class PaymentService {
         membership.setAmountPaid(paid);
         if (paid.signum() <= 0) {
             membership.setPaymentStatus(MembershipPaymentStatus.UNPAID);
-        } else if (paid.compareTo(membership.getPrice()) >= 0) {
+        } else if (paid.compareTo(membership.getNetAmount()) >= 0) {
             membership.setPaymentStatus(MembershipPaymentStatus.PAID);
         } else {
             membership.setPaymentStatus(MembershipPaymentStatus.PARTIAL);
@@ -151,5 +174,34 @@ public class PaymentService {
         AppUserPrincipal principal = SecurityUtils.currentPrincipal();
         payment.setReceivedByUserId(principal.getUserId());
         payment.setReceivedByUsername(principal.getUsername());
+    }
+
+    @Transactional(readOnly = true)
+    public PaymentSummaryResponse summary(
+            Long tenantId,
+            LocalDate from,
+            LocalDate to) {
+
+        if (from.isAfter(to)) {
+            throw CommonExceptions.badRequest("from date cannot be after to date");
+        }
+
+        BigDecimal total = paymentRepository.sumCompletedBetween(
+                tenantId,
+                from,
+                to
+        );
+
+        long count = paymentRepository.countByTenantIdAndStatusAndPaidOnBetween(
+                tenantId,
+                PaymentStatus.COMPLETED,
+                from,
+                to
+        );
+
+        return new PaymentSummaryResponse(
+                total == null ? BigDecimal.ZERO : total,
+                count
+        );
     }
 }

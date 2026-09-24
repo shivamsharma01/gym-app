@@ -10,7 +10,7 @@ backend/target/
 *.env.local
 
 # ---- Vendor native SDK binaries ------------------------------------------------------------------
-# Large, vendor-provided binaries are provisioned out-of-band (see docs/PHASE-0-ASSESSMENT.md),
+# Large, vendor-provided binaries are provisioned out-of-band (see docs/device-sdk.md),
 # not tracked in git. Source (*.cs, *.csproj, *.sln) IS tracked.
 *.dll
 *.so

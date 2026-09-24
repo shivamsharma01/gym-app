@@ -22,10 +22,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Normalizes and persists device access events (§10). De-duplicates by a per-device fingerprint
- * (stable record number when available, else a conservative composite), maps the device user to an
- * application member, resolves direction from the device role, advances the per-device watermark,
- * and raises a security event for denied/unknown-credential access.
+ * Normalizes and persists device access events (§10). Prefers stable {@code rec:{nRecNo}}
+ * fingerprints; when a later reconcile supplies a recNo for a live composite event, upgrades that
+ * row instead of inserting a duplicate.
  */
 @Service
 public class AttendanceIngestionService {
@@ -52,9 +51,33 @@ public class AttendanceIngestionService {
     @Transactional
     public Optional<AttendanceEvent> ingest(Device device, String deviceUserId, Instant occurredAt,
                                             String method, boolean granted, Long deviceRecNo) {
-        Long tenantId = device.getTenantId();
-        String fingerprint = fingerprint(deviceUserId, occurredAt, method, granted, deviceRecNo);
+        return ingest(device, deviceUserId, occurredAt, method, granted, deviceRecNo, null);
+    }
 
+    @Transactional
+    public Optional<AttendanceEvent> ingest(Device device, String deviceUserId, Instant occurredAt,
+                                            String method, boolean granted, Long deviceRecNo,
+                                            String denyReason) {
+        Long tenantId = device.getTenantId();
+        AccessResult result = granted ? AccessResult.GRANTED : AccessResult.DENIED;
+
+        if (deviceRecNo != null) {
+            String recFp = "rec:" + deviceRecNo;
+            if (attendanceRepository.existsByTenantIdAndDeviceIdAndFingerprint(
+                    tenantId, device.getId(), recFp)) {
+                return Optional.empty();
+            }
+            Optional<AttendanceEvent> upgrade = tryUpgradeComposite(
+                    tenantId, device.getId(), deviceUserId, occurredAt, method, result, deviceRecNo,
+                    denyReason);
+            if (upgrade.isPresent()) {
+                advanceWatermark(tenantId, device.getId(), deviceRecNo, occurredAt);
+                clearReconciliationRequired(device.getId());
+                return upgrade;
+            }
+        }
+
+        String fingerprint = fingerprint(deviceUserId, occurredAt, method, granted, deviceRecNo);
         if (attendanceRepository.existsByTenantIdAndDeviceIdAndFingerprint(
                 tenantId, device.getId(), fingerprint)) {
             return Optional.empty();
@@ -64,19 +87,20 @@ public class AttendanceIngestionService {
                 : mappingRepository.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null);
         Long memberId = mapping == null ? null : mapping.getMemberId();
 
-        AccessResult result = granted ? AccessResult.GRANTED : AccessResult.DENIED;
         AttendanceEvent event = new AttendanceEvent(tenantId, device.getId(), memberId, deviceUserId,
-                occurredAt, directionFor(device.getRole()), method, result, deviceRecNo, fingerprint);
+                occurredAt, directionFor(device.getRole()), method, result, deviceRecNo, fingerprint,
+                granted ? null : denyReason);
 
         try {
             attendanceRepository.save(event);
         } catch (DataIntegrityViolationException dup) {
-            // Lost a race on the unique dedupe key — another ingest already persisted it.
             return Optional.empty();
         }
 
         advanceWatermark(tenantId, device.getId(), deviceRecNo, occurredAt);
-        maybeRaiseSecurityEvent(tenantId, device.getId(), granted, memberId, deviceUserId, occurredAt);
+        clearReconciliationRequired(device.getId());
+        maybeRaiseSecurityEvent(tenantId, device.getId(), granted, memberId, deviceUserId, occurredAt,
+                denyReason);
         events.publishEvent(new StaffLiveBroadcast(tenantId, granted ? "ATTENDANCE" : "ACCESS_DENIED",
                 Map.of(
                         "deviceId", device.getPublicId(),
@@ -84,8 +108,48 @@ public class AttendanceIngestionService {
                         "result", result.name(),
                         "direction", event.getDirection().name(),
                         "occurredAt", occurredAt == null ? "" : occurredAt.toString(),
-                        "memberLinked", memberId != null)));
+                        "memberLinked", memberId != null,
+                        "denyReason", denyReason == null ? "" : denyReason)));
         return Optional.of(event);
+    }
+
+    @Transactional
+    public void markReconciliationRequired(Long tenantId, Long deviceId, boolean required) {
+        AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(deviceId)
+                .orElseGet(() -> new AttendanceSyncCursor(tenantId, deviceId));
+        cursor.setReconciliationRequired(required);
+        cursorRepository.save(cursor);
+    }
+
+    private Optional<AttendanceEvent> tryUpgradeComposite(Long tenantId, Long deviceId,
+                                                          String deviceUserId, Instant occurredAt,
+                                                          String method, AccessResult result,
+                                                          Long deviceRecNo, String denyReason) {
+        if (deviceUserId == null || occurredAt == null) {
+            return Optional.empty();
+        }
+        Optional<AttendanceEvent> existing = attendanceRepository
+                .findFirstByTenantIdAndDeviceIdAndDeviceUserIdAndOccurredAtAndMethodAndResultAndDeviceRecNoIsNull(
+                        tenantId, deviceId, deviceUserId, occurredAt, method, result);
+        if (existing.isEmpty()) {
+            return Optional.empty();
+        }
+        AttendanceEvent event = existing.get();
+        event.setDeviceRecNo(deviceRecNo);
+        event.setFingerprint("rec:" + deviceRecNo);
+        if (denyReason != null && event.getDenyReason() == null) {
+            event.setDenyReason(denyReason);
+        }
+        return Optional.of(attendanceRepository.save(event));
+    }
+
+    private void clearReconciliationRequired(Long deviceId) {
+        cursorRepository.findByDeviceId(deviceId).ifPresent(cursor -> {
+            if (cursor.isReconciliationRequired()) {
+                cursor.setReconciliationRequired(false);
+                cursorRepository.save(cursor);
+            }
+        });
     }
 
     private void advanceWatermark(Long tenantId, Long deviceId, Long deviceRecNo, Instant occurredAt) {
@@ -102,10 +166,14 @@ public class AttendanceIngestionService {
     }
 
     private void maybeRaiseSecurityEvent(Long tenantId, Long deviceId, boolean granted, Long memberId,
-                                         String deviceUserId, Instant occurredAt) {
+                                         String deviceUserId, Instant occurredAt, String denyReason) {
         if (!granted) {
+            String details = "Access denied for deviceUserId=" + deviceUserId;
+            if (denyReason != null) {
+                details = details + " reason=" + denyReason;
+            }
             securityEventRepository.save(new SecurityEvent(tenantId, deviceId, "ACCESS_DENIED",
-                    occurredAt, "Access denied for deviceUserId=" + deviceUserId));
+                    occurredAt, details));
         } else if (memberId == null) {
             securityEventRepository.save(new SecurityEvent(tenantId, deviceId, "UNKNOWN_CREDENTIAL",
                     occurredAt, "Granted access for unmapped deviceUserId=" + deviceUserId));

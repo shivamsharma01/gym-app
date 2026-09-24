@@ -82,6 +82,8 @@ public class MembershipNotificationListener {
 		case CANCELLED -> NotificationTemplateKeys.MEMBERSHIP_CANCELLED;
 
 		case DATES_UPDATED -> NotificationTemplateKeys.MEMBERSHIP_DATES_UPDATED;
+		case DELETED -> throw new UnsupportedOperationException("Unimplemented case: " + event.type());
+		default -> throw new IllegalArgumentException("Unexpected value: " + event.type());
 		};
 
 		log.info(

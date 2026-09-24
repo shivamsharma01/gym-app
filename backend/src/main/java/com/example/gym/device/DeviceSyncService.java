@@ -80,9 +80,33 @@ public class DeviceSyncService {
         return saved;
     }
 
+    /**
+     * Reclaims DISPATCHED / ACKNOWLEDGED commands that never received SYNC_RESULT so they become
+     * retryable again (gateway crash after WSS write, lost poll body, reconcile without SYNC_RESULT).
+     */
+    @Transactional
+    public int reclaimStaleDispatched() {
+        Duration timeout = properties.getOutbox().getDispatchTimeout();
+        Instant cutoff = Instant.now().minus(timeout);
+        List<DeviceSyncCommand> stale = commandRepository.findByStateInAndDispatchedAtLessThanEqual(
+                List.of(SyncCommandState.DISPATCHED, SyncCommandState.ACKNOWLEDGED),
+                cutoff,
+                PageRequest.of(0, properties.getOutbox().getBatchSize()));
+        for (DeviceSyncCommand command : stale) {
+            command.setState(SyncCommandState.RETRYING);
+            command.setNextAttemptAt(Instant.now());
+            command.setLastError(truncate("Reclaimed: no SYNC_RESULT within " + timeout, 500));
+            commandRepository.save(command);
+            log.info("Reclaimed stale command {} (was {})", command.getCorrelationId(),
+                    command.getDispatchedAt());
+        }
+        return stale.size();
+    }
+
     /** Claims due commands and attempts delivery to their gateways. Returns the number dispatched. */
     @Transactional
     public int dispatchDue() {
+        reclaimStaleDispatched();
         List<DeviceSyncCommand> due = commandRepository
                 .findByStateInAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
                         List.of(SyncCommandState.PENDING, SyncCommandState.RETRYING),
@@ -181,6 +205,15 @@ public class DeviceSyncService {
         return command;
     }
 
+    @Transactional(readOnly = true)
+    public boolean hasActiveReconcile(Long deviceId) {
+        return commandRepository.existsByDeviceIdAndTypeAndStateIn(
+                deviceId,
+                SyncCommandType.RECONCILE_DEVICE,
+                List.of(SyncCommandState.PENDING, SyncCommandState.DISPATCHED,
+                        SyncCommandState.ACKNOWLEDGED, SyncCommandState.RETRYING));
+    }
+
     // --- internals -------------------------------------------------------------------------------
 
     private void failAttempt(DeviceSyncCommand command, String error) {
@@ -209,7 +242,10 @@ public class DeviceSyncService {
         return Duration.ofMillis(capped + jitter);
     }
 
-    /** Propagates a sync state to the member-device mapping and any linked membership. */
+    /**
+     * Propagates sync state to the member-device mapping for this device only. Membership
+     * {@code device_sync_state} is derived: SYNCED only when every mapping for the member is SYNCED.
+     */
     private void markState(DeviceSyncCommand command, DeviceSyncState state) {
         if (command.getMemberId() != null) {
             for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(command.getMemberId())) {
@@ -218,14 +254,45 @@ public class DeviceSyncService {
                     mappingRepository.save(mapping);
                 }
             }
-        }
-        if (command.getMembershipId() != null) {
+            refreshMembershipSyncState(command.getMembershipId(), command.getMemberId());
+        } else if (command.getMembershipId() != null) {
             Membership membership = membershipRepository.findById(command.getMembershipId()).orElse(null);
             if (membership != null) {
-                membership.setDeviceSyncState(state);
-                membershipRepository.save(membership);
+                refreshMembershipSyncState(command.getMembershipId(), membership.getMemberId());
             }
         }
+    }
+
+    private void refreshMembershipSyncState(Long membershipId, Long memberId) {
+        if (membershipId == null || memberId == null) {
+            return;
+        }
+        Membership membership = membershipRepository.findById(membershipId).orElse(null);
+        if (membership == null) {
+            return;
+        }
+        List<MemberDeviceMapping> mappings = mappingRepository.findByMemberId(memberId);
+        if (mappings.isEmpty()) {
+            membership.setDeviceSyncState(DeviceSyncState.NOT_SYNCED);
+            membershipRepository.save(membership);
+            return;
+        }
+        boolean anyFailed = mappings.stream().anyMatch(m -> m.getSyncState() == DeviceSyncState.FAILED);
+        boolean anyPending = mappings.stream().anyMatch(m ->
+                m.getSyncState() == DeviceSyncState.PENDING
+                        || m.getSyncState() == DeviceSyncState.NOT_SYNCED
+                        || m.getSyncState() == DeviceSyncState.OFFLINE);
+        boolean allSynced = mappings.stream().allMatch(m -> m.getSyncState() == DeviceSyncState.SYNCED);
+        if (allSynced) {
+            membership.setDeviceSyncState(DeviceSyncState.SYNCED);
+        } else if (anyFailed) {
+            membership.setDeviceSyncState(DeviceSyncState.FAILED);
+        } else if (anyPending) {
+            membership.setDeviceSyncState(DeviceSyncState.PENDING);
+        } else {
+            membership.setDeviceSyncState(DeviceSyncState.PENDING);
+        }
+        membershipRepository.save(membership);
     }
 
     private String truncate(String value, int max) {

@@ -17,6 +17,9 @@ import com.example.gym.tenant.TenantGuard;
 import lombok.extern.slf4j.Slf4j;
 
 import com.example.gym.membership.MembershipChangedEvent.ChangeType;
+
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -25,14 +28,13 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import com.example.gym.security.SecurityUtils;
 
 /**
- * Membership lifecycle: create, renew (preserving history), freeze/unfreeze
- * (pausing validity), and cancel. Device I/O is not performed here — a
- * {@link MembershipChangedEvent} is published in the same transaction so the
- * outbox can enqueue authorization commands. Results stay
- * {@code NOT_SYNCED}/{@code PENDING} until the gateway reports
- * {@code SYNC_RESULT}.
+ * Membership lifecycle: create, renew (preserving history), freeze/unfreeze (pausing validity),
+ * and cancel. Device I/O is not performed here — a {@link MembershipChangedEvent} is published
+ * in the same transaction so the outbox can enqueue authorization commands. Results stay
+ * {@code NOT_SYNCED}/{@code PENDING} until the gateway reports {@code SYNC_RESULT}.
  */
 @Slf4j
 @Service
@@ -61,7 +63,7 @@ public class MembershipService {
 
 		log.debug("Fetching membership: publicId={}, tenantId={}", publicId, tenantId);
 
-		Membership membership = membershipRepository.findByPublicId(publicId)
+		Membership membership = membershipRepository.findByPublicIdAndDeletedFalse(publicId)
 				.orElseThrow(() -> CommonExceptions.notFound("Membership"));
 		TenantGuard.check(membership.getTenantId(), tenantId, "Membership");
 
@@ -76,7 +78,7 @@ public class MembershipService {
 		log.debug("Listing memberships for member: memberPublicId={}, tenantId={}", memberPublicId, tenantId);
 
 		Member member = memberService.getByPublicId(memberPublicId, tenantId);
-		List<Membership> memberships = membershipRepository.findByMemberIdOrderByStartDateDesc(member.getId());
+		List<Membership> memberships = membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId());
 
 		log.debug("Memberships fetched: memberPublicId={}, tenantId={}, count={}", memberPublicId, tenantId,
 				memberships.size());
@@ -93,15 +95,38 @@ public class MembershipService {
 		MembershipPlan plan = planService.requireActive(request.planId(), tenantId);
 		LocalDate start = request.startDate() != null ? request.startDate() : LocalDate.now();
 		LocalDate end = resolveEnd(start, request.endDate(), plan);
+        
+		requireNoOverlappingMembership(
+                member.getId(),
+                start,
+                end,
+                null
+        );
 		Membership membership = build(tenantId, member.getId(), plan, start, end);
+        BigDecimal discount =
+                validateAndAuthorizeDiscount(
+                        request.discountAmount(),
+                        plan.getPrice()
+                );
+
+        membership.setDiscountAmount(discount);
+        recordDiscountApproval(membership, discount);
 		Membership saved = membershipRepository.save(membership);
 
 		log.info("Membership created successfully: publicId={}, memberId={}, tenantId={}", saved.getPublicId(),
 				member.getId(), tenantId);
 
-		auditService.record(AuditActions.MEMBERSHIP_CREATED, AuditActions.RESULT_SUCCESS, "Membership",
-				saved.getPublicId(), Map.of("memberId", member.getPublicId(), "plan", plan.getName()));
-		publish(saved, ChangeType.CREATED);
+        auditService.record(
+                AuditActions.MEMBERSHIP_CREATED,
+                AuditActions.RESULT_SUCCESS,
+                "Membership",
+                saved.getPublicId(),
+                Map.of(
+                        "memberId", member.getPublicId(),
+                        "plan", plan.getName()
+                )
+        );
+        publish(saved, ChangeType.CREATED);
 		return saved;
 	}
 
@@ -111,35 +136,129 @@ public class MembershipService {
 		log.info("Renewing membership: publicId={}, requestedPlan={}, tenantId={}", membershipPublicId,
 				request.planId(), tenantId);
 
-		Membership current = getByPublicId(membershipPublicId, tenantId);
-		MembershipPlan plan = resolveRenewalPlan(current, request.planId(), tenantId);
+		
+        Membership current =
+                getByPublicId(membershipPublicId, tenantId);
 
-		LocalDate today = LocalDate.now();
-		LocalDate start;
-		if (request.startDate() != null) {
-			start = request.startDate();
-		} else {
-			start = current.getEndDate().isBefore(today) ? today : current.getEndDate().plusDays(1);
-		}
+        MembershipPlan plan =
+                resolveRenewalPlan(
+                        current,
+                        request.planId(),
+                        tenantId
+                );
 
-		// History is preserved: the old membership row is left untouched; a new one is
-		// created.
 
-		LocalDate end = start.plusDays(Math.max(plan.getDurationDays() - 1, 0));
+        LocalDate start = request.startDate();
 
-		log.debug("Renewal dates resolved: currentMembership={}, start={}, end={}, plan={}", membershipPublicId, start,
-				end, plan.getName());
+        if (start == null) {
+            start = current.getEndDate().plusDays(1);
+        }
 
-		Membership renewal = build(tenantId, current.getMemberId(), plan, start, end);
-		Membership saved = membershipRepository.save(renewal);
+        if (!start.isAfter(current.getEndDate())) {
+            throw CommonExceptions.badRequest(
+                    "Renewal can only start after the current membership end date"
+            );
+        }
 
+        LocalDate end = request.endDate();
+
+        if (end.isBefore(start)) {
+            throw CommonExceptions.badRequest(
+                    "End date cannot be before start date"
+            );
+        }
+
+        requireNoOverlappingMembership(
+                current.getMemberId(),
+                start,
+                end,
+                current.getId()
+        );
+
+        if (request.endDate().isBefore(start)) {
+            throw CommonExceptions.badRequest(
+                    "End date cannot be before start date"
+            );
+        }
+
+        /*
+         * Current plan credit is allowed only when:
+         *
+         * 1. Renewal starts on the current membership's
+         *    original start date
+         *
+         * OR
+         *
+         * 2. Renewal starts exactly one day after the
+         *    current membership ends.
+         *
+         * Any later start date means there is a gap,
+         * so there is NO credit for the previous plan.
+         */
+        boolean qualifiesForCredit =
+                start.equals(current.getStartDate())
+                        || start.equals(
+                        current.getEndDate().plusDays(1)
+                );
+
+        BigDecimal discount =
+                validateAndAuthorizeDiscount(
+                        request.discountAmount(),
+                        plan.getPrice()
+                );
+
+        BigDecimal amountToCollect;
+
+        if (qualifiesForCredit) {
+            amountToCollect = plan.getPrice()
+                    .subtract(current.getPrice())
+                    .max(BigDecimal.ZERO);
+        } else {
+            amountToCollect = plan.getPrice();
+        }
+
+        amountToCollect = amountToCollect
+                .subtract(discount)
+                .max(BigDecimal.ZERO);
+
+        Membership renewal = build(
+                tenantId,
+                current.getMemberId(),
+                plan,
+                start,
+                end
+        );
+
+
+        renewal.setDiscountAmount(discount);
+        recordDiscountApproval(renewal, discount);
+
+        renewal.setAmountPaid(BigDecimal.ZERO);
+
+        renewal.setPaymentStatus(
+                renewal.getNetAmount().compareTo(BigDecimal.ZERO) == 0
+                        ? MembershipPaymentStatus.PAID
+                        : MembershipPaymentStatus.UNPAID
+        );
+
+        Membership saved =
+                membershipRepository.save(renewal);
 		log.info("Membership renewed successfully: oldPublicId={}, newPublicId={}, tenantId={}", membershipPublicId,
 				saved.getPublicId(), tenantId);
+        auditService.record(
+                AuditActions.MEMBERSHIP_RENEWED,
+                AuditActions.RESULT_SUCCESS,
+                "Membership",
+                saved.getPublicId(),
+                Map.of(
+                        "renewedFrom", current.getPublicId(),
+                        "plan", plan.getName()
+                )
+        );
 
-		auditService.record(AuditActions.MEMBERSHIP_RENEWED, AuditActions.RESULT_SUCCESS, "Membership",
-				saved.getPublicId(), Map.of("renewedFrom", current.getPublicId(), "plan", plan.getName()));
-		publish(saved, ChangeType.RENEWED);
-		return saved;
+        publish(saved, ChangeType.RENEWED);
+
+        return saved;
 	}
 
 	@Transactional
@@ -243,7 +362,21 @@ public class MembershipService {
 		}
 		LocalDate start = request.startDate();
 		LocalDate end = request.endDate();
+		
 		requireEndOnOrAfterStart(start, end);
+		
+		if (membershipRepository.existsOverlappingMembership(
+                membership.getMemberId(),
+                membership.getPublicId(),
+                start,
+                end
+        )) {
+            throw CommonExceptions.badRequest(
+                    "Membership dates overlap with an existing membership. " +
+                            "Cancel the existing membership before changing these dates."
+            );
+        }
+		
 		membership.setStartDate(start);
 		membership.setEndDate(end);
 		LocalDate today = LocalDate.now();
@@ -264,6 +397,37 @@ public class MembershipService {
 		publish(saved, ChangeType.DATES_UPDATED);
 		return saved;
 	}
+	
+    @Transactional
+    public void delete(String membershipPublicId, Long tenantId) {
+        Membership membership = getByPublicId(membershipPublicId, tenantId);
+
+        if (membership.getStatus() != MembershipStatus.PENDING && membership.getStatus() != MembershipStatus.ACTIVE) {
+            throw CommonExceptions.badRequest(
+                    "Only pending/active memberships can be deleted");
+        }
+
+        if (membership.getPaymentStatus() != MembershipPaymentStatus.UNPAID) {
+            throw CommonExceptions.badRequest(
+                    "A membership with payment history cannot be deleted");
+        }
+
+        if (membership.getDeviceSyncState() != DeviceSyncState.NOT_SYNCED) {
+            throw CommonExceptions.badRequest(
+                    "A members");
+        }
+
+        membership.setDeleted(true);
+        membershipRepository.save(membership);
+
+        auditService.record(
+                AuditActions.MEMBERSHIP_DELETED,
+                AuditActions.RESULT_SUCCESS,
+                "Membership",
+                membership.getPublicId(),
+                null
+        );
+    }
 
 	private void publish(Membership membership, ChangeType type) {
 
@@ -288,7 +452,77 @@ public class MembershipService {
 		return new Membership(tenantId, memberId, plan.getId(), plan.getName(), plan.getPrice(), plan.getCurrency(),
 				start, end, status);
 	}
+	
+    private void requireNoOverlappingMembership(
+            Long memberId,
+            LocalDate start,
+            LocalDate end,
+            Long excludeMembershipId
+    ) {
+        boolean overlaps;
 
+        if (excludeMembershipId == null) {
+            overlaps =
+                    membershipRepository
+                            .existsByMemberIdAndDeletedFalseAndStatusNotAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                                    memberId,
+                                    MembershipStatus.CANCELLED,
+                                    end,
+                                    start
+                            );
+        } else {
+            overlaps =
+                    membershipRepository
+                            .findByMemberIdAndDeletedFalseOrderByStartDateDesc(memberId)
+                            .stream()
+                            .anyMatch(existing ->
+                                    !existing.getId().equals(excludeMembershipId)
+                                            && existing.getStatus() != MembershipStatus.CANCELLED
+                                            && !existing.getStartDate().isAfter(end)
+                                            && !existing.getEndDate().isBefore(start)
+                            );
+        }
+
+        if (overlaps) {
+            throw CommonExceptions.badRequest(
+                    "Membership dates overlap with an existing membership. "
+                            + "Cancel the existing membership before creating another one."
+            );
+        }
+    }
+    
+    private BigDecimal validateDiscount(BigDecimal discountAmount, BigDecimal planPrice) {
+        BigDecimal discount = discountAmount == null
+                ? BigDecimal.ZERO
+                : discountAmount;
+
+        if (discount.compareTo(BigDecimal.ZERO) < 0) {
+            throw CommonExceptions.badRequest(
+                    "Discount cannot be negative"
+            );
+        }
+
+        if (discount.compareTo(planPrice) > 0) {
+            throw CommonExceptions.badRequest(
+                    "Discount cannot be greater than the plan amount"
+            );
+        }
+
+        return discount;
+    }
+    
+    private void recordDiscountApproval(Membership membership, BigDecimal discount) {
+        if (discount == null || discount.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+
+        var principal = SecurityUtils.currentPrincipal();
+
+        membership.setDiscountApprovedByUserId(principal.getUserId());
+        membership.setDiscountApprovedByUsername(principal.getUsername());
+        membership.setDiscountApprovedAt(Instant.now());
+    }
+    
 	private static LocalDate resolveEnd(LocalDate start, LocalDate requestedEnd, MembershipPlan plan) {
 		if (requestedEnd != null) {
 			log.debug("Using requested membership end date: start={}, end={}", start, requestedEnd);
@@ -342,4 +576,44 @@ public class MembershipService {
 		}
 		return plan;
 	}
+	
+    private BigDecimal validateAndAuthorizeDiscount(
+            BigDecimal discountAmount,
+            BigDecimal planPrice
+    ) {
+        BigDecimal discount = discountAmount == null
+                ? BigDecimal.ZERO
+                : discountAmount;
+
+        if (discount.compareTo(BigDecimal.ZERO) < 0) {
+            throw CommonExceptions.badRequest(
+                    "Discount cannot be negative"
+            );
+        }
+
+        if (discount.compareTo(planPrice) > 0) {
+            throw CommonExceptions.badRequest(
+                    "Discount cannot be greater than the plan amount"
+            );
+        }
+
+        if (discount.compareTo(BigDecimal.ZERO) > 0) {
+            boolean authorized = SecurityUtils.currentPrincipal()
+                    .getAuthorities()
+                    .stream()
+                    .anyMatch(a ->
+                            "MEMBERSHIP_DISCOUNT_APPROVE"
+                                    .equals(a.getAuthority())
+                    );
+
+            if (!authorized) {
+                throw CommonExceptions.forbidden(
+                        "Only an authorized administrator can approve membership discounts"
+                );
+            }
+        }
+
+        return discount;
+    }
+
 }

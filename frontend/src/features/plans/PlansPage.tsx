@@ -3,8 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
-import { Badge, Button, Card, EmptyState, FieldError, Input, Label, PageHeader, Select, Skeleton, Textarea } from '@/components/ui'
+import { ConfirmDialog } from '@/components/Dialog'
 import { QueryError } from '@/components/QueryError'
+import { Badge, Button, Card, EmptyState, FieldError, Input, Label, PageHeader, Select, Skeleton, Textarea } from '@/components/ui'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { CURRENCIES, PLAN_DURATIONS } from '@/lib/catalog'
@@ -26,6 +27,7 @@ export function PlansPage() {
   const { has } = useAuth()
   const qc = useQueryClient()
   const [editing, setEditing] = useState<Plan | null>(null)
+  const [archiveId, setArchiveId] = useState<string | null>(null)
   const plans = useQuery({
     queryKey: ['plans'],
     queryFn: () => api<PageResponse<Plan>>('/api/v1/plans?size=50'),
@@ -98,12 +100,7 @@ export function PlansPage() {
                   </Button>
                 ) : null}
                 {has('MEMBERSHIP_UPDATE') && plan.status === 'ACTIVE' ? (
-                  <Button
-                    variant="danger"
-                    onClick={() => {
-                      if (confirm('Archive this plan? Existing memberships are kept.')) archive.mutate(plan.id)
-                    }}
-                  >
+                  <Button variant="danger" size="sm" onClick={() => setArchiveId(plan.id)}>
                     Archive
                   </Button>
                 ) : null}
@@ -114,9 +111,8 @@ export function PlansPage() {
       </div>
       {has('MEMBERSHIP_CREATE') || (editing && has('MEMBERSHIP_UPDATE')) ? (
         <Card>
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">
-            {editing ? 'Edit plan' : 'New plan'}
-          </h2>
+          <h2 className="mb-1 text-sm font-semibold tracking-tight">{editing ? 'Edit plan' : 'New plan'}</h2>
+          <p className="mb-4 text-xs text-muted">Prices and durations used when starting memberships.</p>
           <form className="space-y-3" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
             <div>
               <Label>Name</Label>
@@ -179,6 +175,19 @@ export function PlansPage() {
           </form>
         </Card>
       ) : null}
+      <ConfirmDialog
+        open={Boolean(archiveId)}
+        onClose={() => setArchiveId(null)}
+        title="Archive this plan?"
+        description="Existing memberships keep their history. New enrollments will not use this plan."
+        confirmLabel="Archive"
+        danger
+        busy={archive.isPending}
+        onConfirm={() => {
+          if (!archiveId) return
+          archive.mutate(archiveId, { onSettled: () => setArchiveId(null) })
+        }}
+      />
     </div>
   )
 }

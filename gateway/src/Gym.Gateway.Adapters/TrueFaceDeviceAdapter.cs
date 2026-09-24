@@ -334,15 +334,17 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return ok ? DeviceCommandResult.Success() : DeviceCommandResult.Fail(SdkError("SetupDeviceTime failed"));
     }
 
-    public DeviceReconciliationResult Reconcile()
+    public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
     {
         if (!EnsureLogin(out var err))
         {
             return new DeviceReconciliationResult(false, err, [], []);
         }
 
-        var events = QueryAttendance(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow);
-        var users = QueryUserIds();
+        var from = fromUtc ?? DateTimeOffset.UtcNow.AddDays(-1);
+        var to = toUtc ?? DateTimeOffset.UtcNow.AddHours(1);
+        var events = QueryAttendance(from, to);
+        var users = QueryUsers();
         return new DeviceReconciliationResult(true, null, events, users);
     }
 
@@ -359,15 +361,68 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             return DeviceCommandResult.Fail(err);
         }
 
+        if (TryGetExistingUser(mutation.DeviceUserId, out var existing)
+            && UserMatchesDesired(existing, mutation, freeze))
+        {
+            Touch();
+            return DeviceCommandResult.Success();
+        }
+
         var user = BuildUser(mutation, freeze);
         var ok = NETClient.InsertOperateAccessUserService(_loginId, [user], out var fail, WaitMs);
         if (!ok)
         {
+            // INSERT may fail when the user already exists — re-GET and treat match as success.
+            if (TryGetExistingUser(mutation.DeviceUserId, out var afterFail)
+                && UserMatchesDesired(afterFail, mutation, freeze))
+            {
+                Touch();
+                return DeviceCommandResult.Success();
+            }
+
             return DeviceCommandResult.Fail(FailCodes("InsertOperateAccessUserService", fail));
         }
 
         Touch();
         return DeviceCommandResult.Success();
+    }
+
+    private bool TryGetExistingUser(string deviceUserId, out NET_ACCESS_USER_INFO user)
+    {
+        user = default;
+        if (string.IsNullOrWhiteSpace(deviceUserId) || _loginId == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var ok = NETClient.GetOperateAccessUserService(_loginId, [deviceUserId], out var users, out _, WaitMs);
+        if (!ok || users == null || users.Length == 0 || string.IsNullOrWhiteSpace(users[0].szUserID))
+        {
+            return false;
+        }
+
+        user = users[0];
+        return true;
+    }
+
+    private static bool UserMatchesDesired(NET_ACCESS_USER_INFO existing, DeviceUserMutation mutation, bool freeze)
+    {
+        var frozen = existing.nUserStatus != 0;
+        if (frozen != freeze)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(mutation.Name))
+        {
+            var desired = Truncate(mutation.Name, 31);
+            if (!string.Equals(NullIfEmpty(existing.szName), desired, StringComparison.Ordinal))
+            {
+                // Name mismatch is soft — still treat freeze/validity as authoritative
+            }
+        }
+
+        return true;
     }
 
     private static NET_ACCESS_USER_INFO BuildUser(DeviceUserMutation mutation, bool freeze)
@@ -526,9 +581,6 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
     }
 
-    private IReadOnlyList<string> QueryUserIds() =>
-        QueryUsers().Select(u => u.DeviceUserId).ToArray();
-
     private IReadOnlyList<DeviceUserSnapshot> QueryUsers()
     {
         var startIn = new NET_IN_USERINFO_START_FIND
@@ -582,7 +634,9 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                             users.Add(new DeviceUserSnapshot(
                                 user.szUserID.Trim(),
                                 NullIfEmpty(user.szName),
-                                Frozen: user.nUserStatus != 0));
+                                Frozen: user.nUserStatus != 0,
+                                ValidFrom: NetTimeOrNull(user.stuValidBeginTime),
+                                ValidTo: NetTimeOrNull(user.stuValidEndTime)));
                         }
                     }
 
@@ -687,9 +741,10 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                     ToUtc(info.stuTime),
                     MapMethod(info.emOpenMethod),
                     info.bStatus,
+                    info.nPunchingRecNo > 0 ? info.nPunchingRecNo : null,
                     null,
                     null,
-                    null));
+                    info.bStatus ? null : info.nErrorCode));
                 return true;
             }
 
@@ -730,7 +785,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     }
 
     private static DeviceAttendanceRecord ToAttendance(NET_RECORDSET_ACCESS_CTL_CARDREC info) =>
-        new(NullIfEmpty(info.szUserID), ToUtc(info.stuTime), MapMethod(info.emMethod), info.bStatus, info.nRecNo);
+        new(NullIfEmpty(info.szUserID), ToUtc(info.stuTime), MapMethod(info.emMethod), info.bStatus,
+            info.nRecNo, info.bStatus ? null : info.nErrorCode);
 
     private static string MapMethod(EM_ACCESS_DOOROPEN_METHOD method) =>
         method == EM_ACCESS_DOOROPEN_METHOD.FACE_RECOGNITION ? "FACE" : method.ToString();
@@ -770,4 +826,30 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     private static string? NullIfEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>Null when the device left validity unset (zeroed NET_TIME).</summary>
+    private static DateTimeOffset? NetTimeOrNull(NET_TIME time)
+    {
+        if (time.dwYear == 0 || time.dwMonth == 0 || time.dwDay == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var dt = new DateTime(
+                (int)time.dwYear,
+                (int)time.dwMonth,
+                (int)time.dwDay,
+                (int)time.dwHour,
+                (int)time.dwMinute,
+                (int)time.dwSecond,
+                DateTimeKind.Utc);
+            return new DateTimeOffset(dt);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

@@ -89,7 +89,12 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
         }
 
         return _users.Values
-            .Select(u => new DeviceUserSnapshot(u.DeviceUserId, u.Name, Frozen: u.Enabled == false))
+            .Select(u => new DeviceUserSnapshot(
+                u.DeviceUserId,
+                u.Name,
+                Frozen: u.Enabled == false,
+                ValidFrom: u.ValidFrom,
+                ValidTo: u.ValidTo))
             .OrderBy(u => u.DeviceUserId, StringComparer.Ordinal)
             .ToArray();
     }
@@ -148,14 +153,14 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
         return ConnectedOrFail();
     }
 
-    public DeviceReconciliationResult Reconcile()
+    public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
     {
         if (!EnsureConnected(out var err))
         {
             return new DeviceReconciliationResult(false, err, [], []);
         }
 
-        return new DeviceReconciliationResult(true, null, FetchAttendance(null, null), _users.Keys.ToArray());
+        return new DeviceReconciliationResult(true, null, FetchAttendance(fromUtc, toUtc), ListUsers());
     }
 
     /// <summary>Test helper: emit a mock attendance event as if the terminal reported it.</summary>

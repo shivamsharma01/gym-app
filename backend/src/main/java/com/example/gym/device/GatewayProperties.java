@@ -22,6 +22,12 @@ public class GatewayProperties {
      */
     private boolean simulatorEnabled = false;
 
+    /** How long a one-time enrollment token remains usable after gateway create/reissue. */
+    private Duration enrollmentTtl = Duration.ofHours(24);
+
+    /** Lifetime of an operational gateway credential after enroll or rotate. */
+    private Duration credentialTtl = Duration.ofDays(90);
+
     private final Outbox outbox = new Outbox();
 
     public String getSharedToken() {
@@ -48,6 +54,22 @@ public class GatewayProperties {
         this.simulatorEnabled = simulatorEnabled;
     }
 
+    public Duration getEnrollmentTtl() {
+        return enrollmentTtl;
+    }
+
+    public void setEnrollmentTtl(Duration enrollmentTtl) {
+        this.enrollmentTtl = enrollmentTtl;
+    }
+
+    public Duration getCredentialTtl() {
+        return credentialTtl;
+    }
+
+    public void setCredentialTtl(Duration credentialTtl) {
+        this.credentialTtl = credentialTtl;
+    }
+
     public Outbox getOutbox() {
         return outbox;
     }
@@ -60,6 +82,8 @@ public class GatewayProperties {
         private Duration baseBackoff = Duration.ofSeconds(5);
         private Duration maxBackoff = Duration.ofMinutes(10);
         private Duration jitter = Duration.ofSeconds(1);
+        /** How long a DISPATCHED command may wait for SYNC_RESULT before reclaim. */
+        private Duration dispatchTimeout = Duration.ofMinutes(2);
 
         public boolean isDispatcherEnabled() {
             return dispatcherEnabled;
@@ -108,5 +132,35 @@ public class GatewayProperties {
         public void setJitter(Duration jitter) {
             this.jitter = jitter;
         }
+
+        public Duration getDispatchTimeout() {
+            return dispatchTimeout;
+        }
+
+        public void setDispatchTimeout(Duration dispatchTimeout) {
+            this.dispatchTimeout = dispatchTimeout;
+        }
+    }
+
+    /** How long gateway messageId entries are retained for replay dedupe. */
+    private Duration messageDedupeTtl = Duration.ofHours(24);
+
+    /** Interval for automatic attendance/user reconcile enqueue (0 disables). */
+    private Duration autoReconcileInterval = Duration.ofMinutes(15);
+
+    public Duration getMessageDedupeTtl() {
+        return messageDedupeTtl;
+    }
+
+    public void setMessageDedupeTtl(Duration messageDedupeTtl) {
+        this.messageDedupeTtl = messageDedupeTtl;
+    }
+
+    public Duration getAutoReconcileInterval() {
+        return autoReconcileInterval;
+    }
+
+    public void setAutoReconcileInterval(Duration autoReconcileInterval) {
+        this.autoReconcileInterval = autoReconcileInterval;
     }
 }

@@ -7,7 +7,9 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * A member's subscription for a period. Plan name/price/currency are snapshotted so later plan
@@ -42,6 +44,10 @@ public class Membership extends TenantAwareEntity {
     @Column(name = "end_date", nullable = false)
     private LocalDate endDate;
 
+    /** True when end_date was inferred (e.g. device validity missing → today+1y), not from device. */
+    @Column(name = "end_date_inferred", nullable = false)
+    private boolean endDateInferred = false;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private MembershipStatus status;
@@ -68,6 +74,56 @@ public class Membership extends TenantAwareEntity {
 
     @Column(name = "cancel_reason", length = 300)
     private String cancelReason;
+
+    @Column(name = "deleted", nullable = false)
+    private boolean deleted = false;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "discount_amount", nullable = false, precision = 12, scale = 2)
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
+    @Column(name = "discount_approved_by_user_id")
+    private Long discountApprovedByUserId;
+
+    @Column(name = "discount_approved_by_username", length = 100)
+    private String discountApprovedByUsername;
+
+    public BigDecimal getDiscountAmount() {
+        return discountAmount;
+    }
+
+    public void setDiscountAmount(BigDecimal discountAmount) {
+        this.discountAmount = discountAmount;
+    }
+
+    public Long getDiscountApprovedByUserId() {
+        return discountApprovedByUserId;
+    }
+
+    public void setDiscountApprovedByUserId(Long discountApprovedByUserId) {
+        this.discountApprovedByUserId = discountApprovedByUserId;
+    }
+
+    public String getDiscountApprovedByUsername() {
+        return discountApprovedByUsername;
+    }
+
+    public void setDiscountApprovedByUsername(String discountApprovedByUsername) {
+        this.discountApprovedByUsername = discountApprovedByUsername;
+    }
+
+    public Instant getDiscountApprovedAt() {
+        return discountApprovedAt;
+    }
+
+    public void setDiscountApprovedAt(Instant discountApprovedAt) {
+        this.discountApprovedAt = discountApprovedAt;
+    }
+
+    @Column(name = "discount_approved_at")
+    private Instant discountApprovedAt;
 
     protected Membership() {
     }
@@ -122,6 +178,22 @@ public class Membership extends TenantAwareEntity {
         return price;
     }
 
+    public void setPlanId(Long planId) {
+        this.planId = planId;
+    }
+
+    public void setPlanName(String planName) {
+        this.planName = planName;
+    }
+
+    public void setPrice(BigDecimal price) {
+        this.price = price;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
     public String getCurrency() {
         return currency;
     }
@@ -140,6 +212,14 @@ public class Membership extends TenantAwareEntity {
 
     public void setEndDate(LocalDate endDate) {
         this.endDate = endDate;
+    }
+
+    public boolean isEndDateInferred() {
+        return endDateInferred;
+    }
+
+    public void setEndDateInferred(boolean endDateInferred) {
+        this.endDateInferred = endDateInferred;
     }
 
     public MembershipStatus getStatus() {
@@ -204,5 +284,25 @@ public class Membership extends TenantAwareEntity {
 
     public void setCancelReason(String cancelReason) {
         this.cancelReason = cancelReason;
+    }
+
+    public boolean isDeleted() {
+        return deleted;
+    }
+
+    public void setDeleted(boolean deleted) {
+        this.deleted = deleted;
+    }
+
+    public LocalDateTime getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(LocalDateTime deletedAt) {
+        this.deletedAt = deletedAt;
+    }
+
+    public BigDecimal getNetAmount() {
+        return price.subtract(discountAmount).max(BigDecimal.ZERO);
     }
 }

@@ -81,7 +81,9 @@ public sealed class CommandDispatcher
                 return From(adapter.CloseDoor());
             case "REFRESH_DEVICE_USERS":
             case "RECONCILE_DEVICE":
-                var recon = adapter.Reconcile();
+                var fromUtc = Instant(payload, "fromUtc");
+                var toUtc = Instant(payload, "toUtc");
+                var recon = adapter.Reconcile(fromUtc, toUtc);
                 return recon.Ok
                     ? DispatchOutcome.Reconciliation(recon)
                     : DispatchOutcome.SyncFail(recon.Error ?? "reconcile failed");
@@ -164,15 +166,42 @@ public sealed record DispatchOutcome(
             new
             {
                 ok = true,
-                deviceUserIds = result.DeviceUserIds,
+                deviceUserIds = result.Users.Select(u => u.DeviceUserId).ToArray(),
+                deviceUsers = result.Users.Select(u => new
+                {
+                    deviceUserId = u.DeviceUserId,
+                    name = u.Name,
+                    frozen = u.Frozen,
+                    validFrom = u.ValidFrom?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'"),
+                    validTo = u.ValidTo?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+                }),
                 events = result.Events.Select(e => new
                 {
                     deviceUserId = e.DeviceUserId,
                     occurredAt = e.OccurredAt.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'"),
                     method = e.Method,
                     granted = e.Granted,
-                    recNo = e.RecNo
+                    recNo = e.RecNo,
+                    errorCode = e.ErrorCode,
+                    denyReason = MapDenyReason(e.ErrorCode, e.Granted)
                 })
             },
             result.Events);
+
+    private static string? MapDenyReason(int? errorCode, bool granted)
+    {
+        if (granted || errorCode is null or 0)
+        {
+            return null;
+        }
+
+        return errorCode.Value switch
+        {
+            0x10 => "UNAUTHORIZED",
+            0x14 => "VALIDITY_PERIOD",
+            0x20 or 0x21 => "PERIOD_ERROR",
+            0x23 => "OVERDUE",
+            _ => "ERR_0x" + errorCode.Value.ToString("X")
+        };
+    }
 }

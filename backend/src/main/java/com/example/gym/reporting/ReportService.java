@@ -126,6 +126,12 @@ public class ReportService {
                 .filter(m -> m.effectiveStatus(today) == MembershipStatus.ACTIVE)
                 .count();
 
+        List<Membership> expiringIn7Days = memberships.stream()
+                .filter(m -> m.effectiveStatus(today) == MembershipStatus.ACTIVE)
+                .filter(m -> !m.getEndDate().isBefore(today) && !m.getEndDate().isAfter(today.plusDays(7)))
+                .sorted(Comparator.comparing(Membership::getEndDate))
+                .toList();
+
         List<Membership> expiring = memberships.stream()
                 .filter(m -> m.effectiveStatus(today) == MembershipStatus.ACTIVE)
                 .filter(m -> !m.getEndDate().isBefore(today) && !m.getEndDate().isAfter(today.plusDays(30)))
@@ -198,7 +204,7 @@ public class ReportService {
 
         ReportOperations.Overview overview = new ReportOperations.Overview(
                 members.size(), activeMembers, newMemberRows.size(), activeMemberships,
-                expiring.stream().filter(m -> !m.getEndDate().isAfter(today.plusDays(7))).count(),
+                expiringIn7Days.size(),
                 expiring.size(),
                 memberships.stream().filter(m -> m.effectiveStatus(today) == MembershipStatus.EXPIRED).count(),
                 outstanding.size(), outstandingAmount,
@@ -215,6 +221,14 @@ public class ReportService {
                             p.getPublicId(), memberName(member), memberCode(member), p.getPaidOn().toString(),
                             p.getAmount(), p.getCurrency(), p.getMethod().name(), p.getStatus().name());
                 }).toList();
+
+        List<ReportOperations.MembershipRow> expiring7Rows = expiringIn7Days.stream()
+                .map(m -> new ReportOperations.MembershipRow(
+                        m.getPublicId(), memberName(membersById.get(m.getMemberId())),
+                        memberCode(membersById.get(m.getMemberId())), m.getPlanName(),
+                        m.effectiveStatus(today).name(), m.getStartDate().toString(), m.getEndDate().toString(),
+                        m.getNetAmount(), m.getAmountPaid(), balance(m)))
+                .toList();
 
         List<ReportOperations.MembershipRow> expiringRows = expiring.stream()
                 .map(m -> new ReportOperations.MembershipRow(
@@ -233,7 +247,7 @@ public class ReportService {
                 .toList();
 
         return new ReportOperations(
-                overview, collectionsByMethod, paymentRows, expiringRows, dueRows,
+                overview, collectionsByMethod, paymentRows, expiring7Rows, expiringRows, dueRows,
                 newMemberRows.stream().map(this::memberRow).toList(), attendanceRows, inactiveMembers);
     }
 

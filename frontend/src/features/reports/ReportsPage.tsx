@@ -56,6 +56,18 @@ type Operations = {
     method: string;
     status: string;
   }[];
+  expiringIn7Days: {
+    id: string;
+    memberName: string;
+    memberCode: string;
+    planName: string;
+    status: string;
+    startDate: string;
+    endDate: string;
+    price: number | string;
+    amountPaid: number | string;
+    balance: number | string;
+  }[];
   expiringMemberships: {
     id: string;
     memberName: string;
@@ -361,6 +373,52 @@ export function ReportsPage() {
                               <Td>{formatDate(r.endDate)}</Td>
                               <Td className="tabular-nums">
                                 {money(r.planAmount, "INR")}
+                              </Td>
+                              <Td className="tabular-nums">
+                                {money(r.amountPaid, "INR")}
+                              </Td>
+                              <Td className="font-semibold tabular-nums">
+                                {money(r.balance, "INR")}
+                              </Td>
+                            </Tr>
+                        ))}
+                        </tbody>
+                      </Table>
+                    </TableShell>
+                )}
+              </ReportSection>
+
+              <ReportSection
+                  title="Memberships expiring in next 7 days"
+                  description="Active memberships that will expire today or within the next 7 days. These members should be contacted for renewal."
+                  count={query.data.overview.expiringIn7Days}
+              >
+                {query.data.expiringIn7Days.length === 0 ? (
+                    <EmptyState
+                        title="No memberships expiring in the next 7 days"
+                        body="There are no active memberships ending today or within the next 7 days."
+                    />
+                ) : (
+                    <TableShell>
+                      <Table>
+                        <THead>
+                          <tr>
+                            <Th>Member</Th>
+                            <Th>Member ID</Th>
+                            <Th>Plan</Th>
+                            <Th>End date</Th>
+                            <Th>Paid</Th>
+                            <Th>Balance</Th>
+                          </tr>
+                        </THead>
+                        <tbody>
+                        {query.data.expiringIn7Days.map((r) => (
+                            <Tr key={r.id}>
+                              <Td className="font-medium">{r.memberName}</Td>
+                              <Td className="text-muted">{r.memberCode || "—"}</Td>
+                              <Td>{r.planName}</Td>
+                              <Td className="font-semibold">
+                                {formatDate(r.endDate)}
                               </Td>
                               <Td className="tabular-nums">
                                 {money(r.amountPaid, "INR")}

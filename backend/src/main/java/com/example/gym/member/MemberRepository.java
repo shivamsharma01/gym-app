@@ -1,5 +1,7 @@
 package com.example.gym.member;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -40,4 +42,7 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
     long countByTenantId(Long tenantId);
 
     long countByTenantIdAndStatus(Long tenantId, MemberStatus status);
+
+    List<Member> findByTenantIdAndJoinedOnBetweenOrderByJoinedOnDesc(
+            Long tenantId, LocalDate from, LocalDate to);
 }

@@ -42,6 +42,7 @@ export function UsersPage() {
   const [password, setPassword] = useState('')
   const [role, setRole] = useState('STAFF')
   const [disableId, setDisableId] = useState<string | null>(null)
+  const [enableId, setEnableId] = useState<string | null>(null)
   const available = new Set((catalog.data ?? []).map((r) => r.name))
   const assignable = STAFF_ROLES.filter((r) => available.has(r.name))
   const selected = STAFF_ROLES.find((r) => r.name === role)
@@ -67,6 +68,10 @@ export function UsersPage() {
   })
   const disable = useMutation({
     mutationFn: (id: string) => api(`/api/v1/users/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+  const enable = useMutation({
+    mutationFn: (id: string) => api(`/api/v1/users/${id}/enable`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   })
 
@@ -97,6 +102,11 @@ export function UsersPage() {
                   {u.status === 'ACTIVE' && u.id !== current?.id ? (
                     <Button variant="danger" size="sm" onClick={() => setDisableId(u.id)}>
                       Disable
+                    </Button>
+                  ) : null}
+                  {u.status === 'DISABLED' ? (
+                    <Button variant="outline" size="sm" onClick={() => setEnableId(u.id)}>
+                      Enable
                     </Button>
                   ) : null}
                 </div>
@@ -157,6 +167,18 @@ export function UsersPage() {
         onConfirm={() => {
           if (!disableId) return
           disable.mutate(disableId, { onSettled: () => setDisableId(null) })
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(enableId)}
+        onClose={() => setEnableId(null)}
+        title="Enable this staff account?"
+        description="They can sign in again with their existing password. Any login lockout is cleared."
+        confirmLabel="Enable"
+        busy={enable.isPending}
+        onConfirm={() => {
+          if (!enableId) return
+          enable.mutate(enableId, { onSettled: () => setEnableId(null) })
         }}
       />
     </div>

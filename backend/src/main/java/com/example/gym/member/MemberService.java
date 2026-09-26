@@ -3,6 +3,7 @@ package com.example.gym.member;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.device.DeviceAuthorizationService;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
 import com.example.gym.tenant.TenantGuard;
@@ -23,11 +24,14 @@ public class MemberService {
 
     private final MemberRepository memberRepository;
     private final AuditService auditService;
+    private final DeviceAuthorizationService deviceAuthorizationService;
     private final SecureRandom random = new SecureRandom();
 
-    public MemberService(MemberRepository memberRepository, AuditService auditService) {
+    public MemberService(MemberRepository memberRepository, AuditService auditService,
+                         DeviceAuthorizationService deviceAuthorizationService) {
         this.memberRepository = memberRepository;
         this.auditService = auditService;
+        this.deviceAuthorizationService = deviceAuthorizationService;
     }
 
     @Transactional(readOnly = true)
@@ -89,6 +93,7 @@ public class MemberService {
         Member member = getByPublicId(publicId, tenantId);
         member.setStatus(MemberStatus.INACTIVE);
         memberRepository.save(member);
+        deviceAuthorizationService.syncMember(member);
         auditService.record(AuditActions.MEMBER_DELETED, AuditActions.RESULT_SUCCESS,
                 "Member", member.getPublicId(), null);
     }
@@ -101,6 +106,7 @@ public class MemberService {
         }
         member.setStatus(MemberStatus.ACTIVE);
         Member saved = memberRepository.save(member);
+        deviceAuthorizationService.syncMember(saved);
         auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), null);
         return saved;

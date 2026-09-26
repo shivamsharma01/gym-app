@@ -12,7 +12,9 @@ type Audit = {
   result: string
   resourceType: string | null
   resourceId: string | null
+  resourceLabel: string | null
   actorUsername: string | null
+  details: string | null
   createdAt: string
 }
 
@@ -50,8 +52,16 @@ export function AuditPage() {
                     <span className="mx-1.5 text-muted">·</span>
                     <Badge tone={statusTone(row.result)}>{row.result}</Badge>
                   </Td>
-                  <Td className="text-muted">
-                    {row.resourceType} {row.resourceId}
+                  <Td>
+                    <div className="font-medium text-ink">
+                      {row.resourceType}
+                      {row.resourceLabel ? ` · ${row.resourceLabel}` : ''}
+                    </div>
+                    {row.resourceId ? (
+                      <div className="mt-0.5 font-mono text-[11px] text-muted" title={row.resourceId}>
+                        {row.resourceId}
+                      </div>
+                    ) : null}
                   </Td>
                 </Tr>
               ))}

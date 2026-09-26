@@ -25,6 +25,12 @@ public interface DeviceSyncCommandRepository extends JpaRepository<DeviceSyncCom
     Page<DeviceSyncCommand> findByTenantIdAndDeviceIdOrderByCreatedAtDesc(
             Long tenantId, Long deviceId, Pageable pageable);
 
+    Page<DeviceSyncCommand> findByTenantIdAndStateInOrderByCreatedAtDesc(
+            Long tenantId, Collection<SyncCommandState> states, Pageable pageable);
+
+    Page<DeviceSyncCommand> findByTenantIdAndDeviceIdAndStateInOrderByCreatedAtDesc(
+            Long tenantId, Long deviceId, Collection<SyncCommandState> states, Pageable pageable);
+
     long countByDeviceIdAndStateIn(Long deviceId, Collection<SyncCommandState> states);
 
     Optional<DeviceSyncCommand> findTopByDeviceIdAndStateOrderByCompletedAtDesc(

@@ -75,6 +75,8 @@ export function DeviceDetailPage() {
 
 function Overview({ device }: { device: Device }) {
   const { has } = useAuth()
+  const navigate = useNavigate()
+  const qc = useQueryClient()
   const health = useQuery({
     queryKey: ['device-health', device.id],
     queryFn: () => api<DeviceHealth>(`/api/v1/devices/${device.id}/health`),
@@ -85,9 +87,17 @@ function Overview({ device }: { device: Device }) {
   })
   const reconcile = useMutation({
     mutationFn: () => api<SyncCommand>(`/api/v1/devices/${device.id}/reconcile`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['device-health', device.id] })
+      void qc.invalidateQueries({ queryKey: ['sync-commands', device.id] })
+    },
   })
   const syncNow = useMutation({
     mutationFn: () => api<SyncCommand>(`/api/v1/devices/${device.id}/sync-now`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['device-health', device.id] })
+      void qc.invalidateQueries({ queryKey: ['sync-commands', device.id] })
+    },
   })
   const importUsers = useMutation({
     mutationFn: () => api<ImportUsersResult>(`/api/v1/devices/${device.id}/import-users`, { method: 'POST' }),
@@ -122,8 +132,20 @@ function Overview({ device }: { device: Device }) {
             <div className="text-xs uppercase text-muted">Gateway</div>
             <div className="mt-1 font-semibold">{health.data.gatewayStatus ?? '—'}</div>
             <p className="mt-2 text-sm text-muted">
-              Session {health.data.gatewaySessionOnline ? 'online' : 'offline'} · pending{' '}
-              {health.data.pendingCommandCount} · failed {health.data.failedCommandCount}
+              Session {health.data.gatewaySessionOnline ? 'online' : 'offline'} ·{' '}
+              <button
+                type="button"
+                className="font-medium text-accent underline-offset-2 hover:underline"
+                onClick={() => navigate(`/app/devices/${device.id}/sync`)}
+              >
+                pending {health.data.pendingCommandCount}
+                {health.data.pendingCommandCount > 0 ? (
+                  <span className="ml-1.5 inline-flex align-middle">
+                    <Badge tone="warn">unsynced</Badge>
+                  </span>
+                ) : null}
+              </button>
+              {' · '}failed {health.data.failedCommandCount}
             </p>
           </Card>
           <Card>
@@ -265,61 +287,108 @@ function Events() {
 function Sync({ deviceId }: { deviceId: string }) {
   const { has } = useAuth()
   const qc = useQueryClient()
+  const [openOnly, setOpenOnly] = useState(true)
   const commands = useQuery({
-    queryKey: ['sync-commands', deviceId],
-    queryFn: () => api<PageResponse<SyncCommand>>(`/api/v1/sync-commands?deviceId=${deviceId}&size=50`),
+    queryKey: ['sync-commands', deviceId, openOnly],
+    queryFn: () =>
+      api<PageResponse<SyncCommand>>(
+        `/api/v1/sync-commands?deviceId=${deviceId}&size=50&openOnly=${openOnly}`,
+      ),
+    refetchInterval: 15_000,
   })
   const retry = useMutation({
     mutationFn: (id: string) => api<SyncCommand>(`/api/v1/sync-commands/${id}/retry`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sync-commands', deviceId] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['sync-commands', deviceId] })
+      void qc.invalidateQueries({ queryKey: ['device-health', deviceId] })
+    },
   })
   const cancel = useMutation({
     mutationFn: (id: string) => api<SyncCommand>(`/api/v1/sync-commands/${id}/cancel`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sync-commands', deviceId] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['sync-commands', deviceId] })
+      void qc.invalidateQueries({ queryKey: ['device-health', deviceId] })
+    },
   })
-  if (commands.isLoading) return <Skeleton className="h-32" />
-  if (commands.error) return <QueryError error={commands.error} />
-  if (!commands.data?.content.length) return <p className="text-sm text-muted">No sync commands for this device.</p>
+  const openStates = new Set(['PENDING', 'DISPATCHED', 'ACKNOWLEDGED', 'RETRYING'])
+
   return (
-    <TableShell>
-      <Table className="min-w-[720px]">
-        <THead>
-          <tr>
-            <Th>Type</Th>
-            <Th>State</Th>
-            <Th>Attempts</Th>
-            <Th>Last error</Th>
-            <Th />
-          </tr>
-        </THead>
-        <tbody>
-          {commands.data.content.map((c) => (
-            <Tr key={c.id}>
-              <Td className="font-medium">{c.type}</Td>
-              <Td>
-                <Badge tone={statusTone(c.state)}>{c.state}</Badge>
-              </Td>
-              <Td className="text-muted">
-                {c.attemptCount}/{c.maxAttempts}
-              </Td>
-              <Td className="max-w-xs truncate text-xs text-muted">{c.lastError ?? '—'}</Td>
-              <Td>
-                {has('DEVICE_SYNC') ? (
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => retry.mutate(c.id)}>
-                      Retry
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => cancel.mutate(c.id)}>
-                      Cancel
-                    </Button>
-                  </div>
-                ) : null}
-              </Td>
-            </Tr>
-          ))}
-        </tbody>
-      </Table>
-    </TableShell>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted">
+          Pending means saved on the server, not yet confirmed on this device. If the gateway is offline, commands stay
+          here until they can be delivered.
+        </p>
+        <div className="flex gap-2">
+          <Button size="sm" variant={openOnly ? 'primary' : 'outline'} onClick={() => setOpenOnly(true)}>
+            Open queue
+          </Button>
+          <Button size="sm" variant={!openOnly ? 'primary' : 'outline'} onClick={() => setOpenOnly(false)}>
+            All history
+          </Button>
+        </div>
+      </div>
+      {commands.isLoading ? <Skeleton className="h-32" /> : null}
+      {commands.error ? <QueryError error={commands.error} /> : null}
+      {commands.data && commands.data.content.length === 0 ? (
+        <p className="text-sm text-muted">
+          {openOnly ? 'No open sync commands for this device.' : 'No sync commands for this device.'}
+        </p>
+      ) : null}
+      {commands.data && commands.data.content.length > 0 ? (
+        <TableShell>
+          <Table className="min-w-[820px]">
+            <THead>
+              <tr>
+                <Th>Type</Th>
+                <Th>Member</Th>
+                <Th>State</Th>
+                <Th>Attempts</Th>
+                <Th>When</Th>
+                <Th>Last error</Th>
+                <Th />
+              </tr>
+            </THead>
+            <tbody>
+              {commands.data.content.map((c) => {
+                const canAct = openStates.has(c.state) || c.state === 'DEAD_LETTER' || c.state === 'FAILED'
+                return (
+                  <Tr key={c.id}>
+                    <Td className="font-medium">{c.type}</Td>
+                    <Td>
+                      <div className="font-medium">{c.memberName ?? '—'}</div>
+                      <div className="font-mono text-[11px] text-muted">{c.deviceUserId ?? ''}</div>
+                    </Td>
+                    <Td>
+                      <Badge tone={statusTone(c.state)}>{c.state}</Badge>
+                    </Td>
+                    <Td className="text-muted">
+                      {c.attemptCount}/{c.maxAttempts}
+                    </Td>
+                    <Td className="whitespace-nowrap text-xs text-muted">{formatDateTime(c.createdAt)}</Td>
+                    <Td className="max-w-xs truncate text-xs text-muted">{c.lastError ?? '—'}</Td>
+                    <Td>
+                      {has('DEVICE_SYNC') && canAct ? (
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" onClick={() => retry.mutate(c.id)}>
+                            Retry
+                          </Button>
+                          {openStates.has(c.state) ? (
+                            <Button variant="ghost" size="sm" onClick={() => cancel.mutate(c.id)}>
+                              Cancel
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </Td>
+                  </Tr>
+                )
+              })}
+            </tbody>
+          </Table>
+        </TableShell>
+      ) : null}
+    </div>
   )
 }
 

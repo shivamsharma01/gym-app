@@ -9,6 +9,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   Skeleton,
   Table,
   TableShell,
@@ -27,15 +28,20 @@ export function MembersPage() {
   const { has } = useAuth()
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
+  const [status, setStatus] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL')
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q), 300)
     return () => clearTimeout(t)
   }, [q])
 
   const members = useQuery({
-    queryKey: ['members', debounced],
-    queryFn: () =>
-      api<PageResponse<Member>>(`/api/v1/members?page=0&size=50${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}`),
+    queryKey: ['members', debounced, status],
+    queryFn: () => {
+      const params = new URLSearchParams({ page: '0', size: '50' })
+      if (debounced) params.set('q', debounced)
+      if (status !== 'ALL') params.set('status', status)
+      return api<PageResponse<Member>>(`/api/v1/members?${params}`)
+    },
   })
 
   return (
@@ -59,6 +65,16 @@ export function MembersPage() {
           className="max-w-md"
           aria-label="Search members"
         />
+        <Select
+          aria-label="Filter by status"
+          value={status}
+          onChange={(e) => setStatus(e.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')}
+          className="w-40"
+        >
+          <option value="ALL">All statuses</option>
+          <option value="ACTIVE">Active</option>
+          <option value="INACTIVE">Inactive</option>
+        </Select>
       </Toolbar>
       {members.isLoading ? <Skeleton className="h-48" /> : null}
       {members.error ? <QueryError error={members.error} onRetry={() => void members.refetch()} /> : null}

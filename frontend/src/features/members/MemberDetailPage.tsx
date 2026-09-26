@@ -1,6 +1,6 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 import { ConfirmDialog } from '@/components/Dialog'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, EmptyState, Label, PageHeader, SectionTitle, Select, Skeleton } from '@/components/ui'
@@ -14,7 +14,7 @@ import type { AccessStatus, Attendance, Device, Mapping, Member, Membership, Pag
 export function MemberDetailPage() {
   const { id } = useParams()
   const { has } = useAuth()
-  const navigate = useNavigate()
+  const qc = useQueryClient()
   const member = useQuery({ queryKey: ['member', id], queryFn: () => api<Member>(`/api/v1/members/${id}`) })
   const memberships = useQuery({
     queryKey: ['memberships', id],
@@ -39,13 +39,21 @@ export function MemberDetailPage() {
   const [confirmReactivate, setConfirmReactivate] = useState(false)
   const deactivate = useMutation({
     mutationFn: () => api(`/api/v1/members/${id}`, { method: 'DELETE' }),
-    onSuccess: () => navigate('/app/members'),
+    onSuccess: () => {
+      void member.refetch()
+      void access.refetch()
+      void qc.invalidateQueries({ queryKey: ['members'] })
+      void qc.invalidateQueries({ queryKey: ['sync-commands'] })
+      setConfirmDeactivate(false)
+    },
   })
   const reactivate = useMutation({
     mutationFn: () => api<Member>(`/api/v1/members/${id}/reactivate`, { method: 'POST' }),
     onSuccess: () => {
       void member.refetch()
       void access.refetch()
+      void qc.invalidateQueries({ queryKey: ['members'] })
+      void qc.invalidateQueries({ queryKey: ['sync-commands'] })
       setConfirmReactivate(false)
     },
   })
@@ -178,7 +186,7 @@ export function MemberDetailPage() {
         open={confirmDeactivate}
         onClose={() => setConfirmDeactivate(false)}
         title="Deactivate this member?"
-        description="History is kept. They will lose door access once memberships and device sync catch up."
+        description="They lose app access immediately. Mapped devices get disable commands queued (check each device Sync tab until confirmed)."
         confirmLabel="Deactivate"
         danger
         busy={deactivate.isPending}
@@ -188,7 +196,7 @@ export function MemberDetailPage() {
         open={confirmReactivate}
         onClose={() => setConfirmReactivate(false)}
         title="Reactivate this member?"
-        description="Restores the member account to ACTIVE. Membership and device access still follow their own rules."
+        description="Restores the member to ACTIVE and queues device enable/sync for mapped terminals. Check device Sync tabs for pending work."
         confirmLabel="Reactivate"
         busy={reactivate.isPending}
         onConfirm={() => reactivate.mutate()}

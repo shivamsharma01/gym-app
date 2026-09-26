@@ -24,8 +24,9 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Stateless, token-based security. There is no server session and no auth cookie, so CSRF
- * protection is not applicable and is disabled deliberately (bearer tokens are immune to CSRF).
+ * Stateless Bearer access JWT + httpOnly refresh cookie (SameSite=Lax, path /api/v1/auth).
+ * CSRF is disabled: SPA and API are same-site; refresh cookie is not readable by JS.
+ * There is no server session.
  * All authorization is enforced server-side via method security ({@code @PreAuthorize}).
  *
  * <p>Actuator: {@code /actuator/health/**} is public (minimal details). {@code info},
@@ -41,6 +42,7 @@ public class SecurityConfig {
     private static final String[] PUBLIC_PATHS = {
             "/api/v1/auth/login",
             "/api/v1/auth/refresh",
+            "/api/v1/auth/logout",
             "/v3/api-docs/**",
             "/swagger-ui/**",
             "/swagger-ui.html",

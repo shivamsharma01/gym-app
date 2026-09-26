@@ -14,8 +14,10 @@ import {
   LogOut,
   Menu,
   MonitorSmartphone,
+  Moon,
   Settings,
   Shield,
+  Sun,
   Users,
   Wallet,
   X,
@@ -29,6 +31,7 @@ import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useStaffLive } from '@/lib/live'
 import { isPlatformSuperAdmin } from '@/lib/platform'
+import { readStoredTheme, toggleTheme, type ThemeMode } from '@/lib/theme'
 
 type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; perm: string | null }
 
@@ -66,6 +69,7 @@ export function AppShell() {
   const { user, logout, has } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
+  const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme())
   const live = useStaffLive()
   const isPlatform = isPlatformSuperAdmin(user)
   const settings = useQuery({
@@ -96,6 +100,10 @@ export function AppShell() {
     navigate('/app/login')
   }
 
+  function onToggleTheme() {
+    setTheme(toggleTheme())
+  }
+
   return (
     <div className="app-shell-bg min-h-screen text-ink">
       <a
@@ -110,16 +118,19 @@ export function AppShell() {
           {logo ? <img src={logo} alt="" className="h-7 w-7 rounded-lg object-cover" /> : null}
           <span className="truncate">{brand}</span>
         </span>
-        <button
-          type="button"
-          className="rounded-lg p-2 text-muted hover:bg-raised hover:text-ink"
-          aria-label="Open menu"
-          aria-expanded={open}
-          aria-controls="mobile-nav"
-          onClick={() => setOpen(true)}
-        >
-          <Menu className="h-5 w-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <ThemeToggleButton theme={theme} onToggle={onToggleTheme} />
+          <button
+            type="button"
+            className="rounded-lg p-2 text-muted hover:bg-raised hover:text-ink"
+            aria-label="Open menu"
+            aria-expanded={open}
+            aria-controls="mobile-nav"
+            onClick={() => setOpen(true)}
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        </div>
       </header>
 
       {open ? (
@@ -184,7 +195,10 @@ export function AppShell() {
             <p className="text-sm text-muted">
               Signed in as <span className="font-medium text-ink">{user?.fullName}</span>
             </p>
-            <LiveDot state={live} />
+            <div className="flex items-center gap-3">
+              <ThemeToggleButton theme={theme} onToggle={onToggleTheme} />
+              <LiveDot state={live} />
+            </div>
           </div>
           <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 px-4 py-5 sm:px-6 md:px-8 lg:py-7 xl:px-10">
             <div className="mx-auto w-full max-w-[90rem] animate-[fade-up_0.45s_ease-out]">
@@ -194,6 +208,20 @@ export function AppShell() {
         </div>
       </div>
     </div>
+  )
+}
+
+function ThemeToggleButton({ theme, onToggle }: { theme: ThemeMode; onToggle: () => void }) {
+  const next = theme === 'light' ? 'dark' : 'light'
+  return (
+    <button
+      type="button"
+      className="rounded-lg p-2 text-muted hover:bg-raised hover:text-ink"
+      aria-label={`Switch to ${next} theme`}
+      onClick={onToggle}
+    >
+      {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+    </button>
   )
 }
 

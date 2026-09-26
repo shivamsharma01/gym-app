@@ -1,6 +1,5 @@
 package com.example.gym.auth.dto;
 
-import jakarta.validation.constraints.NotBlank;
-
-public record RefreshRequest(@NotBlank String refreshToken) {
+/** Optional body refresh token; prefer httpOnly cookie when present. */
+public record RefreshRequest(String refreshToken) {
 }

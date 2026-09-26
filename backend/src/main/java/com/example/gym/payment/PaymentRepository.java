@@ -36,4 +36,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     long countByTenantIdAndStatusAndPaidOnBetween(
             Long tenantId, PaymentStatus status, LocalDate from, LocalDate to);
+
+    List<Payment> findByTenantIdAndPaidOnBetweenOrderByPaidOnDescIdDesc(
+            Long tenantId, LocalDate from, LocalDate to);
 }

@@ -86,16 +86,17 @@ public static class GatewayServiceControl
     private static IEnumerable<string> CandidateExePaths()
     {
         var dir = AppContext.BaseDirectory;
-        yield return Path.Combine(dir, "Gym.Gateway.exe");
-        yield return Path.Combine(dir, "..", "Gym.Gateway", "Gym.Gateway.exe");
-
-        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        yield return Path.Combine(pf, "Gym Gateway", "Gym.Gateway.exe");
+        var list = new List<string>
+        {
+            Path.Combine(dir, "Gym.Gateway.exe"),
+            Path.Combine(dir, "..", "Gym.Gateway", "Gym.Gateway.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Gym Gateway", "Gym.Gateway.exe"),
+        };
 
         var pf64 = Environment.GetEnvironmentVariable("ProgramW6432");
         if (!string.IsNullOrWhiteSpace(pf64))
         {
-            yield return Path.Combine(pf64, "Gym Gateway", "Gym.Gateway.exe");
+            list.Add(Path.Combine(pf64, "Gym Gateway", "Gym.Gateway.exe"));
         }
 
         try
@@ -104,13 +105,15 @@ public static class GatewayServiceControl
             var installDir = key?.GetValue("InstallDir") as string;
             if (!string.IsNullOrWhiteSpace(installDir))
             {
-                yield return Path.Combine(installDir, "Gym.Gateway.exe");
+                list.Add(Path.Combine(installDir, "Gym.Gateway.exe"));
             }
         }
         catch
         {
             // ignore registry miss
         }
+
+        return list;
     }
 
     private static string? FindGatewayExe() =>

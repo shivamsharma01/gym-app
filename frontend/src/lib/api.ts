@@ -1,5 +1,5 @@
 import { apiUrl } from '@/lib/backendUrls'
-import { clearTokens, getAccessToken, getRefreshToken, setTokens } from '@/lib/tokens'
+import { clearTokens, getAccessToken, setAccessToken } from '@/lib/tokens'
 import type { TokenResponse } from '@/lib/types'
 
 export class ApiError extends Error {
@@ -30,7 +30,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
     headers.set('Authorization', `Bearer ${token}`)
   }
 
-  const res = await fetch(apiUrl(path), { ...init, headers })
+  const res = await fetch(apiUrl(path), { ...init, headers, credentials: 'include' })
   if (res.status === 401 && !retried && !path.includes('/auth/login') && !path.includes('/auth/refresh')) {
     const ok = refreshHandler ? await refreshHandler() : false
     if (ok) {
@@ -66,14 +66,12 @@ export async function loginRequest(usernameOrEmail: string, password: string) {
 }
 
 export async function refreshRequest() {
-  const refresh = getRefreshToken()
-  if (!refresh) return false
   try {
     const tokens = await api<TokenResponse>('/api/v1/auth/refresh', {
       method: 'POST',
-      body: JSON.stringify({ refreshToken: refresh }),
+      body: '{}',
     })
-    setTokens(tokens.accessToken, tokens.refreshToken)
+    setAccessToken(tokens.accessToken)
     return true
   } catch {
     clearTokens()
@@ -82,16 +80,13 @@ export async function refreshRequest() {
 }
 
 export async function logoutRequest() {
-  const refresh = getRefreshToken()
-  if (refresh) {
-    try {
-      await api('/api/v1/auth/logout', {
-        method: 'POST',
-        body: JSON.stringify({ refreshToken: refresh }),
-      })
-    } catch {
-      // still clear local session
-    }
+  try {
+    await api('/api/v1/auth/logout', {
+      method: 'POST',
+      body: '{}',
+    })
+  } catch {
+    // still clear local session
   }
   clearTokens()
 }

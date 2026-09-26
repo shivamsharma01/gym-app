@@ -22,8 +22,10 @@ public class SecurityProperties {
         /** HMAC signing secret; MUST be overridden outside dev and be >= 32 bytes. */
         private String secret;
         private Duration accessTokenTtl = Duration.ofMinutes(15);
-        private Duration refreshTokenTtl = Duration.ofDays(7);
+        private Duration refreshTokenTtl = Duration.ofDays(30);
         private String issuer = "gym-backend";
+        /** When true, refresh cookie is Secure (HTTPS). Disable for local HTTP. */
+        private boolean refreshCookieSecure = false;
 
         public String getSecret() {
             return secret;
@@ -55,6 +57,14 @@ public class SecurityProperties {
 
         public void setIssuer(String issuer) {
             this.issuer = issuer;
+        }
+
+        public boolean isRefreshCookieSecure() {
+            return refreshCookieSecure;
+        }
+
+        public void setRefreshCookieSecure(boolean refreshCookieSecure) {
+            this.refreshCookieSecure = refreshCookieSecure;
         }
     }
 

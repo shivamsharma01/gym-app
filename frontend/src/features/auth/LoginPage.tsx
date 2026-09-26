@@ -16,10 +16,18 @@ const schema = z.object({
 type Form = z.infer<typeof schema>
 
 export function LoginPage() {
-  const { login, user } = useAuth()
+  const { login, user, ready } = useAuth()
   const navigate = useNavigate()
   const [formError, setFormError] = useState<string | null>(null)
   const form = useForm<Form>({ resolver: zodResolver(schema), defaultValues: { usernameOrEmail: '', password: '' } })
+
+  if (!ready) {
+    return (
+      <div className="app-shell-bg flex min-h-screen items-center justify-center text-sm text-muted">
+        Restoring session…
+      </div>
+    )
+  }
 
   if (user) {
     return <Navigate to={isPlatformSuperAdmin(user) ? platformHomePath() : '/app/dashboard'} replace />
@@ -41,7 +49,7 @@ export function LoginPage() {
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">Staff console</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight">Sign in</h1>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          Gym admins and platform operators. Access tokens stay in memory — closing the tab signs you out.
+          Gym admins and platform operators. Forgot your password? Contact a Super Admin to reset it.
         </p>
         <form className="mt-8 space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
           <div>

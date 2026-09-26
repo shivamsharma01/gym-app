@@ -56,7 +56,7 @@ public class AuthService {
     }
 
     @Transactional
-    public TokenResponse login(String usernameOrEmail, String rawPassword) {
+    public IssuedTokens login(String usernameOrEmail, String rawPassword) {
         AdminUser user = userRepository.findByUsernameOrEmail(usernameOrEmail, usernameOrEmail)
                 .orElse(null);
 
@@ -89,14 +89,14 @@ public class AuthService {
         user.setLockedUntil(null);
         userRepository.save(user);
 
-        TokenResponse response = issueTokens(user);
+        IssuedTokens issued = issueTokens(user);
         auditService.recordAuth(AuditActions.LOGIN_SUCCESS, AuditActions.RESULT_SUCCESS,
                 user.getId(), user.getUsername(), user.getTenantId(), null);
-        return response;
+        return issued;
     }
 
     @Transactional
-    public TokenResponse refresh(String rawRefreshToken) {
+    public IssuedTokens refresh(String rawRefreshToken) {
         String hash = jwtService.hashRefreshToken(rawRefreshToken);
         RefreshToken token = refreshTokenRepository.findByTokenHash(hash)
                 .orElseThrow(() -> CommonExceptions.unauthorized("Invalid refresh token"));
@@ -119,13 +119,13 @@ public class AuthService {
         }
 
         // Rotate: issue a new token and revoke the old one, linking the chain.
-        TokenResponse response = issueTokens(user);
+        IssuedTokens issued = issueTokens(user);
         token.setRevoked(true);
         refreshTokenRepository.save(token);
 
         auditService.recordAuth(AuditActions.TOKEN_REFRESH, AuditActions.RESULT_SUCCESS,
                 user.getId(), user.getUsername(), user.getTenantId(), null);
-        return response;
+        return issued;
     }
 
     @Transactional
@@ -139,7 +139,7 @@ public class AuthService {
         });
     }
 
-    private TokenResponse issueTokens(AdminUser user) {
+    private IssuedTokens issueTokens(AdminUser user) {
         AppUserPrincipal principal = AppUserPrincipal.from(user);
         var authorities = principal.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
@@ -153,8 +153,9 @@ public class AuthService {
                 user.getId(), jwtService.hashRefreshToken(rawRefresh), jwtService.refreshTokenExpiry());
         refreshTokenRepository.save(refreshToken);
 
-        return TokenResponse.of(accessToken, rawRefresh, jwtService.accessTokenTtlSeconds(),
+        TokenResponse response = TokenResponse.of(accessToken, jwtService.accessTokenTtlSeconds(),
                 UserSummary.from(user, tenantPublicId(user.getTenantId())));
+        return new IssuedTokens(response, rawRefresh);
     }
 
     private boolean isLocked(AdminUser user) {

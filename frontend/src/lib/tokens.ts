@@ -1,21 +1,19 @@
-/** In-memory tokens only — never localStorage (ADR 0001). A full page reload requires login again. */
+/** In-memory access token only — refresh lives in an httpOnly cookie (ADR 0001). */
 let accessToken: string | null = null
-let refreshToken: string | null = null
 
 export function getAccessToken() {
   return accessToken
 }
 
-export function getRefreshToken() {
-  return refreshToken
+export function setAccessToken(access: string | null) {
+  accessToken = access
 }
 
-export function setTokens(access: string | null, refresh: string | null) {
+/** @deprecated Use setAccessToken — refresh is cookie-based. */
+export function setTokens(access: string | null, _refresh?: string | null) {
   accessToken = access
-  refreshToken = refresh
 }
 
 export function clearTokens() {
   accessToken = null
-  refreshToken = null
 }

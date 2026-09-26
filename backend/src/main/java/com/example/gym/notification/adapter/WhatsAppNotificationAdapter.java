@@ -7,15 +7,13 @@ import com.example.gym.notification.channel.adapter.NotificationChannelAdapter;
 import com.example.gym.notification.outbound.OutboundNotification;
 import com.example.gym.notification.whatsapp.WhatsAppClient;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
+@RequiredArgsConstructor
 public class WhatsAppNotificationAdapter implements NotificationChannelAdapter {
 
 	private final WhatsAppClient whatsappClient;
-
-	public WhatsAppNotificationAdapter(WhatsAppClient whatsappClient) {
-
-		this.whatsappClient = whatsappClient;
-	}
 
 	@Override
 	public NotificationChannel channel() {

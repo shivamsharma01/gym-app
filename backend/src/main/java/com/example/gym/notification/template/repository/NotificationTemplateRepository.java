@@ -17,8 +17,6 @@ public interface NotificationTemplateRepository extends JpaRepository<Notificati
 	Optional<NotificationTemplate> findByTenantIdAndTemplateKeyAndChannel(Long tenantId, String templateKey,
 			NotificationChannel channel);
 
-	boolean existsByTenantIdAndTemplateKeyAndChannel(Long tenantId, String templateKey, NotificationChannel channel);
-
 	Optional<NotificationTemplate> findByTenantIdAndTemplateKeyAndChannelAndActiveTrue(Long tenantId,
 			String templateKey, NotificationChannel channel);
 }

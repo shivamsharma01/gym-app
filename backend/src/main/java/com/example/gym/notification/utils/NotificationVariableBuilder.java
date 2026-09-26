@@ -1,67 +1,32 @@
-package com.example.gym.notification.utils;
-
-import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
-import java.util.Map;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
-import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
-
-import com.example.gym.member.Member;
-import com.example.gym.membership.Membership;
-import com.example.gym.platform.PlatformTenantService;
-
-import lombok.extern.slf4j.Slf4j;
-
-@Slf4j
-@Component
-public class NotificationVariableBuilder {
-
-	private final PlatformTenantService tenantService;
-
-	public NotificationVariableBuilder(PlatformTenantService tenantService) {
-
-		this.tenantService = tenantService;
-	}
-
-	public Map<String, Object> membershipVariables(Member member, Membership membership) {
-
-		log.info("Building membership variables for memberCode={}, membershipPlan={}", member.getMemberCode(),
-				membership.getPlanName());
-
-		LocalDate today = LocalDate.now();
-
-		long daysRemaining = ChronoUnit.DAYS.between(today, membership.getEndDate());
-
-		String fullName = Stream.of(member.getFirstName(), member.getLastName()).filter(StringUtils::hasText)
-				.collect(Collectors.joining(" "));
-
-		Map<String, Object> variables = Map.ofEntries(Map.entry("memberName", fullName),
-
-				Map.entry("memberCode", member.getMemberCode()),
-
-				Map.entry("gymName", tenantService.getDisplayName(membership.getTenantId())),
-
-				Map.entry("membershipPlan", membership.getPlanName()),
-
-				Map.entry("startDate", membership.getStartDate().toString()),
-
-				Map.entry("expiryDate", membership.getEndDate().toString()),
-
-				Map.entry("daysRemaining", Math.max(daysRemaining, 0)),
-
-				Map.entry("amount", membership.getPrice()),
-
-				Map.entry("currency", membership.getCurrency()),
-
-				Map.entry("amountPaid", membership.getAmountPaid()),
-
-				Map.entry("membershipStatus", membership.effectiveStatus(today).name()));
-
-		log.info("Membership variables built successfully for memberCode={}", member.getMemberCode());
-
-		return variables;
-	}
-}
+//package com.example.gym.notification.utils;
+//
+//import java.time.LocalDate;
+//import java.time.temporal.ChronoUnit;
+//
+//import org.springframework.stereotype.Component;
+//
+//import com.example.gym.member.Member;
+//import com.example.gym.membership.Membership;
+//import com.example.gym.notification.whatsapp.NotificationContext;
+//import com.example.gym.platform.PlatformTenantService;
+//
+//import lombok.RequiredArgsConstructor;
+//import lombok.extern.slf4j.Slf4j;
+//
+//@Slf4j
+//@Component
+//@RequiredArgsConstructor
+//public class NotificationVariableBuilder {
+//
+//	private final PlatformTenantService tenantService;
+//
+//	public NotificationContext membershipContext(Member member, Membership membership) {
+//
+//		LocalDate today = LocalDate.now();
+//
+//		long days = ChronoUnit.DAYS.between(today, membership.getEndDate());
+//
+//		return new NotificationContext(member, membership, tenantService.getDisplayName(membership.getTenantId()),
+//				(int) Math.max(days, 0));
+//	}
+//}

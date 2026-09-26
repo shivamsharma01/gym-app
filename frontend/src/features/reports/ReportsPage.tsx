@@ -55,6 +55,11 @@ export function ReportsPage() {
                 Device health
               </Button>
             </Link>
+            <Link to="/app/reports/notifications">
+              <Button variant="outline" size="sm">
+                Notifications
+              </Button>
+            </Link>
           </div>
         }
       />

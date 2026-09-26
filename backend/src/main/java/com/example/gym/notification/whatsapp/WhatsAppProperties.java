@@ -12,9 +12,5 @@ public class WhatsAppProperties {
 
 	private String baseUrl = "https://graph.facebook.com";
 
-	private String apiVersion;
-
-	private String phoneNumberId;
-
-	private String accessToken;
+	private String defaultApiVersion = "v23.0";
 }

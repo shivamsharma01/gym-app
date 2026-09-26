@@ -2,17 +2,23 @@ package com.example.gym.notification;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
@@ -31,13 +37,21 @@ import com.example.gym.notification.dto.CreateAnnouncement;
 import com.example.gym.notification.dto.SendNotification;
 import com.example.gym.notification.dto.UpsertTemplate;
 import com.example.gym.notification.outbound.OutboundNotification;
+import com.example.gym.notification.outbound.OutboundNotificationParameter;
 import com.example.gym.notification.outbound.repository.OutboundNotificationRepository;
 import com.example.gym.notification.template.NotificationTemplate;
 import com.example.gym.notification.template.NotificationTemplateKeys;
+import com.example.gym.notification.template.NotificationTemplateVariable;
+import com.example.gym.notification.template.NotificationTemplateVariableRepository;
 import com.example.gym.notification.template.TemplateRenderer;
 import com.example.gym.notification.template.repository.NotificationTemplateRepository;
 import com.example.gym.notification.utils.NotificationStatus;
-import com.example.gym.notification.whatsapp.WhatsAppTemplateDefaults;
+import com.example.gym.notification.whatsapp.ConfigureWhatsappTemplate;
+import com.example.gym.notification.whatsapp.NotificationContext;
+import com.example.gym.notification.whatsapp.WhatsappTemplateService;
+import com.example.gym.notification.whatsapp.WhatsappVariable;
+import com.example.gym.notification.whatsapp.WhatsappVariableRequest;
+import com.example.gym.notification.whatsapp.WhatsappVariableResolver;
 import com.example.gym.settings.GymProfileRepository;
 import com.example.gym.tenant.Tenant;
 import com.example.gym.tenant.TenantGuard;
@@ -50,13 +64,30 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class NotificationService {
 
-	@Value("${notification.scheduler.max-retry-attempts:3}")
-	private int maxRetryAttempts;
+	private final int maxRetryAttempts;
+	private final int batchSize;
 
-	@Value("${notification.scheduler.batch-size:50}")
-	private int batchSize;
+	/*
+	 * Notification delivery window.
+	 *
+	 * Example:
+	 *
+	 * 08:00 - 21:00 -> notification may be sent immediately 21:01 -> queued for
+	 * next day 08:00 02:00 -> queued for same day 08:00
+	 */
+	private final LocalTime notificationStartTime;
+	private final LocalTime notificationEndTime;
+
+	/*
+	 * Used to prevent the first deployment of the new notification system from
+	 * immediately sending historical expiry reminders.
+	 *
+	 * This should normally be configured explicitly in application.properties.
+	 */
+	private final LocalDate expiryNotificationActivationDate;
 
 	private final NotificationTemplateRepository templateRepository;
+	private final NotificationTemplateVariableRepository templateVariableRepository;
 	private final OutboundNotificationRepository outboundRepository;
 	private final AnnouncementRepository announcementRepository;
 
@@ -69,230 +100,418 @@ public class NotificationService {
 	private final AuditService auditService;
 	private final TenantRepository tenantRepository;
 	private final GymProfileRepository profileRepository;
+
 	private final TemplateRenderer templateRenderer;
+	private final WhatsappVariableResolver whatsappVariableResolver;
+	private final WhatsappTemplateService whatsappTemplateService;
 
 	public NotificationService(NotificationTemplateRepository templateRepository,
+			NotificationTemplateVariableRepository templateVariableRepository,
 			OutboundNotificationRepository outboundRepository, AnnouncementRepository announcementRepository,
 			MemberService memberService, MemberRepository memberRepository, MembershipRepository membershipRepository,
 			List<NotificationChannelAdapter> adapterList, AuditService auditService, TenantRepository tenantRepository,
-			GymProfileRepository profileRepository, TemplateRenderer templateRenderer) {
+			GymProfileRepository profileRepository, TemplateRenderer templateRenderer,
+			WhatsappVariableResolver whatsappVariableResolver, WhatsappTemplateService whatsappTemplateService,
+			Environment environment) {
 
 		this.templateRepository = templateRepository;
-
+		this.templateVariableRepository = templateVariableRepository;
 		this.outboundRepository = outboundRepository;
-
 		this.announcementRepository = announcementRepository;
 
 		this.memberService = memberService;
-
 		this.memberRepository = memberRepository;
-
 		this.membershipRepository = membershipRepository;
 
 		this.adapters = adapterList.stream()
 				.collect(Collectors.toUnmodifiableMap(NotificationChannelAdapter::channel, Function.identity()));
 
 		this.auditService = auditService;
-
 		this.tenantRepository = tenantRepository;
-
 		this.profileRepository = profileRepository;
 
 		this.templateRenderer = templateRenderer;
+		this.whatsappVariableResolver = whatsappVariableResolver;
+		this.whatsappTemplateService = whatsappTemplateService;
+
+		this.maxRetryAttempts = environment.getProperty("notification.scheduler.max-retry-attempts", Integer.class, 3);
+
+		this.batchSize = environment.getProperty("notification.scheduler.batch-size", Integer.class, 50);
+
+		this.notificationStartTime = environment.getProperty("notification.delivery.start-time", LocalTime.class,
+				LocalTime.of(8, 0));
+
+		this.notificationEndTime = environment.getProperty("notification.delivery.end-time", LocalTime.class,
+				LocalTime.of(21, 0));
+
+		this.expiryNotificationActivationDate = environment.getProperty("notification.expiry.activation-date",
+				LocalDate.class, LocalDate.now());
 	}
+
+	// =========================================================
+	// TEMPLATE MANAGEMENT
+	// =========================================================
 
 	@Transactional(readOnly = true)
 	public List<NotificationTemplate> templates(Long tenantId) {
 
-		log.info("Loading notification templates: tenantId={}", tenantId);
-
 		requireTenant(tenantId);
 
-		List<NotificationTemplate> templates = templateRepository.findByTenantIdOrderByTemplateKeyAsc(tenantId);
-
-		log.info("Notification templates loaded: tenantId={}, count={}", tenantId, templates.size());
-
-		return templates;
+		return templateRepository.findByTenantIdOrderByTemplateKeyAsc(tenantId);
 	}
 
 	@Transactional
-	public NotificationTemplate upsertTemplate(UpsertTemplate request, Long tenantId) {
-
-		log.info("Upserting notification template: tenantId={}, templateKey={}, channel={}", tenantId,
-				request.templateKey(), request.channel());
+	public NotificationTemplate configureWhatsappTemplate(ConfigureWhatsappTemplate request, Long tenantId) {
 
 		requireTenant(tenantId);
+		validateWhatsappTemplateRequest(request);
 
 		NotificationTemplate template = templateRepository
-				.findByTenantIdAndTemplateKeyAndChannel(tenantId, request.templateKey(), request.channel())
-				.orElseGet(() -> {
-					log.info("Creating new notification template: tenantId={}, templateKey={}, channel={}", tenantId,
-							request.templateKey(), request.channel());
+				.findByTenantIdAndTemplateKeyAndChannel(tenantId, request.templateKey(), NotificationChannel.WHATSAPP)
+				.orElseGet(() -> new NotificationTemplate(tenantId, request.templateKey(), NotificationChannel.WHATSAPP,
+						null, null));
 
-					return new NotificationTemplate(tenantId, request.templateKey(), request.channel(),
-							request.subject(), request.body());
-				});
+		template.setWhatsappTemplateName(request.whatsappTemplateName().trim());
 
-		template.setSubject(request.subject());
+		template.setWhatsappLanguage(request.whatsappLanguage().trim());
 
-		template.setBody(request.body());
-		if (request.channel() == NotificationChannel.WHATSAPP) {
-			template.setWhatsappTemplateName(WhatsAppTemplateDefaults.TEMPLATE_NAME);
-			template.setWhatsappLanguage(WhatsAppTemplateDefaults.LANGUAGE);
+		template.setActive(true);
 
-			log.info("WhatsApp template configuration applied: templateKey={}, whatsappTemplateName={}, language={}",
-					request.templateKey(), WhatsAppTemplateDefaults.TEMPLATE_NAME, WhatsAppTemplateDefaults.LANGUAGE);
-		} else {
-			template.setWhatsappTemplateName(null);
-			template.setWhatsappLanguage(null);
+		template.getWhatsappVariables().clear();
+
+		for (WhatsappVariableRequest variable : request.variables()) {
+			template.addWhatsappVariable(variable.variable(), variable.order());
 		}
 
 		NotificationTemplate saved = templateRepository.save(template);
 
-		log.info("Notification template saved: tenantId={}, id={}, templateKey={}, channel={}", tenantId,
-				saved.getPublicId(), saved.getTemplateKey(), saved.getChannel());
+		log.info(
+				"WhatsApp template configured: tenantId={}, templateId={}, "
+						+ "templateKey={}, metaTemplate={}, language={}, variableCount={}",
+				tenantId, saved.getPublicId(), saved.getTemplateKey(), saved.getWhatsappTemplateName(),
+				saved.getWhatsappLanguage(), request.variables().size());
 
 		return saved;
 	}
 
 	@Transactional
+	public NotificationTemplate upsertTemplate(UpsertTemplate request, Long tenantId) {
+
+		requireTenant(tenantId);
+
+		if (request == null) {
+			throw CommonExceptions.badRequest("Notification template request is required");
+		}
+
+		if (!StringUtils.hasText(request.templateKey())) {
+			throw CommonExceptions.badRequest("Template key is required");
+		}
+
+		if (request.channel() == null) {
+			throw CommonExceptions.badRequest("Notification channel is required");
+		}
+
+		NotificationTemplate template = templateRepository
+				.findByTenantIdAndTemplateKeyAndChannel(tenantId, request.templateKey(), request.channel())
+				.orElseGet(() -> new NotificationTemplate(tenantId, request.templateKey(), request.channel(),
+						request.subject(), request.body()));
+
+		template.setSubject(request.subject());
+		template.setBody(request.body());
+		template.setActive(true);
+
+		if (request.channel() != NotificationChannel.WHATSAPP) {
+			template.setWhatsappTemplateName(null);
+			template.setWhatsappLanguage(null);
+			template.getWhatsappVariables().clear();
+		}
+
+		return templateRepository.save(template);
+	}
+
+	// =========================================================
+	// MANUAL SEND
+	// =========================================================
+
+	@Transactional
 	public OutboundNotification send(SendNotification request, Long tenantId) {
 
-		log.info("Sending notification request: tenantId={}, memberId={}, membershipId={}, templateKey={}, channel={}",
-				tenantId, request.memberId(), request.membershipId(), request.templateKey(), request.channel());
 		requireTenant(tenantId);
+
+		if (request == null) {
+			throw CommonExceptions.badRequest("Notification request is required");
+		}
 
 		Member member = memberService.getByPublicId(request.memberId(), tenantId);
 
-		log.info("Member resolved for notification: tenantId={}, memberId={}, memberPublicId={}", tenantId,
-				member.getId(), request.memberId());
-
 		NotificationTemplate template = templateRepository
 				.findByTenantIdAndTemplateKeyAndChannelAndActiveTrue(tenantId, request.templateKey(), request.channel())
-				.orElseThrow(() -> {
-					log.error("Notification template not found: tenantId={}, templateKey={}, channel={}", tenantId,
-							request.templateKey(), request.channel());
-
-					return CommonExceptions.notFound("Notification template");
-				});
-
-		log.info(
-				"Notification template resolved: tenantId={}, templateKey={}, channel={}, whatsappTemplate={}, whatsappLanguage={}",
-				tenantId, template.getTemplateKey(), template.getChannel(), template.getWhatsappTemplateName(),
-				template.getWhatsappLanguage());
+				.orElseThrow(() -> CommonExceptions.notFound("Notification template"));
 
 		String recipient = recipientFor(member, request.channel());
 
-		Long membershipId = null;
+		Membership membership = null;
 
-		// membershipId is optional for normal/UI notifications.
-		// If UI provides it, resolve the public ID to the internal DB ID.
-		if (request.membershipId() != null && !request.membershipId().isBlank()) {
+		if (StringUtils.hasText(request.membershipId())) {
 
-			log.info("Resolving membership: tenantId={}, membershipPublicId={}, memberId={}", tenantId,
-					request.membershipId(), member.getId());
-
-			Membership membership = membershipRepository.findByPublicId(request.membershipId()).orElseThrow(() -> {
-				log.error("Membership not found: tenantId={}, membershipPublicId={}", tenantId, request.membershipId());
-
-				return CommonExceptions.notFound("Membership");
-			});
+			membership = membershipRepository.findByPublicId(request.membershipId())
+					.orElseThrow(() -> CommonExceptions.notFound("Membership"));
 
 			TenantGuard.check(membership.getTenantId(), tenantId, "Membership");
 
-			// Optional safety check: membership must belong to this member.
 			if (!membership.getMemberId().equals(member.getId())) {
-				log.error(
-						"Membership does not belong to member: tenantId={}, membershipId={}, membershipMemberId={}, requestedMemberId={}",
-						tenantId, membership.getId(), membership.getMemberId(), member.getId());
 				throw CommonExceptions.badRequest("Membership does not belong to the specified member");
 			}
-
-			membershipId = membership.getId();
-
-			log.info("Membership resolved: tenantId={}, membershipId={}, memberId={}", tenantId, membershipId,
-					member.getId());
 		}
 
-		Map<String, Object> variables = Map.of("memberName", member.getFullName(), "gymName", gymDisplayName(tenantId));
+		NotificationContext context = buildContext(tenantId, member, membership,
+				membership == null ? null : calculateDaysRemaining(membership));
 
-		log.info(
-				"Queueing member notification: tenantId={}, memberId={}, membershipId={}, recipient={}, templateKey={}, channel={}",
-				tenantId, member.getId(), membershipId, recipient, template.getTemplateKey(), request.channel());
-
-		return queueAndDeliver(tenantId, member.getId(), membershipId, request.channel(), template, recipient,
-				variables);
+		return queueAndDeliver(tenantId, member, membership, null, request.channel(), template, recipient, context);
 	}
 
+	// =========================================================
+	// MEMBERSHIP NOTIFICATIONS
+	// =========================================================
+
+	@Transactional
+	public OutboundNotification sendMembershipNotification(Long tenantId, Membership membership, String templateKey) {
+
+		requireTenant(tenantId);
+
+		if (membership == null) {
+			throw CommonExceptions.badRequest("Membership is required");
+		}
+
+		TenantGuard.check(membership.getTenantId(), tenantId, "Membership");
+
+		Member member = memberRepository.findById(membership.getMemberId())
+				.orElseThrow(() -> CommonExceptions.notFound("Member"));
+
+		TenantGuard.check(member, tenantId, "Member");
+
+		NotificationTemplate template = whatsappTemplateService.getTemplate(tenantId, templateKey);
+
+		if (!StringUtils.hasText(member.getPhone())) {
+			throw CommonExceptions.badRequest("Member has no phone");
+		}
+
+		NotificationContext context = buildContext(tenantId, member, membership, calculateDaysRemaining(membership));
+
+		return queueAndDeliver(tenantId, member, membership, null, NotificationChannel.WHATSAPP, template,
+				member.getPhone(), context);
+	}
+
+	private NotificationContext buildContext(Long tenantId, Member member, Membership membership,
+			Integer daysRemaining) {
+
+		return new NotificationContext(member, membership, gymDisplayName(tenantId), daysRemaining);
+	}
+
+	// =========================================================
+	// QUEUE + DELIVERY
+	// =========================================================
+
+	/**
+	 * Convenience method for application code that already has IDs.
+	 */
 	@Transactional
 	public OutboundNotification queueAndDeliver(Long tenantId, Long memberId, Long membershipId,
-			NotificationChannel channel, String templateKey, String recipient, Map<String, Object> variables) {
-
-		log.info("Queueing notification: tenantId={}, memberId={}, membershipId={}, channel={}, templateKey={}",
-				tenantId, memberId, membershipId, channel, templateKey);
+			NotificationChannel channel, String templateKey, String recipient) {
 
 		requireTenant(tenantId);
 
 		NotificationTemplate template = templateRepository
-				.findByTenantIdAndTemplateKeyAndChannelAndActiveTrue(tenantId, templateKey, channel).orElseThrow(() -> {
-					log.error("Active notification template not found: tenantId={}, templateKey={}, channel={}",
-							tenantId, templateKey, channel);
+				.findByTenantIdAndTemplateKeyAndChannelAndActiveTrue(tenantId, templateKey, channel)
+				.orElseThrow(() -> CommonExceptions.notFound("Notification template"));
 
-					return CommonExceptions.notFound("Notification template");
-				});
+		Member member = memberRepository.findById(memberId).orElseThrow(() -> CommonExceptions.notFound("Member"));
 
-		return queueAndDeliver(tenantId, memberId, membershipId, channel, template, recipient, variables);
+		TenantGuard.check(member, tenantId, "Member");
+
+		Membership membership = null;
+
+		if (membershipId != null) {
+
+			membership = membershipRepository.findById(membershipId)
+					.orElseThrow(() -> CommonExceptions.notFound("Membership"));
+
+			TenantGuard.check(membership.getTenantId(), tenantId, "Membership");
+
+			if (!membership.getMemberId().equals(member.getId())) {
+				throw CommonExceptions.badRequest("Membership does not belong to the specified member");
+			}
+		}
+
+		NotificationContext context = buildContext(tenantId, member, membership,
+				membership == null ? null : calculateDaysRemaining(membership));
+
+		return queueAndDeliver(tenantId, member, membership, null, channel, template, recipient, context);
 	}
 
-	private OutboundNotification queueAndDeliver(Long tenantId, Long memberId, Long membershipId,
-			NotificationChannel channel, NotificationTemplate template, String recipient,
-			Map<String, Object> variables) {
+	/**
+	 * Creates the immutable outbound notification snapshot.
+	 *
+	 * Delivery policy:
+	 *
+	 * 08:00 - 21:00 -> send immediately
+	 *
+	 * Before 08:00 -> queue for today 08:00
+	 *
+	 * After 21:00 -> queue for tomorrow 08:00
+	 *
+	 * The notification itself is always persisted first.
+	 */
+	private OutboundNotification queueAndDeliver(Long tenantId, Member member, Membership membership,
+			Announcement announcement, NotificationChannel channel, NotificationTemplate template, String recipient,
+			NotificationContext context) {
 
-		log.info("Queueing notification: tenantId={}, memberId={}, membershipId={}, channel={}, templateKey={}",
-				tenantId, memberId, membershipId, channel, template.getTemplateKey());
+		if (!StringUtils.hasText(recipient)) {
+			throw CommonExceptions.badRequest("Notification recipient is required");
+		}
 
-		String subject = templateRenderer.render(template.getSubject(), variables);
+		Map<String, Object> genericVariables = buildGenericVariables(context);
 
-		String body = templateRenderer.render(template.getBody(), variables);
+		String subject = templateRenderer.render(template.getSubject(), genericVariables);
 
-		log.debug("Notification template rendered: tenantId={}, templateKey={}, subjectLength={}, bodyLength={}",
-				tenantId, template.getTemplateKey(), subject != null ? subject.length() : 0,
-				body != null ? body.length() : 0);
+		String body = templateRenderer.render(template.getBody(), genericVariables);
 
-		OutboundNotification notification = new OutboundNotification(tenantId, memberId, channel,
+		OutboundNotification notification = new OutboundNotification(tenantId, member.getId(), channel,
 				template.getTemplateKey(), recipient, subject, body, template.getWhatsappTemplateName(),
-				template.getWhatsappLanguage(), membershipId, null);
+				template.getWhatsappLanguage(), membership == null ? null : membership.getId(),
+				announcement == null ? null : announcement.getId());
 
+		LocalDateTime now = LocalDateTime.now();
+
+		LocalDateTime scheduledAt = calculateScheduledAt(now);
+
+		notification.setScheduledAt(scheduledAt);
+
+		/*
+		 * Save first.
+		 *
+		 * This guarantees that the notification exists in the database even if the
+		 * provider subsequently fails.
+		 */
 		notification = outboundRepository.save(notification);
 
-		log.info(
-				"Outbound notification saved: notificationId={}, tenantId={}, memberId={}, membershipId={}, templateKey={}, channel={}, whatsappTemplate={}, whatsappLanguage={}",
-				notification.getPublicId(), tenantId, memberId, membershipId, template.getTemplateKey(), channel,
-				notification.getWhatsappTemplateName(), notification.getWhatsappLanguage());
+		/*
+		 * Persist WhatsApp parameters once.
+		 *
+		 * Retry never recalculates business values.
+		 */
+		if (channel == NotificationChannel.WHATSAPP) {
 
-		deliver(notification);
+			persistWhatsappParameters(notification, template, context);
+		}
 
-		log.info("Outbound notification processing completed: notificationId={}, status={}, attemptCount={}",
-				notification.getPublicId(), notification.getStatus(), notification.getAttemptCount());
+		/*
+		 * If the notification is currently inside the allowed delivery window, send
+		 * immediately.
+		 *
+		 * Otherwise it remains QUEUED.
+		 */
+		if (!scheduledAt.isAfter(now)) {
+
+			deliver(notification);
+
+		} else {
+
+			log.info(
+					"Notification scheduled: notificationId={}, " + "tenantId={}, memberId={}, membershipId={}, "
+							+ "channel={}, templateKey={}, scheduledAt={}",
+					notification.getPublicId(), tenantId, member.getId(),
+					membership == null ? null : membership.getId(), channel, template.getTemplateKey(), scheduledAt);
+		}
 
 		return notification;
 	}
 
-	@Transactional
-	protected void deliver(OutboundNotification notification) {
+	/**
+	 * Calculates the first permitted delivery time.
+	 */
+	private LocalDateTime calculateScheduledAt(LocalDateTime now) {
 
-		log.info(
-				"Starting notification delivery: notificationId={}, tenantId={}, memberId={}, membershipId={}, channel={}, templateKey={}, recipient={}",
-				notification.getPublicId(), notification.getTenantId(), notification.getMemberId(),
-				notification.getMembershipId(), notification.getChannel(), notification.getTemplateKey(),
-				notification.getRecipient());
+		LocalTime currentTime = now.toLocalTime();
+
+		/*
+		 * Normal delivery window.
+		 *
+		 * Example: 10:30 -> now
+		 */
+		if (!currentTime.isBefore(notificationStartTime) && currentTime.isBefore(notificationEndTime)) {
+
+			return now;
+		}
+
+		/*
+		 * Before the morning window.
+		 *
+		 * Example: 06:30 -> today 08:00
+		 */
+		if (currentTime.isBefore(notificationStartTime)) {
+
+			return LocalDateTime.of(now.toLocalDate(), notificationStartTime);
+		}
+
+		/*
+		 * After the evening window.
+		 *
+		 * Example: 23:30 -> tomorrow 08:00
+		 */
+		return LocalDateTime.of(now.toLocalDate().plusDays(1), notificationStartTime);
+	}
+
+	private void persistWhatsappParameters(OutboundNotification notification, NotificationTemplate template,
+			NotificationContext context) {
+
+		List<NotificationTemplateVariable> configuredVariables = templateVariableRepository
+				.findByNotificationTemplateIdOrderByVariableOrderAsc(template.getId());
+
+		if (configuredVariables.isEmpty()) {
+
+			log.debug("WhatsApp template has no variables: " + "notificationId={}, templateId={}",
+					notification.getPublicId(), template.getPublicId());
+
+			return;
+		}
+
+		for (NotificationTemplateVariable variable : configuredVariables) {
+
+			String value = whatsappVariableResolver.resolve(variable.getVariableName(), context);
+
+			OutboundNotificationParameter parameter = new OutboundNotificationParameter();
+
+			parameter.setNotification(notification);
+			parameter.setParameterOrder(variable.getVariableOrder());
+			parameter.setVariableName(variable.getVariableName().name());
+			parameter.setParameterValue(value);
+
+			notification.addParameter(parameter);
+		}
+
+		outboundRepository.save(notification);
+
+		log.debug("WhatsApp parameters persisted: notificationId={}, " + "parameterCount={}",
+				notification.getPublicId(), configuredVariables.size());
+	}
+
+	// =========================================================
+	// DELIVERY
+	// =========================================================
+
+	/**
+	 * Attempts delivery through the configured channel adapter.
+	 *
+	 * Provider exceptions are converted to FAILED.
+	 *
+	 * The scheduler can subsequently retry the notification.
+	 */
+	private void deliver(OutboundNotification notification) {
 
 		NotificationChannelAdapter adapter = adapters.get(notification.getChannel());
 
 		if (adapter == null) {
-
-			log.error("No notification adapter configured: notificationId={}, channel={}", notification.getPublicId(),
-					notification.getChannel());
 
 			markFailed(notification, "No adapter configured for channel " + notification.getChannel());
 
@@ -305,14 +524,7 @@ public class NotificationService {
 
 			notification.setAttemptCount(notification.getAttemptCount() + 1);
 
-			log.info("Calling notification adapter: notificationId={}, channel={}, attempt={}",
-					notification.getPublicId(), notification.getChannel(), notification.getAttemptCount());
-
 			adapter.send(notification);
-
-			log.info("Notification sent: notificationId={}, tenantId={}, memberId={}, channel={}, templateKey={}",
-					notification.getPublicId(), notification.getTenantId(), notification.getMemberId(),
-					notification.getChannel(), notification.getTemplateKey());
 
 			notification.setStatus(NotificationStatus.SENT);
 
@@ -320,29 +532,17 @@ public class NotificationService {
 
 			notification.setLastError(null);
 
-			log.info(
-					"Notification delivered successfully: notificationId={}, tenantId={}, memberId={}, membershipId={}, channel={}, templateKey={}, attempt={}",
-					notification.getPublicId(), notification.getTenantId(), notification.getMemberId(),
-					notification.getMembershipId(), notification.getChannel(), notification.getTemplateKey(),
-					notification.getAttemptCount());
-
 		} catch (Exception ex) {
 
 			String message = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
 
-			log.error(
-					"Notification adapter failed: notificationId={}, tenantId={}, memberId={}, membershipId={}, channel={}, attempt={}, error={}",
-					notification.getPublicId(), notification.getTenantId(), notification.getMemberId(),
-					notification.getMembershipId(), notification.getChannel(), notification.getAttemptCount(), message,
-					ex);
+			log.error("Notification delivery failed: " + "notificationId={}, channel={}, attempt={}, error={}",
+					notification.getPublicId(), notification.getChannel(), notification.getAttemptCount(), message, ex);
 
 			markFailed(notification, message);
 		}
 
 		outboundRepository.save(notification);
-
-		log.info("Notification delivery state saved: notificationId={}, status={}, attemptCount={}",
-				notification.getPublicId(), notification.getStatus(), notification.getAttemptCount());
 	}
 
 	private void markFailed(OutboundNotification notification, String error) {
@@ -350,99 +550,102 @@ public class NotificationService {
 		notification.setStatus(NotificationStatus.FAILED);
 
 		notification.setLastError(error);
-
-		log.error("Notification delivery failed: notificationId={}, tenantId={}, memberId={}, attempt={}, error={}",
-				notification.getPublicId(), notification.getTenantId(), notification.getMemberId(),
-				notification.getAttemptCount(), notification.getLastError());
 	}
+
+	// =========================================================
+	// EXPIRY REMINDERS
+	// =========================================================
 
 	@Transactional
 	public int queueExpiryReminders(Long tenantId) {
 
-		log.info("Starting expiry reminder job: tenantId={}", tenantId);
-
 		requireTenant(tenantId);
 
 		LocalDate today = LocalDate.now();
+
 		LocalDate expiryDate = today.plusDays(3);
 
-		log.info("Expiry reminder dates: tenantId={}, today={}, expiryDate={}", tenantId, today, expiryDate);
-
-		int queued = 0;
 		String templateKey = NotificationTemplateKeys.EXPIRY_REMINDER_3_DAYS;
 
-		NotificationTemplate whatsappTemplate = templateRepository.findByTenantIdAndTemplateKeyAndChannelAndActiveTrue(
-				tenantId, templateKey, NotificationChannel.WHATSAPP).orElse(null);
+		NotificationTemplate template = templateRepository.findByTenantIdAndTemplateKeyAndChannelAndActiveTrue(tenantId,
+				templateKey, NotificationChannel.WHATSAPP).orElse(null);
 
-		if (whatsappTemplate == null) {
+		if (template == null) {
 
-			log.warn("Expiry reminder template not configured: tenantId={}, templateKey={}, channel=WHATSAPP", tenantId,
+			log.warn("Expiry reminder template not configured: " + "tenantId={}, templateKey={}", tenantId,
 					templateKey);
 
 			return 0;
 		}
 
-		log.info("Expiry reminder template found: tenantId={}, templateKey={}, whatsappTemplate={}, language={}",
-				tenantId, templateKey, whatsappTemplate.getWhatsappTemplateName(),
-				whatsappTemplate.getWhatsappLanguage());
+		/*
+		 * If the notification system has just been enabled, don't send historical
+		 * expiry reminders automatically.
+		 *
+		 * The activation date is a safety switch for the initial data migration.
+		 */
+		if (today.isBefore(expiryNotificationActivationDate)) {
+
+			log.info("Expiry reminder scheduler not active yet: " + "tenantId={}, today={}, activationDate={}",
+					tenantId, today, expiryNotificationActivationDate);
+
+			return 0;
+		}
 
 		List<Membership> memberships = membershipRepository.findByTenantIdAndEndDateAndStatus(tenantId, expiryDate,
 				MembershipStatus.ACTIVE);
 
-		log.info("Expiry memberships found: tenantId={}, expiryDate={}, count={}", tenantId, expiryDate,
-				memberships.size());
+		int queued = 0;
 
 		for (Membership membership : memberships) {
 
-			log.debug("Processing expiry membership: tenantId={}, membershipId={}, memberId={}", tenantId,
-					membership.getId(), membership.getMemberId());
+			/*
+			 * Deleted memberships should never receive an expiry notification.
+			 */
+			if (membership.isDeleted()) {
+				continue;
+			}
 
 			Member member = memberRepository.findById(membership.getMemberId()).orElse(null);
 
 			if (member == null) {
-				log.warn("Skipping expiry reminder because member not found: tenantId={}, membershipId={}, memberId={}",
-						tenantId, membership.getId(), membership.getMemberId());
 				continue;
 			}
+
 			TenantGuard.check(member, tenantId, "Member");
 
-			if (member.getPhone() == null || member.getPhone().isBlank()) {
-				log.warn(
-						"Skipping expiry reminder because member has no phone: tenantId={}, membershipId={}, memberId={}",
-						tenantId, membership.getId(), member.getId());
+			if (!StringUtils.hasText(member.getPhone())) {
+
+				log.debug("Skipping expiry reminder because member " + "has no phone: memberId={}", member.getId());
+
 				continue;
 			}
 
+			/*
+			 * Idempotency.
+			 *
+			 * Scheduler may run more than once.
+			 *
+			 * Only one expiry notification is allowed for a membership/template/channel
+			 * combination.
+			 */
 			boolean alreadyQueued = outboundRepository.existsByMembershipIdAndTemplateKeyAndChannel(membership.getId(),
 					templateKey, NotificationChannel.WHATSAPP);
 
 			if (alreadyQueued) {
-				log.info(
-						"Expiry reminder already exists, skipping: tenantId={}, membershipId={}, memberId={}, templateKey={}",
-						tenantId, membership.getId(), member.getId(), templateKey);
 				continue;
 			}
 
-			Map<String, Object> variables = Map.ofEntries(Map.entry("memberName", member.getFullName()),
-					Map.entry("memberCode", member.getMemberCode()), Map.entry("gymName", gymDisplayName(tenantId)),
-					Map.entry("membershipPlan", membership.getPlanName()),
-					Map.entry("startDate", membership.getStartDate().toString()),
-					Map.entry("expiryDate", membership.getEndDate().toString()), Map.entry("daysRemaining", 3),
-					Map.entry("amount", membership.getPrice()), Map.entry("currency", membership.getCurrency()),
-					Map.entry("amountPaid", membership.getAmountPaid()),
-					Map.entry("membershipStatus", MembershipStatus.ACTIVE));
+			NotificationContext context = buildContext(tenantId, member, membership, 3);
 
-			log.info(
-					"Queueing expiry reminder: tenantId={}, membershipId={}, memberId={}, phone={}, expiryDate={}, daysRemaining={}",
-					tenantId, membership.getId(), member.getId(), member.getPhone(), membership.getEndDate(), 3);
-
-			queueAndDeliver(tenantId, member.getId(), membership.getId(), NotificationChannel.WHATSAPP,
-					whatsappTemplate, member.getPhone(), variables);
+			queueAndDeliver(tenantId, member, membership, null, NotificationChannel.WHATSAPP, template,
+					member.getPhone(), context);
 
 			queued++;
 		}
 
-		log.info("Expiry reminder job completed: tenantId={}, expiryDate={}, queued={}", tenantId, expiryDate, queued);
+		log.info("Expiry reminders processed: " + "tenantId={}, expiryDate={}, queued={}", tenantId, expiryDate,
+				queued);
 
 		return queued;
 	}
@@ -450,133 +653,185 @@ public class NotificationService {
 	@Transactional
 	public int queueExpiryRemindersForAllTenants() {
 
-		log.info("Starting expiry reminder job for all tenants");
-
 		int total = 0;
+
 		List<Tenant> tenants = tenantRepository.findByStatus(TenantStatus.ACTIVE);
 
-		log.info("Tenants found for expiry reminder job: count={}", tenants.size());
-
 		for (Tenant tenant : tenants) {
-			log.info("Running expiry reminder job for tenant: tenantId={}, tenantName={}", tenant.getId(),
-					tenant.getName());
 
 			try {
-				int queued = queueExpiryReminders(tenant.getId());
-				total += queued;
 
-				log.info("Tenant expiry reminder job completed: tenantId={}, queued={}", tenant.getId(), queued);
+				total += queueExpiryReminders(tenant.getId());
 
 			} catch (Exception ex) {
 
-				log.error("Expiry reminder job failed for tenant: tenantId={}, error={}", tenant.getId(),
-						ex.getMessage(), ex);
+				log.error("Expiry reminder failed: tenantId={}", tenant.getId(), ex);
 			}
 		}
-		log.info("Expiry reminder job for all tenants completed: totalQueued={}", total);
 
 		return total;
 	}
 
+	// =========================================================
+	// QUEUED NOTIFICATION PROCESSOR
+	// =========================================================
+
+	/**
+	 * Processes notifications whose scheduledAt has arrived.
+	 *
+	 * This handles:
+	 *
+	 * - payment notifications created at night - membership notifications created
+	 * at night - expiry notifications created outside the delivery window - any
+	 * future notification type using queueAndDeliver()
+	 */
 	@Transactional
-	public int retryFailedNotificationsForAllTenants() {
+	public int processQueuedNotificationsForAllTenants() {
 
-		log.info("Starting failed notification retry job for all tenants");
+		LocalDateTime now = LocalDateTime.now();
 
-		int totalRetried = 0;
-		List<Tenant> tenants = tenantRepository.findByStatus(TenantStatus.ACTIVE);
+		List<OutboundNotification> notifications = outboundRepository
+				.findTop100ByStatusAndScheduledAtLessThanEqualOrderByScheduledAtAsc(NotificationStatus.QUEUED, now);
 
-		for (Tenant tenant : tenants) {
-			log.info("Retrying failed notifications for tenant: tenantId={}, tenantName={}", tenant.getId(),
-					tenant.getName());
+		int processed = 0;
+
+		for (OutboundNotification notification : notifications) {
+
 			try {
-				int retried = retryFailedNotifications(tenant.getId());
 
-				totalRetried += retried;
+				/*
+				 * Defensive check.
+				 */
+				if (notification.getScheduledAt() == null) {
+					log.warn("Queued notification has no scheduledAt: " + "notificationId={}",
+							notification.getPublicId());
 
-				log.info("Tenant notification retry completed: tenantId={}, retried={}", tenant.getId(), retried);
+					continue;
+				}
+
+				if (notification.getScheduledAt().isAfter(now)) {
+					continue;
+				}
+
+				/*
+				 * Only deliver within the configured delivery window.
+				 *
+				 * This protects against a scheduler configuration that runs at an unexpected
+				 * time.
+				 */
+				LocalTime currentTime = now.toLocalTime();
+
+				if (currentTime.isBefore(notificationStartTime) || !currentTime.isBefore(notificationEndTime)) {
+
+					continue;
+				}
+
+				/*
+				 * Deliver using the persisted notification and persisted WhatsApp parameters.
+				 */
+				deliver(notification);
+
+				processed++;
+
 			} catch (Exception ex) {
 
-				log.error("Tenant notification retry failed: tenantId={}, error={}", tenant.getId(), ex.getMessage(),
+				log.error("Queued notification delivery failed: " + "notificationId={}", notification.getPublicId(),
 						ex);
 			}
 		}
 
-		log.info("Failed notification retry job completed: totalRetried={}", totalRetried);
-
-		return totalRetried;
+		return processed;
 	}
+
+	// =========================================================
+	// RETRY
+	// =========================================================
 
 	@Transactional
 	public int retryFailedNotifications(Long tenantId) {
 
-		log.info("Starting failed notification retry: tenantId={}", tenantId);
-
 		requireTenant(tenantId);
-		PageRequest pageLimit = PageRequest.of(0, this.batchSize);
+
+		Pageable pageable = PageRequest.of(0, batchSize);
 
 		List<OutboundNotification> failed = outboundRepository.findByTenantIdAndStatusAndAttemptCountLessThan(tenantId,
-				NotificationStatus.FAILED, this.maxRetryAttempts, pageLimit);
-
-		log.info("Failed notifications eligible for retry: tenantId={}, count={}, maxAttempts={}, batchSize={}",
-				tenantId, failed.size(), this.maxRetryAttempts, this.batchSize);
+				NotificationStatus.FAILED, maxRetryAttempts, pageable);
 
 		int retried = 0;
 
 		for (OutboundNotification notification : failed) {
 
-			log.info(
-					"Retrying notification: notificationId={}, tenantId={}, memberId={}, membershipId={}, attemptBeforeRetry={}",
-					notification.getPublicId(), tenantId, notification.getMemberId(), notification.getMembershipId(),
-					notification.getAttemptCount());
+			/*
+			 * Don't retry outside the notification window.
+			 *
+			 * A failed notification at 23:00 should wait until the next permitted delivery
+			 * window.
+			 */
+			LocalTime currentTime = LocalTime.now();
 
+			if (currentTime.isBefore(notificationStartTime) || !currentTime.isBefore(notificationEndTime)) {
+
+				continue;
+			}
+
+			/*
+			 * deliver() uses the existing OutboundNotification and existing WhatsApp
+			 * parameters.
+			 *
+			 * It does NOT recalculate business data.
+			 */
 			deliver(notification);
+
 			retried++;
 		}
-
-		log.info("Failed notification retry completed: tenantId={}, retried={}", tenantId, retried);
 
 		return retried;
 	}
 
-	@Transactional(readOnly = true)
-	public Page<OutboundNotification> outbound(Long tenantId, Pageable pageable) {
-		log.info("Loading outbound notifications: tenantId={}, page={}, size={}", tenantId, pageable.getPageNumber(),
-				pageable.getPageSize());
+	@Transactional
+	public int retryFailedNotificationsForAllTenants() {
 
-		requireTenant(tenantId);
-		Page<OutboundNotification> result = outboundRepository.findByTenantIdOrderByCreatedAtDesc(tenantId, pageable);
+		int total = 0;
 
-		log.info("Outbound notifications loaded: tenantId={}, page={}, size={}, totalElements={}, totalPages={}",
-				tenantId, result.getNumber(), result.getSize(), result.getTotalElements(), result.getTotalPages());
+		List<Tenant> tenants = tenantRepository.findByStatus(TenantStatus.ACTIVE);
 
-		return result;
+		for (Tenant tenant : tenants) {
+
+			try {
+
+				total += retryFailedNotifications(tenant.getId());
+
+			} catch (Exception ex) {
+
+				log.error("Notification retry failed: tenantId={}", tenant.getId(), ex);
+			}
+		}
+
+		return total;
 	}
+
+	// =========================================================
+	// ANNOUNCEMENTS
+	// =========================================================
 
 	@Transactional
 	public Announcement createAnnouncement(CreateAnnouncement request, Long tenantId) {
-		log.info("Creating announcement: tenantId={}, title={}, published={}", tenantId, request.title(),
-				request.published());
+
 		requireTenant(tenantId);
+
+		if (request == null) {
+			throw CommonExceptions.badRequest("Announcement request is required");
+		}
 
 		Announcement announcement = announcementRepository
 				.save(new Announcement(tenantId, request.title(), request.body(), request.published()));
-
-		log.info("Announcement saved: tenantId={}, announcementId={}, title={}", tenantId, announcement.getId(),
-				announcement.getTitle());
 
 		auditService.record(AuditActions.ANNOUNCEMENT_CREATED, AuditActions.RESULT_SUCCESS, "Announcement",
 				announcement.getPublicId(), null);
 
 		if (request.published()) {
 
-			log.info("Announcement is published, starting WhatsApp delivery: tenantId={}, announcementId={}", tenantId,
-					announcement.getId());
-
 			queueAnnouncementWhatsApp(announcement, tenantId);
-		} else {
-			log.info("Announcement is not published, skipping WhatsApp delivery: tenantId={}, announcementId={}",
-					tenantId, announcement.getId());
 		}
 
 		return announcement;
@@ -585,83 +840,52 @@ public class NotificationService {
 	@Transactional
 	protected int queueAnnouncementWhatsApp(Announcement announcement, Long tenantId) {
 
-		log.info("Starting announcement WhatsApp delivery: tenantId={}, announcementId={}", tenantId,
-				announcement.getId());
-
 		List<Membership> memberships = membershipRepository.findByTenantIdAndStatus(tenantId, MembershipStatus.ACTIVE);
 
-		log.info("Active memberships found for announcement: tenantId={}, announcementId={}, count={}", tenantId,
-				announcement.getId(), memberships.size());
+		NotificationTemplate template = templateRepository.findByTenantIdAndTemplateKeyAndChannelAndActiveTrue(tenantId,
+				NotificationTemplateKeys.ANNOUNCEMENT, NotificationChannel.WHATSAPP).orElse(null);
+
+		if (template == null) {
+
+			log.warn("Announcement WhatsApp template not configured: " + "tenantId={}", tenantId);
+
+			return 0;
+		}
 
 		int queued = 0;
 
 		for (Membership membership : memberships) {
 
-			log.debug(
-					"Processing announcement membership: tenantId={}, announcementId={}, membershipId={}, memberId={}",
-					tenantId, announcement.getId(), membership.getId(), membership.getMemberId());
-
 			Member member = memberRepository.findById(membership.getMemberId()).orElse(null);
 
 			if (member == null) {
-
-				log.warn(
-						"Skipping announcement because member not found: tenantId={}, announcementId={}, membershipId={}, memberId={}",
-						tenantId, announcement.getId(), membership.getId(), membership.getMemberId());
 				continue;
 			}
 
 			TenantGuard.check(member, tenantId, "Member");
 
-			if (member.getPhone() == null || member.getPhone().isBlank()) {
-
-				log.warn(
-						"Skipping announcement because member has no phone: tenantId={}, announcementId={}, memberId={}",
-						tenantId, announcement.getId(), member.getId());
+			if (!StringUtils.hasText(member.getPhone())) {
 
 				continue;
 			}
 
-			/*
-			 * Prevent the same announcement from being queued twice for the same member.
-			 */
 			boolean alreadyQueued = outboundRepository.existsByTenantIdAndMemberIdAndAnnouncementIdAndChannel(tenantId,
 					member.getId(), announcement.getId(), NotificationChannel.WHATSAPP);
 
 			if (alreadyQueued) {
-				log.debug("Skipping duplicate announcement notification: tenantId={}, announcementId={}, memberId={}",
-						tenantId, announcement.getId(), member.getId());
 				continue;
 			}
 
-			Map<String, Object> variables = Map.of("memberName", member.getFullName(), "memberCode",
-					member.getMemberCode(), "gymName", gymDisplayName(tenantId));
+			NotificationContext context = buildContext(tenantId, member, null, null);
 
-			String body = templateRenderer.render(announcement.getBody(), variables);
-
-			log.info(
-					"Creating announcement outbound notification: tenantId={}, announcementId={}, memberId={}, recipient={}, whatsappTemplate={}, language={}",
-					tenantId, announcement.getId(), member.getId(), member.getPhone(),
-					WhatsAppTemplateDefaults.TEMPLATE_NAME, WhatsAppTemplateDefaults.LANGUAGE);
-
-			OutboundNotification notification = new OutboundNotification(tenantId, member.getId(),
-					NotificationChannel.WHATSAPP, NotificationTemplateKeys.ANNOUNCEMENT, member.getPhone(),
-					announcement.getTitle(), body, WhatsAppTemplateDefaults.TEMPLATE_NAME,
-					WhatsAppTemplateDefaults.LANGUAGE, null, // membershipId - announcement is not membership-specific
-					announcement.getId());
-
-			notification = outboundRepository.save(notification);
-
-			log.info(
-					"Announcement outbound notification saved: notificationId={}, tenantId={}, announcementId={}, memberId={}",
-					notification.getPublicId(), tenantId, announcement.getId(), member.getId());
-
-			deliver(notification);
+			queueAndDeliver(tenantId, member, null, announcement, NotificationChannel.WHATSAPP, template,
+					member.getPhone(), context);
 
 			queued++;
 		}
-		log.info("Announcement WhatsApp delivery completed: tenantId={}, announcementId={}, queued={}", tenantId,
-				announcement.getId(), queued);
+
+		log.info("Announcement WhatsApp notifications queued: " + "tenantId={}, announcementId={}, queued={}", tenantId,
+				announcement.getPublicId(), queued);
 
 		return queued;
 	}
@@ -669,39 +893,107 @@ public class NotificationService {
 	@Transactional(readOnly = true)
 	public List<Announcement> announcements(Long tenantId) {
 
-		log.info("Loading announcements: tenantId={}", tenantId);
+		requireTenant(tenantId);
+
+		return announcementRepository.findByTenantIdOrderByCreatedAtDesc(tenantId);
+	}
+
+	// =========================================================
+	// OUTBOUND
+	// =========================================================
+
+	@Transactional(readOnly = true)
+	public Page<OutboundNotification> outbound(Long tenantId, Pageable pageable) {
 
 		requireTenant(tenantId);
-		List<Announcement> announcements = announcementRepository.findByTenantIdOrderByCreatedAtDesc(tenantId);
 
-		log.info("Announcements loaded: tenantId={}, count={}", tenantId, announcements.size());
+		return outboundRepository.findByTenantIdOrderByCreatedAtDesc(tenantId, pageable);
+	}
 
-		return announcements;
+	// =========================================================
+	// GENERIC TEMPLATE VARIABLES
+	// =========================================================
+
+	private Map<String, Object> buildGenericVariables(NotificationContext context) {
+
+		Member member = context.member();
+
+		Membership membership = context.membership();
+
+		return Map.ofEntries(
+
+				Map.entry("memberName", value(member == null ? null : member.getFullName())),
+
+				Map.entry("memberCode", value(member == null ? null : member.getMemberCode())),
+
+				Map.entry("gymName", value(context.gymName())),
+
+				Map.entry("membershipPlan", membership == null ? "" : value(membership.getPlanName())),
+
+				Map.entry("startDate",
+						membership == null || membership.getStartDate() == null ? ""
+								: membership.getStartDate().toString()),
+
+				Map.entry("expiryDate",
+						membership == null || membership.getEndDate() == null ? ""
+								: membership.getEndDate().toString()),
+
+				Map.entry("daysRemaining", context.daysRemaining() == null ? "" : context.daysRemaining()),
+
+				Map.entry("amount",
+						membership == null || membership.getPrice() == null ? "" : membership.getPrice().toString()),
+
+				Map.entry("currency", membership == null ? "" : value(membership.getCurrency())),
+
+				Map.entry("amountPaid",
+						membership == null || membership.getAmountPaid() == null ? ""
+								: membership.getAmountPaid().toString()),
+
+				Map.entry("membershipStatus", membership == null ? "" : membership.getStatus().name()));
+	}
+
+	// =========================================================
+	// HELPERS
+	// =========================================================
+
+	private int calculateDaysRemaining(Membership membership) {
+
+		if (membership == null || membership.getEndDate() == null) {
+
+			return 0;
+		}
+
+		long days = ChronoUnit.DAYS.between(LocalDate.now(), membership.getEndDate());
+
+		return (int) Math.max(days, 0);
 	}
 
 	private String recipientFor(Member member, NotificationChannel channel) {
+
+		if (channel == null) {
+			throw CommonExceptions.badRequest("Notification channel is required");
+		}
 
 		return switch (channel) {
 
 		case EMAIL -> {
 
-			if (member.getEmail() == null || member.getEmail().isBlank()) {
-				log.warn("Member has no email: memberId={}", member.getId());
+			if (!StringUtils.hasText(member.getEmail())) {
+
 				throw CommonExceptions.badRequest("Member has no email");
 			}
 
-			yield member.getEmail();
+			yield member.getEmail().trim();
 		}
 
 		case WHATSAPP -> {
 
-			if (member.getPhone() == null || member.getPhone().isBlank()) {
+			if (!StringUtils.hasText(member.getPhone())) {
 
-				log.warn("Member has no phone for WhatsApp: memberId={}", member.getId());
 				throw CommonExceptions.badRequest("Member has no phone");
 			}
 
-			yield member.getPhone();
+			yield member.getPhone().trim();
 		}
 
 		case IN_APP -> member.getPublicId();
@@ -710,26 +1002,75 @@ public class NotificationService {
 
 	private String gymDisplayName(Long tenantId) {
 
-		if (tenantId == null) {
-			log.warn("gymDisplayName called with null tenantId");
-			return "Gym";
+		return profileRepository.findByTenantId(tenantId).map(profile -> profile.getDisplayName())
+				.filter(StringUtils::hasText).or(() -> tenantRepository.findById(tenantId).map(Tenant::getName))
+				.orElse("Gym");
+	}
+
+	private void validateWhatsappTemplateRequest(ConfigureWhatsappTemplate request) {
+
+		if (request == null) {
+			throw CommonExceptions.badRequest("WhatsApp template configuration is required");
 		}
 
-		String displayName = profileRepository.findByTenantId(tenantId).map(p -> p.getDisplayName())
-				.filter(name -> name != null && !name.isBlank())
-				.or(() -> tenantRepository.findById(tenantId).map(t -> t.getName())).orElse("Gym");
+		if (!StringUtils.hasText(request.templateKey())) {
 
-		log.debug("Resolved gym display name: tenantId={}, displayName={}", tenantId, displayName);
-		return displayName;
+			throw CommonExceptions.badRequest("Template key is required");
+		}
+
+		if (!StringUtils.hasText(request.whatsappTemplateName())) {
+
+			throw CommonExceptions.badRequest("WhatsApp template name is required");
+		}
+
+		if (!StringUtils.hasText(request.whatsappLanguage())) {
+
+			throw CommonExceptions.badRequest("WhatsApp template language is required");
+		}
+
+		if (request.variables() == null) {
+
+			throw CommonExceptions.badRequest("WhatsApp variables are required");
+		}
+
+		Set<Integer> orders = new HashSet<>();
+
+		Set<WhatsappVariable> variables = new HashSet<>();
+
+		for (WhatsappVariableRequest variable : request.variables()) {
+
+			if (variable == null || variable.variable() == null) {
+
+				throw CommonExceptions.badRequest("WhatsApp variable cannot be null");
+			}
+
+			if (variable.order() == null || variable.order() <= 0) {
+
+				throw CommonExceptions.badRequest("WhatsApp variable order must be greater than zero");
+			}
+
+			if (!orders.add(variable.order())) {
+
+				throw CommonExceptions.badRequest("Duplicate WhatsApp variable order: " + variable.order());
+			}
+
+			if (!variables.add(variable.variable())) {
+
+				throw CommonExceptions.badRequest("Duplicate WhatsApp variable: " + variable.variable());
+			}
+		}
+	}
+
+	private String value(String value) {
+
+		return value == null ? "" : value;
 	}
 
 	private void requireTenant(Long tenantId) {
 
 		if (tenantId == null) {
-			log.error("Tenant is required but tenantId is null");
 
 			throw CommonExceptions.badRequest("A gym tenant is required");
 		}
-		log.debug("Tenant validated: tenantId={}", tenantId);
 	}
 }

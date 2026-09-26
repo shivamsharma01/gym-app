@@ -26,4 +26,9 @@ public final class NotificationTemplateKeys {
 	public static final String MEMBERSHIP_EXPIRED = "MEMBERSHIP_EXPIRED";
 
 	public static final String ANNOUNCEMENT = "ANNOUNCEMENT";
+
+	public static final String PAYMENT_RECORDED = "PAYMENT_RECORDED";
+
+	public static final String PAYMENT_REFUNDED = "PAYMENT_REFUNDED";
+
 }

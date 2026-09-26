@@ -1,12 +1,15 @@
 package com.example.gym.notification.outbound.repository;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import com.example.gym.notification.channel.NotificationChannel;
 import com.example.gym.notification.outbound.OutboundNotification;
@@ -18,21 +21,28 @@ public interface OutboundNotificationRepository extends JpaRepository<OutboundNo
 
 	Optional<OutboundNotification> findByProviderMessageId(String providerMessageId);
 
-	boolean existsByTenantIdAndMemberIdAndTemplateKeyAndChannelAndCreatedAtAfter(Long tenantId, Long memberId,
-			String templateKey, NotificationChannel channel, Instant createdAfter);
-
 	Page<OutboundNotification> findByTenantIdOrderByCreatedAtDesc(Long tenantId, Pageable pageable);
 
 	boolean existsByMembershipIdAndTemplateKeyAndChannel(Long membershipId, String templateKey,
 			NotificationChannel channel);
 
 	List<OutboundNotification> findByTenantIdAndStatusAndAttemptCountLessThan(Long tenantId, NotificationStatus status,
-			int maxAttempts,Pageable pageable);
-
-	boolean existsByTenantIdAndMemberIdAndTemplateKeyAndChannelAndBody(Long tenantId, Long id, String announcement,
-			NotificationChannel whatsapp, String body);
+			int maxAttempts, Pageable pageable);
 
 	boolean existsByTenantIdAndMemberIdAndAnnouncementIdAndChannel(Long tenantId, Long memberId, Long announcementId,
 			NotificationChannel channel);
 
+	List<OutboundNotification> findTop100ByStatusAndScheduledAtLessThanEqualOrderByScheduledAtAsc(
+			NotificationStatus queued, LocalDateTime now);
+
+	@Query("""
+			    select o
+			    from OutboundNotification o
+			    where o.tenantId = :tenantId
+			      and o.createdAt >= :from
+			      and o.createdAt < :to
+			    order by o.createdAt desc
+			""")
+	List<OutboundNotification> findReportRows(@Param("tenantId") Long tenantId, @Param("from") Instant from,
+			@Param("to") Instant to);
 }

@@ -22,9 +22,11 @@ public class AuditController {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final AuditLogRepository repository;
+    private final AuditLabelResolver labelResolver;
 
-    public AuditController(AuditLogRepository repository) {
+    public AuditController(AuditLogRepository repository, AuditLabelResolver labelResolver) {
         this.repository = repository;
+        this.labelResolver = labelResolver;
     }
 
     @GetMapping
@@ -39,6 +41,7 @@ public class AuditController {
         Page<AuditLog> result = tenantId == null
                 ? repository.findAllByOrderByCreatedAtDesc(pageable)
                 : repository.findByTenantIdOrderByCreatedAtDesc(tenantId, pageable);
-        return PageResponse.from(result, AuditLogResponse::from);
+        return PageResponse.from(result, log -> AuditLogResponse.from(log,
+                labelResolver.resolve(log.getResourceType(), log.getResourceId(), log.getDetails())));
     }
 }

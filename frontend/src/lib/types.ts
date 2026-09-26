@@ -192,6 +192,8 @@ export type SyncCommand = {
   acknowledgedAt: string | null
   completedAt: string | null
   createdAt: string
+  memberName: string | null
+  deviceUserId: string | null
 }
 
 export type Mapping = {

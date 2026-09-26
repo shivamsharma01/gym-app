@@ -65,18 +65,27 @@ export async function loginRequest(usernameOrEmail: string, password: string) {
   })
 }
 
+/** Shared in-flight refresh so StrictMode double-mount / 401 retries cannot rotate twice. */
+let refreshInFlight: Promise<boolean> | null = null
+
 export async function refreshRequest() {
-  try {
-    const tokens = await api<TokenResponse>('/api/v1/auth/refresh', {
-      method: 'POST',
-      body: '{}',
-    })
-    setAccessToken(tokens.accessToken)
-    return true
-  } catch {
-    clearTokens()
-    return false
-  }
+  if (refreshInFlight) return refreshInFlight
+  refreshInFlight = (async () => {
+    try {
+      const tokens = await api<TokenResponse>('/api/v1/auth/refresh', {
+        method: 'POST',
+        body: '{}',
+      })
+      setAccessToken(tokens.accessToken)
+      return true
+    } catch {
+      clearTokens()
+      return false
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+  return refreshInFlight
 }
 
 export async function logoutRequest() {

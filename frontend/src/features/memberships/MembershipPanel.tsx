@@ -512,7 +512,7 @@ export function MembershipPanel({
                   key={row.id}
                   className={`space-y-2 ${
                       row.status === 'ACTIVE'
-                          ? 'border-green-500/60 bg-green-500/5 ring-1 ring-green-500/20'
+                          ? 'border-ok/60 bg-ok/5 ring-1 ring-ok/20'
                           : ''
                   }`}
               >
@@ -635,7 +635,7 @@ export function MembershipPanel({
               <Button
                 variant="outline"
                 type="button"
-                className="border-orange-500 text-orange-500 hover:bg-orange-500 hover:text-white"
+                className="border-warn text-warn hover:bg-warn hover:text-accent-ink"
                 onClick={() => openRenewal(row)}
               >
                 Renew
@@ -647,7 +647,7 @@ export function MembershipPanel({
                 <Button
                     variant="outline"
                     type="button"
-                    className="border-green-500 text-green-500 hover:bg-green-500 hover:text-white"
+                    className="border-ok text-ok hover:bg-ok hover:text-accent-ink"
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
@@ -707,13 +707,13 @@ export function MembershipPanel({
 
       {/* RENEWAL MODAL */}
       {renewingId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <Card className="w-full max-w-md overflow-hidden border border-[#29322d] bg-[#151a17] text-[#f1f5f2] shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/80 p-4">
+          <Card className="w-full max-w-md overflow-hidden border border-line bg-panel text-ink shadow-2xl">
             {/* Header */}
-            <div className="border-b border-[#29322d] bg-[#101512] px-6 py-5">
+            <div className="border-b border-line bg-raised px-6 py-5">
               <h2 className="text-lg font-semibold">Renew Membership</h2>
 
-              <p className="mt-1 text-sm text-[#91a39a]">
+              <p className="mt-1 text-sm text-muted">
                 Select the plan for the next membership period.
               </p>
             </div>
@@ -722,24 +722,24 @@ export function MembershipPanel({
             <div className="space-y-5 px-6 py-5">
               {/* Current Plan */}
               {renewingMembership && (
-                <div className="rounded-lg border border-[#29322d] bg-[#101512] p-4">
-                  <div className="mb-2 text-xs font-medium uppercase tracking-wide text-[#91a39a]">
+                <div className="rounded-lg border border-line bg-raised p-4">
+                  <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">
                     Current Membership
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-medium text-[#f1f5f2]">
+                      <div className="font-medium text-ink">
                         {renewingMembership.planName}
                       </div>
 
-                      <div className="mt-1 text-sm text-[#91a39a]">
+                      <div className="mt-1 text-sm text-muted">
                         {formatDate(renewingMembership.startDate)} →{' '}
                         {formatDate(renewingMembership.endDate)}
                       </div>
                     </div>
 
-                    <div className="font-semibold text-[#f1f5f2]">
+                    <div className="font-semibold text-ink">
                       {money(currentPlanPrice, renewingMembership.currency)}
                     </div>
                   </div>
@@ -750,7 +750,7 @@ export function MembershipPanel({
               <div className="space-y-2">
                 <Label
                   htmlFor="renew-plan"
-                  className="text-sm font-medium text-[#d5ddd8]"
+                  className="text-sm font-medium text-ink"
                 >
                   New Plan
                 </Label>
@@ -759,7 +759,7 @@ export function MembershipPanel({
                   id="renew-plan"
                   value={renewPlanId}
                   onChange={(e) => applyRenewPlan(e.target.value)}
-                  className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                  className="border-line bg-canvas text-ink"
                 >
                   <option value="">Select plan</option>
 
@@ -797,7 +797,7 @@ export function MembershipPanel({
                 <div className="space-y-2">
                   <Label
                     htmlFor="renew-start"
-                    className="text-sm text-[#d5ddd8]"
+                    className="text-sm text-ink"
                   >
                     Start Date
                   </Label>
@@ -808,12 +808,12 @@ export function MembershipPanel({
                       value={renewStartDate}
                       min={renewingMembership ? addDays(renewingMembership.endDate, 1) : undefined}
                       onChange={(e) => applyRenewStart(e.target.value)}
-                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                      className="border-line bg-canvas text-ink"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="renew-end" className="text-sm text-[#d5ddd8]">
+                  <Label htmlFor="renew-end" className="text-sm text-ink">
                     End Date
                   </Label>
 
@@ -823,7 +823,7 @@ export function MembershipPanel({
                     value={renewEndDate}
                     min={renewStartDate}
                     onChange={(e) => setRenewEndDate(e.target.value)}
-                    className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                    className="border-line bg-canvas text-ink"
                   />
                 </div>
               </div>
@@ -839,11 +839,11 @@ export function MembershipPanel({
             </div>
 
             {/* Footer */}
-            <div className="flex justify-end gap-3 border-t border-[#29322d] bg-[#101512] px-6 py-4">
+            <div className="flex justify-end gap-3 border-t border-line bg-raised px-6 py-4">
               <Button
                 variant="outline"
                 type="button"
-                className="border-[#29322d] bg-transparent text-[#d5ddd8] hover:bg-[#1d2520]"
+                className="border-line bg-transparent text-ink hover:bg-raised"
                 onClick={closeRenewal}
               >
                 Cancel
@@ -858,7 +858,7 @@ export function MembershipPanel({
                     invalidRenewDiscount ||
                     renew.isPending
                 }
-                className="bg-orange-500 text-white hover:bg-orange-600 disabled:bg-orange-500/40"
+                className="bg-warn text-accent-ink hover:brightness-110 disabled:opacity-40"
                 onClick={() => {
                   const discount = Number(renewDiscountAmount) || 0;
 
@@ -884,17 +884,17 @@ export function MembershipPanel({
 
       {/* RECORD PAYMENT MODAL */}
       {paymentMembershipId && paymentMembership ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-            <Card className="w-full max-w-md overflow-hidden border border-[#29322d] bg-[#151a17] text-[#f1f5f2] shadow-2xl">
-              <div className="border-b border-[#29322d] px-6 py-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/80 p-4">
+            <Card className="w-full max-w-md overflow-hidden border border-line bg-panel text-ink shadow-2xl">
+              <div className="border-b border-line px-6 py-4">
                 <h2 className="text-lg font-semibold">Record Payment</h2>
-                <p className="mt-1 text-sm text-[#91a39a]">
+                <p className="mt-1 text-sm text-muted">
                   {paymentMembership.planName}
                 </p>
               </div>
 
               <div className="space-y-4 px-6 py-5">
-                <div className="rounded-lg border border-[#29322d] bg-[#0d110f] p-3 text-sm">
+                <div className="rounded-lg border border-line bg-canvas p-3 text-sm">
                   <div className="flex justify-between">
                     <span>Plan Amount</span>
                     <span>
@@ -939,7 +939,7 @@ export function MembershipPanel({
     </span>
                   </div>
 
-                  <div className="mt-2 flex justify-between border-t border-[#29322d] pt-2 font-semibold">
+                  <div className="mt-2 flex justify-between border-t border-line pt-2 font-semibold">
                     <span>Remaining</span>
                     <span>
     {money(
@@ -984,7 +984,7 @@ export function MembershipPanel({
                       step="0.01"
                       value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}
-                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                      className="border-line bg-canvas text-ink"
                   />
                 </div>
 
@@ -994,7 +994,7 @@ export function MembershipPanel({
                       id="payment-currency"
                       value={paymentCurrency}
                       onChange={(e) => setPaymentCurrency(e.target.value)}
-                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                      className="border-line bg-canvas text-ink"
                   >
                     <option value="INR">INR</option>
                     <option value="USD">USD</option>
@@ -1007,7 +1007,7 @@ export function MembershipPanel({
                       id="payment-method"
                       value={paymentMethod}
                       onChange={(e) => setPaymentMethod(e.target.value)}
-                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                      className="border-line bg-canvas text-ink"
                   >
                     <option value="CASH">Cash</option>
                     <option value="UPI">UPI</option>
@@ -1023,7 +1023,7 @@ export function MembershipPanel({
                       value={paymentReference}
                       onChange={(e) => setPaymentReference(e.target.value)}
                       placeholder="Optional"
-                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                      className="border-line bg-canvas text-ink"
                   />
                 </div>
 
@@ -1034,7 +1034,7 @@ export function MembershipPanel({
                       type="date"
                       value={paymentDate}
                       onChange={(e) => setPaymentDate(e.target.value)}
-                      className="border-[#29322d] bg-[#0d110f] text-[#f1f5f2]"
+                      className="border-line bg-canvas text-ink"
                   />
                 </div>
 
@@ -1047,11 +1047,11 @@ export function MembershipPanel({
                 ) : null}
               </div>
 
-              <div className="flex justify-end gap-3 border-t border-[#29322d] bg-[#101512] px-6 py-4">
+              <div className="flex justify-end gap-3 border-t border-line bg-raised px-6 py-4">
                 <Button
                     variant="outline"
                     type="button"
-                    className="border-[#29322d] bg-transparent text-[#d5ddd8] hover:bg-[#1d2520]"
+                    className="border-line bg-transparent text-ink hover:bg-raised"
                     onClick={() => setPaymentMembershipId(null)}
                 >
                   Cancel
@@ -1065,7 +1065,7 @@ export function MembershipPanel({
                         Number(paymentAmount) <= 0 ||
                         !paymentDate
                     }
-                    className="bg-green-500 text-white hover:bg-green-600 disabled:bg-green-500/40"
+                    className="bg-ok text-accent-ink hover:brightness-110 disabled:opacity-40"
                     onClick={() => {
                       const paidAmount = Number(paymentMembership?.amountPaid ?? 0)
                       const enteredAmount = Number(paymentAmount)

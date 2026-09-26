@@ -45,15 +45,14 @@ export function DateOfBirthField({ id, value = '', onChange, disabled }: Props) 
           id={fieldId}
           disabled={disabled}
           className={cn(
-            'flex w-full items-center gap-2 rounded-lg border border-line bg-canvas px-3 py-2 text-left text-sm text-ink',
-            'shadow-[inset_0_1px_0_rgb(255_255_255/0.02)] transition hover:border-line-strong',
-            'focus:border-accent/50 focus:outline-none disabled:opacity-45',
+            'flex w-full items-center gap-2 rounded-lg border border-line-strong bg-raised px-3 py-2 text-left text-sm text-ink',
+            'transition hover:border-accent/40 focus:border-accent/50 focus:outline-none disabled:opacity-45',
           )}
           onClick={() => setOpen((v) => !v)}
           aria-haspopup="dialog"
           aria-expanded={open}
         >
-          <CalendarIcon className="h-4 w-4 shrink-0 text-muted" />
+          <CalendarIcon className="h-4 w-4 shrink-0 text-accent" aria-hidden />
           <span className={selected ? 'text-ink' : 'text-muted'}>
             {selected ? format(selected, 'dd MMM yyyy') : 'Pick a date'}
           </span>
@@ -72,11 +71,10 @@ export function DateOfBirthField({ id, value = '', onChange, disabled }: Props) 
           </Button>
         ) : null}
       </div>
-      {/* Keep RHF value in sync without allowing typing */}
       <Input type="hidden" readOnly value={value} tabIndex={-1} aria-hidden />
       {open ? (
         <div
-          className="absolute z-30 mt-2 rounded-xl border border-line bg-panel p-3 shadow-[var(--shadow-panel)]"
+          className="rdp-theme absolute z-30 mt-2 rounded-xl border border-line bg-panel p-3 text-ink shadow-[var(--shadow-panel)]"
           role="dialog"
           aria-label="Date of birth calendar"
         >

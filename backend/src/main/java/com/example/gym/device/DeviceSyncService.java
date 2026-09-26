@@ -191,7 +191,17 @@ public class DeviceSyncService {
 
     @Transactional(readOnly = true)
     public org.springframework.data.domain.Page<DeviceSyncCommand> list(
-            Long tenantId, Long deviceId, org.springframework.data.domain.Pageable pageable) {
+            Long tenantId, Long deviceId, boolean openOnly,
+            org.springframework.data.domain.Pageable pageable) {
+        if (openOnly) {
+            java.util.List<SyncCommandState> open = java.util.List.of(
+                    SyncCommandState.PENDING, SyncCommandState.DISPATCHED,
+                    SyncCommandState.ACKNOWLEDGED, SyncCommandState.RETRYING);
+            return deviceId == null
+                    ? commandRepository.findByTenantIdAndStateInOrderByCreatedAtDesc(tenantId, open, pageable)
+                    : commandRepository.findByTenantIdAndDeviceIdAndStateInOrderByCreatedAtDesc(
+                            tenantId, deviceId, open, pageable);
+        }
         return deviceId == null
                 ? commandRepository.findByTenantIdOrderByCreatedAtDesc(tenantId, pageable)
                 : commandRepository.findByTenantIdAndDeviceIdOrderByCreatedAtDesc(tenantId, deviceId, pageable);

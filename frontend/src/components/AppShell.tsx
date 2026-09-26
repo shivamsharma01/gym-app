@@ -31,7 +31,8 @@ import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useStaffLive } from '@/lib/live'
 import { isPlatformSuperAdmin } from '@/lib/platform'
-import { readStoredTheme, toggleTheme, type ThemeMode } from '@/lib/theme'
+import { cycleTheme, readStoredTheme, type ThemeMode } from '@/lib/theme'
+import type { Gateway, PageResponse } from '@/lib/types'
 
 type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; perm: string | null }
 
@@ -77,6 +78,13 @@ export function AppShell() {
     queryFn: () => api<PublicSite>('/api/v1/settings'),
     enabled: Boolean(user?.tenantId),
   })
+  const gateways = useQuery({
+    queryKey: ['gateways', 'shell'],
+    queryFn: () => api<PageResponse<Gateway>>('/api/v1/gateways?size=20'),
+    enabled: Boolean(user?.tenantId) && !isPlatform,
+    refetchInterval: 30_000,
+  })
+  const gatewayState = gatewayConnectionState(gateways.data?.content)
   const brand = isPlatform ? 'Platform' : brandDisplayName(settings.data, 'Gym')
   const logo = isPlatform ? null : brandLogo(settings.data)
 
@@ -101,7 +109,16 @@ export function AppShell() {
   }
 
   function onToggleTheme() {
-    setTheme(toggleTheme())
+    setTheme(cycleTheme())
+  }
+
+  function StatusCluster() {
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <LiveDot state={live} labelPrefix="Server" />
+        {!isPlatform ? <LiveDot state={gatewayState} labelPrefix="Gateway" /> : null}
+      </div>
+    )
   }
 
   return (
@@ -118,7 +135,8 @@ export function AppShell() {
           {logo ? <img src={logo} alt="" className="h-7 w-7 rounded-lg object-cover" /> : null}
           <span className="truncate">{brand}</span>
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          <StatusCluster />
           <ThemeToggleButton theme={theme} onToggle={onToggleTheme} />
           <button
             type="button"
@@ -178,10 +196,8 @@ export function AppShell() {
               )}
               <div className="min-w-0">
                 <div className="truncate text-[15px] font-bold tracking-tight leading-tight">{brand}</div>
-                <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted">
-                  <span>{isPlatform ? 'Super admin' : 'Staff console'}</span>
-                  <span aria-hidden>·</span>
-                  <LiveDot state={live} />
+                <div className="mt-0.5 text-[11px] text-muted">
+                  {isPlatform ? 'Super admin' : 'Staff console'}
                 </div>
               </div>
             </div>
@@ -196,8 +212,8 @@ export function AppShell() {
               Signed in as <span className="font-medium text-ink">{user?.fullName}</span>
             </p>
             <div className="flex items-center gap-3">
+              <StatusCluster />
               <ThemeToggleButton theme={theme} onToggle={onToggleTheme} />
-              <LiveDot state={live} />
             </div>
           </div>
           <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 px-4 py-5 sm:px-6 md:px-8 lg:py-7 xl:px-10">
@@ -211,13 +227,24 @@ export function AppShell() {
   )
 }
 
+function gatewayConnectionState(gateways: Gateway[] | undefined): 'live' | 'reconnecting' | 'offline' | 'off' {
+  if (!gateways) return 'off'
+  if (gateways.length === 0) return 'offline'
+  const online = gateways.filter((g) => g.status === 'ONLINE').length
+  if (online === gateways.length) return 'live'
+  if (online > 0) return 'reconnecting'
+  return 'offline'
+}
+
 function ThemeToggleButton({ theme, onToggle }: { theme: ThemeMode; onToggle: () => void }) {
-  const next = theme === 'light' ? 'dark' : 'light'
+  const label =
+    theme === 'dark' ? 'Switch to light theme' : theme === 'light' ? 'Switch to slate theme' : 'Switch to dark theme'
   return (
     <button
       type="button"
       className="rounded-lg p-2 text-muted hover:bg-raised hover:text-ink"
-      aria-label={`Switch to ${next} theme`}
+      aria-label={label}
+      title={label}
       onClick={onToggle}
     >
       {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}

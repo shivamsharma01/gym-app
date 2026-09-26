@@ -92,13 +92,19 @@ public final class DeviceResponses {
             Instant dispatchedAt,
             Instant acknowledgedAt,
             Instant completedAt,
-            Instant createdAt) {
+            Instant createdAt,
+            String memberName,
+            String deviceUserId) {
 
         public static SyncCommandView from(DeviceSyncCommand c) {
+            return from(c, null, null);
+        }
+
+        public static SyncCommandView from(DeviceSyncCommand c, String memberName, String deviceUserId) {
             return new SyncCommandView(c.getPublicId(), c.getType().name(), c.getState().name(),
                     c.getAttemptCount(), c.getMaxAttempts(), c.getNextAttemptAt(), c.getLastError(),
                     c.getCorrelationId(), c.getDispatchedAt(), c.getAcknowledgedAt(),
-                    c.getCompletedAt(), c.getCreatedAt());
+                    c.getCompletedAt(), c.getCreatedAt(), memberName, deviceUserId);
         }
     }
 

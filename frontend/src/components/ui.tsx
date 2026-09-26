@@ -347,7 +347,13 @@ export function FormSection({
   )
 }
 
-export function LiveDot({ state }: { state: 'live' | 'reconnecting' | 'offline' | 'off' | 'down' | string }) {
+export function LiveDot({
+  state,
+  labelPrefix = '',
+}: {
+  state: 'live' | 'reconnecting' | 'offline' | 'off' | 'down' | string
+  labelPrefix?: string
+}) {
   const normalized = state === 'down' ? 'reconnecting' : state
   const tone =
     normalized === 'live'
@@ -355,8 +361,9 @@ export function LiveDot({ state }: { state: 'live' | 'reconnecting' | 'offline' 
       : normalized === 'reconnecting'
         ? 'bg-warn'
         : 'bg-muted'
-  const label =
+  const statusLabel =
     normalized === 'live' ? 'Live' : normalized === 'reconnecting' ? 'Reconnecting' : 'Offline'
+  const label = labelPrefix ? `${labelPrefix} · ${statusLabel}` : statusLabel
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-muted">
       <span className={cn('h-1.5 w-1.5 rounded-full', tone)} aria-hidden />

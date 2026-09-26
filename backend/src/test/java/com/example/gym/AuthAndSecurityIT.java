@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.auth.AuthRefreshCookie;
 import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,10 +52,11 @@ class AuthAndSecurityIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void gymAdminCannotListPermissions() throws Exception {
+    void gymAdminCanListPermissions() throws Exception {
         String token = login("acme-admin", DEFAULT_PASSWORD);
         mockMvc.perform(get("/api/v1/permissions").header("Authorization", "Bearer " + token))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.name=='MEMBER_VIEW')]").isNotEmpty());
     }
 
     @Test
@@ -115,23 +117,48 @@ class AuthAndSecurityIT extends AbstractIntegrationTest {
 
     @Test
     void refreshRotatesTokenAndOldTokenIsRejected() throws Exception {
-        JsonNode login = loginJson("acme-admin", DEFAULT_PASSWORD);
-        String firstRefresh = login.get("refreshToken").asString();
-
-        // First refresh succeeds and returns a new refresh token.
-        String body = mockMvc.perform(post("/api/v1/auth/refresh")
+        var loginResult = mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json("refreshToken", firstRefresh)))
+                        .content(loginBody("acme-admin", DEFAULT_PASSWORD)))
                 .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-        String secondRefresh = jsonMapper.readTree(body).get("refreshToken").asString();
-        assertThat(secondRefresh).isNotEqualTo(firstRefresh);
+                .andReturn();
+        jakarta.servlet.http.Cookie firstCookie = loginResult.getResponse().getCookie(AuthRefreshCookie.COOKIE_NAME);
+        assertThat(firstCookie).isNotNull();
+        String firstRefresh = firstCookie.getValue();
 
-        // Reusing the now-rotated first token is rejected.
+        // Cookie-based refresh succeeds and rotates the cookie.
+        var refreshResult = mockMvc.perform(post("/api/v1/auth/refresh").cookie(firstCookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").isString())
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
+                .andReturn();
+        jakarta.servlet.http.Cookie secondCookie = refreshResult.getResponse().getCookie(AuthRefreshCookie.COOKIE_NAME);
+        assertThat(secondCookie).isNotNull();
+        assertThat(secondCookie.getValue()).isNotEqualTo(firstRefresh);
+
+        // Body refresh still works for the rotated token value (transition / IT helpers).
         mockMvc.perform(post("/api/v1/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json("refreshToken", firstRefresh)))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void logoutClearsRefreshCookie() throws Exception {
+        var loginResult = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody("acme-admin", DEFAULT_PASSWORD)))
+                .andExpect(status().isOk())
+                .andReturn();
+        jakarta.servlet.http.Cookie refresh = loginResult.getResponse().getCookie(AuthRefreshCookie.COOKIE_NAME);
+        assertThat(refresh).isNotNull();
+
+        var logoutResult = mockMvc.perform(post("/api/v1/auth/logout").cookie(refresh))
+                .andExpect(status().isNoContent())
+                .andReturn();
+        jakarta.servlet.http.Cookie cleared = logoutResult.getResponse().getCookie(AuthRefreshCookie.COOKIE_NAME);
+        assertThat(cleared).isNotNull();
+        assertThat(cleared.getMaxAge()).isZero();
     }
 
     @Test

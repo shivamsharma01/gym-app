@@ -8,8 +8,8 @@ export function ForgotPasswordPage() {
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">Account</p>
         <h1 className="mt-2 text-2xl font-bold tracking-tight">Reset password</h1>
         <p className="mt-3 text-sm leading-relaxed text-muted">
-          Email reset is not available. Ask your gym operator, or a platform super admin, to set a new
-          password and give it to you in person. After you sign in, change it under Profile.
+          Self-service email reset is not available. Contact a Super Admin to set a new password for
+          your account and share it with you securely. After you sign in, change it under Profile.
         </p>
         <Link to="/app/login" className="mt-6 inline-block">
           <Button variant="outline">Back to sign in</Button>

@@ -347,10 +347,16 @@ export function FormSection({
   )
 }
 
-export function LiveDot({ state }: { state: 'live' | 'down' | 'off' | string }) {
+export function LiveDot({ state }: { state: 'live' | 'reconnecting' | 'offline' | 'off' | 'down' | string }) {
+  const normalized = state === 'down' ? 'reconnecting' : state
   const tone =
-    state === 'live' ? 'bg-ok shadow-[0_0_8px_var(--color-ok)]' : state === 'down' ? 'bg-warn' : 'bg-muted'
-  const label = state === 'live' ? 'Live' : state === 'down' ? 'Reconnecting' : 'Offline'
+    normalized === 'live'
+      ? 'bg-ok shadow-[0_0_8px_var(--color-ok)]'
+      : normalized === 'reconnecting'
+        ? 'bg-warn'
+        : 'bg-muted'
+  const label =
+    normalized === 'live' ? 'Live' : normalized === 'reconnecting' ? 'Reconnecting' : 'Offline'
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-muted">
       <span className={cn('h-1.5 w-1.5 rounded-full', tone)} aria-hidden />

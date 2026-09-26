@@ -93,6 +93,19 @@ public class MemberService {
                 "Member", member.getPublicId(), null);
     }
 
+    @Transactional
+    public Member reactivate(String publicId, Long tenantId) {
+        Member member = getByPublicId(publicId, tenantId);
+        if (member.getStatus() == MemberStatus.ACTIVE) {
+            return member;
+        }
+        member.setStatus(MemberStatus.ACTIVE);
+        Member saved = memberRepository.save(member);
+        auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,
+                "Member", saved.getPublicId(), null);
+        return saved;
+    }
+
     private String generateUniqueCode(Long tenantId) {
         for (int attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
             String code = "MBR-" + randomCode();

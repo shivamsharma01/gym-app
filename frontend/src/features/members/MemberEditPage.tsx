@@ -1,31 +1,20 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { useNavigate, useParams } from 'react-router'
-import { z } from 'zod'
 import { Button, FieldError, Input, Label, PageHeader, Select, Skeleton, Textarea } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
+import { DateOfBirthField } from '@/features/members/DateOfBirthField'
+import { memberFormSchema, type MemberFormValues } from '@/features/members/memberFormSchema'
 import { ApiError, api } from '@/lib/api'
 import type { Member } from '@/lib/types'
-
-const schema = z.object({
-  firstName: z.string().min(1, 'Required'),
-  lastName: z.string().optional(),
-  email: z.string().optional(),
-  phone: z.string().optional(),
-  dateOfBirth: z.string().optional(),
-  gender: z.string(),
-  notes: z.string().optional(),
-})
-
-type Form = z.infer<typeof schema>
 
 export function MemberEditPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const member = useQuery({ queryKey: ['member', id], queryFn: () => api<Member>(`/api/v1/members/${id}`) })
-  const form = useForm<Form>({ resolver: zodResolver(schema) })
+  const form = useForm<MemberFormValues>({ resolver: zodResolver(memberFormSchema) })
 
   useEffect(() => {
     if (!member.data) return
@@ -41,13 +30,14 @@ export function MemberEditPage() {
   }, [member.data, form])
 
   const mutation = useMutation({
-    mutationFn: (body: Form) =>
+    mutationFn: (body: MemberFormValues) =>
       api<Member>(`/api/v1/members/${id}`, {
         method: 'PUT',
         body: JSON.stringify({
           ...body,
           email: body.email || null,
           lastName: body.lastName || null,
+          phone: body.phone || null,
           dateOfBirth: body.dateOfBirth || null,
         }),
       }),
@@ -75,14 +65,23 @@ export function MemberEditPage() {
         <div>
           <Label>Email</Label>
           <Input type="email" {...form.register('email')} />
+          <FieldError message={form.formState.errors.email?.message} />
         </div>
         <div>
           <Label>Phone</Label>
-          <Input {...form.register('phone')} />
+          <Input inputMode="numeric" maxLength={10} placeholder="10 digits" {...form.register('phone')} />
+          <FieldError message={form.formState.errors.phone?.message} />
         </div>
         <div>
           <Label>Date of birth</Label>
-          <Input type="date" {...form.register('dateOfBirth')} />
+          <Controller
+            control={form.control}
+            name="dateOfBirth"
+            render={({ field }) => (
+              <DateOfBirthField value={field.value} onChange={field.onChange} />
+            )}
+          />
+          <FieldError message={form.formState.errors.dateOfBirth?.message} />
         </div>
         <div>
           <Label>Gender</Label>

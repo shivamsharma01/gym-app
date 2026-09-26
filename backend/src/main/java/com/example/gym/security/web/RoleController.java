@@ -38,7 +38,7 @@ public class RoleController {
     }
 
     @GetMapping("/permissions")
-    @PreAuthorize("hasAuthority('ROLE_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('ROLE_MANAGE', 'USER_MANAGE')")
     @Transactional(readOnly = true)
     @Operation(summary = "List all permissions in the catalogue")
     public List<PermissionResponse> permissions() {

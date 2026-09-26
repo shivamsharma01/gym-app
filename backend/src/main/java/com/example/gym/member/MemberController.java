@@ -82,4 +82,11 @@ public class MemberController {
     public void deactivate(@PathVariable String id) {
         memberService.deactivate(id, SecurityUtils.currentTenantId());
     }
+
+    @PostMapping("/{id}/reactivate")
+    @PreAuthorize("hasAuthority('MEMBER_DELETE')")
+    @Operation(summary = "Reactivate an inactive member account")
+    public MemberResponse reactivate(@PathVariable String id) {
+        return MemberResponse.from(memberService.reactivate(id, SecurityUtils.currentTenantId()));
+    }
 }

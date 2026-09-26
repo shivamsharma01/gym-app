@@ -20,7 +20,6 @@ export type UserSummary = {
 
 export type TokenResponse = {
   accessToken: string
-  refreshToken: string
   tokenType: string
   expiresInSeconds: number
   user: UserSummary

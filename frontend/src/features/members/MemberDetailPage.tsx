@@ -36,9 +36,18 @@ export function MemberDetailPage() {
     enabled: has('PAYMENT_VIEW'),
   })
   const [confirmDeactivate, setConfirmDeactivate] = useState(false)
+  const [confirmReactivate, setConfirmReactivate] = useState(false)
   const deactivate = useMutation({
     mutationFn: () => api(`/api/v1/members/${id}`, { method: 'DELETE' }),
     onSuccess: () => navigate('/app/members'),
+  })
+  const reactivate = useMutation({
+    mutationFn: () => api<Member>(`/api/v1/members/${id}/reactivate`, { method: 'POST' }),
+    onSuccess: () => {
+      void member.refetch()
+      void access.refetch()
+      setConfirmReactivate(false)
+    },
   })
 
   if (member.isLoading) return <Skeleton className="h-40" />
@@ -61,6 +70,9 @@ export function MemberDetailPage() {
               <Button variant="danger" onClick={() => setConfirmDeactivate(true)}>
                 Deactivate
               </Button>
+            ) : null}
+            {has('MEMBER_DELETE') && m.status === 'INACTIVE' ? (
+              <Button onClick={() => setConfirmReactivate(true)}>Reactivate</Button>
             ) : null}
           </div>
         }
@@ -171,6 +183,15 @@ export function MemberDetailPage() {
         danger
         busy={deactivate.isPending}
         onConfirm={() => deactivate.mutate()}
+      />
+      <ConfirmDialog
+        open={confirmReactivate}
+        onClose={() => setConfirmReactivate(false)}
+        title="Reactivate this member?"
+        description="Restores the member account to ACTIVE. Membership and device access still follow their own rules."
+        confirmLabel="Reactivate"
+        busy={reactivate.isPending}
+        onConfirm={() => reactivate.mutate()}
       />
     </div>
   )

@@ -132,6 +132,21 @@ public class UserService {
     }
 
     @Transactional
+    public AdminUser enable(String publicId, Long currentTenantId) {
+        AdminUser user = getByPublicId(publicId, currentTenantId);
+        if (user.getStatus() == UserStatus.ACTIVE) {
+            return user;
+        }
+        user.setStatus(UserStatus.ACTIVE);
+        user.setFailedLoginAttempts(0);
+        user.setLockedUntil(null);
+        AdminUser saved = userRepository.save(user);
+        auditService.record(AuditActions.USER_ENABLED, AuditActions.RESULT_SUCCESS,
+                "AdminUser", saved.getPublicId(), null);
+        return saved;
+    }
+
+    @Transactional
     public void changeOwnPassword(Long userId, String currentPassword, String newPassword) {
         AdminUser user = userRepository.findById(userId)
                 .orElseThrow(() -> CommonExceptions.unauthorized("No authenticated user"));

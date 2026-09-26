@@ -86,6 +86,12 @@ public class UserController {
         userService.disable(id, SecurityUtils.currentTenantId());
     }
 
+    @PostMapping("/{id}/enable")
+    @Operation(summary = "Re-enable a disabled admin user")
+    public UserResponse enable(@PathVariable String id) {
+        return UserResponse.from(userService.enable(id, SecurityUtils.currentTenantId()));
+    }
+
     @PutMapping("/{id}/password")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(summary = "Set a staff password without the old one (tenant-scoped)")

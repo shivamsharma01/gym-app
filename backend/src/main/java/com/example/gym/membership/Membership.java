@@ -6,6 +6,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import lombok.Data;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -18,6 +20,7 @@ import java.time.LocalDateTime;
  * <p>Business state ({@link MembershipStatus}) and device authorization state
  * ({@link DeviceSyncState}) are tracked independently, per §8 of the spec.
  */
+@Data
 @Entity
 @Table(name = "membership")
 public class Membership extends TenantAwareEntity {
@@ -90,38 +93,6 @@ public class Membership extends TenantAwareEntity {
     @Column(name = "discount_approved_by_username", length = 100)
     private String discountApprovedByUsername;
 
-    public BigDecimal getDiscountAmount() {
-        return discountAmount;
-    }
-
-    public void setDiscountAmount(BigDecimal discountAmount) {
-        this.discountAmount = discountAmount;
-    }
-
-    public Long getDiscountApprovedByUserId() {
-        return discountApprovedByUserId;
-    }
-
-    public void setDiscountApprovedByUserId(Long discountApprovedByUserId) {
-        this.discountApprovedByUserId = discountApprovedByUserId;
-    }
-
-    public String getDiscountApprovedByUsername() {
-        return discountApprovedByUsername;
-    }
-
-    public void setDiscountApprovedByUsername(String discountApprovedByUsername) {
-        this.discountApprovedByUsername = discountApprovedByUsername;
-    }
-
-    public Instant getDiscountApprovedAt() {
-        return discountApprovedAt;
-    }
-
-    public void setDiscountApprovedAt(Instant discountApprovedAt) {
-        this.discountApprovedAt = discountApprovedAt;
-    }
-
     @Column(name = "discount_approved_at")
     private Instant discountApprovedAt;
 
@@ -160,146 +131,6 @@ public class Membership extends TenantAwareEntity {
 
     public boolean coversDate(LocalDate date) {
         return !date.isBefore(startDate) && !date.isAfter(endDate);
-    }
-
-    public Long getMemberId() {
-        return memberId;
-    }
-
-    public Long getPlanId() {
-        return planId;
-    }
-
-    public String getPlanName() {
-        return planName;
-    }
-
-    public BigDecimal getPrice() {
-        return price;
-    }
-
-    public void setPlanId(Long planId) {
-        this.planId = planId;
-    }
-
-    public void setPlanName(String planName) {
-        this.planName = planName;
-    }
-
-    public void setPrice(BigDecimal price) {
-        this.price = price;
-    }
-
-    public void setCurrency(String currency) {
-        this.currency = currency;
-    }
-
-    public String getCurrency() {
-        return currency;
-    }
-
-    public LocalDate getStartDate() {
-        return startDate;
-    }
-
-    public void setStartDate(LocalDate startDate) {
-        this.startDate = startDate;
-    }
-
-    public LocalDate getEndDate() {
-        return endDate;
-    }
-
-    public void setEndDate(LocalDate endDate) {
-        this.endDate = endDate;
-    }
-
-    public boolean isEndDateInferred() {
-        return endDateInferred;
-    }
-
-    public void setEndDateInferred(boolean endDateInferred) {
-        this.endDateInferred = endDateInferred;
-    }
-
-    public MembershipStatus getStatus() {
-        return status;
-    }
-
-    public void setStatus(MembershipStatus status) {
-        this.status = status;
-    }
-
-    public MembershipPaymentStatus getPaymentStatus() {
-        return paymentStatus;
-    }
-
-    public void setPaymentStatus(MembershipPaymentStatus paymentStatus) {
-        this.paymentStatus = paymentStatus;
-    }
-
-    public BigDecimal getAmountPaid() {
-        return amountPaid;
-    }
-
-    public void setAmountPaid(BigDecimal amountPaid) {
-        this.amountPaid = amountPaid;
-    }
-
-    public DeviceSyncState getDeviceSyncState() {
-        return deviceSyncState;
-    }
-
-    public void setDeviceSyncState(DeviceSyncState deviceSyncState) {
-        this.deviceSyncState = deviceSyncState;
-    }
-
-    public LocalDate getFrozenOn() {
-        return frozenOn;
-    }
-
-    public void setFrozenOn(LocalDate frozenOn) {
-        this.frozenOn = frozenOn;
-    }
-
-    public int getFreezeDaysAccumulated() {
-        return freezeDaysAccumulated;
-    }
-
-    public void setFreezeDaysAccumulated(int freezeDaysAccumulated) {
-        this.freezeDaysAccumulated = freezeDaysAccumulated;
-    }
-
-    public LocalDate getCancelledOn() {
-        return cancelledOn;
-    }
-
-    public void setCancelledOn(LocalDate cancelledOn) {
-        this.cancelledOn = cancelledOn;
-    }
-
-    public String getCancelReason() {
-        return cancelReason;
-    }
-
-    public void setCancelReason(String cancelReason) {
-        this.cancelReason = cancelReason;
-    }
-
-    public boolean isDeleted() {
-        return deleted;
-    }
-
-    public void setDeleted(boolean deleted) {
-        this.deleted = deleted;
-    }
-
-    public LocalDateTime getDeletedAt() {
-        return deletedAt;
-    }
-
-    public void setDeletedAt(LocalDateTime deletedAt) {
-        this.deletedAt = deletedAt;
     }
 
     public BigDecimal getNetAmount() {

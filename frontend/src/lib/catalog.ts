@@ -9,9 +9,17 @@ export const PLAN_DURATIONS = [
   { days: 365, label: '1 year (365 days)' },
 ] as const
 
-export const NOTIFICATION_TEMPLATE_KEYS = ['EXPIRY_REMINDER', 'WELCOME'] as const
-
-export const NOTIFICATION_CHANNELS = ['EMAIL', 'SMS', 'IN_APP'] as const
+export const NOTIFICATION_CHANNELS = ['WHATSAPP'] as const
+export const NOTIFICATION_TEMPLATE_KEYS = [
+  'MEMBERSHIP_CREATED',
+  'MEMBERSHIP_RENEWED',
+  'MEMBERSHIP_FROZEN',
+  'MEMBERSHIP_UNFROZEN',
+  'MEMBERSHIP_CANCELLED',
+  'MEMBERSHIP_DATES_UPDATED',
+  'EXPIRY_REMINDER_3_DAYS',
+  'MEMBERSHIP_EXPIRED',
+] as const
 
 export const DEVICE_MODELS = ['TrueFace 3000'] as const
 

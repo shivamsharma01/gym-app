@@ -1,8 +1,12 @@
-package com.example.gym.notification;
+package com.example.gym.notification.adapter;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+
+import com.example.gym.notification.channel.NotificationChannel;
+import com.example.gym.notification.channel.adapter.NotificationChannelAdapter;
+import com.example.gym.notification.outbound.OutboundNotification;
 
 @Component
 public class MockNotificationAdapter implements NotificationChannelAdapter {

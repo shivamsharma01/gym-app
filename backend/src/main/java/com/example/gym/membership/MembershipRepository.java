@@ -1,8 +1,10 @@
 package com.example.gym.membership;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,18 +16,18 @@ public interface MembershipRepository extends JpaRepository<Membership, Long> {
     List<Membership> findByMemberIdAndDeletedFalseOrderByStartDateDesc(Long memberId);
 
     List<Membership> findByTenantIdAndDeletedFalse(Long tenantId);
-
+    
     long countByTenantIdAndStatusAndDeletedFalse(
             Long tenantId,
             MembershipStatus status);
-
+    
     boolean existsByMemberIdAndDeletedFalseAndStatusNotAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
             Long memberId,
             MembershipStatus status,
             LocalDate endDate,
             LocalDate startDate
     );
-
+    
     @Query("""
     SELECT COUNT(m) > 0
     FROM Membership m
@@ -35,11 +37,33 @@ public interface MembershipRepository extends JpaRepository<Membership, Long> {
       AND m.publicId <> :membershipPublicId
       AND m.startDate <= :endDate
       AND m.endDate >= :startDate
-""")
+    """)
     boolean existsOverlappingMembership(
             @Param("memberId") Long memberId,
             @Param("membershipPublicId") String membershipPublicId,
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate
     );
+    
+	Optional<Membership> findByPublicId(String publicId);
+
+	List<Membership> findByMemberIdOrderByStartDateDesc(Long memberId);
+
+	List<Membership> findByTenantId(Long tenantId);
+
+	long countByTenantIdAndStatus(Long tenantId, MembershipStatus status);
+
+	@Query("""
+			    select m
+			    from Membership m
+			    where m.tenantId = :tenantId
+			      and m.endDate = :endDate
+			      and m.status in :statuses
+			""")
+	List<Membership> findExpiringOn(@Param("tenantId") Long tenantId, @Param("endDate") LocalDate endDate,
+			@Param("statuses") Collection<MembershipStatus> statuses);
+
+	List<Membership> findByTenantIdAndEndDateAndStatus(Long tenantId, LocalDate endDate, MembershipStatus status);
+
+	List<Membership> findByTenantIdAndStatus(Long tenantId, MembershipStatus active);
 }

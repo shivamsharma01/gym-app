@@ -27,21 +27,28 @@ public interface IDeviceAdapter : IDisposable
 
     DeviceCommandResult UpdateValidity(DeviceUserMutation mutation);
 
-    /// <summary>Enumerate access users (id, name, frozen). No biometrics.</summary>
+    /// <summary>Enumerate access users (id, name, frozen, validity). No biometrics.</summary>
     IReadOnlyList<DeviceUserSnapshot> ListUsers();
 
-    /// <summary>
-    /// Remote face capture is UNVERIFIED on this firmware. Implementations must not report success.
-    /// </summary>
-    EnrollmentOutcome StartFaceEnrollment(string deviceUserId);
+    /// <summary>One access user, or null when absent / not readable.</summary>
+    DeviceUserSnapshot? GetUser(string deviceUserId);
 
     /// <summary>
-    /// Actually calls OperateAccessFaceService(INSERT) for evidence. Never claim product success.
+    /// Writes the user's face photo (UPDATE, or INSERT when the user has no face yet).
+    /// Image bytes must not be logged.
+    /// </summary>
+    DeviceCommandResult UpsertFace(string deviceUserId, byte[] jpegBytes);
+
+    /// <summary>Reads the user's face photo as stored on the device.</summary>
+    DeviceFaceRead GetFace(string deviceUserId);
+
+    DeviceCommandResult DeleteFace(string deviceUserId);
+
+    /// <summary>
+    /// Raw OperateAccessFaceService(INSERT) evidence call kept for the PoC tooling.
     /// Image bytes must not be logged by callers.
     /// </summary>
     FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes);
-
-    DeviceCommandResult DeleteFace(string deviceUserId);
 
     IReadOnlyList<DeviceAttendanceRecord> FetchAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc);
 

@@ -4,11 +4,13 @@ namespace Gym.Gateway.Adapters;
 
 /// <summary>
 /// In-memory device used for Linux development and local protocol tests.
-/// Does not load native libraries. Face enrolment is never reported as success.
+/// Does not load native libraries. Keeps face photos in memory; the PoC INSERT probe still
+/// simulates the historical firmware reject.
 /// </summary>
 public sealed class MockDeviceAdapter : IDeviceAdapter
 {
     private readonly ConcurrentDictionary<string, DeviceUserMutation> _users = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, (byte[] Photo, DateTimeOffset UpdatedAt)> _faces = new(StringComparer.Ordinal);
     private readonly List<DeviceAttendanceRecord> _records = [];
     private readonly object _gate = new();
     private IDeviceEventListener? _listener;
@@ -75,6 +77,7 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
         }
 
         _users.TryRemove(deviceUserId, out _);
+        _faces.TryRemove(deviceUserId, out _);
         Touch();
         return DeviceCommandResult.Success();
     }
@@ -99,15 +102,79 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
             .ToArray();
     }
 
-    public EnrollmentOutcome StartFaceEnrollment(string deviceUserId)
+    public DeviceUserSnapshot? GetUser(string deviceUserId)
     {
-        if (!_users.ContainsKey(deviceUserId))
+        if (!_connected || !_users.TryGetValue(deviceUserId, out var u))
         {
-            _users[deviceUserId] = new DeviceUserMutation(deviceUserId, Enabled: true);
+            return null;
         }
 
-        return EnrollmentOutcome.GuidedPending(
-            "UNVERIFIED: remote face enrollment is not claimed as success; complete enrollment on the device");
+        return new DeviceUserSnapshot(u.DeviceUserId, u.Name, u.Enabled == false, u.ValidFrom, u.ValidTo);
+    }
+
+    public DeviceCommandResult UpsertFace(string deviceUserId, byte[] jpegBytes)
+    {
+        if (!EnsureConnected(out var err))
+        {
+            return DeviceCommandResult.Fail(err);
+        }
+
+        if (!_users.ContainsKey(deviceUserId))
+        {
+            return DeviceCommandResult.Fail("INVALID_USER: user does not exist on device");
+        }
+
+        if (jpegBytes == null || jpegBytes.Length == 0)
+        {
+            return DeviceCommandResult.Fail("No face image");
+        }
+
+        _faces[deviceUserId] = (jpegBytes.ToArray(), DateTimeOffset.UtcNow);
+        Touch();
+        return DeviceCommandResult.Success();
+    }
+
+    public DeviceFaceRead GetFace(string deviceUserId)
+    {
+        if (!EnsureConnected(out var err))
+        {
+            return DeviceFaceRead.Fail(err);
+        }
+
+        return _faces.TryGetValue(deviceUserId, out var face)
+            ? DeviceFaceRead.Found(face.Photo.ToArray(), face.UpdatedAt)
+            : DeviceFaceRead.None();
+    }
+
+    public DeviceCommandResult DeleteFace(string deviceUserId)
+    {
+        if (!EnsureConnected(out var err))
+        {
+            return DeviceCommandResult.Fail(err);
+        }
+
+        _faces.TryRemove(deviceUserId, out _);
+        Touch();
+        return DeviceCommandResult.Success();
+    }
+
+    /// <summary>Test helper: someone enrolled or edited a user directly on the terminal.</summary>
+    public void SimulateLocalUserChange(string deviceUserId, string? name, byte[]? facePhoto = null, bool emitEvent = true)
+    {
+        _users.AddOrUpdate(
+            deviceUserId,
+            new DeviceUserMutation(deviceUserId, name, Enabled: true),
+            (_, existing) => existing with { Name = name ?? existing.Name });
+        if (facePhoto != null)
+        {
+            _faces[deviceUserId] = (facePhoto.ToArray(), DateTimeOffset.UtcNow);
+        }
+
+        if (emitEvent)
+        {
+            _listener?.OnNormalizedEvent(new NormalizedDeviceEvent(
+                "USER_CHANGED", deviceUserId, DateTimeOffset.UtcNow, "UNKNOWN", true, null, null, "mock"));
+        }
     }
 
     public FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes)
@@ -126,9 +193,6 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
             null,
             $"Mock: OperateAccessFaceService INSERT for {deviceUserId} rejected (simulated 0x10030110)");
     }
-
-    public DeviceCommandResult DeleteFace(string deviceUserId) =>
-        DeviceCommandResult.Fail("UNVERIFIED: DELETE_FACE is not claimed as success (OperateAccessFaceService failed in log)");
 
     public IReadOnlyList<DeviceAttendanceRecord> FetchAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc)
     {

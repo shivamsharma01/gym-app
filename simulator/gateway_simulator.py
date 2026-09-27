@@ -103,6 +103,11 @@ def apply_command(cmd: dict) -> dict:
         rec["validTo"] = payload.get("validTo")
     elif ctype == "REMOVE_USER" and user_id:
         USERS.pop(user_id, None)
+    elif ctype == "UPSERT_FACE" and user_id:
+        USERS.setdefault(user_id, {})["faceVersion"] = payload.get("faceVersion")
+        return {"ok": True, "faceVersion": payload.get("faceVersion")}
+    elif ctype == "REPORT_DEVICE_USER":
+        return {"ok": False, "error": "simulator has no device faces to report"}
     elif ctype in ("OPEN_DOOR", "CLOSE_DOOR", "RECONCILE_DEVICE", "SYNC_DEVICE_TIME",
                    "REFRESH_DEVICE_USERS", "UPDATE_USER", "UPDATE_ACCESS_POLICY",
                    "DELETE_FACE", "CLEAR_DEVICE_LOGS"):

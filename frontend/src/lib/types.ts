@@ -205,6 +205,34 @@ export type Mapping = {
   createdAt: string
 }
 
+export type FaceView = {
+  version: number
+  sha256: string
+  source: 'MANUAL' | 'DEVICE'
+  changedAt: string
+}
+
+export type MemberDeviceSync = {
+  face: {
+    version: number
+    source: 'MANUAL' | 'DEVICE'
+    sourceDeviceName: string | null
+    changedAt: string
+  } | null
+  devices: {
+    deviceId: string
+    deviceName: string
+    connectionState: string | null
+    hasGateway: boolean
+    deviceUserId: string
+    userSyncState: string | null
+    faceSyncState: string | null
+    faceVersionSynced: number | null
+    faceLastError: string | null
+    openCommands: { type: string; state: string; attemptCount: number; lastError: string | null }[]
+  }[]
+}
+
 export type SecurityEvent = {
   id: string
   type: string

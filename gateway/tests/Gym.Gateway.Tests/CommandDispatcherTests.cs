@@ -23,7 +23,26 @@ public class CommandDispatcherTests
     }
 
     [Fact]
-    public async Task Enroll_face_is_not_reported_as_success()
+    public async Task Disable_with_dates_also_moves_the_validity_window()
+    {
+        var adapter = new MockDeviceAdapter();
+        adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
+        var dispatcher = new CommandDispatcher(
+            new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
+            NullLogger<CommandDispatcher>.Instance);
+        await dispatcher.DispatchAsync(Command("CREATE_USER", "dev-1", new { deviceUserId = "1001", name = "Ada" }));
+
+        await dispatcher.DispatchAsync(Command("DISABLE_USER", "dev-1",
+            new { deviceUserId = "1001", enabled = false, validFrom = "2027-02-05", validTo = "2027-03-04" }));
+
+        var user = adapter.GetUser("1001")!;
+        Assert.True(user.Frozen);
+        Assert.Equal(new DateTime(2027, 2, 5), user.ValidFrom!.Value.UtcDateTime.Date);
+        Assert.Equal(new DateTime(2027, 3, 4), user.ValidTo!.Value.UtcDateTime.Date);
+    }
+
+    [Fact]
+    public async Task Retired_enroll_face_fails_without_touching_device()
     {
         var adapter = new MockDeviceAdapter();
         adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
@@ -33,10 +52,10 @@ public class CommandDispatcherTests
 
         var result = await dispatcher.DispatchAsync(
             Command("ENROLL_FACE", "dev-1", new { deviceUserId = "1001" }));
-        Assert.Equal(ProtocolTypes.EnrollmentResult, result.ResultType);
+        Assert.Equal(ProtocolTypes.SyncResult, result.ResultType);
         var json = JsonSerializer.Serialize(result.Payload);
-        Assert.Contains("GUIDED_PENDING", json);
-        Assert.DoesNotContain("\"ok\":true", json.Replace(" ", ""));
+        Assert.Contains("\"ok\":false", json.Replace(" ", ""));
+        Assert.Contains("UPSERT_FACE", json);
     }
 
     [Fact]

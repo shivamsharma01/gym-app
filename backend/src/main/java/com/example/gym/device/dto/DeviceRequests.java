@@ -38,7 +38,8 @@ public final class DeviceRequests {
 
     public record CreateMapping(
             @NotBlank String memberId,
-            @NotBlank @Size(max = 64) String deviceUserId) {
+            /** Optional; defaults to the member code. */
+            @Size(max = 64) String deviceUserId) {
     }
 
     public record RemoteDoor(

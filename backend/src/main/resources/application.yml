@@ -30,6 +30,10 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
 
 server:
   port: ${SERVER_PORT:8080}
@@ -75,6 +79,9 @@ springdoc:
     path: /swagger-ui.html
 
 app:
+  faces:
+    # Member face JPEGs. Production mounts the gym-faces Docker volume here (back it up with MySQL).
+    dir: ${APP_FACES_DIR:/var/lib/gym/faces}
   security:
     jwt:
       # Dev-only secret; MUST be overridden via APP_SECURITY_JWT_SECRET in real environments.

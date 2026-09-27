@@ -14,6 +14,8 @@ import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.ReconciliationConflictRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
 import com.example.gym.enquiry.EnquiryRepository;
+import com.example.gym.face.GatewayFaceUploadRepository;
+import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.notification.AnnouncementRepository;
@@ -139,12 +141,20 @@ public abstract class AbstractIntegrationTest {
     @Autowired
     protected PasswordEncoder passwordEncoder;
 
+    @Autowired
+    protected MemberFaceRepository memberFaceRepository;
+
+    @Autowired
+    protected GatewayFaceUploadRepository gatewayFaceUploadRepository;
+
     /**
      * Clears all tenant data in FK-safe order (child -> parent). The container is shared across
      * every test class, so each class must start from a clean slate. Seeded roles/permissions are
      * left intact.
      */
     protected void resetDatabase() {
+        memberFaceRepository.deleteAllInBatch();
+        gatewayFaceUploadRepository.deleteAllInBatch();
         deviceSyncCommandRepository.deleteAllInBatch();
         attendanceEventRepository.deleteAllInBatch();
         attendanceSyncCursorRepository.deleteAllInBatch();

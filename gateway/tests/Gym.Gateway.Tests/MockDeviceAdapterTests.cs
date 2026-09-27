@@ -43,14 +43,17 @@ public class MockDeviceAdapterTests
     }
 
     [Fact]
-    public void Face_enrollment_is_never_success()
+    public void Face_upsert_read_and_delete()
     {
         var adapter = Connected();
+        byte[] photo = [0xFF, 0xD8, 0xFF, 0x01, 0x02];
+        Assert.False(adapter.UpsertFace("1001", photo).Ok); // user must exist first
         adapter.CreateUser(new DeviceUserMutation("1001", "Ada"));
-        var outcome = adapter.StartFaceEnrollment("1001");
-        Assert.Equal("GUIDED_PENDING", outcome.Status);
-        Assert.Contains("UNVERIFIED", outcome.Error);
-        Assert.False(adapter.DeleteFace("1001").Ok);
+        Assert.True(adapter.GetFace("1001") is { Ok: true, Photo: null });
+        Assert.True(adapter.UpsertFace("1001", photo).Ok);
+        Assert.Equal(photo, adapter.GetFace("1001").Photo);
+        Assert.True(adapter.DeleteFace("1001").Ok);
+        Assert.Null(adapter.GetFace("1001").Photo);
     }
 
     [Fact]

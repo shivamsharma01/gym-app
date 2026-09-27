@@ -20,9 +20,9 @@ export function setRefreshHandler(handler: RefreshHandler | null) {
   refreshHandler = handler
 }
 
-export async function api<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
+async function send(path: string, init: RequestInit, retried: boolean): Promise<Response> {
   const headers = new Headers(init.headers)
-  if (init.body && !headers.has('Content-Type')) {
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
   const token = getAccessToken()
@@ -34,9 +34,22 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
   if (res.status === 401 && !retried && !path.includes('/auth/login') && !path.includes('/auth/refresh')) {
     const ok = refreshHandler ? await refreshHandler() : false
     if (ok) {
-      return api<T>(path, init, true)
+      return send(path, init, true)
     }
   }
+  return res
+}
+
+/** Authenticated binary GET (e.g. a member photo). Resolves to null on 404. */
+export async function apiBlob(path: string): Promise<Blob | null> {
+  const res = await send(path, {}, false)
+  if (res.status === 404) return null
+  if (!res.ok) throw new ApiError(res.status, res.statusText)
+  return res.blob()
+}
+
+export async function api<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
+  const res = await send(path, init, retried)
 
   if (res.status === 204) {
     return undefined as T

@@ -39,12 +39,17 @@ public sealed record DeviceCommandResult(bool Ok, string? Error)
     public static DeviceCommandResult Fail(string error) => new(false, error);
 }
 
-public sealed record EnrollmentOutcome(string Status, string? Error)
+/// <summary>
+/// Result of reading a user's face photo from a device. <see cref="Photo"/> is null when the user
+/// has no face (Ok = true) or when the read failed (Ok = false).
+/// </summary>
+public sealed record DeviceFaceRead(bool Ok, byte[]? Photo, DateTimeOffset? UpdatedAtUtc, string? Error)
 {
-    /// <summary>Guided on-device enrollment; never a fabricated remote success.</summary>
-    public static EnrollmentOutcome GuidedPending(string reason) => new("GUIDED_PENDING", reason);
+    public static DeviceFaceRead Found(byte[] photo, DateTimeOffset? updatedAtUtc) => new(true, photo, updatedAtUtc, null);
 
-    public static EnrollmentOutcome Failed(string error) => new("FAILED", error);
+    public static DeviceFaceRead None() => new(true, null, null, null);
+
+    public static DeviceFaceRead Fail(string error) => new(false, null, null, error);
 }
 
 public sealed record DeviceAttendanceRecord(
@@ -61,6 +66,10 @@ public sealed record DeviceReconciliationResult(
     IReadOnlyList<DeviceAttendanceRecord> Events,
     IReadOnlyList<DeviceUserSnapshot> Users);
 
+/// <summary>
+/// Kind is ACCESS, ALARM, STATUS or USER_CHANGED (a user or face was added/changed on the device;
+/// DeviceUserId is set when the device reported it).
+/// </summary>
 public sealed record NormalizedDeviceEvent(
     string Kind,
     string? DeviceUserId,

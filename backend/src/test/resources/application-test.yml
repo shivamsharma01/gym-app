@@ -1,6 +1,8 @@
 # Test profile: do not background-dispatch outbox commands — tests drive dispatch/results
 # deterministically. The in-process simulator is also off so we never fabricate hardware success.
 app:
+  faces:
+    dir: ${java.io.tmpdir}/gym-test-faces
   gateway:
     simulator-enabled: false
     outbox:

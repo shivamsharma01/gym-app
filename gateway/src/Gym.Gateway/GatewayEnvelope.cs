@@ -73,6 +73,7 @@ public static class ProtocolTypes
     public const string SyncResult = "SYNC_RESULT";
     public const string ReconciliationResult = "RECONCILIATION_RESULT";
     public const string EnrollmentResult = "ENROLLMENT_RESULT";
+    public const string DeviceUserChanged = "DEVICE_USER_CHANGED";
     public const string Registered = "REGISTERED";
     public const string Ack = "ACK";
     public const string Error = "ERROR";

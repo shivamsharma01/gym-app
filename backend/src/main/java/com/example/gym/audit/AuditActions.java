@@ -28,6 +28,14 @@ public final class AuditActions {
     public static final String MEMBER_UPDATED = "MEMBER_UPDATED";
     public static final String MEMBER_DELETED = "MEMBER_DELETED";
     public static final String MEMBER_REACTIVATED = "MEMBER_REACTIVATED";
+    public static final String MEMBER_FACE_UPDATED = "MEMBER_FACE_UPDATED";
+    public static final String MEMBER_FACE_DELETED = "MEMBER_FACE_DELETED";
+    public static final String MEMBER_CHANGED_ON_DEVICE = "MEMBER_CHANGED_ON_DEVICE";
+    public static final String MEMBER_DELETED_ON_DEVICE = "MEMBER_DELETED_ON_DEVICE";
+    /** A change (from a device or the server) not applied because a newer change of the same field won. */
+    public static final String SYNC_CHANGE_IGNORED = "SYNC_CHANGE_IGNORED";
+    /** A user enrolled offline on a device reused a code that belongs to a different member. */
+    public static final String DEVICE_CODE_CLASH = "DEVICE_CODE_CLASH";
     public static final String MEMBERSHIP_CREATED = "MEMBERSHIP_CREATED";
     public static final String MEMBERSHIP_RENEWED = "MEMBERSHIP_RENEWED";
     public static final String MEMBERSHIP_FROZEN = "MEMBERSHIP_FROZEN";

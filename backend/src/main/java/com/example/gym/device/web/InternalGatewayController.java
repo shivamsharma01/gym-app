@@ -11,13 +11,18 @@ import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.dto.DeviceResponses.DeviceView;
 import com.example.gym.device.dto.GatewayCredentialResponse;
 import com.example.gym.device.dto.GatewayEnrollRequest;
+import com.example.gym.face.GatewayFaceUpload;
+import com.example.gym.face.MemberFaceService;
+import com.example.gym.face.MemberFaceService.FaceImage;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -37,15 +42,18 @@ public class InternalGatewayController {
     private final GatewayService gatewayService;
     private final GatewayMessageService messageService;
     private final GatewayCommandPollService pollService;
+    private final MemberFaceService faceService;
 
     public InternalGatewayController(GatewayAuthService authService,
                                      GatewayService gatewayService,
                                      GatewayMessageService messageService,
-                                     GatewayCommandPollService pollService) {
+                                     GatewayCommandPollService pollService,
+                                     MemberFaceService faceService) {
         this.authService = authService;
         this.gatewayService = gatewayService;
         this.messageService = messageService;
         this.pollService = pollService;
+        this.faceService = faceService;
     }
 
     @PostMapping(value = "/enroll", consumes = MediaType.APPLICATION_JSON_VALUE,
@@ -83,6 +91,30 @@ public class InternalGatewayController {
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         Gateway gateway = requireBoundGateway(authorization);
         return pollService.claimDue(gateway);
+    }
+
+    /** Face image for UPSERT_FACE (images never travel inside WebSocket frames). */
+    @GetMapping(value = "/faces/{memberId}/{version}", produces = MediaType.IMAGE_JPEG_VALUE)
+    public ResponseEntity<byte[]> face(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable String memberId, @PathVariable int version) {
+        Gateway gateway = requireBoundGateway(authorization);
+        FaceImage image = faceService.imageForGateway(gateway, memberId, version);
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_JPEG)
+                .header("X-Face-Sha256", image.sha256())
+                .body(image.bytes());
+    }
+
+    /** A face image the gateway read from a device; referenced later by DEVICE_USER_CHANGED. */
+    @PostMapping(value = "/faces", consumes = {MediaType.IMAGE_JPEG_VALUE, MediaType.IMAGE_PNG_VALUE,
+            MediaType.APPLICATION_OCTET_STREAM_VALUE}, produces = MediaType.APPLICATION_JSON_VALUE)
+    public Map<String, Object> uploadFace(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestBody byte[] body) {
+        Gateway gateway = requireBoundGateway(authorization);
+        GatewayFaceUpload upload = faceService.acceptGatewayUpload(gateway, body);
+        return Map.of("uploadId", upload.getPublicId(), "sha256", upload.getSha256());
     }
 
     private Gateway requireBoundGateway(String authorization) {

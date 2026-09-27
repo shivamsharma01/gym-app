@@ -8,6 +8,14 @@ import com.example.gym.device.domain.DeviceSyncCommand;
  */
 public interface GatewayCommandTransport {
 
-    /** @return true if the command was delivered to a connected gateway; false if none is reachable. */
-    boolean dispatch(DeviceSyncCommand command);
+    enum Outcome {
+        /** Written to the gateway connection. */
+        SENT,
+        /** The gateway is offline; the command waits for it without using up delivery attempts. */
+        NOT_CONNECTED,
+        /** Delivery was attempted and failed (or can never succeed, e.g. no gateway assigned). */
+        FAILED
+    }
+
+    Outcome dispatch(DeviceSyncCommand command);
 }

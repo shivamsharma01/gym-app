@@ -28,7 +28,22 @@ public class GatewayProperties {
     /** Lifetime of an operational gateway credential after enroll or rotate. */
     private Duration credentialTtl = Duration.ofDays(90);
 
+    /**
+     * Whether devices refuse entry outside a user's valid-from / valid-to dates by themselves
+     * (TrueFace does). When true, a paid membership that has not started yet is sent enabled with
+     * its dates; when false it is sent disabled and enabled by the access check on its start day.
+     */
+    private boolean devicesEnforceValidityDates = true;
+
     private final Outbox outbox = new Outbox();
+
+    public boolean isDevicesEnforceValidityDates() {
+        return devicesEnforceValidityDates;
+    }
+
+    public void setDevicesEnforceValidityDates(boolean devicesEnforceValidityDates) {
+        this.devicesEnforceValidityDates = devicesEnforceValidityDates;
+    }
 
     public String getSharedToken() {
         return sharedToken;
@@ -84,6 +99,16 @@ public class GatewayProperties {
         private Duration jitter = Duration.ofSeconds(1);
         /** How long a DISPATCHED command may wait for SYNC_RESULT before reclaim. */
         private Duration dispatchTimeout = Duration.ofMinutes(2);
+        /** How often a command waiting for an offline gateway is checked again (no attempt is used). */
+        private Duration offlineRecheck = Duration.ofMinutes(1);
+
+        public Duration getOfflineRecheck() {
+            return offlineRecheck;
+        }
+
+        public void setOfflineRecheck(Duration offlineRecheck) {
+            this.offlineRecheck = offlineRecheck;
+        }
 
         public boolean isDispatcherEnabled() {
             return dispatcherEnabled;

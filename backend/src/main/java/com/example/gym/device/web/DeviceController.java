@@ -107,14 +107,6 @@ public class DeviceController {
                 id, request.memberId(), request.deviceUserId(), SecurityUtils.currentTenantId()));
     }
 
-    @DeleteMapping("/{id}/mappings/{mappingId}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
-    @Operation(summary = "Unmap a member and enqueue REMOVE_USER on the device")
-    public void deleteMapping(@PathVariable String id, @PathVariable String mappingId) {
-        deviceService.deleteMapping(id, mappingId, SecurityUtils.currentTenantId());
-    }
-
     @PostMapping("/{id}/reconcile")
     @PreAuthorize("hasAuthority('DEVICE_SYNC')")
     @Operation(summary = "Request attendance + user reconciliation for a device")

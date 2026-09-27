@@ -38,7 +38,7 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
         String memberId = readJson(post("/api/v1/members",
-                "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"phone\":\"5551234\"}")
+                "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"phone\":\"5551234567\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
@@ -86,7 +86,9 @@ class MembershipFlowIT extends AbstractIntegrationTest {
         getAccess(memberId).andExpect(jsonPath("$.allowed").value(true));
 
         // Renew creates a new membership period (history preserved).
-        post("/api/v1/memberships/" + membershipId + "/renew", "{}")
+        post("/api/v1/memberships/" + membershipId + "/renew",
+                "{\"planId\":\"" + planId + "\",\"startDate\":\"" + java.time.LocalDate.now().plusDays(31)
+                        + "\",\"endDate\":\"" + java.time.LocalDate.now().plusDays(61) + "\"}")
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.planName").value("Monthly"));
 

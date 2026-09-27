@@ -14,19 +14,12 @@ import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.DeviceUserSnapshotRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.ReconciliationConflictRepository;
+import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.Member;
-import com.example.gym.member.MemberCreationSource;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.membership.DeviceSyncState;
-import com.example.gym.membership.Membership;
-import com.example.gym.membership.MembershipPaymentStatus;
-import com.example.gym.membership.MembershipRepository;
-import com.example.gym.membership.MembershipStatus;
-import com.example.gym.plan.MembershipPlan;
-import com.example.gym.plan.MembershipPlanRepository;
 import com.example.gym.tenant.TenantGuard;
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HashSet;
@@ -40,21 +33,21 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
- * Idempotent import of device-side users into Members + Unknown memberships + mappings.
- * Does not enqueue face-replacing UPSERT/CREATE or ENABLE for frozen users.
+ * Manual, idempotent import of cached device user lists into Members + Unknown memberships +
+ * mappings. Reconcile now imports automatically; this remains as a fallback. Imported members are
+ * fanned out to the devices that do not have them, and their faces are requested from a device.
  */
 @Service
 public class DeviceUserImportService {
-
-    public static final String UNKNOWN_PLAN_NAME = "Unknown";
 
     private final DeviceRepository deviceRepository;
     private final DeviceUserSnapshotRepository snapshotRepository;
     private final MemberDeviceMappingRepository mappingRepository;
     private final MemberRepository memberRepository;
-    private final MembershipRepository membershipRepository;
-    private final MembershipPlanRepository planRepository;
     private final ReconciliationConflictRepository conflictRepository;
+    private final MemberFaceRepository faceRepository;
+    private final DeviceMemberImporter importer;
+    private final MemberDeviceProvisioningService provisioning;
     private final DeviceService deviceService;
     private final AuditService auditService;
 
@@ -62,18 +55,20 @@ public class DeviceUserImportService {
                                    DeviceUserSnapshotRepository snapshotRepository,
                                    MemberDeviceMappingRepository mappingRepository,
                                    MemberRepository memberRepository,
-                                   MembershipRepository membershipRepository,
-                                   MembershipPlanRepository planRepository,
                                    ReconciliationConflictRepository conflictRepository,
+                                   MemberFaceRepository faceRepository,
+                                   DeviceMemberImporter importer,
+                                   MemberDeviceProvisioningService provisioning,
                                    DeviceService deviceService,
                                    AuditService auditService) {
         this.deviceRepository = deviceRepository;
         this.snapshotRepository = snapshotRepository;
         this.mappingRepository = mappingRepository;
         this.memberRepository = memberRepository;
-        this.membershipRepository = membershipRepository;
-        this.planRepository = planRepository;
         this.conflictRepository = conflictRepository;
+        this.faceRepository = faceRepository;
+        this.importer = importer;
+        this.provisioning = provisioning;
         this.deviceService = deviceService;
         this.auditService = auditService;
     }
@@ -89,7 +84,6 @@ public class DeviceUserImportService {
                 .orElseThrow(() -> CommonExceptions.notFound("Device"));
         TenantGuard.check(device.getTenantId(), tenantId, "Device");
 
-        // Refresh path for next time; import uses cache already present across the gym.
         deviceService.reconcile(devicePublicId, tenantId);
 
         List<Device> devices = deviceRepository.findByTenantId(tenantId);
@@ -101,7 +95,7 @@ public class DeviceUserImportService {
         }
 
         Map<String, MergedDeviceUser> merged = mergeByDeviceUserId(allRows);
-        MembershipPlan unknownPlan = ensureUnknownPlan(tenantId);
+        importer.ensureUnknownPlan(tenantId);
 
         int created = 0;
         int mapped = 0;
@@ -110,44 +104,30 @@ public class DeviceUserImportService {
         int inferredEndDates = 0;
 
         for (MergedDeviceUser user : merged.values()) {
-            Optional<MemberDeviceMapping> existingMapping = findAnyMapping(devices, user.deviceUserId());
-            if (existingMapping.isPresent()) {
-                Member member = memberRepository.findById(existingMapping.get().getMemberId()).orElse(null);
-                if (member != null) {
-                    int added = ensureMappings(member, user, devices);
-                    mapped += added;
-                    if (added == 0) {
-                        skipped++;
-                    }
-                    closeExtraConflicts(user);
-                } else {
-                    skipped++;
+            Optional<Member> known = findAnyMapping(devices, user.deviceUserId())
+                    .flatMap(m -> memberRepository.findById(m.getMemberId()))
+                    .or(() -> memberRepository.findByTenantIdAndMemberCode(
+                            tenantId, DeviceMemberImporter.truncateCode(user.deviceUserId())));
+            Member member;
+            if (known.isPresent()) {
+                member = known.get();
+            } else {
+                member = importer.createMember(tenantId, user.deviceUserId(), user.name(), user.frozenAnywhere());
+                if (member.getStatus() == MemberStatus.INACTIVE) {
+                    inactiveFrozen++;
                 }
-                continue;
-            }
-
-            Optional<Member> byCode = memberRepository.findByTenantIdAndMemberCode(tenantId, truncateCode(user.deviceUserId()));
-            if (byCode.isPresent()) {
-                int added = ensureMappings(byCode.get(), user, devices);
-                mapped += added;
-                if (added == 0) {
-                    skipped++;
+                if (importer.ensureUnknownMembership(member, user.validFrom(), user.validTo())) {
+                    inferredEndDates++;
                 }
-                closeExtraConflicts(user);
-                continue;
+                created++;
             }
-
-            Member member = createImportedMember(tenantId, user);
-            if (member.getStatus() == MemberStatus.INACTIVE) {
-                inactiveFrozen++;
+            int added = ensureMappings(member, user, devices);
+            mapped += added;
+            if (known.isPresent() && added == 0) {
+                skipped++;
             }
-            boolean inferred = ensureUnknownMembership(member, unknownPlan, user);
-            if (inferred) {
-                inferredEndDates++;
-            }
-            mapped += ensureMappings(member, user, devices);
+            fanOut(member, user, devices);
             closeExtraConflicts(user);
-            created++;
         }
 
         ImportResult result = new ImportResult(created, mapped, skipped, inactiveFrozen, inferredEndDates,
@@ -160,15 +140,23 @@ public class DeviceUserImportService {
         return result;
     }
 
+    /** Pushes the member to devices that do not hold it and requests its face from one that does. */
+    private void fanOut(Member member, MergedDeviceUser user, List<Device> devices) {
+        provisioning.provisionMember(member, user.deviceIds());
+        if (faceRepository.findByMemberId(member.getId()).isPresent()) {
+            return;
+        }
+        devices.stream()
+                .filter(d -> user.deviceIds().contains(d.getId()) && d.getGatewayId() != null)
+                .findFirst()
+                .ifPresent(d -> provisioning.requestDeviceReport(member, d, user.deviceUserId()));
+    }
+
     private Map<String, MergedDeviceUser> mergeByDeviceUserId(List<DeviceUserSnapshotRow> rows) {
         Map<String, MergedDeviceUser> map = new LinkedHashMap<>();
         for (DeviceUserSnapshotRow row : rows) {
             MergedDeviceUser existing = map.get(row.getDeviceUserId());
-            if (existing == null) {
-                map.put(row.getDeviceUserId(), MergedDeviceUser.from(row));
-            } else {
-                map.put(row.getDeviceUserId(), existing.merge(row));
-            }
+            map.put(row.getDeviceUserId(), existing == null ? MergedDeviceUser.from(row) : existing.merge(row));
         }
         return map;
     }
@@ -183,61 +171,10 @@ public class DeviceUserImportService {
         return Optional.empty();
     }
 
-    private Member createImportedMember(Long tenantId, MergedDeviceUser user) {
-        String code = truncateCode(user.deviceUserId());
-        if (memberRepository.existsByTenantIdAndMemberCode(tenantId, code)) {
-            code = truncateCode("DEV-" + user.deviceUserId());
-        }
-        NameParts names = parseName(user.name(), user.deviceUserId());
-        Member member = new Member(tenantId, code, names.firstName());
-        member.setLastName(names.lastName());
-        member.setCreationSource(MemberCreationSource.DEVICE_IMPORT);
-        member.setStatus(user.frozenAnywhere() ? MemberStatus.INACTIVE : MemberStatus.ACTIVE);
-        return memberRepository.save(member);
-    }
-
-    private boolean ensureUnknownMembership(Member member, MembershipPlan plan, MergedDeviceUser user) {
-        LocalDate today = LocalDate.now();
-        boolean hasCurrent = membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId())
-                .stream()
-                .filter(m -> m.getStatus() != MembershipStatus.CANCELLED)
-                .anyMatch(m -> m.coversDate(today));
-        if (hasCurrent) {
-            return false;
-        }
-
-        LocalDate start = user.validFrom() != null ? user.validFrom() : today;
-        boolean inferred = user.validTo() == null;
-        LocalDate end = inferred ? today.plusYears(1) : user.validTo();
-        if (end.isBefore(start)) {
-            end = start.plusYears(1);
-            inferred = true;
-        }
-
-        Membership membership = new Membership(
-                member.getTenantId(),
-                member.getId(),
-                plan.getId(),
-                plan.getName(),
-                plan.getPrice(),
-                plan.getCurrency(),
-                start,
-                end,
-                MembershipStatus.ACTIVE);
-        membership.setPaymentStatus(MembershipPaymentStatus.PAID);
-        membership.setAmountPaid(BigDecimal.ZERO);
-        membership.setEndDateInferred(inferred);
-        membership.setDeviceSyncState(DeviceSyncState.SYNCED);
-        membershipRepository.save(membership);
-        // Intentionally no MembershipChangedEvent — do not push CREATE/UPSERT/ENABLE to device.
-        return inferred;
-    }
-
     private int ensureMappings(Member member, MergedDeviceUser user, List<Device> devices) {
         int added = 0;
-        Set<Long> deviceIdsOnUser = user.deviceIds();
         for (Device d : devices) {
-            if (!deviceIdsOnUser.contains(d.getId())) {
+            if (!user.deviceIds().contains(d.getId())) {
                 continue;
             }
             if (mappingRepository.existsByDeviceIdAndDeviceUserId(d.getId(), user.deviceUserId())) {
@@ -270,37 +207,6 @@ public class DeviceUserImportService {
         }
     }
 
-    private MembershipPlan ensureUnknownPlan(Long tenantId) {
-        return planRepository.findFirstByTenantIdAndNameIgnoreCase(tenantId, UNKNOWN_PLAN_NAME)
-                .orElseGet(() -> planRepository.save(new MembershipPlan(
-                        tenantId,
-                        UNKNOWN_PLAN_NAME,
-                        "Placeholder plan for members imported from devices; replace with the correct plan later.",
-                        BigDecimal.ZERO,
-                        "INR",
-                        365)));
-    }
-
-    private static String truncateCode(String raw) {
-        String code = raw == null ? "UNKNOWN" : raw.trim();
-        if (code.length() > 32) {
-            return code.substring(0, 32);
-        }
-        return code;
-    }
-
-    private static NameParts parseName(String deviceName, String fallbackId) {
-        String raw = StringUtils.hasText(deviceName) ? deviceName.trim() : fallbackId;
-        int space = raw.indexOf(' ');
-        if (space < 0) {
-            return new NameParts(raw, null);
-        }
-        return new NameParts(raw.substring(0, space), raw.substring(space + 1).trim());
-    }
-
-    private record NameParts(String firstName, String lastName) {
-    }
-
     private record MergedDeviceUser(
             String deviceUserId,
             String name,
@@ -312,35 +218,23 @@ public class DeviceUserImportService {
         static MergedDeviceUser from(DeviceUserSnapshotRow row) {
             Set<Long> ids = new HashSet<>();
             ids.add(row.getDeviceId());
-            return new MergedDeviceUser(
-                    row.getDeviceUserId(),
-                    row.getName(),
-                    row.isFrozen(),
-                    row.getValidFrom(),
-                    row.getValidTo(),
-                    ids);
+            return new MergedDeviceUser(row.getDeviceUserId(), row.getName(), row.isFrozen(),
+                    row.getValidFrom(), row.getValidTo(), ids);
         }
 
         MergedDeviceUser merge(DeviceUserSnapshotRow row) {
             Set<Long> ids = new HashSet<>(deviceIds);
             ids.add(row.getDeviceId());
             String betterName = StringUtils.hasText(name) ? name : row.getName();
-            LocalDate from = validFrom != null ? validFrom : row.getValidFrom();
-            LocalDate to = validTo != null ? validTo : row.getValidTo();
-            // Prefer later end / earlier start when both present
+            LocalDate from = validFrom;
+            LocalDate to = validTo;
             if (row.getValidFrom() != null && (from == null || row.getValidFrom().isBefore(from))) {
                 from = row.getValidFrom();
             }
             if (row.getValidTo() != null && (to == null || row.getValidTo().isAfter(to))) {
                 to = row.getValidTo();
             }
-            return new MergedDeviceUser(
-                    deviceUserId,
-                    betterName,
-                    frozenAnywhere || row.isFrozen(),
-                    from,
-                    to,
-                    ids);
+            return new MergedDeviceUser(deviceUserId, betterName, frozenAnywhere || row.isFrozen(), from, to, ids);
         }
     }
 

@@ -20,6 +20,7 @@ public class GatewayWebSocketHandler extends TextWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayWebSocketHandler.class);
     private static final String GATEWAY_ID_ATTR = GatewayHandshakeInterceptor.GATEWAY_ID_ATTR;
+    static final int MAX_TEXT_MESSAGE_BYTES = 1024 * 1024;
 
     private final GatewayMessageService messageService;
     private final GatewaySessionRegistry registry;
@@ -38,6 +39,8 @@ public class GatewayWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
+        // Reconcile results carry full rosters; the container default (~8 KB) would close the socket.
+        session.setTextMessageSizeLimit(MAX_TEXT_MESSAGE_BYTES);
         Object gatewayId = session.getAttributes().get(GATEWAY_ID_ATTR);
         if (gatewayId != null) {
             registry.register(gatewayId.toString(), session);
@@ -45,18 +48,14 @@ public class GatewayWebSocketHandler extends TextWebSocketHandler {
     }
 
     @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) {
         String raw = message.getPayload();
         if (!registerIfHandshake(session, raw)) {
-            if (session.isOpen()) {
-                session.sendMessage(new TextMessage(messageService.impersonationError()));
-            }
+            registry.reply(session, messageService.impersonationError());
             return;
         }
         Optional<String> reply = messageService.process(raw);
-        if (reply.isPresent() && session.isOpen()) {
-            session.sendMessage(new TextMessage(reply.get()));
-        }
+        reply.ifPresent(text -> registry.reply(session, text));
     }
 
     @Override

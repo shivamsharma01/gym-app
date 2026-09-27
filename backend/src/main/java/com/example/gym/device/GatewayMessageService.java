@@ -46,6 +46,7 @@ public class GatewayMessageService {
     private final MemberDeviceMappingRepository mappingRepository;
     private final JsonMapper jsonMapper;
     private final ApplicationEventPublisher events;
+    private final DeviceUserChangeService deviceUserChangeService;
 
     public GatewayMessageService(GatewayService gatewayService,
                                  GatewayRepository gatewayRepository,
@@ -58,7 +59,9 @@ public class GatewayMessageService {
                                  SecurityEventRepository securityEventRepository,
                                  MemberDeviceMappingRepository mappingRepository,
                                  JsonMapper jsonMapper,
-                                 ApplicationEventPublisher events) {
+                                 ApplicationEventPublisher events,
+                                 DeviceUserChangeService deviceUserChangeService) {
+        this.deviceUserChangeService = deviceUserChangeService;
         this.gatewayService = gatewayService;
         this.gatewayRepository = gatewayRepository;
         this.deviceRepository = deviceRepository;
@@ -90,17 +93,26 @@ public class GatewayMessageService {
             return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
                     Map.of("error", "gateway identity mismatch")));
         }
-        if (!dedupeService.claim(message.messageId(), message.gatewayId())) {
+        if (dedupeService.alreadyProcessed(message.messageId())) {
             log.debug("Ignoring duplicate gateway messageId {}", message.messageId());
             return ack(message);
         }
+        Optional<String> reply;
         try {
-            return handle(message);
+            reply = handle(message);
         } catch (RuntimeException ex) {
+            // Not recorded as processed: the gateway keeps it (no ACK) and resends it on reconnect.
             log.error("Error handling gateway message {} ({})", message.type(), message.messageId(), ex);
             return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
                     Map.of("error", "processing failed")));
         }
+        try {
+            dedupeService.markProcessed(message.messageId(), message.gatewayId());
+        } catch (RuntimeException ex) {
+            // Processing is idempotent; a replay would only be processed again.
+            log.warn("Could not record gateway messageId {} as processed: {}", message.messageId(), ex.getMessage());
+        }
+        return reply;
     }
 
     private Optional<String> handle(GatewayMessage message) {
@@ -168,8 +180,9 @@ public class GatewayMessageService {
                 yield ack(message);
             }
             case SYNC_RESULT -> {
-                deviceSyncService.handleResult(message.correlationId(),
-                        boolAt(message.payload(), "ok"), text(message.payload(), "error"));
+                boolean skipped = boolAt(message.payload(), "skipped");
+                deviceSyncService.handleResult(message.correlationId(), boolAt(message.payload(), "ok"),
+                        skipped ? text(message.payload(), "reason") : text(message.payload(), "error"), skipped);
                 yield ack(message);
             }
             case RECONCILIATION_RESULT -> {
@@ -195,6 +208,10 @@ public class GatewayMessageService {
                                 text(message.payload(), "error"));
                     }
                 });
+                yield ack(message);
+            }
+            case DEVICE_USER_CHANGED -> {
+                resolveDevice(message).ifPresent(device -> deviceUserChangeService.apply(device, message.payload()));
                 yield ack(message);
             }
             case ENROLLMENT_RESULT -> {

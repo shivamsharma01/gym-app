@@ -4,11 +4,14 @@ import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.device.DeviceAuthorizationService;
+import com.example.gym.device.MemberDeviceProvisioningService;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
 import com.example.gym.tenant.TenantGuard;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -25,13 +28,16 @@ public class MemberService {
     private final MemberRepository memberRepository;
     private final AuditService auditService;
     private final DeviceAuthorizationService deviceAuthorizationService;
+    private final MemberDeviceProvisioningService provisioning;
     private final SecureRandom random = new SecureRandom();
 
     public MemberService(MemberRepository memberRepository, AuditService auditService,
-                         DeviceAuthorizationService deviceAuthorizationService) {
+                         DeviceAuthorizationService deviceAuthorizationService,
+                         MemberDeviceProvisioningService provisioning) {
         this.memberRepository = memberRepository;
         this.auditService = auditService;
         this.deviceAuthorizationService = deviceAuthorizationService;
+        this.provisioning = provisioning;
     }
 
     @Transactional(readOnly = true)
@@ -66,6 +72,7 @@ public class MemberService {
         member.setNotes(request.notes());
         member.setCreationSource(MemberCreationSource.MANUAL);
         Member saved = memberRepository.save(member);
+        provisioning.provisionMember(saved, Set.of());
 
         auditService.record(AuditActions.MEMBER_CREATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), Map.of("memberCode", saved.getMemberCode()));
@@ -75,6 +82,7 @@ public class MemberService {
     @Transactional
     public Member update(String publicId, UpdateMember request, Long tenantId) {
         Member member = getByPublicId(publicId, tenantId);
+        String previousName = member.getFullName();
         member.setFirstName(request.firstName());
         member.setLastName(request.lastName());
         member.setEmail(request.email());
@@ -82,7 +90,14 @@ public class MemberService {
         member.setDateOfBirth(request.dateOfBirth());
         member.setGender(request.gender());
         member.setNotes(request.notes());
+        boolean nameChanged = !previousName.equals(member.getFullName());
+        if (nameChanged) {
+            member.setProfileChangedAt(Instant.now());
+        }
         Member saved = memberRepository.save(member);
+        if (nameChanged) {
+            provisioning.pushProfile(saved, Set.of());
+        }
         auditService.record(AuditActions.MEMBER_UPDATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), null);
         return saved;
@@ -92,6 +107,7 @@ public class MemberService {
     public void deactivate(String publicId, Long tenantId) {
         Member member = getByPublicId(publicId, tenantId);
         member.setStatus(MemberStatus.INACTIVE);
+        member.setAccessChangedAt(Instant.now());
         memberRepository.save(member);
         deviceAuthorizationService.syncMember(member);
         auditService.record(AuditActions.MEMBER_DELETED, AuditActions.RESULT_SUCCESS,
@@ -105,11 +121,19 @@ public class MemberService {
             return member;
         }
         member.setStatus(MemberStatus.ACTIVE);
+        member.setAccessChangedAt(Instant.now());
         Member saved = memberRepository.save(member);
         deviceAuthorizationService.syncMember(saved);
+        provisioning.provisionMember(saved, Set.of());
         auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), null);
         return saved;
+    }
+
+    /** A new, unused member code in the app's format (codes are never typed by staff). */
+    @Transactional(readOnly = true)
+    public String allocateMemberCode(Long tenantId) {
+        return generateUniqueCode(tenantId);
     }
 
     private String generateUniqueCode(Long tenantId) {

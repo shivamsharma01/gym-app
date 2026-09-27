@@ -6,17 +6,41 @@ using Microsoft.Extensions.Logging;
 namespace Gym.Gateway;
 
 /// <summary>
-/// Maps backend outbox commands onto <see cref="IDeviceAdapter"/>. Never marks face enrolment as success.
+/// Maps backend outbox commands onto <see cref="IDeviceAdapter"/>. After each successful write it
+/// records what the device now holds in <see cref="RosterStateStore"/>, so the change watcher never
+/// reports the gateway's own writes back to the server as device edits.
 /// </summary>
 public sealed class CommandDispatcher
 {
+    private static readonly HashSet<string> UserCommands = new(StringComparer.Ordinal)
+    {
+        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", "DISABLE_USER", "ENABLE_USER", "UPDATE_VALIDITY"
+    };
+
     private readonly IReadOnlyDictionary<string, IDeviceAdapter> _adapters;
     private readonly ILogger<CommandDispatcher> _log;
+    private readonly IFaceTransfer? _faces;
+    private readonly RosterStateStore _roster;
+    private readonly DeviceLocks _locks;
+    private readonly Func<string, string, Task<(bool Ok, string? Error)>>? _reportUser;
+    private readonly ILocalMemberSync? _memberSync;
 
-    public CommandDispatcher(IReadOnlyDictionary<string, IDeviceAdapter> adapters, ILogger<CommandDispatcher> log)
+    public CommandDispatcher(
+        IReadOnlyDictionary<string, IDeviceAdapter> adapters,
+        ILogger<CommandDispatcher> log,
+        IFaceTransfer? faces = null,
+        RosterStateStore? roster = null,
+        DeviceLocks? locks = null,
+        Func<string, string, Task<(bool Ok, string? Error)>>? reportUser = null,
+        ILocalMemberSync? memberSync = null)
     {
         _adapters = adapters;
         _log = log;
+        _faces = faces;
+        _roster = roster ?? new RosterStateStore(null);
+        _locks = locks ?? new DeviceLocks();
+        _reportUser = reportUser;
+        _memberSync = memberSync;
     }
 
     public async Task<DispatchOutcome> DispatchAsync(GatewayEnvelope command)
@@ -28,7 +52,59 @@ public sealed class CommandDispatcher
 
         try
         {
-            return await Task.Run(() => Dispatch(adapter, command)).ConfigureAwait(false);
+            if (command.Type == "REPORT_DEVICE_USER")
+            {
+                var reportId = Text(command.Payload, "deviceUserId");
+                if (string.IsNullOrWhiteSpace(reportId) || _reportUser == null)
+                {
+                    return DispatchOutcome.SyncFail("REPORT_DEVICE_USER requires deviceUserId and a change watcher");
+                }
+
+                var (ok, error) = await _reportUser(command.DeviceId, reportId).ConfigureAwait(false);
+                return ok ? DispatchOutcome.SyncOk() : DispatchOutcome.SyncFail(error ?? "report failed");
+            }
+
+            byte[]? face = null;
+            if (command.Type == "UPSERT_FACE")
+            {
+                var prepared = await DownloadFaceAsync(command.Payload).ConfigureAwait(false);
+                if (prepared.Error != null)
+                {
+                    return DispatchOutcome.SyncFail(prepared.Error);
+                }
+
+                face = prepared.Bytes;
+            }
+
+            if (_memberSync != null)
+            {
+                // Timestamped member commands go through local state (latest change wins, all devices updated).
+                var synced = await _memberSync.TryApplyAsync(command, face, CancellationToken.None).ConfigureAwait(false);
+                if (synced != null)
+                {
+                    return synced;
+                }
+            }
+
+            var gate = _locks.For(command.DeviceId);
+            await gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                return await Task.Run(() =>
+                {
+                    var outcome = Dispatch(adapter, command, face);
+                    if (outcome.Ok)
+                    {
+                        RecordEcho(adapter, command, face);
+                    }
+
+                    return outcome;
+                }).ConfigureAwait(false);
+            }
+            finally
+            {
+                gate.Release();
+            }
         }
         catch (Exception ex)
         {
@@ -37,7 +113,39 @@ public sealed class CommandDispatcher
         }
     }
 
-    private static DispatchOutcome Dispatch(IDeviceAdapter adapter, GatewayEnvelope command)
+    private async Task<(byte[]? Bytes, string? Error)> DownloadFaceAsync(JsonElement payload)
+    {
+        var memberId = Text(payload, "memberId");
+        var version = Int(payload, "faceVersion");
+        var expectedSha = Text(payload, "sha256");
+        if (string.IsNullOrWhiteSpace(Text(payload, "deviceUserId")) || string.IsNullOrWhiteSpace(memberId)
+            || version is null)
+        {
+            return (null, "UPSERT_FACE requires deviceUserId, memberId and faceVersion");
+        }
+
+        if (_faces == null)
+        {
+            return (null, "Face download is not configured on this gateway");
+        }
+
+        var download = await _faces.DownloadFaceAsync(memberId, version.Value, CancellationToken.None)
+            .ConfigureAwait(false);
+        if (!download.Ok || download.Bytes == null)
+        {
+            return (null, "Face download failed: " + (download.Error ?? "no data"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(expectedSha)
+            && !string.Equals(FaceHash.Sha256Hex(download.Bytes), expectedSha, StringComparison.OrdinalIgnoreCase))
+        {
+            return (null, "Face image sha256 mismatch (stale or corrupted download)");
+        }
+
+        return (download.Bytes, null);
+    }
+
+    private static DispatchOutcome Dispatch(IDeviceAdapter adapter, GatewayEnvelope command, byte[]? face)
     {
         var payload = command.Payload;
         var userId = Text(payload, "deviceUserId");
@@ -55,24 +163,29 @@ public sealed class CommandDispatcher
             case "UPDATE_USER":
             case "UPDATE_ACCESS_POLICY":
                 return RequireUser(userId, adapter.UpdateUser(mutation));
+            case "DISABLE_USER" when mutation.ValidFrom.HasValue || mutation.ValidTo.HasValue:
+                return RequireUser(userId, adapter.UpdateUser(mutation with { Enabled = false }));
             case "DISABLE_USER":
                 return RequireUser(userId, adapter.DisableUser(userId!));
+            case "ENABLE_USER" when mutation.ValidFrom.HasValue || mutation.ValidTo.HasValue:
+                return RequireUser(userId, adapter.UpdateUser(mutation with { Enabled = true }));
             case "ENABLE_USER":
                 return RequireUser(userId, adapter.EnableUser(userId!));
             case "REMOVE_USER":
                 return RequireUser(userId, adapter.DeleteUser(userId!));
             case "UPDATE_VALIDITY":
                 return RequireUser(userId, adapter.UpdateValidity(mutation));
-            case "ENROLL_FACE":
-                if (string.IsNullOrWhiteSpace(userId))
-                {
-                    return DispatchOutcome.SyncFail("deviceUserId required");
-                }
-
-                var enroll = adapter.StartFaceEnrollment(userId);
-                return DispatchOutcome.Enrollment(enroll.Status, enroll.Error, userId);
+            case "UPSERT_FACE":
+            {
+                var result = adapter.UpsertFace(userId!, face!);
+                return result.Ok
+                    ? DispatchOutcome.SyncOk(new { ok = true, faceVersion = Int(payload, "faceVersion") })
+                    : DispatchOutcome.SyncFail(result.Error ?? "face write failed");
+            }
             case "DELETE_FACE":
                 return RequireUser(userId, adapter.DeleteFace(userId!));
+            case "ENROLL_FACE":
+                return DispatchOutcome.SyncFail("ENROLL_FACE is retired; the server sends UPSERT_FACE with the stored photo");
             case "SYNC_DEVICE_TIME":
                 return From(adapter.SynchronizeTime(DateTimeOffset.UtcNow));
             case "OPEN_DOOR":
@@ -94,23 +207,85 @@ public sealed class CommandDispatcher
         }
     }
 
+    /// <summary>Remember what the device holds after our write (echo suppression).</summary>
+    private void RecordEcho(IDeviceAdapter adapter, GatewayEnvelope command, byte[]? face)
+    {
+        var deviceId = command.DeviceId!;
+        var userId = Text(command.Payload, "deviceUserId");
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return;
+        }
+
+        try
+        {
+            if (UserCommands.Contains(command.Type))
+            {
+                var snapshot = adapter.GetUser(userId);
+                if (snapshot != null)
+                {
+                    _roster.RecordProfile(deviceId, snapshot);
+                }
+            }
+            else if (command.Type == "REMOVE_USER")
+            {
+                _roster.Remove(deviceId, userId);
+            }
+            else if (command.Type == "UPSERT_FACE" && face != null)
+            {
+                // The device may re-encode the image; remember the bytes it returns, not ours.
+                var read = adapter.GetFace(userId);
+                var sha = read is { Ok: true, Photo: not null } ? FaceHash.Sha256Hex(read.Photo) : FaceHash.Sha256Hex(face);
+                _roster.RecordFace(deviceId, userId, sha);
+            }
+            else if (command.Type == "DELETE_FACE")
+            {
+                _roster.RecordFace(deviceId, userId, null);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not record post-write state for {Type} user={User}", command.Type, userId);
+        }
+    }
+
     private static DispatchOutcome RequireUser(string? userId, DeviceCommandResult result) =>
         string.IsNullOrWhiteSpace(userId) ? DispatchOutcome.SyncFail("deviceUserId required") : From(result);
 
     private static DispatchOutcome From(DeviceCommandResult result) =>
         result.Ok ? DispatchOutcome.SyncOk() : DispatchOutcome.SyncFail(result.Error ?? "command failed");
 
-    private static string? Text(JsonElement payload, string name)
+    internal static string? Text(JsonElement payload, string name)
     {
         if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty(name, out var v))
         {
             return null;
         }
 
-        return v.ValueKind == JsonValueKind.String ? v.GetString() : v.ToString();
+        return v.ValueKind switch
+        {
+            JsonValueKind.String => v.GetString(),
+            JsonValueKind.Null => null,
+            _ => v.ToString()
+        };
     }
 
-    private static bool? Bool(JsonElement payload, string name)
+    internal static int? Int(JsonElement payload, string name)
+    {
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty(name, out var v))
+        {
+            return null;
+        }
+
+        if (v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n))
+        {
+            return n;
+        }
+
+        return v.ValueKind == JsonValueKind.String && int.TryParse(v.GetString(), out var parsed) ? parsed : null;
+    }
+
+    internal static bool? Bool(JsonElement payload, string name)
     {
         if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty(name, out var v))
         {
@@ -125,7 +300,7 @@ public sealed class CommandDispatcher
         };
     }
 
-    private static DateTimeOffset? Instant(JsonElement payload, string name)
+    internal static DateTimeOffset? Instant(JsonElement payload, string name)
     {
         var text = Text(payload, name);
         if (string.IsNullOrWhiteSpace(text))
@@ -150,15 +325,15 @@ public sealed class CommandDispatcher
 public sealed record DispatchOutcome(
     string ResultType,
     object Payload,
-    IReadOnlyList<DeviceAttendanceRecord>? Events = null)
+    IReadOnlyList<DeviceAttendanceRecord>? Events = null,
+    bool Ok = false)
 {
-    public static DispatchOutcome SyncOk() => new(ProtocolTypes.SyncResult, new { ok = true });
+    public static DispatchOutcome SyncOk() => new(ProtocolTypes.SyncResult, new { ok = true }, null, true);
+
+    public static DispatchOutcome SyncOk(object payload) => new(ProtocolTypes.SyncResult, payload, null, true);
 
     public static DispatchOutcome SyncFail(string error) =>
         new(ProtocolTypes.SyncResult, new { ok = false, error });
-
-    public static DispatchOutcome Enrollment(string status, string? error, string deviceUserId) =>
-        new(ProtocolTypes.EnrollmentResult, new { status, error, deviceUserId, ok = false });
 
     public static DispatchOutcome Reconciliation(DeviceReconciliationResult result) =>
         new(
@@ -186,7 +361,8 @@ public sealed record DispatchOutcome(
                     denyReason = MapDenyReason(e.ErrorCode, e.Granted)
                 })
             },
-            result.Events);
+            result.Events,
+            true);
 
     private static string? MapDenyReason(int? errorCode, bool granted)
     {

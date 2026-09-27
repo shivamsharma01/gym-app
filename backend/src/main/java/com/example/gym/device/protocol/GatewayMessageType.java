@@ -12,6 +12,8 @@ public enum GatewayMessageType {
     SYNC_RESULT,
     RECONCILIATION_RESULT,
     ENROLLMENT_RESULT,
+    /** A user (or their face) was created/changed directly on a device. */
+    DEVICE_USER_CHANGED,
 
     // Backend -> Gateway replies
     REGISTERED,

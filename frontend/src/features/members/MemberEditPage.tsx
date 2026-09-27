@@ -1,11 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useNavigate, useParams } from 'react-router'
 import { Button, FieldError, Input, Label, PageHeader, Select, Skeleton, Textarea } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { DateOfBirthField } from '@/features/members/DateOfBirthField'
+import { MemberPhotoField, photoUploadError, useMemberPhotoUrl } from '@/features/members/MemberPhotoField'
 import { memberFormSchema, type MemberFormValues } from '@/features/members/memberFormSchema'
 import { ApiError, api } from '@/lib/api'
 import type { Member } from '@/lib/types'
@@ -13,6 +14,7 @@ import type { Member } from '@/lib/types'
 export function MemberEditPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const member = useQuery({ queryKey: ['member', id], queryFn: () => api<Member>(`/api/v1/members/${id}`) })
   const form = useForm<MemberFormValues>({ resolver: zodResolver(memberFormSchema) })
 
@@ -29,9 +31,11 @@ export function MemberEditPage() {
     })
   }, [member.data, form])
 
+  const [photo, setPhoto] = useState<File | null>(null)
+  const currentPhoto = useMemberPhotoUrl(id)
   const mutation = useMutation({
-    mutationFn: (body: MemberFormValues) =>
-      api<Member>(`/api/v1/members/${id}`, {
+    mutationFn: async (body: MemberFormValues) => {
+      const saved = await api<Member>(`/api/v1/members/${id}`, {
         method: 'PUT',
         body: JSON.stringify({
           ...body,
@@ -40,8 +44,14 @@ export function MemberEditPage() {
           phone: body.phone || null,
           dateOfBirth: body.dateOfBirth || null,
         }),
-      }),
-    onSuccess: (m) => navigate(`/app/members/${m.id}`),
+      })
+      return { member: saved, photoError: photo ? await photoUploadError(saved.id, photo) : null }
+    },
+    onSuccess: ({ member: saved, photoError }) => {
+      void qc.invalidateQueries({ queryKey: ['member-photo', saved.id] })
+      void qc.invalidateQueries({ queryKey: ['member-device-sync', saved.id] })
+      navigate(`/app/members/${saved.id}`, { state: { photoError } })
+    },
   })
 
   if (member.isLoading) return <Skeleton className="h-40" />
@@ -96,9 +106,10 @@ export function MemberEditPage() {
           <Label>Notes</Label>
           <Textarea rows={3} {...form.register('notes')} />
         </div>
+        <MemberPhotoField value={photo} onChange={setPhoto} currentUrl={currentPhoto.url} />
         {mutation.error instanceof ApiError ? <p className="text-sm text-danger">{mutation.error.message}</p> : null}
         <Button type="submit" disabled={mutation.isPending}>
-          Save
+          {mutation.isPending ? 'Saving…' : 'Save member'}
         </Button>
       </form>
     </div>

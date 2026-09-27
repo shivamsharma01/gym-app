@@ -10,7 +10,7 @@ namespace Gym.Gateway;
 /// Outbound backend link: WSS primary, REST poll fallback, reconnect with exponential backoff.
 /// Persists envelopes until backend ACK (or REST 2xx with ACK body) so crashes do not drop events.
 /// </summary>
-public sealed class BackendLink : IAsyncDisposable
+public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
 {
     private readonly GatewayOptions _options;
     private readonly ILogger<BackendLink> _log;
@@ -155,6 +155,59 @@ public sealed class BackendLink : IAsyncDisposable
         var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         var commands = JsonSerializer.Deserialize<List<GatewayEnvelope>>(json, JsonOptions.Inbound);
         return commands ?? [];
+    }
+
+    public async Task<FaceDownload> DownloadFaceAsync(string memberId, int version, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                new Uri(HttpBase, $"internal/gateway/faces/{Uri.EscapeDataString(memberId)}/{version}"));
+            request.Headers.Accept.Clear();
+            request.Headers.Accept.ParseAdd("image/jpeg");
+            using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new FaceDownload(false, null, $"HTTP {(int)response.StatusCode}");
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            return new FaceDownload(true, bytes, null);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            return new FaceDownload(false, null, ex.Message);
+        }
+    }
+
+    public async Task<FaceUpload> UploadFaceAsync(byte[] jpegBytes, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var content = new ByteArrayContent(jpegBytes);
+            content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+            using var response = await _http.PostAsync(new Uri(HttpBase, "internal/gateway/faces"), content, cancellationToken)
+                .ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var status = (int)response.StatusCode;
+                // 400/413/415: the image itself is unacceptable; retrying cannot help.
+                var rejected = status is 400 or 413 or 415 or 422;
+                _log.LogWarning("Face upload failed HTTP {Status}{Kind}: {Body}", status,
+                    rejected ? " (rejected, not retried)" : " (will retry)", body);
+                return rejected ? new FaceUpload(null, Rejected: true) : FaceUpload.Transient;
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            return new FaceUpload(doc.RootElement.TryGetProperty("uploadId", out var id) ? id.GetString() : null);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            _log.LogInformation("Face upload deferred, server unreachable: {Message}", ex.Message);
+            return FaceUpload.Transient;
+        }
     }
 
     public async Task RunWebSocketAsync(Func<GatewayEnvelope, Task> onMessage, CancellationToken cancellationToken)

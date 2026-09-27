@@ -137,3 +137,16 @@ logging:
   level:
     org.springframework.security: INFO
     gym.access: INFO
+    
+whatsapp:
+  base-url: https://graph.facebook.com
+  api-version: ${WHATSAPP_API_VERSION:v25.0}
+
+notification:
+  scheduler:
+    enabled: false
+    expiry-cron: "0 0 9 * * *"
+    retry-delay-ms: 60000
+    max-retry-attempts: 3
+    batch-size: 50
+

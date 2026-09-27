@@ -1,0 +1,16 @@
+package com.example.gym.notification.whatsapp;
+
+public enum WhatsappVariable {
+
+	MEMBER_NAME, MEMBER_CODE,
+
+	AGE, EMAIL, PHONE,
+
+	GYM_NAME,
+
+	MEMBERSHIP_PLAN, START_DATE, EXPIRY_DATE, DAYS_REMAINING,
+
+	AMOUNT, CURRENCY, AMOUNT_PAID,
+
+	MEMBERSHIP_STATUS
+}

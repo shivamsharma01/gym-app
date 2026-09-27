@@ -40,3 +40,8 @@ backend/target/
 .vscode/
 .DS_Store
 Thumbs.db
+/.metadata/
+.classpath
+.factorypath
+.project
+.settings

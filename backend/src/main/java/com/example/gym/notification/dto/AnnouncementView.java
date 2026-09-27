@@ -1,7 +1,8 @@
 package com.example.gym.notification.dto;
 
-import com.example.gym.notification.Announcement;
 import java.time.Instant;
+
+import com.example.gym.notification.annoucement.entity.Announcement;
 
 public record AnnouncementView(
         String id,

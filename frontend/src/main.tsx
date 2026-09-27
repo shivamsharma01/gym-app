@@ -20,7 +20,8 @@ import { MemberEditPage } from '@/features/members/MemberEditPage'
 import { MemberNewPage } from '@/features/members/MemberNewPage'
 import { MembersPage } from '@/features/members/MembersPage'
 import { MembershipsPage } from '@/features/memberships/MembershipsPage'
-import { AnnouncementsPage, NotificationTemplatesPage, NotificationsPage } from '@/features/notifications/NotificationsPage'
+import { NotificationsPage } from '@/features/notifications/NotificationsPage'
+import { NotificationTemplatesPage } from '@/features/notifications/NotificationTemplatesPage'
 import { NotFoundPage } from '@/features/NotFoundPage'
 import { PaymentsPage } from '@/features/payments/PaymentsPage'
 import { PlansPage } from '@/features/plans/PlansPage'
@@ -44,6 +45,10 @@ import { MembershipPlansPage } from '@/public/MembershipPlansPage'
 import { PublicLayout } from '@/public/PublicLayout'
 import { RootLandingPage } from '@/public/RootLandingPage'
 import './index.css'
+import { WhatsAppNotificationSettingsPage } from '@/features/settings/whatsappSettings/WhatsAppNotificationSettingsPage'
+import { NotificationHistoryPage } from './features/notifications/NotificationHistoryPage'
+import { NotificationReportPage } from '@/features/reports/NotificationReportPage'
+
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -95,12 +100,19 @@ const gymChildren = [
   { path: 'reports/attendance', element: <Navigate to="/app/attendance" replace /> },
   { path: 'reports/payments', element: <Navigate to="/app/payments" replace /> },
   { path: 'reports/devices', element: <DeviceReportPage /> },
+  { path: 'reports/notifications', element: <NotificationReportPage /> },
   { path: 'notifications', element: <NotificationsPage /> },
   { path: 'notifications/templates', element: <NotificationTemplatesPage /> },
-  { path: 'announcements', element: <AnnouncementsPage /> },
+  { path: 'notifications/history', element: <NotificationHistoryPage /> },
+  // { path: 'announcements', element: <AnnouncementsPage /> },
   { path: 'users', element: <UsersPage /> },
   { path: 'roles', element: <RolesPage /> },
   { path: 'settings', element: <SettingsPage /> },
+
+  {
+    path: 'settings/whatsapp',
+    element: <WhatsAppNotificationSettingsPage />,
+  },
 ]
 
 const router = createBrowserRouter([

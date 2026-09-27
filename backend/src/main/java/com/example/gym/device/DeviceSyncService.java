@@ -143,20 +143,22 @@ public class DeviceSyncService {
                         PageRequest.of(0, properties.getOutbox().getBatchSize()));
         int dispatched = 0;
         for (DeviceSyncCommand command : due) {
-            boolean sent;
+            GatewayCommandTransport.Outcome outcome;
             try {
-                sent = transport.dispatch(command);
+                outcome = transport.dispatch(command);
             } catch (RuntimeException ex) {
                 log.warn("Transport error dispatching {}: {}", command.getCorrelationId(), ex.getMessage());
-                sent = false;
+                outcome = GatewayCommandTransport.Outcome.FAILED;
             }
-            if (sent) {
-                command.setState(SyncCommandState.DISPATCHED);
-                command.setDispatchedAt(Instant.now());
-                command.setAttemptCount(command.getAttemptCount() + 1);
-                dispatched++;
-            } else {
-                failAttempt(command, "Gateway not reachable");
+            switch (outcome) {
+                case SENT -> {
+                    command.setState(SyncCommandState.DISPATCHED);
+                    command.setDispatchedAt(Instant.now());
+                    command.setAttemptCount(command.getAttemptCount() + 1);
+                    dispatched++;
+                }
+                case NOT_CONNECTED -> waitForGateway(command);
+                case FAILED -> failAttempt(command, "Delivery to the gateway failed");
             }
             commandRepository.save(command);
         }
@@ -408,6 +410,26 @@ public class DeviceSyncService {
             payload.put("state", command.getState().name());
             events.publishEvent(new StaffLiveBroadcast(command.getTenantId(), "MEMBER_SYNC", payload));
         });
+    }
+
+    /**
+     * The gateway is offline: the command keeps its attempts and waits. It is checked again after
+     * {@code offlineRecheck} and released at once when the gateway reconnects ({@link #wakeGateway}).
+     */
+    private void waitForGateway(DeviceSyncCommand command) {
+        command.setState(SyncCommandState.RETRYING);
+        command.setLastError("Waiting for the gateway to connect");
+        command.setNextAttemptAt(Instant.now().plus(properties.getOutbox().getOfflineRecheck()));
+    }
+
+    /** Makes every waiting command of the gateway's devices due now (called when it connects). */
+    @Transactional
+    public int wakeGateway(List<Long> deviceIds) {
+        if (deviceIds.isEmpty()) {
+            return 0;
+        }
+        return commandRepository.makeDueNow(deviceIds,
+                List.of(SyncCommandState.PENDING, SyncCommandState.RETRYING), Instant.now());
     }
 
     private void failAttempt(DeviceSyncCommand command, String error) {

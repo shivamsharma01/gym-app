@@ -54,4 +54,11 @@ public interface DeviceSyncCommandRepository extends JpaRepository<DeviceSyncCom
             Collection<SyncCommandState> states);
 
     List<DeviceSyncCommand> findByMemberIdAndStateIn(Long memberId, Collection<SyncCommandState> states);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("update DeviceSyncCommand c set c.nextAttemptAt = :now "
+            + "where c.deviceId in :deviceIds and c.state in :states and c.nextAttemptAt > :now")
+    int makeDueNow(@org.springframework.data.repository.query.Param("deviceIds") Collection<Long> deviceIds,
+                   @org.springframework.data.repository.query.Param("states") Collection<SyncCommandState> states,
+                   @org.springframework.data.repository.query.Param("now") Instant now);
 }

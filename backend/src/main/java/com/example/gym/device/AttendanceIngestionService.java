@@ -34,17 +34,20 @@ public class AttendanceIngestionService {
     private final MemberDeviceMappingRepository mappingRepository;
     private final SecurityEventRepository securityEventRepository;
     private final ApplicationEventPublisher events;
+    private final AttendanceEventWriter writer;
 
     public AttendanceIngestionService(AttendanceEventRepository attendanceRepository,
                                       AttendanceSyncCursorRepository cursorRepository,
                                       MemberDeviceMappingRepository mappingRepository,
                                       SecurityEventRepository securityEventRepository,
-                                      ApplicationEventPublisher events) {
+                                      ApplicationEventPublisher events,
+                                      AttendanceEventWriter writer) {
         this.attendanceRepository = attendanceRepository;
         this.cursorRepository = cursorRepository;
         this.mappingRepository = mappingRepository;
         this.securityEventRepository = securityEventRepository;
         this.events = events;
+        this.writer = writer;
     }
 
     /** @return the persisted event, or empty when it was a duplicate. */
@@ -92,8 +95,9 @@ public class AttendanceIngestionService {
                 granted ? null : denyReason);
 
         try {
-            attendanceRepository.save(event);
+            event = writer.insert(event);
         } catch (DataIntegrityViolationException dup) {
+            // Stored by a concurrent copy of the same event.
             return Optional.empty();
         }
 

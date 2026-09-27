@@ -30,12 +30,12 @@ public class SimulatedGatewayCommandTransport implements GatewayCommandTransport
     }
 
     @Override
-    public boolean dispatch(DeviceSyncCommand command) {
+    public Outcome dispatch(DeviceSyncCommand command) {
         boolean enroll = command.getType() == SyncCommandType.ENROLL_FACE;
         log.info("Simulator applied {} correlationId={}", command.getType(), command.getCorrelationId());
         events.publishEvent(new SimulatedSyncCompleted(command.getCorrelationId(), !enroll,
                 enroll ? "UNVERIFIED: remote face enrollment is not simulated as success" : null));
-        return true;
+        return Outcome.SENT;
     }
 
     public record SimulatedSyncCompleted(String correlationId, boolean ok, String error) {

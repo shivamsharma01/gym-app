@@ -99,6 +99,16 @@ public class GatewayProperties {
         private Duration jitter = Duration.ofSeconds(1);
         /** How long a DISPATCHED command may wait for SYNC_RESULT before reclaim. */
         private Duration dispatchTimeout = Duration.ofMinutes(2);
+        /** How often a command waiting for an offline gateway is checked again (no attempt is used). */
+        private Duration offlineRecheck = Duration.ofMinutes(1);
+
+        public Duration getOfflineRecheck() {
+            return offlineRecheck;
+        }
+
+        public void setOfflineRecheck(Duration offlineRecheck) {
+            this.offlineRecheck = offlineRecheck;
+        }
 
         public boolean isDispatcherEnabled() {
             return dispatcherEnabled;

@@ -106,7 +106,7 @@ public class MemberFaceService {
             return;
         }
         faceRepository.delete(face);
-        storage.deleteQuietly(face.getObjectKey());
+        storage.deleteAfterCommit(face.getObjectKey());
         member.setFaceChangedAt(Instant.now());
         memberRepository.save(member);
         provisioning.deleteFace(member);
@@ -122,7 +122,7 @@ public class MemberFaceService {
             return;
         }
         faceRepository.delete(face);
-        storage.deleteQuietly(face.getObjectKey());
+        storage.deleteAfterCommit(face.getObjectKey());
         member.setFaceChangedAt(changedAt);
         memberRepository.save(member);
         provisioning.deleteFace(member, Set.of(sourceDeviceId));
@@ -150,7 +150,7 @@ public class MemberFaceService {
         byte[] jpeg = FaceImageProcessor.normaliseFromDevice(raw);
         String sha = FaceStorageService.sha256(jpeg);
         String key = FaceStorageService.uploadKey(gateway.getTenantId());
-        storage.write(key, jpeg);
+        storage.writeInTransaction(key, jpeg);
         return uploadRepository.save(new GatewayFaceUpload(gateway.getTenantId(), gateway.getId(), key, sha,
                 jpeg.length));
     }
@@ -167,7 +167,7 @@ public class MemberFaceService {
     public void purgeOldUploads() {
         for (GatewayFaceUpload upload : uploadRepository.findByCreatedAtBefore(
                 Instant.now().minus(1, ChronoUnit.DAYS))) {
-            storage.deleteQuietly(upload.getObjectKey());
+            storage.deleteAfterCommit(upload.getObjectKey());
             uploadRepository.delete(upload);
         }
     }
@@ -179,11 +179,11 @@ public class MemberFaceService {
         String previousKey = face.getObjectKey();
         int nextVersion = face.getFaceVersion() + 1;
         String key = FaceStorageService.memberKey(member.getTenantId(), member.getId(), nextVersion);
-        storage.write(key, jpeg);
+        storage.writeInTransaction(key, jpeg);
         face.replace(key, sha, jpeg.length, source, sourceDeviceId, changedAt);
         MemberFace saved = faceRepository.save(face);
         if (previousKey != null && !previousKey.equals(key)) {
-            storage.deleteQuietly(previousKey);
+            storage.deleteAfterCommit(previousKey);
         }
         return saved;
     }

@@ -48,18 +48,14 @@ public class GatewayWebSocketHandler extends TextWebSocketHandler {
     }
 
     @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) {
         String raw = message.getPayload();
         if (!registerIfHandshake(session, raw)) {
-            if (session.isOpen()) {
-                session.sendMessage(new TextMessage(messageService.impersonationError()));
-            }
+            registry.reply(session, messageService.impersonationError());
             return;
         }
         Optional<String> reply = messageService.process(raw);
-        if (reply.isPresent() && session.isOpen()) {
-            session.sendMessage(new TextMessage(reply.get()));
-        }
+        reply.ifPresent(text -> registry.reply(session, text));
     }
 
     @Override

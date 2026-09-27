@@ -5,14 +5,13 @@ import com.example.gym.device.domain.GatewayMessageDedupe;
 import com.example.gym.device.repo.GatewayMessageDedupeRepository;
 import com.example.gym.device.repo.GatewayRepository;
 import java.time.Instant;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
- * Persists gateway {@code messageId} values so reconnect/replay cannot double-process the same
- * envelope. Returns false when the id was already seen and has not expired.
+ * Persists the {@code messageId} of successfully processed gateway messages so a reconnect replay
+ * of the same envelope is acknowledged without being processed twice.
  */
 @Service
 public class GatewayMessageDedupeService {
@@ -30,32 +29,35 @@ public class GatewayMessageDedupeService {
     }
 
     /**
-     * @return true if this messageId is new (or blank / missing — caller proceeds without dedupe)
+     * True when this messageId was already processed successfully (and has not expired). Blank ids
+     * are never deduplicated.
+     */
+    @Transactional(readOnly = true)
+    public boolean alreadyProcessed(String messageId) {
+        if (!StringUtils.hasText(messageId)) {
+            return false;
+        }
+        return dedupeRepository.findById(messageId)
+                .map(existing -> existing.getExpiresAt().isAfter(Instant.now()))
+                .orElse(false);
+    }
+
+    /**
+     * Records a message as processed. Called only after processing succeeded, so a message whose
+     * processing failed is handled again when the gateway resends it.
      */
     @Transactional
-    public boolean claim(String messageId, String gatewayPublicId) {
+    public void markProcessed(String messageId, String gatewayPublicId) {
         if (!StringUtils.hasText(messageId)) {
-            return true;
+            return;
         }
         Instant now = Instant.now();
-        GatewayMessageDedupe existing = dedupeRepository.findById(messageId).orElse(null);
-        if (existing != null) {
-            if (existing.getExpiresAt().isAfter(now)) {
-                return false;
-            }
-            dedupeRepository.delete(existing);
-        }
         Long gatewayId = null;
         if (StringUtils.hasText(gatewayPublicId)) {
             gatewayId = gatewayRepository.findByPublicId(gatewayPublicId).map(Gateway::getId).orElse(null);
         }
-        try {
-            dedupeRepository.save(new GatewayMessageDedupe(
-                    messageId, gatewayId, now, now.plus(properties.getMessageDedupeTtl())));
-            return true;
-        } catch (DataIntegrityViolationException race) {
-            return false;
-        }
+        dedupeRepository.save(new GatewayMessageDedupe(
+                messageId, gatewayId, now, now.plus(properties.getMessageDedupeTtl())));
     }
 
     @Transactional

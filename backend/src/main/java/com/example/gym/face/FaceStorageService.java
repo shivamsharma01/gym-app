@@ -13,6 +13,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Stores face JPEGs on the local faces volume ({@code app.faces.dir}, a Docker volume on the VPS).
@@ -58,6 +60,44 @@ public class FaceStorageService {
         } catch (IOException ex) {
             throw new UncheckedIOException("Could not store face image", ex);
         }
+    }
+
+    /**
+     * Writes now (the database row must be able to point at it) and removes the file again if the
+     * surrounding transaction rolls back, so no orphan is left behind.
+     */
+    public void writeInTransaction(String key, byte[] bytes) {
+        write(key, bytes);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status == STATUS_ROLLED_BACK) {
+                        deleteQuietly(key);
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Deletes once the surrounding transaction has committed; if it rolls back the database still
+     * points at the file, so it must stay. Without a transaction the file is deleted at once.
+     */
+    public void deleteAfterCommit(String key) {
+        if (key == null) {
+            return;
+        }
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            deleteQuietly(key);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                deleteQuietly(key);
+            }
+        });
     }
 
     public byte[] read(String key) {

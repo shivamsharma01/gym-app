@@ -43,14 +43,17 @@ public class WebSocketGatewayCommandTransport implements GatewayCommandTransport
     }
 
     @Override
-    public boolean dispatch(DeviceSyncCommand command) {
+    public Outcome dispatch(DeviceSyncCommand command) {
         Device device = deviceRepository.findById(command.getDeviceId()).orElse(null);
         if (device == null || device.getGatewayId() == null) {
-            return false;
+            return Outcome.FAILED;
         }
         Gateway gateway = gatewayRepository.findById(device.getGatewayId()).orElse(null);
         if (gateway == null) {
-            return false;
+            return Outcome.FAILED;
+        }
+        if (!registry.isOnline(gateway.getPublicId())) {
+            return Outcome.NOT_CONNECTED;
         }
 
         JsonNode payload = command.getPayload() == null
@@ -68,9 +71,9 @@ public class WebSocketGatewayCommandTransport implements GatewayCommandTransport
 
         boolean sent = registry.send(gateway.getPublicId(), jsonMapper.writeValueAsString(envelope));
         if (!sent) {
-            log.debug("Gateway {} not connected; command {} will be retried",
-                    gateway.getPublicId(), command.getCorrelationId());
+            log.debug("Sending command {} to gateway {} failed; it will be retried",
+                    command.getCorrelationId(), gateway.getPublicId());
         }
-        return sent;
+        return sent ? Outcome.SENT : Outcome.FAILED;
     }
 }

@@ -1,9 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router'
 import { Button, FieldError, Input, Label, PageHeader, Select, Textarea } from '@/components/ui'
 import { DateOfBirthField } from '@/features/members/DateOfBirthField'
+import { MemberPhotoField, photoUploadError } from '@/features/members/MemberPhotoField'
 import { memberFormSchema, type MemberFormValues } from '@/features/members/memberFormSchema'
 import { ApiError, api } from '@/lib/api'
 import type { Member } from '@/lib/types'
@@ -22,9 +24,10 @@ export function MemberNewPage() {
       notes: '',
     },
   })
+  const [photo, setPhoto] = useState<File | null>(null)
   const mutation = useMutation({
-    mutationFn: (body: MemberFormValues) =>
-      api<Member>('/api/v1/members', {
+    mutationFn: async (body: MemberFormValues) => {
+      const member = await api<Member>('/api/v1/members', {
         method: 'POST',
         body: JSON.stringify({
           ...body,
@@ -34,8 +37,10 @@ export function MemberNewPage() {
           dateOfBirth: body.dateOfBirth || null,
           memberCode: null,
         }),
-      }),
-    onSuccess: (m) => navigate(`/app/members/${m.id}`),
+      })
+      return { member, photoError: photo ? await photoUploadError(member.id, photo) : null }
+    },
+    onSuccess: ({ member, photoError }) => navigate(`/app/members/${member.id}`, { state: { photoError } }),
   })
 
   return (
@@ -87,9 +92,10 @@ export function MemberNewPage() {
           <Label>Notes</Label>
           <Textarea rows={3} {...form.register('notes')} />
         </div>
+        <MemberPhotoField value={photo} onChange={setPhoto} />
         {mutation.error instanceof ApiError ? <p className="text-sm text-danger">{mutation.error.message}</p> : null}
         <Button type="submit" disabled={mutation.isPending}>
-          Create
+          {mutation.isPending ? 'Saving…' : 'Save member'}
         </Button>
       </form>
     </div>

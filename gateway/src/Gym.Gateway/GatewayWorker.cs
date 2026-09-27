@@ -14,6 +14,9 @@ public sealed class GatewayWorker : BackgroundService
     private readonly Dictionary<string, IDeviceAdapter> _adapters = new(StringComparer.Ordinal);
     private readonly Channel<OutboundMessage> _outbound = Channel.CreateUnbounded<OutboundMessage>(
         new UnboundedChannelOptions { SingleReader = true });
+    private readonly DeviceLocks _locks = new();
+    private readonly RosterStateStore _roster = new(RosterStateStore.DefaultDirectory());
+    private DeviceChangeWatcher? _watcher;
 
     public GatewayWorker(
         GatewayOptions options,
@@ -35,7 +38,8 @@ public sealed class GatewayWorker : BackgroundService
             var status = adapter.Connect(new DeviceConnectionConfig(
                 device.DeviceId, device.Ip, device.Port, device.Username, device.Password,
                 _options.NativeDirectory));
-            adapter.RegisterEventListener(new ForwardingListener(device.DeviceId, _outbound.Writer));
+            adapter.RegisterEventListener(new ForwardingListener(
+                device.DeviceId, _outbound.Writer, (id, user) => _watcher?.Trigger(id, user)));
             _adapters[device.DeviceId] = adapter;
             _log.LogInformation(
                 "Device {DeviceId} adapter={Adapter} state={State} error={Error}",
@@ -58,12 +62,26 @@ public sealed class GatewayWorker : BackgroundService
             }
         }
 
-        var dispatcher = new CommandDispatcher(_adapters, _logFactory.CreateLogger<CommandDispatcher>());
+        _watcher = new DeviceChangeWatcher(
+            _adapters,
+            _roster,
+            _locks,
+            _link,
+            PublishDeviceChangeAsync,
+            _logFactory.CreateLogger<DeviceChangeWatcher>(),
+            TimeSpan.FromMinutes(Math.Max(1, _options.FaceSweepMinutes)),
+            store: new LocalMemberStore(LocalMemberStore.DefaultDirectory()));
+        var dispatcher = new CommandDispatcher(
+            _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _link, _roster, _locks,
+            (deviceId, userId) => _watcher!.ReportUserAsync(deviceId, userId, stoppingToken),
+            _watcher);
 
         var sendLoop = SendLoopAsync(_link, stoppingToken);
         var wsLoop = _link.RunWebSocketAsync(cmd => HandleCommandAsync(_link, dispatcher, cmd), stoppingToken);
         var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
         var poll = PollLoopAsync(_link, dispatcher, stoppingToken);
+        var watch = _watcher.RunAsync(TimeSpan.FromSeconds(Math.Max(15, _options.RosterPollSeconds)), stoppingToken);
+        var clock = TimeSyncLoopAsync(stoppingToken);
 
         await _outbound.Writer.WriteAsync(new OutboundMessage(
             ProtocolTypes.RegisterGateway,
@@ -71,7 +89,48 @@ public sealed class GatewayWorker : BackgroundService
             new { agentVersion = "gym-gateway-0.5" },
             null), stoppingToken).ConfigureAwait(false);
 
-        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll).ConfigureAwait(false);
+        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, watch, clock).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Keeps device clocks aligned (on start, then daily) so "latest change wins" compares
+    /// device and server timestamps fairly.
+    /// </summary>
+    private async Task TimeSyncLoopAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            foreach (var (deviceId, adapter) in _adapters)
+            {
+                var gate = _locks.For(deviceId);
+                await gate.WaitAsync(stoppingToken).ConfigureAwait(false);
+                try
+                {
+                    var result = adapter.SynchronizeTime(DateTimeOffset.UtcNow);
+                    if (!result.Ok)
+                    {
+                        _log.LogWarning("Time sync failed for {DeviceId}: {Error}", deviceId, result.Error);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Time sync failed for {DeviceId}", deviceId);
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromHours(24), stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
@@ -83,6 +142,24 @@ public sealed class GatewayWorker : BackgroundService
 
         _outbound.Writer.TryComplete();
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Device changes go straight to the durable outbox (persisted before this returns), so the
+    /// watcher can drop its own queued copy; delivery failures are retried by the outbox.
+    /// </summary>
+    private async Task PublishDeviceChangeAsync(string deviceId, object payload)
+    {
+        var envelope = GatewayEnvelope.Create(_options.Id, ProtocolTypes.DeviceUserChanged, payload, deviceId);
+        try
+        {
+            await _link.SendAsync(envelope, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                       or System.Net.WebSockets.WebSocketException)
+        {
+            _log.LogInformation("Device change for {DeviceId} queued; server unreachable ({Message})", deviceId, ex.Message);
+        }
     }
 
     private async Task HandleCommandAsync(BackendLink link, CommandDispatcher dispatcher, GatewayEnvelope command)
@@ -99,18 +176,7 @@ public sealed class GatewayWorker : BackgroundService
             GatewayEnvelope.Create(_options.Id, outcome.ResultType, outcome.Payload, command.DeviceId, command.CorrelationId),
             CancellationToken.None).ConfigureAwait(false);
 
-        if (outcome.ResultType == ProtocolTypes.EnrollmentResult)
-        {
-            await link.SendAsync(
-                GatewayEnvelope.Create(
-                    _options.Id,
-                    ProtocolTypes.SyncResult,
-                    new { ok = false, error = "UNVERIFIED: remote face enrollment is not claimed as success" },
-                    command.DeviceId,
-                    command.CorrelationId),
-                CancellationToken.None).ConfigureAwait(false);
-        }
-        else if (outcome.ResultType == ProtocolTypes.ReconciliationResult)
+        if (outcome.ResultType == ProtocolTypes.ReconciliationResult)
         {
             // Complete the outbox command — RECONCILIATION_RESULT alone left commands DISPATCHED forever.
             await link.SendAsync(
@@ -219,15 +285,23 @@ public sealed class GatewayWorker : BackgroundService
     {
         private readonly string _deviceId;
         private readonly ChannelWriter<OutboundMessage> _writer;
+        private readonly Action<string, string?> _userChanged;
 
-        public ForwardingListener(string deviceId, ChannelWriter<OutboundMessage> writer)
+        public ForwardingListener(string deviceId, ChannelWriter<OutboundMessage> writer, Action<string, string?> userChanged)
         {
             _deviceId = deviceId;
             _writer = writer;
+            _userChanged = userChanged;
         }
 
         public void OnNormalizedEvent(NormalizedDeviceEvent evt)
         {
+            if (evt.Kind == "USER_CHANGED")
+            {
+                _userChanged(_deviceId, evt.DeviceUserId);
+                return;
+            }
+
             if (evt.Kind == "ALARM")
             {
                 _writer.TryWrite(new OutboundMessage(

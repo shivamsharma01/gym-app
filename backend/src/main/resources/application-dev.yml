@@ -4,6 +4,8 @@
 # these origins cover intentional cross-origin calls (Vite → :8080, SPA → :8080).
 
 app:
+  faces:
+    dir: ${APP_FACES_DIR:./data/faces}
   cors:
     allowed-origins:
       - http://localhost:5173

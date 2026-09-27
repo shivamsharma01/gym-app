@@ -48,6 +48,7 @@ server {
     }
 
     location /api/ {
+        client_max_body_size 12m;  # member face photos (backend caps at 10 MB)
         proxy_pass http://gym_backend/api/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -86,6 +87,7 @@ server {
 
     # Windows gateway enroll / devices / rotate / messages / commands
     location /internal/ {
+        client_max_body_size 12m;  # member face photos (backend caps at 10 MB)
         proxy_pass http://gym_backend/internal/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

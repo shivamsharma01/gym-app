@@ -9,21 +9,27 @@ import com.example.gym.device.domain.SyncCommandState;
 import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
+import com.example.gym.live.StaffLiveBroadcast;
+import com.example.gym.member.Member;
+import com.example.gym.member.MemberRepository;
 import com.example.gym.membership.DeviceSyncState;
 import com.example.gym.membership.Membership;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -44,6 +50,8 @@ public class DeviceSyncService {
     private final GatewayProperties properties;
     private final AuditService auditService;
     private final JsonMapper jsonMapper;
+    private final MemberRepository memberRepository;
+    private final ApplicationEventPublisher events;
 
     public DeviceSyncService(DeviceSyncCommandRepository commandRepository,
                              MemberDeviceMappingRepository mappingRepository,
@@ -51,7 +59,9 @@ public class DeviceSyncService {
                              GatewayCommandTransport transport,
                              GatewayProperties properties,
                              AuditService auditService,
-                             JsonMapper jsonMapper) {
+                             JsonMapper jsonMapper,
+                             MemberRepository memberRepository,
+                             ApplicationEventPublisher events) {
         this.commandRepository = commandRepository;
         this.mappingRepository = mappingRepository;
         this.membershipRepository = membershipRepository;
@@ -59,6 +69,24 @@ public class DeviceSyncService {
         this.properties = properties;
         this.auditService = auditService;
         this.jsonMapper = jsonMapper;
+        this.memberRepository = memberRepository;
+        this.events = events;
+    }
+
+    /**
+     * Cancels open commands of the given types for one member on one device (a newer command makes
+     * them obsolete, e.g. an older face version that has not been delivered yet).
+     */
+    @Transactional
+    public void supersede(Long deviceId, Long memberId, List<SyncCommandType> types) {
+        List<DeviceSyncCommand> open = commandRepository.findByDeviceIdAndMemberIdAndTypeInAndStateIn(
+                deviceId, memberId, types, OPEN_STATES);
+        for (DeviceSyncCommand command : open) {
+            command.setState(SyncCommandState.CANCELLED);
+            command.setCompletedAt(Instant.now());
+            command.setLastError("Superseded by a newer change");
+            commandRepository.save(command);
+        }
     }
 
     /**
@@ -69,6 +97,7 @@ public class DeviceSyncService {
     public DeviceSyncCommand enqueue(Long tenantId, Long deviceId, Long memberId, Long membershipId,
                                      SyncCommandType type, Map<String, Object> payload) {
         String correlationId = UUID.randomUUID().toString();
+        payload = withChangeTimes(memberId, type, payload);
         String payloadJson = payload == null ? null : jsonMapper.writeValueAsString(payload);
         DeviceSyncCommand command = new DeviceSyncCommand(tenantId, deviceId, memberId, membershipId,
                 type, payloadJson, correlationId, properties.getOutbox().getMaxAttempts(), Instant.now());
@@ -137,6 +166,16 @@ public class DeviceSyncService {
     /** Applies a gateway result. Idempotent: replays for already-terminal commands are ignored. */
     @Transactional
     public void handleResult(String correlationId, boolean ok, String error) {
+        handleResult(correlationId, ok, error, false);
+    }
+
+    /**
+     * {@code skipped}: the gateway did not apply the command because its devices hold a newer
+     * change of the same fields (that change reaches the server as DEVICE_USER_CHANGED). The
+     * command is complete; the skip is recorded so staff can see what was not applied.
+     */
+    @Transactional
+    public void handleResult(String correlationId, boolean ok, String error, boolean skipped) {
         DeviceSyncCommand command = commandRepository.findByCorrelationId(correlationId).orElse(null);
         if (command == null) {
             log.debug("SYNC_RESULT for unknown correlationId {}", correlationId);
@@ -146,15 +185,25 @@ public class DeviceSyncService {
             return;
         }
         command.setAcknowledgedAt(Instant.now());
-        if (ok) {
+        if (ok && skipped) {
+            command.setState(SyncCommandState.SUCCEEDED);
+            command.setCompletedAt(Instant.now());
+            command.setLastError(truncate("Skipped by gateway (newer change on device): " + error, 500));
+            recordSkipped(command, error);
+        } else if (ok) {
             command.setState(SyncCommandState.SUCCEEDED);
             command.setCompletedAt(Instant.now());
             command.setLastError(null);
-            markState(command, DeviceSyncState.SYNCED);
+            if (isFaceCommand(command)) {
+                applyFaceSuccess(command);
+            } else {
+                markState(command, DeviceSyncState.SYNCED);
+            }
         } else {
             failAttempt(command, error);
         }
         commandRepository.save(command);
+        publishMemberSync(command);
     }
 
     @Transactional
@@ -218,17 +267,162 @@ public class DeviceSyncService {
     @Transactional(readOnly = true)
     public boolean hasActiveReconcile(Long deviceId) {
         return commandRepository.existsByDeviceIdAndTypeAndStateIn(
-                deviceId,
-                SyncCommandType.RECONCILE_DEVICE,
-                List.of(SyncCommandState.PENDING, SyncCommandState.DISPATCHED,
-                        SyncCommandState.ACKNOWLEDGED, SyncCommandState.RETRYING));
+                deviceId, SyncCommandType.RECONCILE_DEVICE, OPEN_STATES);
+    }
+
+    /** Cancels every open command for a member (e.g. the member was deleted on a device). */
+    @Transactional
+    public int cancelOpenForMember(Long memberId) {
+        List<DeviceSyncCommand> open = commandRepository.findByMemberIdAndStateIn(memberId, OPEN_STATES);
+        for (DeviceSyncCommand command : open) {
+            command.setState(SyncCommandState.CANCELLED);
+            command.setCompletedAt(Instant.now());
+        }
+        commandRepository.saveAll(open);
+        return open.size();
+    }
+
+    /** Open (not yet terminal) commands for a member, used by the member device-sync view. */
+    @Transactional(readOnly = true)
+    public List<DeviceSyncCommand> openCommandsForMember(Long memberId) {
+        return commandRepository.findByMemberIdAndStateIn(memberId, OPEN_STATES);
     }
 
     // --- internals -------------------------------------------------------------------------------
 
+    static final List<SyncCommandState> OPEN_STATES = List.of(
+            SyncCommandState.PENDING, SyncCommandState.DISPATCHED,
+            SyncCommandState.ACKNOWLEDGED, SyncCommandState.RETRYING);
+
+    /**
+     * Adds the server's change time for the fields a member command carries. Gateways apply a
+     * command only if it is newer than their own change of those fields (latest change wins), so
+     * an old queued command can never overwrite a newer device edit.
+     */
+    private Map<String, Object> withChangeTimes(Long memberId, SyncCommandType type, Map<String, Object> payload) {
+        if (memberId == null || payload == null) {
+            return payload;
+        }
+        String field = switch (type) {
+            case CREATE_USER, UPDATE_USER, UPDATE_ACCESS_POLICY -> "nameChangedAt";
+            case UPDATE_VALIDITY, ENABLE_USER, DISABLE_USER -> "accessChangedAt";
+            case UPSERT_FACE, DELETE_FACE -> "faceChangedAt";
+            case REMOVE_USER -> "deletedAt";
+            default -> null;
+        };
+        if (field == null) {
+            return payload;
+        }
+        Member member = memberRepository.findById(memberId).orElse(null);
+        if (member == null) {
+            return payload;
+        }
+        Instant fallback = member.getProfileChangedAt() != null ? member.getProfileChangedAt()
+                : member.getCreatedAt() != null ? member.getCreatedAt() : Instant.now();
+        Instant at = switch (field) {
+            case "nameChangedAt" -> member.getProfileChangedAt();
+            case "faceChangedAt" -> member.getFaceChangedAt();
+            default -> member.getAccessChangedAt();
+        };
+        Map<String, Object> stamped = new LinkedHashMap<>(payload);
+        stamped.put(field, (at != null ? at : fallback).toString());
+        return stamped;
+    }
+
+    private static boolean isFaceCommand(DeviceSyncCommand command) {
+        return command.getType() == SyncCommandType.UPSERT_FACE
+                || command.getType() == SyncCommandType.DELETE_FACE;
+    }
+
+    /**
+     * Records the face version a device now holds. Results for a version older than what the
+     * device is already known to hold are ignored.
+     */
+    private void applyFaceSuccess(DeviceSyncCommand command) {
+        MemberDeviceMapping mapping = faceMapping(command);
+        if (mapping == null) {
+            return;
+        }
+        boolean moreQueued = commandRepository.findByDeviceIdAndMemberIdAndTypeInAndStateIn(
+                        command.getDeviceId(), command.getMemberId(),
+                        List.of(SyncCommandType.UPSERT_FACE, SyncCommandType.DELETE_FACE), OPEN_STATES)
+                .stream().anyMatch(c -> !c.getId().equals(command.getId()));
+        if (command.getType() == SyncCommandType.DELETE_FACE) {
+            mapping.setFaceVersionSynced(null);
+            mapping.setFaceSyncState(moreQueued ? DeviceSyncState.PENDING : DeviceSyncState.NOT_SYNCED);
+        } else {
+            Integer version = payloadInt(command, "faceVersion");
+            Integer held = mapping.getFaceVersionSynced();
+            if (version == null || (held != null && version < held)) {
+                return;
+            }
+            mapping.setFaceVersionSynced(version);
+            mapping.setFaceSyncState(moreQueued ? DeviceSyncState.PENDING : DeviceSyncState.SYNCED);
+        }
+        mapping.setFaceLastError(null);
+        mappingRepository.save(mapping);
+    }
+
+    private MemberDeviceMapping faceMapping(DeviceSyncCommand command) {
+        if (command.getMemberId() == null) {
+            return null;
+        }
+        return mappingRepository.findByDeviceIdAndMemberId(command.getDeviceId(), command.getMemberId())
+                .orElse(null);
+    }
+
+    private Integer payloadInt(DeviceSyncCommand command, String field) {
+        if (command.getPayload() == null) {
+            return null;
+        }
+        try {
+            JsonNode node = jsonMapper.readTree(command.getPayload()).get(field);
+            return node == null || node.isNull() ? null : node.asInt();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private void recordSkipped(DeviceSyncCommand command, String reason) {
+        String memberPublicId = command.getMemberId() == null ? null
+                : memberRepository.findById(command.getMemberId()).map(Member::getPublicId).orElse(null);
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("command", command.getType().name());
+        details.put("deviceId", command.getDeviceId());
+        details.put("reason", reason == null ? "" : reason);
+        auditService.recordSystem(AuditActions.SYNC_CHANGE_IGNORED, AuditActions.RESULT_SUCCESS,
+                memberPublicId == null ? "DeviceSyncCommand" : "Member",
+                memberPublicId == null ? command.getPublicId() : memberPublicId,
+                command.getTenantId(), "gateway", details);
+        log.info("Gateway skipped {} for member {}: {}", command.getType(), memberPublicId, reason);
+    }
+
+    private void publishMemberSync(DeviceSyncCommand command) {
+        if (command.getMemberId() == null) {
+            return;
+        }
+        memberRepository.findById(command.getMemberId()).ifPresent(member -> {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("memberId", member.getPublicId());
+            payload.put("commandType", command.getType().name());
+            payload.put("state", command.getState().name());
+            events.publishEvent(new StaffLiveBroadcast(command.getTenantId(), "MEMBER_SYNC", payload));
+        });
+    }
+
     private void failAttempt(DeviceSyncCommand command, String error) {
         command.setAttemptCount(command.getAttemptCount() + 1);
         command.setLastError(truncate(error, 500));
+        if (isFaceCommand(command)) {
+            MemberDeviceMapping mapping = faceMapping(command);
+            if (mapping != null) {
+                mapping.setFaceLastError(error);
+                if (command.getAttemptCount() >= command.getMaxAttempts()) {
+                    mapping.setFaceSyncState(DeviceSyncState.FAILED);
+                }
+                mappingRepository.save(mapping);
+            }
+        }
         if (command.getAttemptCount() >= command.getMaxAttempts()) {
             command.setState(SyncCommandState.DEAD_LETTER);
             command.setCompletedAt(Instant.now());
@@ -257,6 +451,16 @@ public class DeviceSyncService {
      * {@code device_sync_state} is derived: SYNCED only when every mapping for the member is SYNCED.
      */
     private void markState(DeviceSyncCommand command, DeviceSyncState state) {
+        if (isFaceCommand(command)) {
+            if (state == DeviceSyncState.PENDING || state == DeviceSyncState.FAILED) {
+                MemberDeviceMapping mapping = faceMapping(command);
+                if (mapping != null) {
+                    mapping.setFaceSyncState(state);
+                    mappingRepository.save(mapping);
+                }
+            }
+            return;
+        }
         if (command.getMemberId() != null) {
             for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(command.getMemberId())) {
                 if (mapping.getDeviceId().equals(command.getDeviceId())) {

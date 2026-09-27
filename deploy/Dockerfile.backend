@@ -18,8 +18,8 @@ WORKDIR /app
 
 RUN apk add --no-cache wget \
   && addgroup -S gym && adduser -S gym -G gym \
-  && mkdir -p /var/log/gym \
-  && chown -R gym:gym /var/log/gym
+  && mkdir -p /var/log/gym /var/lib/gym/faces \
+  && chown -R gym:gym /var/log/gym /var/lib/gym
 
 COPY --from=build /workspace/app.jar /app/app.jar
 USER gym

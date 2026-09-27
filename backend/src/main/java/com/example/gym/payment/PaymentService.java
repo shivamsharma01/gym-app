@@ -154,7 +154,7 @@ public class PaymentService {
             membership.setPaymentStatus(MembershipPaymentStatus.PARTIAL);
         }
         membershipRepository.save(membership);
-        deviceAuthorizationService.syncMembership(membership);
+        deviceAuthorizationService.refresh(membership.getMemberId());
     }
 
     private String resolveCurrency(String requested, Membership membership) {

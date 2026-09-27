@@ -41,6 +41,8 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
 
     long countByTenantId(Long tenantId);
 
+    List<Member> findByTenantIdAndStatus(Long tenantId, MemberStatus status);
+
     long countByTenantIdAndStatus(Long tenantId, MemberStatus status);
 
     List<Member> findByTenantIdAndJoinedOnBetweenOrderByJoinedOnDesc(

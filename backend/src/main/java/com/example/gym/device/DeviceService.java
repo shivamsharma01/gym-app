@@ -16,14 +16,11 @@ import com.example.gym.device.repo.AttendanceSyncCursorRepository;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.domain.AttendanceSyncCursor;
+import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
-import com.example.gym.membership.Membership;
-import com.example.gym.membership.MembershipRepository;
-import com.example.gym.membership.MembershipStatus;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -40,24 +37,27 @@ public class DeviceService {
     private final GatewayService gatewayService;
     private final MemberDeviceMappingRepository mappingRepository;
     private final MemberService memberService;
-    private final MembershipRepository membershipRepository;
     private final DeviceSyncService deviceSyncService;
     private final AttendanceSyncCursorRepository cursorRepository;
     private final AuditService auditService;
+    private final MemberDeviceProvisioningService provisioning;
+    private final MemberFaceRepository faceRepository;
 
     public DeviceService(DeviceRepository deviceRepository,
                          GatewayService gatewayService,
                          MemberDeviceMappingRepository mappingRepository,
                          MemberService memberService,
-                         MembershipRepository membershipRepository,
                          DeviceSyncService deviceSyncService,
                          AttendanceSyncCursorRepository cursorRepository,
-                         AuditService auditService) {
+                         AuditService auditService,
+                         MemberDeviceProvisioningService provisioning,
+                         MemberFaceRepository faceRepository) {
+        this.provisioning = provisioning;
+        this.faceRepository = faceRepository;
         this.deviceRepository = deviceRepository;
         this.gatewayService = gatewayService;
         this.mappingRepository = mappingRepository;
         this.memberService = memberService;
-        this.membershipRepository = membershipRepository;
         this.deviceSyncService = deviceSyncService;
         this.cursorRepository = cursorRepository;
         this.auditService = auditService;
@@ -86,6 +86,7 @@ public class DeviceService {
         device.setSerialNumber(request.serialNumber());
         device.setGatewayId(resolveGatewayId(request.gatewayId(), tenantId));
         Device saved = deviceRepository.save(device);
+        provisioning.provisionDevice(saved);
         auditService.record(AuditActions.DEVICE_CREATED, AuditActions.RESULT_SUCCESS,
                 "Device", saved.getPublicId(), Map.of("name", saved.getName()));
         return saved;
@@ -100,8 +101,12 @@ public class DeviceService {
         device.setPort(request.port());
         device.setModel(request.model());
         device.setSerialNumber(request.serialNumber());
+        Long previousGatewayId = device.getGatewayId();
         device.setGatewayId(resolveGatewayId(request.gatewayId(), tenantId));
         Device saved = deviceRepository.save(device);
+        if (saved.getGatewayId() != null && !saved.getGatewayId().equals(previousGatewayId)) {
+            provisioning.provisionDevice(saved);
+        }
         auditService.record(AuditActions.DEVICE_UPDATED, AuditActions.RESULT_SUCCESS,
                 "Device", saved.getPublicId(), null);
         return saved;
@@ -131,9 +136,11 @@ public class DeviceService {
      */
     @Transactional
     public MemberDeviceMapping createMapping(String devicePublicId, String memberPublicId,
-                                             String deviceUserId, Long tenantId) {
+                                             String requestedDeviceUserId, Long tenantId) {
         Device device = getByPublicId(devicePublicId, tenantId);
         Member member = memberService.getByPublicId(memberPublicId, tenantId);
+        final String deviceUserId = StringUtils.hasText(requestedDeviceUserId)
+                ? requestedDeviceUserId.trim() : member.getMemberCode();
 
         if (mappingRepository.existsByDeviceIdAndMemberId(device.getId(), member.getId())) {
             throw CommonExceptions.conflict("Member is already mapped to this device");
@@ -155,38 +162,12 @@ public class DeviceService {
         deviceSyncService.enqueue(tenantId, device.getId(), member.getId(), null,
                 SyncCommandType.CREATE_USER, createPayload);
 
-        currentMembership(member.getId()).ifPresent(m -> {
-            boolean enabled = DeviceAuthorizationService.authorizationEnabled(m, member);
-            if (enabled) {
-                deviceSyncService.enqueue(tenantId, device.getId(), member.getId(), m.getId(),
-                        SyncCommandType.UPDATE_VALIDITY, validityPayload(deviceUserId, m, true));
-            } else {
-                deviceSyncService.enqueue(tenantId, device.getId(), member.getId(), m.getId(),
-                        SyncCommandType.DISABLE_USER,
-                        DeviceAuthorizationService.disablePayload(deviceUserId));
-            }
-        });
+        provisioning.pushAccess(member, device.getId(), deviceUserId);
+        if (faceRepository.findByMemberId(member.getId()).isPresent()) {
+            provisioning.repushFace(member, device.getId());
+        }
 
         return mapping;
-    }
-
-    @Transactional
-    public void deleteMapping(String devicePublicId, String mappingPublicId, Long tenantId) {
-        Device device = getByPublicId(devicePublicId, tenantId);
-        MemberDeviceMapping mapping = mappingRepository.findByPublicId(mappingPublicId)
-                .orElseThrow(() -> CommonExceptions.notFound("Member-device mapping"));
-        TenantGuard.check(mapping.getTenantId(), tenantId, "Member-device mapping");
-        if (!mapping.getDeviceId().equals(device.getId())) {
-            throw CommonExceptions.notFound("Member-device mapping");
-        }
-        Map<String, Object> removePayload = new LinkedHashMap<>();
-        removePayload.put("deviceUserId", mapping.getDeviceUserId());
-        deviceSyncService.enqueue(tenantId, device.getId(), mapping.getMemberId(), null,
-                SyncCommandType.REMOVE_USER, removePayload);
-        mappingRepository.delete(mapping);
-        auditService.record(AuditActions.DEVICE_MAPPING_REMOVED, AuditActions.RESULT_SUCCESS,
-                "MemberDeviceMapping", mappingPublicId,
-                Map.of("deviceUserId", mapping.getDeviceUserId(), "device", device.getPublicId()));
     }
 
     /**
@@ -263,23 +244,6 @@ public class DeviceService {
                 "Device", device.getPublicId(),
                 Map.of("action", action.toUpperCase(), "reason", reason == null ? "" : reason));
         return command;
-    }
-
-    static Map<String, Object> validityPayload(String deviceUserId, Membership membership, boolean enabled) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("deviceUserId", deviceUserId);
-        payload.put("enabled", enabled);
-        payload.put("validFrom", membership.getStartDate().toString());
-        payload.put("validTo", membership.getEndDate().toString());
-        return payload;
-    }
-
-    private java.util.Optional<Membership> currentMembership(Long memberId) {
-        LocalDate today = LocalDate.now();
-        return membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(memberId).stream()
-                .filter(m -> m.getStatus() != MembershipStatus.CANCELLED)
-                .filter(m -> m.coversDate(today))
-                .findFirst();
     }
 
     private Long resolveGatewayId(String gatewayPublicId, Long tenantId) {

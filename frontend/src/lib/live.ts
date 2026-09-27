@@ -52,7 +52,24 @@ export function useStaffLive() {
         setState('live')
       }
 
-      ws.onmessage = () => {
+      ws.onmessage = (event: MessageEvent) => {
+        let message: { type?: string; payload?: { memberId?: string } } = {}
+        try {
+          message = JSON.parse(String(event.data)) as typeof message
+        } catch {
+          // non-JSON frames still refresh the general views below
+        }
+        if (message.type === 'MEMBER_SYNC') {
+          const memberId = message.payload?.memberId
+          if (memberId) {
+            void qc.invalidateQueries({ queryKey: ['member-device-sync', memberId] })
+            void qc.invalidateQueries({ queryKey: ['member-photo', memberId] })
+            void qc.invalidateQueries({ queryKey: ['member', memberId] })
+          }
+          void qc.invalidateQueries({ queryKey: ['members'] })
+          void qc.invalidateQueries({ queryKey: ['sync-commands'] })
+          return
+        }
         void qc.invalidateQueries({ queryKey: ['attendance'] })
         void qc.invalidateQueries({ queryKey: ['devices'] })
         void qc.invalidateQueries({ queryKey: ['security-events'] })

@@ -46,6 +46,7 @@ public class GatewayMessageService {
     private final MemberDeviceMappingRepository mappingRepository;
     private final JsonMapper jsonMapper;
     private final ApplicationEventPublisher events;
+    private final DeviceUserChangeService deviceUserChangeService;
 
     public GatewayMessageService(GatewayService gatewayService,
                                  GatewayRepository gatewayRepository,
@@ -58,7 +59,9 @@ public class GatewayMessageService {
                                  SecurityEventRepository securityEventRepository,
                                  MemberDeviceMappingRepository mappingRepository,
                                  JsonMapper jsonMapper,
-                                 ApplicationEventPublisher events) {
+                                 ApplicationEventPublisher events,
+                                 DeviceUserChangeService deviceUserChangeService) {
+        this.deviceUserChangeService = deviceUserChangeService;
         this.gatewayService = gatewayService;
         this.gatewayRepository = gatewayRepository;
         this.deviceRepository = deviceRepository;
@@ -168,8 +171,9 @@ public class GatewayMessageService {
                 yield ack(message);
             }
             case SYNC_RESULT -> {
-                deviceSyncService.handleResult(message.correlationId(),
-                        boolAt(message.payload(), "ok"), text(message.payload(), "error"));
+                boolean skipped = boolAt(message.payload(), "skipped");
+                deviceSyncService.handleResult(message.correlationId(), boolAt(message.payload(), "ok"),
+                        skipped ? text(message.payload(), "reason") : text(message.payload(), "error"), skipped);
                 yield ack(message);
             }
             case RECONCILIATION_RESULT -> {
@@ -195,6 +199,10 @@ public class GatewayMessageService {
                                 text(message.payload(), "error"));
                     }
                 });
+                yield ack(message);
+            }
+            case DEVICE_USER_CHANGED -> {
+                resolveDevice(message).ifPresent(device -> deviceUserChangeService.apply(device, message.payload()));
                 yield ack(message);
             }
             case ENROLLMENT_RESULT -> {

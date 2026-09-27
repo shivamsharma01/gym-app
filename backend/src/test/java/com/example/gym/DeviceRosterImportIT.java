@@ -68,7 +68,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void importCreatesMembersUnknownPaidMappingsAndIsIdempotent() throws Exception {
+    void reconcileAutoImportsDeviceUsersAndFansOutToOtherDevices() throws Exception {
         gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
                 """
                 {"ok":true,"deviceUsers":[
@@ -86,22 +86,28 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
                 ]}
                 """));
 
-        long commandsBefore = deviceSyncCommandRepository.count();
+        Long entrance = deviceRepository.findByPublicId(entranceId).orElseThrow().getId();
+        Long exit = deviceRepository.findByPublicId(exitId).orElseThrow().getId();
+        assertThat(memberRepository.count()).isEqualTo(3);
+        assertThat(reconciliationConflictRepository.findAll())
+                .noneMatch(c -> c.getConflictType().name().equals("EXTRA_DEVICE_USER")
+                        && c.getStatus().name().equals("OPEN"));
 
-        String first = postJson("/api/v1/devices/" + entranceId + "/import-users", null)
+        var commands = deviceSyncCommandRepository.findAll();
+        // The device that already holds the users is never sent CREATE_USER for them.
+        assertThat(commands).noneMatch(c -> c.getDeviceId().equals(entrance)
+                && c.getType() == SyncCommandType.CREATE_USER);
+        // Users only on the entrance are pushed to the exit device.
+        assertThat(commands.stream().filter(c -> c.getDeviceId().equals(exit)
+                && c.getType() == SyncCommandType.CREATE_USER)).hasSizeGreaterThanOrEqualTo(2);
+        // Faces are requested from the device that has them.
+        assertThat(commands.stream().filter(c -> c.getDeviceId().equals(entrance)
+                && c.getType() == SyncCommandType.REPORT_DEVICE_USER)).hasSize(3);
+
+        // The manual import is now a no-op fallback.
+        postJson("/api/v1/devices/" + entranceId + "/import-users", null)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.created").value(3))
-                .andExpect(jsonPath("$.inactiveFrozen").value(1))
-                .andExpect(jsonPath("$.inferredEndDates").value(2))
-                .andReturn().getResponse().getContentAsString();
-        assertThat(readJson(first).get("mapped").asInt()).isGreaterThanOrEqualTo(4);
-
-        // Import must not enqueue CREATE_USER for roster rows (faces stay on device)
-        long createUsers = deviceSyncCommandRepository.findAll().stream()
-                .filter(c -> c.getType() == SyncCommandType.CREATE_USER)
-                .count();
-        assertThat(createUsers).isZero();
-        assertThat(deviceSyncCommandRepository.count()).isGreaterThanOrEqualTo(commandsBefore);
+                .andExpect(jsonPath("$.created").value(0));
 
         mockMvc.perform(get("/api/v1/members?q=Ada").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -137,18 +143,18 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         assertThat(readJson(noEndMs).get(0).get("endDateInferred").asBoolean()).isTrue();
 
-        // Dual-device: Ada mapped on both
+        // Dual-device: Ada mapped on both; the source device already holds her.
         assertThat(memberDeviceMappingRepository.findAll().stream()
                 .filter(m -> "2001".equals(m.getDeviceUserId())).count()).isEqualTo(2);
         assertThat(memberDeviceMappingRepository.findAll().stream()
-                .filter(m -> "2001".equals(m.getDeviceUserId()))
+                .filter(m -> "2001".equals(m.getDeviceUserId()) && m.getDeviceId().equals(entrance))
                 .allMatch(m -> m.getEnrollmentStatus() == EnrollmentStatus.ENROLLED)).isTrue();
 
-        // Idempotent re-import
-        postJson("/api/v1/devices/" + entranceId + "/import-users", null)
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.created").value(0));
-
+        // Replaying the same reconcile does not duplicate members.
+        gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
+                """
+                {"ok":true,"deviceUsers":[{"deviceUserId":"2001","name":"Ada Lovelace","frozen":false}]}
+                """));
         assertThat(memberRepository.count()).isEqualTo(3);
 
         // Manual create still MANUAL

@@ -10,7 +10,8 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
- * After gateway registration commits: enqueue reconcile and flush pending outbox commands.
+ * After gateway registration commits: backfill member mappings onto its devices, enqueue reconcile
+ * and flush pending outbox commands.
  */
 @Component
 public class GatewayConnectedListener {
@@ -20,19 +21,23 @@ public class GatewayConnectedListener {
     private final DeviceRepository deviceRepository;
     private final DeviceService deviceService;
     private final DeviceSyncService deviceSyncService;
+    private final MemberDeviceProvisioningService provisioning;
 
     public GatewayConnectedListener(DeviceRepository deviceRepository,
                                     DeviceService deviceService,
-                                    DeviceSyncService deviceSyncService) {
+                                    DeviceSyncService deviceSyncService,
+                                    MemberDeviceProvisioningService provisioning) {
         this.deviceRepository = deviceRepository;
         this.deviceService = deviceService;
         this.deviceSyncService = deviceSyncService;
+        this.provisioning = provisioning;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onGatewayConnected(GatewayConnectedEvent event) {
         List<Device> devices = deviceRepository.findByGatewayId(event.gatewayInternalId());
         for (Device device : devices) {
+            provisioning.provisionDevice(device);
             deviceService.enqueueReconcileIfAbsent(device);
         }
         int dispatched = deviceSyncService.dispatchDue();

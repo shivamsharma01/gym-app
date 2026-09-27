@@ -2,6 +2,8 @@
 
 Guide for gym admins after TrueFace users already exist on the door devices and need to appear as Members in the app.
 
+> **Update:** import is now automatic. Every reconcile imports unmapped device users (or links them to the member with the same code), pushes them to the other devices, and asks the device for the face photo, which is stored on the server and synced everywhere. The **Import device users** button remains as a fallback. See “Two-way member and face sync” in [product.md](product.md). The notes below describe the original manual flow.
+
 Face templates **stay on the devices**. This flow only creates Member / membership / mapping rows in the gym app. It does **not** copy biometrics to IAS or any other system.
 
 ---

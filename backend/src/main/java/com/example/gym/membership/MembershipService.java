@@ -426,6 +426,32 @@ public class MembershipService {
         return saved;
     }
 
+    /**
+     * Dates edited on a device. Applied as the device holds them (also on a frozen membership, and
+     * even if they now overlap another membership). Returns true when they overlap, so the caller
+     * can flag it for staff.
+     */
+    @Transactional
+    public boolean applyDatesFromDevice(Membership membership, LocalDate start, LocalDate end) {
+        requireEndOnOrAfterStart(start, end);
+        boolean overlaps = membershipRepository.existsOverlappingMembership(
+                membership.getMemberId(), membership.getPublicId(), start, end);
+        membership.setStartDate(start);
+        membership.setEndDate(end);
+        if (membership.getStatus() != MembershipStatus.FROZEN) {
+            LocalDate today = LocalDate.now();
+            membership.setStatus(start.isAfter(today) ? MembershipStatus.PENDING
+                    : today.isAfter(end) ? MembershipStatus.EXPIRED : MembershipStatus.ACTIVE);
+        }
+        Membership saved = membershipRepository.save(membership);
+        auditService.recordSystem(AuditActions.MEMBERSHIP_DATES_UPDATED, AuditActions.RESULT_SUCCESS,
+                "Membership", saved.getPublicId(), saved.getTenantId(), "device",
+                Map.of("startDate", start.toString(), "endDate", end.toString(), "source", "device",
+                        "overlapsAnotherMembership", overlaps));
+        publish(saved, ChangeType.DATES_UPDATED);
+        return overlaps;
+    }
+
     @Transactional
     public void delete(String membershipPublicId, Long tenantId) {
         Membership membership = getByPublicId(membershipPublicId, tenantId);

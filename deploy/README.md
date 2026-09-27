@@ -22,7 +22,7 @@ Sizing assumes Spring Boot 4 / Java 21, Hikari pool **20**, outbox every 10s, We
 | Service | Role | Default resources |
 |---------|------|-------------------|
 | `mysql` | Data (`gym-mysql-data` volume) | 1 GB RAM, 256M InnoDB buffer |
-| `backend` | API + WebSockets | 2 GB RAM, G1, MaxRAMPercentage=75 |
+| `backend` | API + WebSockets; member face photos on the `gym-faces` volume | 2 GB RAM, G1, MaxRAMPercentage=75 |
 | `edge` | Nginx reverse proxy | 128 MB RAM |
 
 **Do not install Nginx on the host** — Compose runs it in the `edge` container.
@@ -201,6 +201,18 @@ Edit `deploy/.env`, then recreate:
 ```bash
 ./deploy/scripts/backup-mysql.sh /var/backups/gym/$(date +%F).sql
 ./deploy/scripts/restore-mysql.sh /var/backups/gym/2026-09-21.sql
+```
+
+Member face photos live in the `gym-faces` volume (`/var/lib/gym/faces` in the backend
+container). Back them up at the same time as the MySQL dump, since `member_face` rows point at
+these files:
+
+```bash
+docker run --rm -v gym_gym-faces:/faces -v /var/backups/gym:/out alpine \
+  tar czf /out/faces-$(date +%F).tgz -C /faces .
+# restore
+docker run --rm -v gym_gym-faces:/faces -v /var/backups/gym:/in alpine \
+  sh -c 'cd /faces && tar xzf /in/faces-2026-09-21.tgz'
 ```
 
 Copy backups off-VPS. Migrate providers: restore dump → new compose → update DNS.

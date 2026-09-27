@@ -1,33 +1,30 @@
 package com.example.gym.device;
 
-import com.example.gym.membership.Membership;
+import com.example.gym.member.MemberRepository;
 import com.example.gym.membership.MembershipChangedEvent;
-import com.example.gym.membership.MembershipRepository;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Turns membership state changes into device authorization sync commands (§8). Runs synchronously
- * within the membership transaction, so the membership change and its outbox commands commit
- * together. No device I/O happens here — commands are queued and delivered by the sync engine.
+ * Turns membership changes into device access updates (§8). Runs synchronously within the
+ * membership transaction, so the change and its outbox commands commit together. Only changes
+ * that alter what the devices hold are sent (e.g. adding a future membership does not touch the
+ * devices until its turn comes); those stamp the member's {@code accessChangedAt}.
  */
 @Component
 public class MembershipSyncListener {
 
-    private final MembershipRepository membershipRepository;
+    private final MemberRepository memberRepository;
     private final DeviceAuthorizationService authorizationService;
 
-    public MembershipSyncListener(MembershipRepository membershipRepository,
+    public MembershipSyncListener(MemberRepository memberRepository,
                                   DeviceAuthorizationService authorizationService) {
-        this.membershipRepository = membershipRepository;
+        this.memberRepository = memberRepository;
         this.authorizationService = authorizationService;
     }
 
     @EventListener
     public void onMembershipChanged(MembershipChangedEvent event) {
-        Membership membership = membershipRepository.findById(event.membershipId()).orElse(null);
-        if (membership != null) {
-            authorizationService.syncMembership(membership);
-        }
+        memberRepository.findById(event.memberId()).ifPresent(authorizationService::refresh);
     }
 }

@@ -6,14 +6,15 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import java.time.LocalDate;
 
 /**
  * A gym member (the person who trains). Distinct from an {@code AdminUser} (staff login).
  *
- * <p>Data minimisation: this table intentionally stores no biometric data — no face images and no
- * face/fingerprint templates. Biometric enrolment lives on the device; the application only keeps
- * an opaque device-user mapping (added in a later phase), never the biometric itself.
+ * <p>Data minimisation: this table stores no biometric data. One face photo per member lives in
+ * {@code member_face} (a resized JPEG on the faces volume, used to enrol the member on devices);
+ * no face or fingerprint templates are ever stored — recognition happens on the device.
  */
 @Entity
 @Table(name = "member")
@@ -56,7 +57,47 @@ public class Member extends TenantAwareEntity {
     @Column(name = "creation_source", nullable = false, length = 16)
     private MemberCreationSource creationSource = MemberCreationSource.MANUAL;
 
+    /** When the name last changed on the server (latest-change-wins vs devices). */
+    @Column(name = "profile_changed_at")
+    private Instant profileChangedAt;
+
+    /** When access (membership dates, freeze, activation) last changed on the server. */
+    @Column(name = "access_changed_at")
+    private Instant accessChangedAt;
+
+    /** When the face photo was last set or removed (on the server or a device). */
+    @Column(name = "face_changed_at")
+    private Instant faceChangedAt;
+
+    /** Access window last sent to the member's devices; null until first sent. */
+    @Column(name = "device_valid_from")
+    private LocalDate deviceValidFrom;
+
+    @Column(name = "device_valid_to")
+    private LocalDate deviceValidTo;
+
+    @Column(name = "device_enabled")
+    private Boolean deviceEnabled;
+
     protected Member() {
+    }
+
+    public LocalDate getDeviceValidFrom() {
+        return deviceValidFrom;
+    }
+
+    public LocalDate getDeviceValidTo() {
+        return deviceValidTo;
+    }
+
+    public Boolean getDeviceEnabled() {
+        return deviceEnabled;
+    }
+
+    public void setDeviceWindow(LocalDate validFrom, LocalDate validTo, Boolean enabled) {
+        this.deviceValidFrom = validFrom;
+        this.deviceValidTo = validTo;
+        this.deviceEnabled = enabled;
     }
 
     public Member(Long tenantId, String memberCode, String firstName) {
@@ -65,6 +106,33 @@ public class Member extends TenantAwareEntity {
         this.firstName = firstName;
         this.joinedOn = LocalDate.now();
         this.creationSource = MemberCreationSource.MANUAL;
+        this.profileChangedAt = micros(Instant.now());
+        this.accessChangedAt = this.profileChangedAt;
+        this.faceChangedAt = this.profileChangedAt;
+    }
+
+    public Instant getFaceChangedAt() {
+        return faceChangedAt;
+    }
+
+    public void setFaceChangedAt(Instant faceChangedAt) {
+        this.faceChangedAt = micros(faceChangedAt);
+    }
+
+    public Instant getAccessChangedAt() {
+        return accessChangedAt;
+    }
+
+    public void setAccessChangedAt(Instant accessChangedAt) {
+        this.accessChangedAt = micros(accessChangedAt);
+    }
+
+    public Instant getProfileChangedAt() {
+        return profileChangedAt;
+    }
+
+    public void setProfileChangedAt(Instant profileChangedAt) {
+        this.profileChangedAt = micros(profileChangedAt);
     }
 
     public String getMemberCode() {
@@ -157,5 +225,10 @@ public class Member extends TenantAwareEntity {
 
     public String getFullName() {
         return lastName == null || lastName.isBlank() ? firstName : firstName + " " + lastName;
+    }
+
+    /** Change times are compared across server and gateways, so keep exactly what the database stores. */
+    private static Instant micros(Instant at) {
+        return at == null ? null : at.truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     }
 }

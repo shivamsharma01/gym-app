@@ -46,6 +46,15 @@ public class AuditService {
         persist(entry);
     }
 
+    /** Records an action performed on behalf of a tenant without a logged-in user (e.g. a device). */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordSystem(String action, String result, String resourceType, String resourceId,
+                             Long tenantId, String actorUsername, Map<String, Object> details) {
+        persist(base(action, result, resourceType, resourceId, details)
+                .actorUsername(actorUsername)
+                .tenantId(tenantId));
+    }
+
     /** Records an auth-flow action where the security context may not yet be established. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordAuth(String action, String result, Long actorUserId, String actorUsername,

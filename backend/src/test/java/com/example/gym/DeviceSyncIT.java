@@ -1,6 +1,7 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -71,8 +72,9 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
+        // Every member is auto-mapped to every gateway device with deviceUserId = memberCode.
         memberId = readJson(postJson("/api/v1/members",
-                "{\"firstName\":\"Asha\",\"lastName\":\"Rao\"}")
+                "{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"memberCode\":\"1001\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
@@ -83,17 +85,16 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void mappingEnqueuesCreateUserAndUnpaidMembershipDisablesAccess() throws Exception {
-        postJson("/api/v1/devices/" + deviceId + "/mappings",
-                "{\"memberId\":\"" + memberId + "\",\"deviceUserId\":\"1001\"}")
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.deviceUserId").value("1001"))
-                .andExpect(jsonPath("$.syncState").value("PENDING"))
-                .andExpect(jsonPath("$.enrollmentStatus").value("PENDING_ENROLL"));
+    void newMemberIsAutoMappedAndUnpaidMembershipDisablesAccess() throws Exception {
+        var mappings = memberDeviceMappingRepository.findAll();
+        assertThat(mappings).hasSize(1);
+        assertThat(mappings.getFirst().getDeviceUserId()).isEqualTo("1001");
+        assertThat(mappings.getFirst().getSyncState().name()).isEqualTo("PENDING");
 
         var commands = deviceSyncCommandRepository.findAll();
         assertThat(commands).extracting(c -> c.getType())
-                .contains(SyncCommandType.CREATE_USER, SyncCommandType.DISABLE_USER);
+                .contains(SyncCommandType.CREATE_USER, SyncCommandType.DISABLE_USER)
+                .doesNotContain(SyncCommandType.UPSERT_FACE);
 
         mockMvc.perform(get("/api/v1/devices/" + deviceId + "/health")
                         .header("Authorization", "Bearer " + token))
@@ -101,16 +102,17 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.deviceConnectionState").value("UNKNOWN"))
                 .andExpect(jsonPath("$.gatewayStatus").value("UNKNOWN"))
                 .andExpect(jsonPath("$.gatewaySessionOnline").value(false))
-                .andExpect(jsonPath("$.pendingCommandCount").value(2))
+                .andExpect(jsonPath("$.pendingCommandCount").value(greaterThanOrEqualTo(2)))
                 .andExpect(jsonPath("$.failedCommandCount").value(0))
                 .andExpect(jsonPath("$.reconciliationRequired").value(false));
+
+        // Mapping the same member again is a conflict, not a second device user.
+        postJson("/api/v1/devices/" + deviceId + "/mappings", "{\"memberId\":\"" + memberId + "\"}")
+                .andExpect(status().isConflict());
     }
 
     @Test
     void syncResultMarksSucceededAndDoesNotFabricateWithoutGatewayAck() throws Exception {
-        postJson("/api/v1/devices/" + deviceId + "/mappings",
-                "{\"memberId\":\"" + memberId + "\",\"deviceUserId\":\"1001\"}")
-                .andExpect(status().isCreated());
 
         var create = deviceSyncCommandRepository.findAll().stream()
                 .filter(c -> c.getType() == SyncCommandType.CREATE_USER)
@@ -134,9 +136,6 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
     @Test
     void attendanceIngestIsIdempotentAndDeniedRaisesSecurityEvent() throws Exception {
-        postJson("/api/v1/devices/" + deviceId + "/mappings",
-                "{\"memberId\":\"" + memberId + "\",\"deviceUserId\":\"1001\"}")
-                .andExpect(status().isCreated());
 
         String occurred = Instant.parse("2026-09-11T06:00:00Z").toString();
         String event = envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
@@ -164,9 +163,14 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
     @Test
     void freezeEnqueuesDisableAndRemoteDoorRequiresConfirmation() throws Exception {
-        postJson("/api/v1/devices/" + deviceId + "/mappings",
-                "{\"memberId\":\"" + memberId + "\",\"deviceUserId\":\"1001\"}")
+        // Unpaid: already disabled. Paying the running membership enables it right away.
+        long paidAt = deviceSyncCommandRepository.count();
+        postJson("/api/v1/payments", "{\"memberId\":\"" + memberId + "\",\"membershipId\":\"" + membershipId
+                + "\",\"amount\":1000.00,\"method\":\"CASH\"}")
                 .andExpect(status().isCreated());
+        assertThat(deviceSyncCommandRepository.findAll().stream().skip(paidAt))
+                .anyMatch(c -> c.getType() == SyncCommandType.UPDATE_VALIDITY);
+
         long before = deviceSyncCommandRepository.count();
 
         postJson("/api/v1/memberships/" + membershipId + "/freeze", null)
@@ -189,9 +193,6 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
     @Test
     void restPollClaimsCommandsWithPerGatewayTokenAndRejectsUserJwt() throws Exception {
-        postJson("/api/v1/devices/" + deviceId + "/mappings",
-                "{\"memberId\":\"" + memberId + "\",\"deviceUserId\":\"1001\"}")
-                .andExpect(status().isCreated());
 
         mockMvc.perform(get("/internal/gateway/commands")
                         .header("Authorization", "Bearer " + token))

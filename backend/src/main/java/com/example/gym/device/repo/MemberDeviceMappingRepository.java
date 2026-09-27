@@ -11,6 +11,9 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
 
     List<MemberDeviceMapping> findByMemberId(Long memberId);
 
+    @org.springframework.data.jpa.repository.Query("select distinct m.memberId from MemberDeviceMapping m")
+    List<Long> findDistinctMemberIds();
+
     List<MemberDeviceMapping> findByDeviceId(Long deviceId);
 
     Optional<MemberDeviceMapping> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
@@ -18,4 +21,6 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
     boolean existsByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
     boolean existsByDeviceIdAndMemberId(Long deviceId, Long memberId);
+
+    Optional<MemberDeviceMapping> findByDeviceIdAndMemberId(Long deviceId, Long memberId);
 }

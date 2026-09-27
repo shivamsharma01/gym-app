@@ -33,8 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Compares a device's reported user list to MySQL desired authorization. Extra users become
- * auditable conflicts (never silent imports). Missing / mismatched users get repair commands.
+ * Compares a device's reported user list to MySQL desired authorization. Unmapped device users are
+ * imported (or linked by member code) and fanned out to other devices; they only become conflicts
+ * while a removal is in flight. Missing / mismatched users get repair commands.
  */
 @Service
 public class DeviceReconciliationService {
@@ -43,22 +44,25 @@ public class DeviceReconciliationService {
     private final ReconciliationConflictRepository conflictRepository;
     private final DeviceUserSnapshotRepository snapshotRepository;
     private final DeviceSyncService deviceSyncService;
-    private final MembershipRepository membershipRepository;
+    private final DeviceAuthorizationService authorizationService;
     private final MemberRepository memberRepository;
     private final AuditService auditService;
+    private final DeviceUserChangeService deviceUserChangeService;
 
     public DeviceReconciliationService(MemberDeviceMappingRepository mappingRepository,
                                        ReconciliationConflictRepository conflictRepository,
                                        DeviceUserSnapshotRepository snapshotRepository,
                                        DeviceSyncService deviceSyncService,
-                                       MembershipRepository membershipRepository,
+                                       DeviceAuthorizationService authorizationService,
                                        MemberRepository memberRepository,
-                                       AuditService auditService) {
+                                       AuditService auditService,
+                                       DeviceUserChangeService deviceUserChangeService) {
+        this.deviceUserChangeService = deviceUserChangeService;
         this.mappingRepository = mappingRepository;
         this.conflictRepository = conflictRepository;
         this.snapshotRepository = snapshotRepository;
         this.deviceSyncService = deviceSyncService;
-        this.membershipRepository = membershipRepository;
+        this.authorizationService = authorizationService;
         this.memberRepository = memberRepository;
         this.auditService = auditService;
     }
@@ -105,7 +109,6 @@ public class DeviceReconciliationService {
         for (MemberDeviceMapping mapping : mappings) {
             mappedIds.add(mapping.getDeviceUserId());
             boolean onDevice = deviceUserIds.contains(mapping.getDeviceUserId());
-            boolean desiredEnabled = desiredEnabled(mapping.getMemberId());
             Boolean frozen = frozenByUser.get(mapping.getDeviceUserId());
 
             if (!onDevice) {
@@ -116,27 +119,41 @@ public class DeviceReconciliationService {
                 continue;
             }
 
+            Member member = memberRepository.findById(mapping.getMemberId()).orElse(null);
+            Optional<DeviceAuthorizationService.AccessWindow> window = member == null
+                    ? Optional.empty() : authorizationService.window(member);
+            boolean desiredEnabled = window.map(DeviceAuthorizationService.AccessWindow::enabled).orElse(false);
+            ParsedUser reported = parsedUsers.get(mapping.getDeviceUserId());
+
             if (frozen != null && frozen == desiredEnabled) {
                 // frozen==true means disabled; desiredEnabled true means should not be frozen
                 openConflict(device, mapping.getDeviceUserId(),
                         ReconciliationConflictType.AUTH_MISMATCH,
                         "Device freeze=" + frozen + " desiredEnabled=" + desiredEnabled);
-                enqueueAuthRepair(device, mapping, desiredEnabled);
+                enqueueAuthRepair(device, mapping, member, desiredEnabled);
             } else if (frozen == null && !desiredEnabled) {
                 // no freeze info — still push DISABLE if membership says so
-                enqueueAuthRepair(device, mapping, false);
-            } else if (frozen != null && frozen && !desiredEnabled) {
-                // already frozen and desired disabled — ok
-            } else if (frozen != null && !frozen && desiredEnabled) {
-                // active and desired enabled — ok
+                enqueueAuthRepair(device, mapping, member, false);
+            } else if (window.isPresent() && reported != null && reported.validFrom() != null
+                    && reported.validTo() != null
+                    && (!reported.validFrom().equals(window.get().validFrom())
+                        || !reported.validTo().equals(window.get().validTo()))) {
+                // Right status, old dates (e.g. the switch to the next membership did not reach it yet).
+                enqueueAuthRepair(device, mapping, member, desiredEnabled);
             }
         }
 
         for (String deviceUserId : deviceUserIds) {
-            if (!mappedIds.contains(deviceUserId)) {
+            if (mappedIds.contains(deviceUserId)) {
+                continue;
+            }
+            ParsedUser u = parsedUsers.get(deviceUserId);
+            boolean imported = deviceUserChangeService.importFromReconcile(
+                    device, deviceUserId, u.name(), u.frozen(), u.validFrom(), u.validTo());
+            if (!imported) {
                 openConflict(device, deviceUserId,
                         ReconciliationConflictType.EXTRA_DEVICE_USER,
-                        "Device user has no member_device_mapping; not auto-imported");
+                        "Device user has no member_device_mapping; import deferred");
             }
         }
     }
@@ -166,35 +183,21 @@ public class DeviceReconciliationService {
         }
         deviceSyncService.enqueue(device.getTenantId(), device.getId(), mapping.getMemberId(), null,
                 SyncCommandType.CREATE_USER, createPayload);
-        Optional<Membership> membership = currentMembership(mapping.getMemberId());
-        membership.ifPresent(m -> {
-            boolean enabled = desiredEnabled(mapping.getMemberId());
-            if (enabled) {
-                deviceSyncService.enqueue(device.getTenantId(), device.getId(), mapping.getMemberId(),
-                        m.getId(), SyncCommandType.UPDATE_VALIDITY,
-                        DeviceService.validityPayload(mapping.getDeviceUserId(), m, true));
-            } else {
-                deviceSyncService.enqueue(device.getTenantId(), device.getId(), mapping.getMemberId(),
-                        m.getId(), SyncCommandType.DISABLE_USER,
-                        DeviceAuthorizationService.disablePayload(mapping.getDeviceUserId()));
-            }
-        });
+        if (member != null) {
+            authorizationService.enqueueFor(member, device.getId(), mapping.getDeviceUserId());
+        }
         auditService.record(AuditActions.RECONCILIATION_REPAIR_ENQUEUED, AuditActions.RESULT_SUCCESS,
                 "Device", device.getPublicId(),
                 Map.of("deviceUserId", mapping.getDeviceUserId(), "type", "CREATE_USER"));
     }
 
-    private void enqueueAuthRepair(Device device, MemberDeviceMapping mapping, boolean desiredEnabled) {
-        Optional<Membership> membership = currentMembership(mapping.getMemberId());
-        if (desiredEnabled && membership.isPresent()) {
-            deviceSyncService.enqueue(device.getTenantId(), device.getId(), mapping.getMemberId(),
-                    membership.get().getId(), SyncCommandType.UPDATE_VALIDITY,
-                    DeviceService.validityPayload(mapping.getDeviceUserId(), membership.get(), true));
+    private void enqueueAuthRepair(Device device, MemberDeviceMapping mapping, Member member,
+                                   boolean desiredEnabled) {
+        if (member != null) {
+            authorizationService.enqueueFor(member, device.getId(), mapping.getDeviceUserId());
         } else {
-            Long membershipId = membership.map(Membership::getId).orElse(null);
-            deviceSyncService.enqueue(device.getTenantId(), device.getId(), mapping.getMemberId(),
-                    membershipId, SyncCommandType.DISABLE_USER,
-                    DeviceAuthorizationService.disablePayload(mapping.getDeviceUserId()));
+            deviceSyncService.enqueue(device.getTenantId(), device.getId(), mapping.getMemberId(), null,
+                    SyncCommandType.DISABLE_USER, DeviceAuthorizationService.disablePayload(mapping.getDeviceUserId()));
         }
         auditService.record(AuditActions.RECONCILIATION_REPAIR_ENQUEUED, AuditActions.RESULT_SUCCESS,
                 "Device", device.getPublicId(),
@@ -215,24 +218,6 @@ public class DeviceReconciliationService {
         auditService.record(AuditActions.RECONCILIATION_CONFLICT_OPENED, AuditActions.RESULT_SUCCESS,
                 "ReconciliationConflict", conflict.getPublicId(),
                 Map.of("type", type.name(), "deviceUserId", deviceUserId));
-    }
-
-    private boolean desiredEnabled(Long memberId) {
-        Member member = memberRepository.findById(memberId).orElse(null);
-        if (member == null || member.getStatus() != MemberStatus.ACTIVE) {
-            return false;
-        }
-        return currentMembership(memberId)
-                .map(DeviceAuthorizationService::authorizationEnabled)
-                .orElse(false);
-    }
-
-    private Optional<Membership> currentMembership(Long memberId) {
-        LocalDate today = LocalDate.now();
-        return membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(memberId).stream()
-                .filter(m -> m.getStatus() != MembershipStatus.CANCELLED)
-                .filter(m -> m.coversDate(today))
-                .findFirst();
     }
 
     private static String text(JsonNode node, String field) {

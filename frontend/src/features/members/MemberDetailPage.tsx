@@ -1,15 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useLocation, useParams } from 'react-router'
 import { ConfirmDialog } from '@/components/Dialog'
 import { QueryError } from '@/components/QueryError'
-import { Badge, Button, Card, EmptyState, Label, PageHeader, SectionTitle, Select, Skeleton } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, PageHeader, SectionTitle, Skeleton } from '@/components/ui'
+import { useMemberPhotoUrl } from '@/features/members/MemberPhotoField'
 import { MembershipPanel } from '@/features/memberships/MembershipPanel'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatDateTime, money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
-import type { AccessStatus, Attendance, Device, Mapping, Member, Membership, PageResponse, Payment } from '@/lib/types'
+import type { AccessStatus, Attendance, Member, MemberDeviceSync, Membership, PageResponse, Payment } from '@/lib/types'
 
 export function MemberDetailPage() {
   const { id } = useParams()
@@ -35,6 +36,13 @@ export function MemberDetailPage() {
     queryFn: () => api<Payment[]>(`/api/v1/members/${id}/payments`),
     enabled: has('PAYMENT_VIEW'),
   })
+  const photo = useMemberPhotoUrl(id)
+  const sync = useQuery({
+    queryKey: ['member-device-sync', id],
+    queryFn: () => api<MemberDeviceSync>(`/api/v1/members/${id}/device-sync`),
+  })
+  const location = useLocation()
+  const photoError = (location.state as { photoError?: string | null } | null)?.photoError ?? null
   const [confirmDeactivate, setConfirmDeactivate] = useState(false)
   const [confirmReactivate, setConfirmReactivate] = useState(false)
   const deactivate = useMutation({
@@ -85,6 +93,23 @@ export function MemberDetailPage() {
           </div>
         }
       />
+      {photoError ? (
+        <p className="rounded-lg border border-line px-4 py-3 text-sm text-danger">
+          Member saved, but the photo was not: {photoError}. Open Edit to try another photo.
+        </p>
+      ) : null}
+      <div className="flex items-center gap-4">
+        <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-raised text-xs text-muted">
+          {photo.url ? <img src={photo.url} alt={m.fullName} className="h-full w-full object-cover" /> : 'No photo'}
+        </div>
+        <div className="text-sm text-muted">
+          {sync.data?.face
+            ? sync.data.face.source === 'DEVICE'
+              ? `Photo taken on ${sync.data.face.sourceDeviceName ?? 'a device'} · ${formatDateTime(sync.data.face.changedAt)}`
+              : `Photo added in the app · ${formatDateTime(sync.data.face.changedAt)}`
+            : 'No photo yet. Add one with Edit, or enrol the face on any device.'}
+        </div>
+      </div>
       <div className="flex flex-wrap gap-2">
         <Badge tone={statusTone(m.status)}>{m.status}</Badge>
         <Badge tone={m.creationSource === 'DEVICE_IMPORT' ? 'warn' : 'ok'}>
@@ -180,7 +205,7 @@ export function MemberDetailPage() {
         </section>
       ) : null}
 
-      {has('DEVICE_MANAGE') ? <EnrollmentPanel memberId={m.id} memberCode={m.memberCode} /> : null}
+      <DeviceSyncPanel memberId={m.id} />
 
       <ConfirmDialog
         open={confirmDeactivate}
@@ -205,60 +230,102 @@ export function MemberDetailPage() {
   )
 }
 
-function EnrollmentPanel({ memberId, memberCode }: { memberId: string; memberCode: string }) {
-  const devices = useQuery({
-    queryKey: ['devices'],
-    queryFn: () => api<PageResponse<Device>>('/api/v1/devices?size=50'),
+const COMMAND_LABELS: Record<string, string> = {
+  CREATE_USER: 'Add user',
+  UPDATE_USER: 'Update name',
+  UPDATE_VALIDITY: 'Update access dates',
+  DISABLE_USER: 'Block access',
+  ENABLE_USER: 'Allow access',
+  REMOVE_USER: 'Remove user',
+  UPSERT_FACE: 'Send photo',
+  DELETE_FACE: 'Remove photo',
+  REPORT_DEVICE_USER: 'Read photo from device',
+}
+
+function faceStateLabel(row: MemberDeviceSync['devices'][number], face: MemberDeviceSync['face']) {
+  if (!face) return { label: 'No photo', tone: 'muted' as const }
+  if (row.faceSyncState === 'SYNCED' && row.faceVersionSynced === face.version) {
+    return { label: 'Photo on device', tone: 'ok' as const }
+  }
+  if (row.faceSyncState === 'FAILED') return { label: 'Photo failed', tone: 'danger' as const }
+  return { label: 'Photo waiting', tone: 'warn' as const }
+}
+
+function DeviceSyncPanel({ memberId }: { memberId: string }) {
+  const { has } = useAuth()
+  const sync = useQuery({
+    queryKey: ['member-device-sync', memberId],
+    queryFn: () => api<MemberDeviceSync>(`/api/v1/members/${memberId}/device-sync`),
   })
-  const [deviceId, setDeviceId] = useState('')
-  const map = useMutation({
-    mutationFn: () =>
-      api<Mapping>(`/api/v1/devices/${deviceId}/mappings`, {
-        method: 'POST',
-        body: JSON.stringify({ memberId, deviceUserId: memberCode }),
-      }),
+  const retry = useMutation({
+    mutationFn: (deviceId: string) =>
+      api(`/api/v1/members/${memberId}/device-sync/${deviceId}/retry`, { method: 'POST' }),
+    onSuccess: () => void sync.refetch(),
   })
-  const registered = devices.data?.content ?? []
+  if (sync.error) return <QueryError error={sync.error} />
+  const data = sync.data
   return (
     <section>
-      <SectionTitle title="Device enrolment" />
-      <Card className="space-y-3">
+      <SectionTitle title="Device sync" />
+      <Card className="space-y-4">
         <p className="text-sm text-muted">
-          Powering on a tablet does not fill this list. Register the terminal under Devices first (name, entrance/exit,
-          LAN IP, gateway). Mapping then queues a face user on that tablet using this member’s gym code (
-          {memberCode}) as the device user id — that is the id TrueFace stores, not Staff/Admin.
+          Saved on the server first, then sent to every device that has a gateway. A device shows “waiting” until it
+          confirms. Members and photos added on a device come back here and go to the other devices too.
         </p>
-        {registered.length === 0 ? (
+        {!data ? (
+          <Skeleton className="h-16" />
+        ) : data.devices.length === 0 ? (
           <p className="text-sm text-muted">
-            No devices in the app yet.{' '}
+            No devices with a gateway yet.{' '}
             <Link className="underline" to="/app/devices">
-              Register a device
+              Set up a device
             </Link>
             .
           </p>
         ) : (
-          <>
-            <Label>Device</Label>
-            <Select value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
-              <option value="">Select device</option>
-              {registered.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </Select>
-            <Button disabled={!deviceId || map.isPending} onClick={() => map.mutate()}>
-              Map to device
-            </Button>
-          </>
+          <div className="divide-y divide-line">
+            {data.devices.map((row) => {
+              const face = faceStateLabel(row, data.face)
+              return (
+                <div key={row.deviceId} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
+                  <div className="space-y-1">
+                    <div className="font-medium">
+                      {row.deviceName}{' '}
+                      <span className="text-xs text-muted">· device user {row.deviceUserId}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone={statusTone(row.connectionState)}>{row.connectionState ?? 'UNKNOWN'}</Badge>
+                      <Badge tone={statusTone(row.userSyncState)}>
+                        {row.userSyncState === 'SYNCED' ? 'Details on device' : `Details ${row.userSyncState ?? 'pending'}`}
+                      </Badge>
+                      <Badge tone={face.tone}>{face.label}</Badge>
+                    </div>
+                    {row.openCommands.length ? (
+                      <div className="text-xs text-muted">
+                        Waiting:{' '}
+                        {row.openCommands
+                          .map((c) => `${COMMAND_LABELS[c.type] ?? c.type}${c.attemptCount > 1 ? ` (try ${c.attemptCount})` : ''}`)
+                          .join(', ')}
+                      </div>
+                    ) : null}
+                    {row.faceLastError ? <div className="text-xs text-danger">{row.faceLastError}</div> : null}
+                  </div>
+                  {has('DEVICE_SYNC') ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={retry.isPending}
+                      onClick={() => retry.mutate(row.deviceId)}
+                    >
+                      Send again
+                    </Button>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
         )}
-        {map.isSuccess ? (
-          <p className="text-sm text-ok">
-            Mapped as device user {memberCode}. Enrolment {map.data.enrollmentStatus}, sync {map.data.syncState}. This is
-            not proof the face is on the terminal — complete the face on the device, then check enrolment there.
-          </p>
-        ) : null}
-        {map.error instanceof ApiError ? <p className="text-sm text-danger">{map.error.message}</p> : null}
+        {retry.error instanceof ApiError ? <p className="text-sm text-danger">{retry.error.message}</p> : null}
       </Card>
     </section>
   )

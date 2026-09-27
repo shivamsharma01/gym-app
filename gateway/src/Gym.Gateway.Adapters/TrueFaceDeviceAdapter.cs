@@ -11,6 +11,7 @@ namespace Gym.Gateway.Adapters;
 public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 {
     private const int WaitMs = 5000;
+    private const int MaxFacePhotoBytes = 120 * 1024;
     private static readonly object SdkGate = new();
     private static bool s_sdkInitialized;
     private static fDisConnectCallBack? s_disconnect;
@@ -127,17 +128,15 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     public DeviceHealth GetHealth() =>
         new(_loginId == IntPtr.Zero ? "OFFLINE" : "ONLINE", _lastSeen, _listening ? "listening" : "not-listening");
 
-    public DeviceCommandResult CreateUser(DeviceUserMutation mutation) =>
-        UpsertUser(mutation, freeze: mutation.Enabled == false);
+    public DeviceCommandResult CreateUser(DeviceUserMutation mutation) => UpsertUser(mutation);
 
-    public DeviceCommandResult UpdateUser(DeviceUserMutation mutation) =>
-        UpsertUser(mutation, freeze: mutation.Enabled == false);
+    public DeviceCommandResult UpdateUser(DeviceUserMutation mutation) => UpsertUser(mutation);
 
     public DeviceCommandResult DisableUser(string deviceUserId) =>
-        UpsertUser(new DeviceUserMutation(deviceUserId, Enabled: false), freeze: true);
+        UpsertUser(new DeviceUserMutation(deviceUserId, Enabled: false));
 
     public DeviceCommandResult EnableUser(string deviceUserId) =>
-        UpsertUser(new DeviceUserMutation(deviceUserId, Enabled: true), freeze: false);
+        UpsertUser(new DeviceUserMutation(deviceUserId, Enabled: true));
 
     public DeviceCommandResult DeleteUser(string deviceUserId)
     {
@@ -147,7 +146,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
 
         var ok = NETClient.RemoveOperateAccessUserService(_loginId, [deviceUserId], out var fail, WaitMs);
-        if (!ok)
+        if (!ok && GetUser(deviceUserId) != null)
         {
             return DeviceCommandResult.Fail(FailCodes("RemoveOperateAccessUserService", fail));
         }
@@ -156,7 +155,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return DeviceCommandResult.Success();
     }
 
-    public DeviceCommandResult UpdateValidity(DeviceUserMutation mutation) => UpsertUser(mutation, freeze: mutation.Enabled == false);
+    public DeviceCommandResult UpdateValidity(DeviceUserMutation mutation) => UpsertUser(mutation);
 
     public IReadOnlyList<DeviceUserSnapshot> ListUsers()
     {
@@ -168,12 +167,291 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return QueryUsers();
     }
 
-    public EnrollmentOutcome StartFaceEnrollment(string deviceUserId)
+    public DeviceUserSnapshot? GetUser(string deviceUserId)
     {
-        // Product path: do not claim remote success. POC uses ProbeRemoteFaceInsert for evidence.
-        _ = deviceUserId;
-        return EnrollmentOutcome.GuidedPending(
-            "UNVERIFIED: remote face enrollment failed in the recorded session (0x10030110); complete on device");
+        if (!TryGetExistingUser(deviceUserId, out var user))
+        {
+            return null;
+        }
+
+        return ToSnapshot(user);
+    }
+
+    public DeviceCommandResult UpsertFace(string deviceUserId, byte[] jpegBytes)
+    {
+        if (jpegBytes == null || jpegBytes.Length == 0)
+        {
+            return DeviceCommandResult.Fail("No face image");
+        }
+
+        if (jpegBytes.Length > MaxFacePhotoBytes)
+        {
+            return DeviceCommandResult.Fail($"Face image is {jpegBytes.Length} bytes; device limit is {MaxFacePhotoBytes}");
+        }
+
+        if (!EnsureLogin(out var err))
+        {
+            return DeviceCommandResult.Fail(err);
+        }
+
+        var update = WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.UPDATE, deviceUserId, jpegBytes);
+        if (update.Ok)
+        {
+            Touch();
+            return DeviceCommandResult.Success();
+        }
+
+        var insert = WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, deviceUserId, jpegBytes);
+        if (insert.Ok)
+        {
+            Touch();
+            return DeviceCommandResult.Success();
+        }
+
+        return DeviceCommandResult.Fail($"Face UPDATE failed ({update.Error}); INSERT failed ({insert.Error})");
+    }
+
+    public DeviceFaceRead GetFace(string deviceUserId)
+    {
+        if (!EnsureLogin(out var err))
+        {
+            return DeviceFaceRead.Fail(err);
+        }
+
+        const int bufferLen = 256 * 1024;
+        var inPtr = IntPtr.Zero;
+        var outPtr = IntPtr.Zero;
+        var facePtr = IntPtr.Zero;
+        var photoPtr = IntPtr.Zero;
+        var failPtr = IntPtr.Zero;
+        try
+        {
+            var input = new NET_IN_ACCESS_FACE_SERVICE_GET
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_GET>(),
+                nUserNum = 1,
+                szUserID = new NET_IN_ACCESS_FACE_SERVICE_UserID[100],
+                szUserIDEx = "",
+                bUserIDEx = false
+            };
+            input.szUserID[0].userID = deviceUserId;
+            inPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_GET>());
+            Marshal.StructureToPtr(input, inPtr, false);
+
+            photoPtr = Marshal.AllocHGlobal(bufferLen);
+            var face = new NET_ACCESS_FACE_INFO
+            {
+                nInFacePhotoLen = new int[5],
+                nOutFacePhotoLen = new int[5],
+                pFacePhoto = new IntPtr[5]
+            };
+            face.nInFacePhotoLen[0] = bufferLen;
+            face.pFacePhoto[0] = photoPtr;
+            facePtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_ACCESS_FACE_INFO>());
+            Marshal.StructureToPtr(face, facePtr, false);
+
+            failPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_EM_FAILCODE>());
+            Marshal.StructureToPtr(new NET_EM_FAILCODE(), failPtr, false);
+
+            var output = new NET_OUT_ACCESS_FACE_SERVICE_GET
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_GET>(),
+                nMaxRetNum = 1,
+                pFaceInfo = facePtr,
+                pFailCode = failPtr
+            };
+            outPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_GET>());
+            Marshal.StructureToPtr(output, outPtr, false);
+
+            var ok = NETClient.OperateAccessFaceService(
+                _loginId, EM_NET_ACCESS_CTL_FACE_SERVICE.GET, inPtr, outPtr, WaitMs);
+            var fail = Marshal.PtrToStructure<NET_EM_FAILCODE>(failPtr).emCode;
+            if (!ok)
+            {
+                if (fail is EM_FAILCODE.NO_RECORD or EM_FAILCODE.INVALID_FACE or EM_FAILCODE.INVALID_USER)
+                {
+                    Touch();
+                    return DeviceFaceRead.None();
+                }
+
+                return DeviceFaceRead.Fail(SdkError("Face GET failed") + " failCode=" + fail);
+            }
+
+            Touch();
+            var read = Marshal.PtrToStructure<NET_ACCESS_FACE_INFO>(facePtr);
+            var len = read.nOutFacePhotoLen is { Length: > 0 } ? read.nOutFacePhotoLen[0] : 0;
+            if (read.nFacePhoto <= 0 || len <= 0)
+            {
+                return DeviceFaceRead.None();
+            }
+
+            var bytes = new byte[Math.Min(len, bufferLen)];
+            Marshal.Copy(photoPtr, bytes, 0, bytes.Length);
+            return DeviceFaceRead.Found(bytes, NetTimeOrNull(read.stuUpdateTime));
+        }
+        catch (Exception ex)
+        {
+            return DeviceFaceRead.Fail($"Face GET threw {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            FreeAll(inPtr, outPtr, facePtr, photoPtr, failPtr);
+        }
+    }
+
+    public DeviceCommandResult DeleteFace(string deviceUserId)
+    {
+        if (!EnsureLogin(out var err))
+        {
+            return DeviceCommandResult.Fail(err);
+        }
+
+        var inPtr = IntPtr.Zero;
+        var outPtr = IntPtr.Zero;
+        var failPtr = IntPtr.Zero;
+        try
+        {
+            var input = new NET_IN_ACCESS_FACE_SERVICE_REMOVE
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_REMOVE>(),
+                nUserNum = 1,
+                szUserID = new NET_IN_ACCESS_FACE_SERVICE_UserID[100],
+                szUserIDEx = "",
+                bUserIDEx = false
+            };
+            input.szUserID[0].userID = deviceUserId;
+            inPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_REMOVE>());
+            Marshal.StructureToPtr(input, inPtr, false);
+
+            failPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_EM_FAILCODE>());
+            Marshal.StructureToPtr(new NET_EM_FAILCODE(), failPtr, false);
+            var output = new NET_OUT_ACCESS_FACE_SERVICE_REMOVE
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_REMOVE>(),
+                nMaxRetNum = 1,
+                pFailCode = failPtr
+            };
+            outPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_REMOVE>());
+            Marshal.StructureToPtr(output, outPtr, false);
+
+            var ok = NETClient.OperateAccessFaceService(
+                _loginId, EM_NET_ACCESS_CTL_FACE_SERVICE.REMOVE, inPtr, outPtr, WaitMs);
+            var fail = Marshal.PtrToStructure<NET_EM_FAILCODE>(failPtr).emCode;
+            if (!ok && fail != EM_FAILCODE.NO_RECORD)
+            {
+                return DeviceCommandResult.Fail(SdkError("Face REMOVE failed") + " failCode=" + fail);
+            }
+
+            Touch();
+            return DeviceCommandResult.Success();
+        }
+        catch (Exception ex)
+        {
+            return DeviceCommandResult.Fail($"Face REMOVE threw {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            FreeAll(inPtr, outPtr, failPtr);
+        }
+    }
+
+    /// <summary>INSERT or UPDATE one face photo (same struct layout for both operations).</summary>
+    private (bool Ok, string? Error) WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE op, string deviceUserId, byte[] jpegBytes)
+    {
+        var faceInfoPtr = IntPtr.Zero;
+        var photoPtr = IntPtr.Zero;
+        var failCodePtr = IntPtr.Zero;
+        var inParamPtr = IntPtr.Zero;
+        var outParamPtr = IntPtr.Zero;
+        try
+        {
+            faceInfoPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_ACCESS_FACE_INFO>());
+            photoPtr = Marshal.AllocHGlobal(jpegBytes.Length);
+            Marshal.Copy(jpegBytes, 0, photoPtr, jpegBytes.Length);
+
+            var faceInfo = new NET_ACCESS_FACE_INFO
+            {
+                szUserID = deviceUserId,
+                nFacePhoto = 1,
+                nInFacePhotoLen = new int[5],
+                nOutFacePhotoLen = new int[5],
+                pFacePhoto = new IntPtr[5]
+            };
+            faceInfo.nInFacePhotoLen[0] = jpegBytes.Length;
+            faceInfo.nOutFacePhotoLen[0] = jpegBytes.Length;
+            faceInfo.pFacePhoto[0] = photoPtr;
+            Marshal.StructureToPtr(faceInfo, faceInfoPtr, false);
+
+            failCodePtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_EM_FAILCODE>());
+            Marshal.StructureToPtr(new NET_EM_FAILCODE(), failCodePtr, false);
+
+            if (op == EM_NET_ACCESS_CTL_FACE_SERVICE.UPDATE)
+            {
+                var input = new NET_IN_ACCESS_FACE_SERVICE_UPDATE
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_UPDATE>(),
+                    nFaceInfoNum = 1,
+                    pFaceInfo = faceInfoPtr
+                };
+                inParamPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_UPDATE>());
+                Marshal.StructureToPtr(input, inParamPtr, false);
+                var output = new NET_OUT_ACCESS_FACE_SERVICE_UPDATE
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_UPDATE>(),
+                    nMaxRetNum = 1,
+                    pFailCode = failCodePtr
+                };
+                outParamPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_UPDATE>());
+                Marshal.StructureToPtr(output, outParamPtr, false);
+            }
+            else
+            {
+                var input = new NET_IN_ACCESS_FACE_SERVICE_INSERT
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_INSERT>(),
+                    nFaceInfoNum = 1,
+                    pFaceInfo = faceInfoPtr
+                };
+                inParamPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_INSERT>());
+                Marshal.StructureToPtr(input, inParamPtr, false);
+                var output = new NET_OUT_ACCESS_FACE_SERVICE_INSERT
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_INSERT>(),
+                    nMaxRetNum = 1,
+                    pFailCode = failCodePtr
+                };
+                outParamPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_INSERT>());
+                Marshal.StructureToPtr(output, outParamPtr, false);
+            }
+
+            var ok = NETClient.OperateAccessFaceService(_loginId, op, inParamPtr, outParamPtr, WaitMs);
+            if (ok)
+            {
+                return (true, null);
+            }
+
+            var fail = Marshal.PtrToStructure<NET_EM_FAILCODE>(failCodePtr).emCode;
+            return (false, $"{SdkError(op.ToString())} failCode={fail}");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"{op} threw {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            FreeAll(photoPtr, faceInfoPtr, failCodePtr, inParamPtr, outParamPtr);
+        }
+    }
+
+    private static void FreeAll(params IntPtr[] pointers)
+    {
+        foreach (var p in pointers)
+        {
+            if (p != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(p);
+            }
+        }
     }
 
     public FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes)
@@ -299,13 +577,6 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
     }
 
-    public DeviceCommandResult DeleteFace(string deviceUserId)
-    {
-        _ = deviceUserId;
-        return DeviceCommandResult.Fail(
-            "UNVERIFIED: OperateAccessFaceService is not claimed as success on this firmware");
-    }
-
     public IReadOnlyList<DeviceAttendanceRecord> FetchAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc)
     {
         if (_loginId == IntPtr.Zero)
@@ -354,27 +625,40 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         GC.SuppressFinalize(this);
     }
 
-    private DeviceCommandResult UpsertUser(DeviceUserMutation mutation, bool freeze)
+    /// <summary>
+    /// Creates the user or changes only the fields the mutation carries (name, enabled, validity),
+    /// keeping everything else as stored on the device. Unchanged users are not rewritten, so a
+    /// server push never shows up as a device-side edit.
+    /// </summary>
+    private DeviceCommandResult UpsertUser(DeviceUserMutation mutation)
     {
         if (!EnsureLogin(out var err))
         {
             return DeviceCommandResult.Fail(err);
         }
 
-        if (TryGetExistingUser(mutation.DeviceUserId, out var existing)
-            && UserMatchesDesired(existing, mutation, freeze))
+        NET_ACCESS_USER_INFO user;
+        if (TryGetExistingUser(mutation.DeviceUserId, out var existing))
         {
-            Touch();
-            return DeviceCommandResult.Success();
+            if (UserMatchesDesired(existing, mutation))
+            {
+                Touch();
+                return DeviceCommandResult.Success();
+            }
+
+            user = ApplyMutation(existing, mutation);
+        }
+        else
+        {
+            user = BuildUser(mutation, freeze: mutation.Enabled == false);
         }
 
-        var user = BuildUser(mutation, freeze);
         var ok = NETClient.InsertOperateAccessUserService(_loginId, [user], out var fail, WaitMs);
         if (!ok)
         {
             // INSERT may fail when the user already exists — re-GET and treat match as success.
             if (TryGetExistingUser(mutation.DeviceUserId, out var afterFail)
-                && UserMatchesDesired(afterFail, mutation, freeze))
+                && UserMatchesDesired(afterFail, mutation))
             {
                 Touch();
                 return DeviceCommandResult.Success();
@@ -405,25 +689,67 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return true;
     }
 
-    private static bool UserMatchesDesired(NET_ACCESS_USER_INFO existing, DeviceUserMutation mutation, bool freeze)
+    private static bool UserMatchesDesired(NET_ACCESS_USER_INFO existing, DeviceUserMutation mutation)
     {
-        var frozen = existing.nUserStatus != 0;
-        if (frozen != freeze)
+        if (mutation.Enabled.HasValue && (existing.nUserStatus != 0) != (mutation.Enabled == false))
         {
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(mutation.Name))
+        if (!string.IsNullOrWhiteSpace(mutation.Name)
+            && !string.Equals(NullIfEmpty(existing.szName), Truncate(mutation.Name.Trim(), 31), StringComparison.Ordinal))
         {
-            var desired = Truncate(mutation.Name, 31);
-            if (!string.Equals(NullIfEmpty(existing.szName), desired, StringComparison.Ordinal))
-            {
-                // Name mismatch is soft — still treat freeze/validity as authoritative
-            }
+            return false;
+        }
+
+        if (mutation.ValidFrom.HasValue && NetTimeOrNull(existing.stuValidBeginTime)?.Date != mutation.ValidFrom.Value.UtcDateTime.Date)
+        {
+            return false;
+        }
+
+        if (mutation.ValidTo.HasValue && NetTimeOrNull(existing.stuValidEndTime)?.Date != mutation.ValidTo.Value.UtcDateTime.Date)
+        {
+            return false;
         }
 
         return true;
     }
+
+    private static NET_ACCESS_USER_INFO ApplyMutation(NET_ACCESS_USER_INFO user, DeviceUserMutation mutation)
+    {
+        if (!string.IsNullOrWhiteSpace(mutation.Name))
+        {
+            user.szName = Truncate(mutation.Name.Trim(), 31);
+        }
+
+        if (mutation.Enabled.HasValue)
+        {
+            user.nUserStatus = mutation.Enabled.Value ? 0u : 1u;
+        }
+
+        if (mutation.ValidFrom.HasValue)
+        {
+            user.stuValidBeginTime = NET_TIME.FromDateTime(mutation.ValidFrom.Value.UtcDateTime);
+        }
+
+        if (mutation.ValidTo.HasValue)
+        {
+            user.stuValidEndTime = NET_TIME.FromDateTime(EndOfDay(mutation.ValidTo.Value));
+        }
+
+        return user;
+    }
+
+    /// <summary>The device compares against a time of day: the end date must stay valid until 23:59:59.</summary>
+    private static DateTime EndOfDay(DateTimeOffset date) => date.UtcDateTime.Date.AddDays(1).AddSeconds(-1);
+
+    private static DeviceUserSnapshot ToSnapshot(NET_ACCESS_USER_INFO user) =>
+        new(
+            user.szUserID.Trim(),
+            NullIfEmpty(user.szName),
+            Frozen: user.nUserStatus != 0,
+            ValidFrom: NetTimeOrNull(user.stuValidBeginTime),
+            ValidTo: NetTimeOrNull(user.stuValidEndTime));
 
     private static NET_ACCESS_USER_INFO BuildUser(DeviceUserMutation mutation, bool freeze)
     {
@@ -449,7 +775,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
         if (mutation.ValidTo.HasValue)
         {
-            user.stuValidEndTime = NET_TIME.FromDateTime(mutation.ValidTo.Value.UtcDateTime);
+            user.stuValidEndTime = NET_TIME.FromDateTime(EndOfDay(mutation.ValidTo.Value));
         }
 
         return user;
@@ -631,12 +957,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                         var user = Marshal.PtrToStructure<NET_ACCESS_USER_INFO>(ptr);
                         if (!string.IsNullOrWhiteSpace(user.szUserID))
                         {
-                            users.Add(new DeviceUserSnapshot(
-                                user.szUserID.Trim(),
-                                NullIfEmpty(user.szName),
-                                Frozen: user.nUserStatus != 0,
-                                ValidFrom: NetTimeOrNull(user.stuValidBeginTime),
-                                ValidTo: NetTimeOrNull(user.stuValidEndTime)));
+                            users.Add(ToSnapshot(user));
                         }
                     }
 
@@ -745,6 +1066,27 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                     null,
                     null,
                     info.bStatus ? null : info.nErrorCode));
+                return true;
+            }
+
+            if (type is EM_ALARM_TYPE.FACEINFO_COLLECT)
+            {
+                var collect = Marshal.PtrToStructure<NET_ALARM_FACEINFO_COLLECT_INFO>(pBuf);
+                adapter._lastSeen = DateTimeOffset.UtcNow;
+                adapter._listener?.OnNormalizedEvent(new NormalizedDeviceEvent(
+                    "USER_CHANGED", NullIfEmpty(collect.szUserID), DateTimeOffset.UtcNow, "UNKNOWN", true,
+                    null, null, type.ToString()));
+                return true;
+            }
+
+            if (type is EM_ALARM_TYPE.ALARM_ACCESS_CTL_USERID_REGISTER
+                or EM_ALARM_TYPE.ALARM_ACCESS_CTL_USERID_DELETE
+                or EM_ALARM_TYPE.ALARM_USER_MODIFIED)
+            {
+                // Payload layouts vary by firmware; the watcher re-reads the roster to find what changed.
+                adapter._lastSeen = DateTimeOffset.UtcNow;
+                adapter._listener?.OnNormalizedEvent(new NormalizedDeviceEvent(
+                    "USER_CHANGED", null, DateTimeOffset.UtcNow, "UNKNOWN", true, null, null, type.ToString()));
                 return true;
             }
 

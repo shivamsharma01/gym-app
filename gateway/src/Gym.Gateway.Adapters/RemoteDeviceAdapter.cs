@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -6,10 +7,17 @@ using System.Text.Json.Serialization;
 namespace Gym.Gateway.Adapters;
 
 /// <summary>
-/// Device adapter that connects over HTTP/REST to a standalone virtual hardware device server.
-/// Exposes the exact same IDeviceAdapter contract to the Gateway so the Gateway can run unmodified,
-/// communicating over local network (e.g. 127.0.0.1:9001 and 127.0.0.1:9002) to the simulator.
-/// Supports long-polling for real-time device callbacks (alarms, punches, local edits).
+/// Simulator-only adapter (Adapter = "Remote"): talks to a virtual device from
+/// <c>simulator/device_server.py</c> over that simulator's own HTTP protocol. It replaces
+/// <see cref="TrueFaceDeviceAdapter"/> behind the same <see cref="IDeviceAdapter"/> contract, so the
+/// rest of the gateway (local state, change detection, outbox) is exercised as in production; the
+/// NetSDK mapping and its callbacks are not.
+/// <para>
+/// Connection handling mirrors what the gateway sees from the SDK: a device that stops answering
+/// (transport error, timeout or HTTP 503) is reported OFFLINE with a STATUS event, commands fail fast
+/// while it is offline, and a background loop reconnects and reports it back ONLINE. Live events
+/// arrive through long polling.
+/// </para>
 /// </summary>
 public sealed class RemoteDeviceAdapter : IDeviceAdapter
 {
@@ -21,131 +29,70 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
     };
 
     private readonly HttpClient _http;
+    private readonly HttpClient _pollHttp;
+    private readonly TimeSpan _minRetryDelay;
+    private readonly TimeSpan _maxRetryDelay;
     private readonly CancellationTokenSource _cts = new();
     private DeviceConnectionConfig? _config;
     private IDeviceEventListener? _listener;
-    private Task? _eventLoopTask;
-    private bool _connected;
+    private Task? _loop;
+    private int _online;
     private DateTimeOffset? _lastSeen;
     private string _baseUrl = "";
 
-    public RemoteDeviceAdapter(HttpClient? http = null)
+    public RemoteDeviceAdapter(HttpClient? http = null, TimeSpan? minRetryDelay = null, TimeSpan? maxRetryDelay = null)
     {
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        _pollHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(35) };
+        _minRetryDelay = minRetryDelay ?? TimeSpan.FromSeconds(2);
+        _maxRetryDelay = maxRetryDelay ?? TimeSpan.FromSeconds(30);
     }
 
     public string DeviceId => _config?.DeviceId ?? "";
+
+    private bool IsOnline => Volatile.Read(ref _online) == 1;
 
     public DeviceConnectionStatus Connect(DeviceConnectionConfig config)
     {
         _config = config;
         _baseUrl = $"http://{config.Ip}:{config.Port}";
-
-        try
+        var error = ProbeAsync(_cts.Token).GetAwaiter().GetResult();
+        if (error == null)
         {
-            var pingResp = _http.GetAsync($"{_baseUrl}/device/info").GetAwaiter().GetResult();
-            if (!pingResp.IsSuccessStatusCode)
-            {
-                return DeviceConnectionStatus.Failed($"Virtual device returned HTTP {pingResp.StatusCode}");
-            }
-
-            _connected = true;
-            _lastSeen = DateTimeOffset.UtcNow;
-
-            // Start long-polling event loop for real-time hardware events
-            _eventLoopTask = Task.Run(() => EventPollingLoopAsync(_cts.Token));
-
-            return DeviceConnectionStatus.Online();
+            Touch();
+            Volatile.Write(ref _online, 1);
         }
-        catch (Exception ex)
-        {
-            return DeviceConnectionStatus.Failed($"Cannot connect to virtual device at {_baseUrl}: {ex.Message}");
-        }
+
+        // Keeps polling events while online and keeps retrying while offline.
+        _loop ??= Task.Run(() => RunAsync(_cts.Token));
+        return error == null
+            ? DeviceConnectionStatus.Online()
+            : DeviceConnectionStatus.Failed($"Cannot reach virtual device at {_baseUrl}: {error} (retrying in background)");
     }
 
     public void Disconnect()
     {
-        _connected = false;
+        Volatile.Write(ref _online, 0);
         _cts.Cancel();
     }
 
     public DeviceInfoSnapshot GetDeviceInfo()
     {
-        if (!_connected)
-        {
-            return new DeviceInfoSnapshot(null, 0, 0, 0, 0, 0);
-        }
-
-        try
-        {
-            var resp = _http.GetFromJsonAsync<RemoteDeviceInfoResponse>($"{_baseUrl}/device/info", JsonOpts)
-                .GetAwaiter().GetResult();
-            return new DeviceInfoSnapshot(
-                resp?.SerialNumber ?? "SIM-SERIAL",
-                resp?.DeviceType ?? 0,
-                resp?.ChannelCount ?? 1,
-                resp?.AlarmInCount ?? 0,
-                resp?.AlarmOutCount ?? 0,
-                resp?.DiskCount ?? 0);
-        }
-        catch
-        {
-            return new DeviceInfoSnapshot("SIM-SERIAL", 0, 1, 0, 0, 0);
-        }
+        var info = Read<RemoteDeviceInfoResponse>("/device/info");
+        return info == null
+            ? new DeviceInfoSnapshot(null, 0, 0, 0, 0, 0)
+            : new DeviceInfoSnapshot(info.SerialNumber, info.DeviceType, info.ChannelCount, info.AlarmInCount,
+                info.AlarmOutCount, info.DiskCount);
     }
 
     public DeviceHealth GetHealth() =>
-        new(_connected ? "ONLINE" : "OFFLINE", _lastSeen, "remote-simulator");
+        new(IsOnline ? "ONLINE" : "OFFLINE", _lastSeen, "remote-simulator");
 
-    public DeviceCommandResult CreateUser(DeviceUserMutation mutation)
-    {
-        if (!EnsureConnected(out var err))
-        {
-            return DeviceCommandResult.Fail(err);
-        }
+    public DeviceCommandResult CreateUser(DeviceUserMutation mutation) =>
+        Command(t => _http.PostAsJsonAsync($"{_baseUrl}/device/users", mutation, JsonOpts, t));
 
-        try
-        {
-            var resp = _http.PostAsJsonAsync($"{_baseUrl}/device/users", mutation, JsonOpts).GetAwaiter().GetResult();
-            Touch();
-            if (resp.IsSuccessStatusCode)
-            {
-                return DeviceCommandResult.Success();
-            }
-
-            var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            return DeviceCommandResult.Fail($"HTTP {resp.StatusCode}: {body}");
-        }
-        catch (Exception ex)
-        {
-            return DeviceCommandResult.Fail(ex.Message);
-        }
-    }
-
-    public DeviceCommandResult UpdateUser(DeviceUserMutation mutation)
-    {
-        if (!EnsureConnected(out var err))
-        {
-            return DeviceCommandResult.Fail(err);
-        }
-
-        try
-        {
-            var resp = _http.PutAsJsonAsync($"{_baseUrl}/device/users/{Uri.EscapeDataString(mutation.DeviceUserId)}", mutation, JsonOpts).GetAwaiter().GetResult();
-            Touch();
-            if (resp.IsSuccessStatusCode)
-            {
-                return DeviceCommandResult.Success();
-            }
-
-            var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            return DeviceCommandResult.Fail($"HTTP {resp.StatusCode}: {body}");
-        }
-        catch (Exception ex)
-        {
-            return DeviceCommandResult.Fail(ex.Message);
-        }
-    }
+    public DeviceCommandResult UpdateUser(DeviceUserMutation mutation) =>
+        Command(t => _http.PutAsJsonAsync(UserUrl(mutation.DeviceUserId), mutation, JsonOpts, t));
 
     public DeviceCommandResult DisableUser(string deviceUserId) =>
         UpdateUser(new DeviceUserMutation(deviceUserId, Enabled: false));
@@ -153,167 +100,59 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
     public DeviceCommandResult EnableUser(string deviceUserId) =>
         UpdateUser(new DeviceUserMutation(deviceUserId, Enabled: true));
 
-    public DeviceCommandResult DeleteUser(string deviceUserId)
-    {
-        if (!EnsureConnected(out var err))
-        {
-            return DeviceCommandResult.Fail(err);
-        }
-
-        try
-        {
-            var resp = _http.DeleteAsync($"{_baseUrl}/device/users/{Uri.EscapeDataString(deviceUserId)}").GetAwaiter().GetResult();
-            Touch();
-            if (resp.IsSuccessStatusCode)
-            {
-                return DeviceCommandResult.Success();
-            }
-
-            var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            return DeviceCommandResult.Fail($"HTTP {resp.StatusCode}: {body}");
-        }
-        catch (Exception ex)
-        {
-            return DeviceCommandResult.Fail(ex.Message);
-        }
-    }
+    public DeviceCommandResult DeleteUser(string deviceUserId) =>
+        Command(t => _http.DeleteAsync(UserUrl(deviceUserId), t));
 
     public DeviceCommandResult UpdateValidity(DeviceUserMutation mutation) => UpdateUser(mutation);
 
-    public IReadOnlyList<DeviceUserSnapshot> ListUsers()
-    {
-        if (!EnsureConnected(out _))
-        {
-            return [];
-        }
-
-        try
-        {
-            var users = _http.GetFromJsonAsync<List<RemoteUserDto>>($"{_baseUrl}/device/users", JsonOpts).GetAwaiter().GetResult();
-            Touch();
-            return users?.Select(u => new DeviceUserSnapshot(
-                u.DeviceUserId,
-                u.Name,
-                Frozen: u.Enabled == false,
-                ValidFrom: u.ValidFrom,
-                ValidTo: u.ValidTo)).ToArray() ?? [];
-        }
-        catch
-        {
-            return [];
-        }
-    }
+    public IReadOnlyList<DeviceUserSnapshot> ListUsers() =>
+        Read<List<RemoteUserDto>>("/device/users")?.Select(ToSnapshot).ToArray() ?? [];
 
     public DeviceUserSnapshot? GetUser(string deviceUserId)
     {
-        if (!EnsureConnected(out _))
-        {
-            return null;
-        }
-
-        try
-        {
-            var u = _http.GetFromJsonAsync<RemoteUserDto>($"{_baseUrl}/device/users/{Uri.EscapeDataString(deviceUserId)}", JsonOpts).GetAwaiter().GetResult();
-            Touch();
-            return u == null ? null : new DeviceUserSnapshot(
-                u.DeviceUserId,
-                u.Name,
-                Frozen: u.Enabled == false,
-                ValidFrom: u.ValidFrom,
-                ValidTo: u.ValidTo);
-        }
-        catch
-        {
-            return null;
-        }
+        var user = Read<RemoteUserDto>($"/device/users/{Uri.EscapeDataString(deviceUserId)}");
+        return user == null ? null : ToSnapshot(user);
     }
 
     public DeviceCommandResult UpsertFace(string deviceUserId, byte[] jpegBytes)
     {
-        if (!EnsureConnected(out var err))
-        {
-            return DeviceCommandResult.Fail(err);
-        }
-
         if (jpegBytes == null || jpegBytes.Length == 0)
         {
             return DeviceCommandResult.Fail("No face image");
         }
 
-        try
+        return Command(t =>
         {
-            using var content = new ByteArrayContent(jpegBytes);
+            var content = new ByteArrayContent(jpegBytes);
             content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
-            var resp = _http.PutAsync($"{_baseUrl}/device/users/{Uri.EscapeDataString(deviceUserId)}/face", content).GetAwaiter().GetResult();
-            Touch();
-            if (resp.IsSuccessStatusCode)
-            {
-                return DeviceCommandResult.Success();
-            }
-
-            var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            return DeviceCommandResult.Fail($"HTTP {resp.StatusCode}: {body}");
-        }
-        catch (Exception ex)
-        {
-            return DeviceCommandResult.Fail(ex.Message);
-        }
+            return _http.PutAsync(UserUrl(deviceUserId) + "/face", content, t);
+        });
     }
 
     public DeviceFaceRead GetFace(string deviceUserId)
     {
-        if (!EnsureConnected(out var err))
+        using var resp = Send(t => _http.GetAsync(UserUrl(deviceUserId) + "/face", t), out var error);
+        if (resp == null)
         {
-            return DeviceFaceRead.Fail(err);
+            return DeviceFaceRead.Fail(error);
         }
 
-        try
+        if (resp.StatusCode == HttpStatusCode.NotFound)
         {
-            var resp = _http.GetAsync($"{_baseUrl}/device/users/{Uri.EscapeDataString(deviceUserId)}/face").GetAwaiter().GetResult();
-            Touch();
-            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                return DeviceFaceRead.None();
-            }
-
-            if (!resp.IsSuccessStatusCode)
-            {
-                return DeviceFaceRead.Fail($"HTTP {resp.StatusCode}");
-            }
-
-            var bytes = resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
-            var lastMod = resp.Content.Headers.LastModified ?? DateTimeOffset.UtcNow;
-            return DeviceFaceRead.Found(bytes, lastMod);
+            return DeviceFaceRead.None();
         }
-        catch (Exception ex)
+
+        if (!resp.IsSuccessStatusCode)
         {
-            return DeviceFaceRead.Fail(ex.Message);
+            return DeviceFaceRead.Fail($"HTTP {(int)resp.StatusCode}");
         }
+
+        var bytes = resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+        return DeviceFaceRead.Found(bytes, resp.Content.Headers.LastModified);
     }
 
-    public DeviceCommandResult DeleteFace(string deviceUserId)
-    {
-        if (!EnsureConnected(out var err))
-        {
-            return DeviceCommandResult.Fail(err);
-        }
-
-        try
-        {
-            var resp = _http.DeleteAsync($"{_baseUrl}/device/users/{Uri.EscapeDataString(deviceUserId)}/face").GetAwaiter().GetResult();
-            Touch();
-            if (resp.IsSuccessStatusCode)
-            {
-                return DeviceCommandResult.Success();
-            }
-
-            return DeviceCommandResult.Fail($"HTTP {resp.StatusCode}");
-        }
-        catch (Exception ex)
-        {
-            return DeviceCommandResult.Fail(ex.Message);
-        }
-    }
+    public DeviceCommandResult DeleteFace(string deviceUserId) =>
+        Command(t => _http.DeleteAsync(UserUrl(deviceUserId) + "/face", t));
 
     public FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes)
     {
@@ -323,151 +162,274 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
 
     public IReadOnlyList<DeviceAttendanceRecord> FetchAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc)
     {
-        if (!EnsureConnected(out _))
+        var query = new List<string>();
+        if (fromUtc.HasValue)
         {
-            return [];
+            query.Add($"from={Uri.EscapeDataString(fromUtc.Value.ToString("O"))}");
         }
 
-        try
+        if (toUtc.HasValue)
         {
-            var url = $"{_baseUrl}/device/attendance";
-            if (fromUtc.HasValue || toUtc.HasValue)
-            {
-                var query = new List<string>();
-                if (fromUtc.HasValue) query.Add($"from={Uri.EscapeDataString(fromUtc.Value.ToString("O"))}");
-                if (toUtc.HasValue) query.Add($"to={Uri.EscapeDataString(toUtc.Value.ToString("O"))}");
-                url += "?" + string.Join("&", query);
-            }
+            query.Add($"to={Uri.EscapeDataString(toUtc.Value.ToString("O"))}");
+        }
 
-            var records = _http.GetFromJsonAsync<List<RemoteAttendanceDto>>(url, JsonOpts).GetAwaiter().GetResult();
-            Touch();
-            return records?.Select(r => new DeviceAttendanceRecord(
-                r.DeviceUserId,
-                r.OccurredAt,
-                r.Method ?? "FACE",
-                r.Granted,
-                r.RecNo,
-                r.ErrorCode)).ToArray() ?? [];
-        }
-        catch
-        {
-            return [];
-        }
+        var path = "/device/attendance" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
+        return Read<List<RemoteAttendanceDto>>(path)?.Select(r => new DeviceAttendanceRecord(
+            r.DeviceUserId, r.OccurredAt, r.Method ?? "FACE", r.Granted, r.RecNo, r.ErrorCode)).ToArray() ?? [];
     }
 
     public void RegisterEventListener(IDeviceEventListener listener) => _listener = listener;
 
-    public DeviceCommandResult OpenDoor() => PostSimpleAction("open-door");
+    public DeviceCommandResult OpenDoor() => Command(t => _http.PostAsync($"{_baseUrl}/device/open-door", null, t));
 
-    public DeviceCommandResult CloseDoor() => PostSimpleAction("close-door");
+    public DeviceCommandResult CloseDoor() => Command(t => _http.PostAsync($"{_baseUrl}/device/close-door", null, t));
 
-    public DeviceCommandResult SynchronizeTime(DateTimeOffset utcNow)
-    {
-        if (!EnsureConnected(out var err))
-        {
-            return DeviceCommandResult.Fail(err);
-        }
-
-        try
-        {
-            var resp = _http.PostAsJsonAsync($"{_baseUrl}/device/sync-time", new { utcNow }, JsonOpts).GetAwaiter().GetResult();
-            Touch();
-            return resp.IsSuccessStatusCode ? DeviceCommandResult.Success() : DeviceCommandResult.Fail($"HTTP {resp.StatusCode}");
-        }
-        catch (Exception ex)
-        {
-            return DeviceCommandResult.Fail(ex.Message);
-        }
-    }
+    public DeviceCommandResult SynchronizeTime(DateTimeOffset utcNow) =>
+        Command(t => _http.PostAsJsonAsync($"{_baseUrl}/device/sync-time", new { utcNow }, JsonOpts, t));
 
     public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
     {
-        if (!EnsureConnected(out var err))
+        if (!IsOnline)
         {
-            return new DeviceReconciliationResult(false, err, [], []);
+            return new DeviceReconciliationResult(false, "Device is offline", [], []);
         }
 
-        return new DeviceReconciliationResult(true, null, FetchAttendance(fromUtc, toUtc), ListUsers());
+        var from = fromUtc ?? DateTimeOffset.UtcNow.AddDays(-1);
+        var to = toUtc ?? DateTimeOffset.UtcNow.AddHours(1);
+        return new DeviceReconciliationResult(true, null, FetchAttendance(from, to), ListUsers());
     }
 
     public void Dispose()
     {
         Disconnect();
+        try
+        {
+            _loop?.Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (AggregateException)
+        {
+            // loop already stopped
+        }
+
         _cts.Dispose();
         _http.Dispose();
+        _pollHttp.Dispose();
     }
 
-    private DeviceCommandResult PostSimpleAction(string action)
+    // --- requests --------------------------------------------------------------------------------
+
+    private string UserUrl(string deviceUserId) => $"{_baseUrl}/device/users/{Uri.EscapeDataString(deviceUserId)}";
+
+    /// <summary>
+    /// Sends a request to the device. Returns null (with an error) when the device is offline or
+    /// does not answer; any HTTP answer other than 503 means the device is reachable.
+    /// </summary>
+    private HttpResponseMessage? Send(Func<CancellationToken, Task<HttpResponseMessage>> call, out string error)
     {
-        if (!EnsureConnected(out var err))
+        if (!IsOnline)
         {
-            return DeviceCommandResult.Fail(err);
+            error = "Device is offline";
+            return null;
         }
 
         try
         {
-            var resp = _http.PostAsync($"{_baseUrl}/device/{action}", null).GetAwaiter().GetResult();
+            var resp = call(_cts.Token).GetAwaiter().GetResult();
+            if (resp.StatusCode == HttpStatusCode.ServiceUnavailable)
+            {
+                resp.Dispose();
+                MarkOffline("HTTP 503");
+                error = "Device is offline (HTTP 503)";
+                return null;
+            }
+
             Touch();
-            return resp.IsSuccessStatusCode ? DeviceCommandResult.Success() : DeviceCommandResult.Fail($"HTTP {resp.StatusCode}");
-        }
-        catch (Exception ex)
-        {
-            return DeviceCommandResult.Fail(ex.Message);
-        }
-    }
-
-    private bool EnsureConnected(out string error)
-    {
-        if (_connected)
-        {
             error = "";
-            return true;
+            return resp;
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+        {
+            error = "Adapter disconnected";
+            return null;
+        }
+        catch (TaskCanceledException)
+        {
+            MarkOffline("timed out");
+            error = "Device did not respond in time";
+            return null;
+        }
+        catch (HttpRequestException ex)
+        {
+            MarkOffline(ex.Message);
+            error = ex.Message;
+            return null;
+        }
+    }
+
+    private DeviceCommandResult Command(Func<CancellationToken, Task<HttpResponseMessage>> call)
+    {
+        using var resp = Send(call, out var error);
+        if (resp == null)
+        {
+            return DeviceCommandResult.Fail(error);
         }
 
-        error = "Device is not connected";
-        return false;
+        if (resp.IsSuccessStatusCode)
+        {
+            return DeviceCommandResult.Success();
+        }
+
+        var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        return DeviceCommandResult.Fail($"HTTP {(int)resp.StatusCode}: {body}");
     }
+
+    /// <summary>GET and parse JSON; null when offline, not found, failed or unreadable.</summary>
+    private T? Read<T>(string path) where T : class
+    {
+        using var resp = Send(t => _http.GetAsync(_baseUrl + path, t), out _);
+        if (resp is not { IsSuccessStatusCode: true })
+        {
+            return null;
+        }
+
+        try
+        {
+            return resp.Content.ReadFromJsonAsync<T>(JsonOpts).GetAwaiter().GetResult();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static DeviceUserSnapshot ToSnapshot(RemoteUserDto u) =>
+        new(u.DeviceUserId, u.Name, Frozen: u.Enabled == false, ValidFrom: u.ValidFrom, ValidTo: u.ValidTo);
+
+    // --- connection state and events ---------------------------------------------------------------
 
     private void Touch() => _lastSeen = DateTimeOffset.UtcNow;
 
-    private async Task EventPollingLoopAsync(CancellationToken token)
+    private void MarkOnline()
     {
-        using var pollClient = new HttpClient { Timeout = TimeSpan.FromSeconds(35) };
-        while (!token.IsCancellationRequested && _connected)
+        Touch();
+        if (Interlocked.Exchange(ref _online, 1) == 0)
         {
+            Publish(new NormalizedDeviceEvent("STATUS", null, DateTimeOffset.UtcNow, "UNKNOWN", true, null, null, "reconnected"));
+        }
+    }
+
+    private void MarkOffline(string reason)
+    {
+        if (Interlocked.Exchange(ref _online, 0) == 1 && !_cts.IsCancellationRequested)
+        {
+            Publish(new NormalizedDeviceEvent("STATUS", null, DateTimeOffset.UtcNow, "UNKNOWN", false, null, null,
+                "disconnected: " + reason));
+        }
+    }
+
+    private void Publish(NormalizedDeviceEvent evt)
+    {
+        try
+        {
+            _listener?.OnNormalizedEvent(evt);
+        }
+        catch
+        {
+            // a listener failure must not stop the event loop
+        }
+    }
+
+    /// <summary>Returns null when the device answers /device/info, otherwise the reason.</summary>
+    private async Task<string?> ProbeAsync(CancellationToken token)
+    {
+        try
+        {
+            using var resp = await _http.GetAsync($"{_baseUrl}/device/info", token).ConfigureAwait(false);
+            return resp.IsSuccessStatusCode ? null : $"HTTP {(int)resp.StatusCode}";
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return "cancelled";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            return ex is TaskCanceledException ? "timed out" : ex.Message;
+        }
+    }
+
+    private async Task RunAsync(CancellationToken token)
+    {
+        var retryDelay = _minRetryDelay;
+        while (!token.IsCancellationRequested)
+        {
+            if (!IsOnline)
+            {
+                if (await ProbeAsync(token).ConfigureAwait(false) == null)
+                {
+                    MarkOnline();
+                    retryDelay = _minRetryDelay;
+                }
+                else
+                {
+                    await PauseAsync(retryDelay, token).ConfigureAwait(false);
+                    retryDelay = TimeSpan.FromTicks(Math.Min(retryDelay.Ticks * 2, _maxRetryDelay.Ticks));
+                }
+
+                continue;
+            }
+
             try
             {
-                var resp = await pollClient.GetAsync($"{_baseUrl}/device/events/poll", token).ConfigureAwait(false);
-                if (resp.IsSuccessStatusCode)
+                using var resp = await _pollHttp.GetAsync($"{_baseUrl}/device/events/poll", token).ConfigureAwait(false);
+                if (resp.StatusCode == HttpStatusCode.ServiceUnavailable)
                 {
-                    var events = await resp.Content.ReadFromJsonAsync<List<RemoteEventDto>>(JsonOpts, token).ConfigureAwait(false);
-                    if (events != null)
-                    {
-                        foreach (var ev in events)
-                        {
-                            _listener?.OnNormalizedEvent(new NormalizedDeviceEvent(
-                                ev.Kind ?? "ACCESS",
-                                ev.DeviceUserId,
-                                ev.OccurredAt,
-                                ev.Method ?? "FACE",
-                                ev.Granted,
-                                ev.RecNo,
-                                ev.AlarmType,
-                                ev.Details,
-                                ev.ErrorCode));
-                        }
-                    }
+                    MarkOffline("HTTP 503");
+                    continue;
+                }
+
+                if (!resp.IsSuccessStatusCode)
+                {
+                    await PauseAsync(_minRetryDelay, token).ConfigureAwait(false);
+                    continue;
+                }
+
+                Touch();
+                var events = await resp.Content.ReadFromJsonAsync<List<RemoteEventDto>>(JsonOpts, token).ConfigureAwait(false);
+                foreach (var ev in events ?? [])
+                {
+                    Publish(new NormalizedDeviceEvent(
+                        ev.Kind ?? "ACCESS", ev.DeviceUserId, ev.OccurredAt, ev.Method ?? "FACE", ev.Granted, ev.RecNo,
+                        ev.AlarmType, ev.Details, ev.ErrorCode));
                 }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 break;
             }
-            catch
+            catch (TaskCanceledException)
             {
-                // Exponential backoff or brief delay on connection drop
-                await Task.Delay(2000, token).ConfigureAwait(false);
+                MarkOffline("event poll timed out");
             }
+            catch (HttpRequestException ex)
+            {
+                MarkOffline(ex.Message);
+            }
+            catch (JsonException)
+            {
+                await PauseAsync(_minRetryDelay, token).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task PauseAsync(TimeSpan delay, CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(delay, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // stopping
         }
     }
 

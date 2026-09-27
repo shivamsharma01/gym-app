@@ -40,3 +40,6 @@ backend/target/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Virtual device server state
+simulator/data/

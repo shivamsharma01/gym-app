@@ -6,7 +6,6 @@ import {
   MonitorSmartphone,
   UserPlus,
   Users,
-  Wallet,
 } from 'lucide-react'
 import { QueryError } from '@/components/QueryError'
 import {
@@ -72,13 +71,6 @@ export function DashboardPage() {
               <Link to="/app/members/new">
                 <Button size="sm">
                   <UserPlus className="h-4 w-4" /> Add member
-                </Button>
-              </Link>
-            ) : null}
-            {has('PAYMENT_CREATE') ? (
-              <Link to="/app/payments">
-                <Button size="sm" variant="outline">
-                  <Wallet className="h-4 w-4" /> Record payment
                 </Button>
               </Link>
             ) : null}

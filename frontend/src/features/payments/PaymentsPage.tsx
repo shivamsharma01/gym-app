@@ -787,6 +787,8 @@ export function PaymentsPage() {
                   <Table>
                     <THead>
                       <tr>
+                        <Th>Member ID</Th>
+                        <Th>Member Name</Th>
                         <Th>Paid on</Th>
                         <Th>Amount</Th>
                         <Th>Method</Th>
@@ -801,6 +803,8 @@ export function PaymentsPage() {
                     {payments.data.content.map(
                         (p) => (
                             <Tr key={p.id}>
+                              <Td className="font-mono text-xs">{p.memberId}</Td>
+                              <Td>{p.memberName}</Td>
                               <Td>
                                 {formatDate(
                                     p.paidOn,

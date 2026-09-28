@@ -91,6 +91,8 @@ export type AccessStatus = {
 
 export type Payment = {
   id: string
+  memberId: string
+  memberName: string
   amount: number | string
   currency: string
   method: string

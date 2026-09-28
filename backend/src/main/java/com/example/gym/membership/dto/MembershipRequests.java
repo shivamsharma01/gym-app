@@ -23,6 +23,16 @@ public final class MembershipRequests {
             BigDecimal discountAmount) {
     }
 
+    public record UpdateMembership(
+            @NotBlank String planId,
+            @NotNull LocalDate startDate,
+            @NotNull LocalDate endDate,
+            BigDecimal discountAmount) {
+    }
+
+    /**
+     * Legacy dates-only payload retained for compatibility with older clients.
+     */
     public record UpdateMembershipDates(
             @NotNull LocalDate startDate,
             @NotNull LocalDate endDate) {

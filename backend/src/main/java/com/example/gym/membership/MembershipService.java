@@ -5,8 +5,10 @@ import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
+import com.example.gym.member.MemberRepository;
 import com.example.gym.membership.dto.MembershipRequests.CreateMembership;
 import com.example.gym.membership.dto.MembershipRequests.RenewMembership;
+import com.example.gym.membership.dto.MembershipRequests.UpdateMembership;
 import com.example.gym.membership.dto.MembershipRequests.UpdateMembershipDates;
 import com.example.gym.plan.MembershipPlan;
 import com.example.gym.plan.PlanService;
@@ -39,6 +41,7 @@ public class MembershipService {
     private final MembershipRepository membershipRepository;
     private final MembershipPlanRepository planRepository;
     private final MemberService memberService;
+    private final MemberRepository memberRepository;
     private final PlanService planService;
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
@@ -46,12 +49,14 @@ public class MembershipService {
     public MembershipService(MembershipRepository membershipRepository,
                              MembershipPlanRepository planRepository,
                              MemberService memberService,
+                             MemberRepository memberRepository,
                              PlanService planService,
                              AuditService auditService,
                              ApplicationEventPublisher eventPublisher) {
         this.membershipRepository = membershipRepository;
         this.planRepository = planRepository;
         this.memberService = memberService;
+        this.memberRepository = memberRepository;
         this.planService = planService;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
@@ -71,9 +76,25 @@ public class MembershipService {
         return membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId());
     }
 
+    private Member requireActiveMemberForMembershipMutation(Long memberId, Long tenantId) {
+        Member member = memberRepository.findById(memberId)
+                .orElseThrow(() -> CommonExceptions.notFound("Member"));
+        TenantGuard.check(member.getTenantId(), tenantId, "Member");
+        if (member.getStatus() != com.example.gym.member.MemberStatus.ACTIVE) {
+            throw CommonExceptions.conflict(
+                    "Member is inactive. Reactivate the member before changing memberships.");
+        }
+        return member;
+    }
+
     @Transactional
     public Membership create(CreateMembership request, Long tenantId) {
         Member member = memberService.getByPublicId(request.memberId(), tenantId);
+        if (member.getStatus() != com.example.gym.member.MemberStatus.ACTIVE) {
+            throw CommonExceptions.conflict(
+                    "Member is inactive. Reactivate the member before creating a membership.");
+        }
+
         MembershipPlan plan = planService.requireActive(request.planId(), tenantId);
 
         LocalDate start =
@@ -166,6 +187,7 @@ public class MembershipService {
     ) {
         Membership current =
                 getByPublicId(membershipPublicId, tenantId);
+        requireActiveMemberForMembershipMutation(current.getMemberId(), tenantId);
 
         MembershipPlan plan =
                 resolveRenewalPlan(
@@ -332,6 +354,7 @@ public class MembershipService {
     @Transactional
     public Membership freeze(String membershipPublicId, Long tenantId) {
         Membership membership = getByPublicId(membershipPublicId, tenantId);
+        requireActiveMemberForMembershipMutation(membership.getMemberId(), tenantId);
         LocalDate today = LocalDate.now();
         if (membership.effectiveStatus(today) != MembershipStatus.ACTIVE) {
             throw CommonExceptions.badRequest("Only an active membership can be frozen");
@@ -348,6 +371,7 @@ public class MembershipService {
     @Transactional
     public Membership unfreeze(String membershipPublicId, Long tenantId) {
         Membership membership = getByPublicId(membershipPublicId, tenantId);
+        requireActiveMemberForMembershipMutation(membership.getMemberId(), tenantId);
         if (membership.getStatus() != MembershipStatus.FROZEN || membership.getFrozenOn() == null) {
             throw CommonExceptions.badRequest("Membership is not frozen");
         }
@@ -371,6 +395,7 @@ public class MembershipService {
     @Transactional
     public Membership cancel(String membershipPublicId, String reason, Long tenantId) {
         Membership membership = getByPublicId(membershipPublicId, tenantId);
+        requireActiveMemberForMembershipMutation(membership.getMemberId(), tenantId);
         if (membership.getStatus() == MembershipStatus.CANCELLED) {
             throw CommonExceptions.badRequest("Membership is already cancelled");
         }
@@ -385,8 +410,100 @@ public class MembershipService {
     }
 
     @Transactional
+    public Membership updateMembership(String membershipPublicId, UpdateMembership request, Long tenantId) {
+        Membership membership = getByPublicId(membershipPublicId, tenantId);
+        requireActiveMemberForMembershipMutation(membership.getMemberId(), tenantId);
+
+        if (membership.getStatus() == MembershipStatus.CANCELLED
+                || membership.getStatus() == MembershipStatus.FROZEN) {
+            throw CommonExceptions.badRequest("Cannot edit a frozen or cancelled membership");
+        }
+
+        MembershipPlan plan = planService.requireActive(request.planId(), tenantId);
+        LocalDate start = request.startDate();
+        LocalDate end = request.endDate();
+        requireEndOnOrAfterStart(start, end);
+
+        if (membershipRepository.existsOverlappingMembership(
+                membership.getMemberId(),
+                membership.getPublicId(),
+                start,
+                end)) {
+            throw CommonExceptions.badRequest(
+                    "Membership dates overlap with an existing membership. " +
+                            "Cancel the existing membership before changing these dates."
+            );
+        }
+
+        if (membership.getAmountPaid().signum() > 0
+                && !membership.getCurrency().equals(plan.getCurrency())) {
+            throw CommonExceptions.badRequest(
+                    "Cannot change the plan currency after payments have been recorded"
+            );
+        }
+
+        BigDecimal discount = validateAndAuthorizeDiscount(
+                request.discountAmount(),
+                plan.getPrice()
+        );
+
+        membership.setPlanId(plan.getId());
+        membership.setPlanName(plan.getName());
+        membership.setPrice(plan.getPrice());
+        membership.setCurrency(plan.getCurrency());
+        membership.setStartDate(start);
+        membership.setEndDate(end);
+        membership.setDiscountAmount(discount);
+        recordDiscountApproval(membership, discount);
+
+        LocalDate today = LocalDate.now();
+        if (start.isAfter(today)) {
+            membership.setStatus(MembershipStatus.PENDING);
+        } else if (today.isAfter(end)) {
+            membership.setStatus(MembershipStatus.EXPIRED);
+        } else {
+            membership.setStatus(MembershipStatus.ACTIVE);
+        }
+
+        BigDecimal netAmount = membership.getNetAmount();
+        BigDecimal amountPaid = membership.getAmountPaid();
+        if (amountPaid.signum() <= 0) {
+            membership.setPaymentStatus(
+                    netAmount.signum() <= 0
+                            ? MembershipPaymentStatus.PAID
+                            : MembershipPaymentStatus.UNPAID
+            );
+        } else if (amountPaid.compareTo(netAmount) >= 0) {
+            membership.setPaymentStatus(MembershipPaymentStatus.PAID);
+        } else {
+            membership.setPaymentStatus(MembershipPaymentStatus.PARTIAL);
+        }
+
+        Membership saved = membershipRepository.save(membership);
+
+        auditService.record(
+                AuditActions.MEMBERSHIP_DATES_UPDATED,
+                AuditActions.RESULT_SUCCESS,
+                "Membership",
+                saved.getPublicId(),
+                Map.of(
+                        "plan", plan.getName(),
+                        "startDate", start.toString(),
+                        "endDate", end.toString(),
+                        "discountAmount", discount.toPlainString(),
+                        "amountPaid", amountPaid.toPlainString(),
+                        "paymentStatus", saved.getPaymentStatus().name()
+                )
+        );
+
+        publish(saved, ChangeType.DATES_UPDATED);
+        return saved;
+    }
+
+    @Transactional
     public Membership updateDates(String membershipPublicId, UpdateMembershipDates request, Long tenantId) {
         Membership membership = getByPublicId(membershipPublicId, tenantId);
+        requireActiveMemberForMembershipMutation(membership.getMemberId(), tenantId);
         if (membership.getStatus() == MembershipStatus.CANCELLED
                 || membership.getStatus() == MembershipStatus.FROZEN) {
             throw CommonExceptions.badRequest("Cannot change dates on a frozen or cancelled membership");
@@ -455,6 +572,7 @@ public class MembershipService {
     @Transactional
     public void delete(String membershipPublicId, Long tenantId) {
         Membership membership = getByPublicId(membershipPublicId, tenantId);
+        requireActiveMemberForMembershipMutation(membership.getMemberId(), tenantId);
 
         if (membership.getStatus() != MembershipStatus.PENDING && membership.getStatus() != MembershipStatus.ACTIVE) {
             throw CommonExceptions.badRequest(

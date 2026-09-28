@@ -1,12 +1,15 @@
 package com.example.gym.payment.dto;
 
 import com.example.gym.payment.Payment;
+import com.example.gym.member.Member;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 
 public record PaymentResponse(
         String id,
+        String memberId,
+        String memberName,
         BigDecimal amount,
         String currency,
         String method,
@@ -17,9 +20,11 @@ public record PaymentResponse(
         String notes,
         Instant createdAt) {
 
-    public static PaymentResponse from(Payment p) {
+    public static PaymentResponse from(Payment p, Member member) {
         return new PaymentResponse(
                 p.getPublicId(),
+                member.getMemberCode(),
+                member.getFullName(),
                 p.getAmount(),
                 p.getCurrency(),
                 p.getMethod().name(),

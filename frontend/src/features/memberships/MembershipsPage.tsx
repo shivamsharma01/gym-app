@@ -35,7 +35,7 @@ export function MembershipsPage() {
       ) : null}
       {memberships.isLoading ? <Skeleton className="h-32" /> : null}
       {memberships.error ? <QueryError error={memberships.error} /> : null}
-      {member && memberships.data ? <MembershipPanel memberId={member.id} rows={memberships.data} /> : null}
+      {member && memberships.data ? <MembershipPanel memberId={member.id} memberStatus={member.status} rows={memberships.data} /> : null}
     </div>
   )
 }

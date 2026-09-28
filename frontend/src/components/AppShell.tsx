@@ -104,6 +104,9 @@ export function AppShell() {
   }, [has, isPlatform])
 
   async function onLogout() {
+    const confirmed = window.confirm('Are you sure you want to sign out?')
+    if (!confirmed) return
+
     await logout()
     navigate('/app/login')
   }

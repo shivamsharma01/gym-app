@@ -153,7 +153,7 @@ export function MemberDetailPage() {
         <section>
           <SectionTitle title="Membership" />
           {memberships.error ? <QueryError error={memberships.error} /> : null}
-          <MembershipPanel memberId={m.id} rows={memberships.data ?? []} />
+          <MembershipPanel memberId={m.id} memberStatus={m.status} rows={memberships.data ?? []} />
         </section>
       ) : null}
 

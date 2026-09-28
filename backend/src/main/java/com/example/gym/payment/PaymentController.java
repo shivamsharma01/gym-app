@@ -1,6 +1,9 @@
 package com.example.gym.payment;
 
 import com.example.gym.common.web.PageResponse;
+import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.member.Member;
+import com.example.gym.member.MemberRepository;
 import com.example.gym.payment.dto.PaymentRequests.RecordPayment;
 import com.example.gym.payment.dto.PaymentResponse;
 import com.example.gym.payment.dto.PaymentSummaryResponse;
@@ -31,9 +34,11 @@ public class PaymentController {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final PaymentService paymentService;
+    private final MemberRepository memberRepository;
 
-    public PaymentController(PaymentService paymentService) {
+    public PaymentController(PaymentService paymentService, MemberRepository memberRepository) {
         this.paymentService = paymentService;
+        this.memberRepository = memberRepository;
     }
 
     @GetMapping("/payments")
@@ -48,7 +53,7 @@ public class PaymentController {
         PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize);
         return PageResponse.from(
                 paymentService.list(SecurityUtils.currentTenantId(), pageable, from, to),
-                PaymentResponse::from);
+                this::toResponse);
     }
 
     @GetMapping("/members/{memberId}/payments")
@@ -56,7 +61,7 @@ public class PaymentController {
     @Operation(summary = "List a member's payments")
     public List<PaymentResponse> listForMember(@PathVariable String memberId) {
         return paymentService.listForMember(memberId, SecurityUtils.currentTenantId()).stream()
-                .map(PaymentResponse::from)
+                .map(this::toResponse)
                 .toList();
     }
 
@@ -65,14 +70,20 @@ public class PaymentController {
     @PreAuthorize("hasAuthority('PAYMENT_CREATE')")
     @Operation(summary = "Record a payment")
     public PaymentResponse record(@Valid @RequestBody RecordPayment request) {
-        return PaymentResponse.from(paymentService.record(request, SecurityUtils.currentTenantId()));
+        return toResponse(paymentService.record(request, SecurityUtils.currentTenantId()));
     }
 
     @PostMapping("/payments/{id}/refund")
     @PreAuthorize("hasAuthority('PAYMENT_CREATE')")
     @Operation(summary = "Refund a payment")
     public PaymentResponse refund(@PathVariable String id) {
-        return PaymentResponse.from(paymentService.refund(id, SecurityUtils.currentTenantId()));
+        return toResponse(paymentService.refund(id, SecurityUtils.currentTenantId()));
+    }
+
+    private PaymentResponse toResponse(com.example.gym.payment.Payment payment) {
+        Member member = memberRepository.findById(payment.getMemberId())
+                .orElseThrow(() -> CommonExceptions.notFound("Member"));
+        return PaymentResponse.from(payment, member);
     }
 
     @GetMapping("/payments/summary")

@@ -35,9 +35,11 @@ function addDays(iso: string, days: number) {
 
 export function MembershipPanel({
   memberId,
+  memberStatus,
   rows,
 }: {
   memberId: string;
+  memberStatus: string;
   rows: Membership[];
 }) {
   const { has } = useAuth();
@@ -56,10 +58,13 @@ export function MembershipPanel({
   const [discountAmount, setDiscountAmount] = useState('');
   const [discountConfirmed, setDiscountConfirmed] = useState(false);
 
-  // Edit membership dates
+  // Edit membership
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editPlanId, setEditPlanId] = useState('');
   const [editStart, setEditStart] = useState('');
   const [editEnd, setEditEnd] = useState('');
+  const [editDiscountAmount, setEditDiscountAmount] = useState('');
+  const [editDiscountConfirmed, setEditDiscountConfirmed] = useState(false);
 
   // Renewal
   const [renewingId, setRenewingId] = useState<string | null>(null);
@@ -77,6 +82,14 @@ export function MembershipPanel({
   const [paymentDate, setPaymentDate] = useState(todayIso())
   const selectedPlan = (plans.data?.content ?? []).find((p) => p.id === planId);
   const planAmount = Number(selectedPlan?.price ?? 0);
+  const editingMembership = rows.find((row) => row.id === editingId);
+  const editingPlan = (plans.data?.content ?? []).find((p) => p.id === editPlanId);
+  const editPlanAmount = Number(editingPlan?.price ?? editingMembership?.price ?? 0);
+  const editDiscount = Number(editDiscountAmount) || 0;
+  const editNetAmount = Math.max(editPlanAmount - editDiscount, 0);
+  const editAmountPaid = Number(editingMembership?.amountPaid ?? 0);
+  const editRemainingAmount = Math.max(editNetAmount - editAmountPaid, 0);
+  const invalidEditDiscount = editDiscount > editPlanAmount;
   const discount = Number(discountAmount) || 0;
   const netAmount = Math.max(planAmount - discount, 0);
   const invalidDiscount = discount > planAmount;
@@ -120,6 +133,26 @@ export function MembershipPanel({
 
     if (selectedPlan) {
       setEndDate(addDays(next, Math.max(selectedPlan.durationDays - 1, 0)));
+    }
+  }
+
+  function openEdit(row: Membership) {
+    const matchedPlan = (plans.data?.content ?? []).find((p) => p.name === row.planName);
+
+    setEditingId(row.id);
+    setEditPlanId(matchedPlan?.id ?? '');
+    setEditStart(row.startDate);
+    setEditEnd(row.endDate);
+    setEditDiscountAmount(String(row.discountAmount ?? 0));
+    setEditDiscountConfirmed(false);
+  }
+
+  function applyEditPlan(id: string) {
+    setEditPlanId(id);
+
+    const plan = (plans.data?.content ?? []).find((p) => p.id === id);
+    if (plan && editStart) {
+      setEditEnd(addDays(editStart, Math.max(plan.durationDays - 1, 0)));
     }
   }
 
@@ -213,18 +246,30 @@ export function MembershipPanel({
     },
   });
 
-  const saveDates = useMutation({
-    mutationFn: () =>
-      api<Membership>(`/api/v1/memberships/${editingId}/dates`, {
+  const saveMembership = useMutation({
+    mutationFn: () => {
+      if (invalidEditDiscount) {
+        throw new Error('Discount cannot be greater than the plan amount.');
+      }
+
+      return api<Membership>(`/api/v1/memberships/${editingId}`, {
         method: 'PUT',
         body: JSON.stringify({
+          planId: editPlanId,
           startDate: editStart,
           endDate: editEnd,
+          discountAmount: editDiscount,
         }),
-      }),
+      });
+    },
 
     onSuccess: () => {
       setEditingId(null);
+      setEditPlanId('');
+      setEditStart('');
+      setEditEnd('');
+      setEditDiscountAmount('');
+      setEditDiscountConfirmed(false);
 
       void qc.invalidateQueries({
         queryKey: ['memberships', memberId],
@@ -349,11 +394,17 @@ export function MembershipPanel({
     (p) => p.status === 'ACTIVE',
   );
 
+  const memberStatusIsInactive = memberStatus === 'INACTIVE';
+
   return (
     <div className="space-y-4">
       {/* CREATE MEMBERSHIP */}
       {has('MEMBERSHIP_CREATE') ? (
-        activePlans.length === 0 ? (
+        memberStatusIsInactive ? (
+          <div className="rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
+            Member is inactive. Create, edit, renew, freeze, cancel, delete, and payment actions are disabled. Reactivate the member first.
+          </div>
+        ) : activePlans.length === 0 ? (
           <p className="text-sm text-muted">
             No plans yet.{' '}
             <Link className="underline" to="/app/plans">
@@ -475,7 +526,7 @@ export function MembershipPanel({
 
       {create.error ? <QueryError error={create.error} /> : null}
 
-      {saveDates.error ? <QueryError error={saveDates.error} /> : null}
+      {saveMembership.error ? <QueryError error={saveMembership.error} /> : null}
 
       {act.error ? <QueryError error={act.error} /> : null}
 
@@ -540,12 +591,26 @@ export function MembershipPanel({
                 </p>
 
 
-          {/* CHANGE DATES */}
-          {editingId === row.id ? (
-            <div className="grid gap-3 sm:grid-cols-2">
+          {/* EDIT MEMBERSHIP */}
+          {editingId === row.id && !memberStatusIsInactive ? (
+            <div className="grid gap-3 rounded-xl border border-line bg-raised/30 p-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <Label>Plan</Label>
+                <Select
+                  value={editPlanId}
+                  onChange={(e) => applyEditPlan(e.target.value)}
+                >
+                  <option value="">Select plan</option>
+                  {(plans.data?.content ?? []).map((plan) => (
+                    <option key={plan.id} value={plan.id}>
+                      {plan.name} · {money(plan.price, plan.currency)} · {plan.durationDays} days
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
               <div>
                 <Label>Start</Label>
-
                 <Input
                   type="date"
                   value={editStart}
@@ -555,7 +620,6 @@ export function MembershipPanel({
 
               <div>
                 <Label>End</Label>
-
                 <Input
                   type="date"
                   value={editEnd}
@@ -564,18 +628,70 @@ export function MembershipPanel({
                 />
               </div>
 
+              <div>
+                <Label>Discount</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editDiscountAmount}
+                  onChange={(e) => setEditDiscountAmount(e.target.value)}
+                  aria-invalid={invalidEditDiscount}
+                />
+                {invalidEditDiscount ? (
+                  <p className="mt-1 text-xs text-danger">Discount cannot be greater than the plan amount.</p>
+                ) : null}
+              </div>
+
+              <div className="rounded-lg border border-line bg-panel px-3 py-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted">Plan amount</span>
+                  <span>{money(editPlanAmount, editingPlan?.currency ?? editingMembership?.currency ?? 'INR')}</span>
+                </div>
+                <div className="mt-1 flex justify-between">
+                  <span className="text-muted">Amount paid</span>
+                  <span>{money(editAmountPaid, editingPlan?.currency ?? editingMembership?.currency ?? 'INR')}</span>
+                </div>
+                <div className="mt-1 flex justify-between font-semibold">
+                  <span>Remaining</span>
+                  <span>{money(editRemainingAmount, editingPlan?.currency ?? editingMembership?.currency ?? 'INR')}</span>
+                </div>
+              </div>
+
               <div className="flex gap-2 sm:col-span-2">
                 <Button
-                  disabled={saveDates.isPending || !editStart || !editEnd}
-                  onClick={() => saveDates.mutate()}
+                  disabled={
+                    saveMembership.isPending ||
+                    !editPlanId ||
+                    !editStart ||
+                    !editEnd ||
+                    invalidEditDiscount
+                  }
+                  onClick={() => {
+                    if (editDiscount > 0 && !editDiscountConfirmed) {
+                      const confirmed = window.confirm(
+                        `You are applying a ${money(editDiscount, editingPlan?.currency ?? editingMembership?.currency ?? 'INR')} discount.\n\nDo you want to record this discount?`,
+                      );
+                      if (!confirmed) return;
+                      setEditDiscountConfirmed(true);
+                    }
+                    saveMembership.mutate();
+                  }}
                 >
-                  Save dates
+                  {saveMembership.isPending ? 'Saving...' : 'Save changes'}
                 </Button>
 
                 <Button
                   variant="ghost"
                   type="button"
-                  onClick={() => setEditingId(null)}
+                  onClick={() => {
+                    setEditingId(null);
+                    setEditPlanId('');
+                    setEditStart('');
+                    setEditEnd('');
+                    setEditDiscountAmount('');
+                    setEditDiscountConfirmed(false);
+                  }}
                 >
                   Cancel
                 </Button>
@@ -584,24 +700,22 @@ export function MembershipPanel({
           ) : null}
 
           {/* ACTIONS */}
+          {editingId !== row.id && !memberStatusIsInactive ? (
           <div className="flex flex-wrap gap-2">
             {has('MEMBERSHIP_UPDATE') &&
+            !memberStatusIsInactive &&
             row.status !== 'CANCELLED' &&
             row.status !== 'FROZEN' &&
             editingId !== row.id ? (
               <Button
                 variant="outline"
-                onClick={() => {
-                  setEditingId(row.id);
-                  setEditStart(row.startDate);
-                  setEditEnd(row.endDate);
-                }}
+                onClick={() => openEdit(row)}
               >
-                Change dates
+                Edit
               </Button>
             ) : null}
 
-            {has('MEMBERSHIP_FREEZE') && row.status === 'ACTIVE' ? (
+            {has('MEMBERSHIP_FREEZE') && !memberStatusIsInactive && row.status === 'ACTIVE' ? (
               <Button
                 variant="outline"
                 onClick={() =>
@@ -615,7 +729,7 @@ export function MembershipPanel({
               </Button>
             ) : null}
 
-            {has('MEMBERSHIP_FREEZE') && row.status === 'FROZEN' ? (
+            {has('MEMBERSHIP_FREEZE') && !memberStatusIsInactive && row.status === 'FROZEN' ? (
               <Button
                 variant="outline"
                 onClick={() =>
@@ -631,6 +745,7 @@ export function MembershipPanel({
 
             {/* RENEW */}
             {has('MEMBERSHIP_CREATE') &&
+            !memberStatusIsInactive &&
             (row.status === 'ACTIVE' || row.status === 'EXPIRED') ? (
               <Button
                 variant="outline"
@@ -643,6 +758,7 @@ export function MembershipPanel({
             ) : null}
 
             {has('PAYMENT_CREATE') &&
+            !memberStatusIsInactive &&
             (row.status === 'ACTIVE' || row.status === 'PENDING') ? (
                 <Button
                     variant="outline"
@@ -659,7 +775,7 @@ export function MembershipPanel({
             ) : null}
 
             {/* CANCEL */}
-            {has('MEMBERSHIP_CANCEL') && row.status !== 'CANCELLED' ? (
+            {has('MEMBERSHIP_CANCEL') && !memberStatusIsInactive && row.status !== 'CANCELLED' ? (
               <Button
                 variant="danger"
                 type="button"
@@ -681,6 +797,7 @@ export function MembershipPanel({
 
             {/* DELETE */}
             {has('MEMBERSHIP_DELETE') &&
+            !memberStatusIsInactive &&
             (row.status === 'PENDING' || row.status === 'ACTIVE') &&
             row.paymentStatus === 'UNPAID' &&
             row.deviceSyncState === 'NOT_SYNCED' ? (
@@ -702,11 +819,12 @@ export function MembershipPanel({
               </Button>
             ) : null}
           </div>
+          ) : null}
         </Card>
       ))}
 
       {/* RENEWAL MODAL */}
-      {renewingId && (
+      {renewingId && !memberStatusIsInactive && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/80 p-4">
           <Card className="w-full max-w-md overflow-hidden border border-line bg-panel text-ink shadow-2xl">
             {/* Header */}

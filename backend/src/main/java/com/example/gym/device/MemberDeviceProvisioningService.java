@@ -1,5 +1,8 @@
 package com.example.gym.device;
 
+import com.example.gym.audit.AuditActions;
+import com.example.gym.audit.AuditService;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.EnrollmentStatus;
 import com.example.gym.device.domain.MemberDeviceMapping;
@@ -41,19 +44,22 @@ public class MemberDeviceProvisioningService {
     private final DeviceAuthorizationService authorizationService;
     private final MemberFaceRepository faceRepository;
     private final DeviceSyncService deviceSyncService;
+    private final AuditService auditService;
 
     public MemberDeviceProvisioningService(DeviceRepository deviceRepository,
                                            MemberDeviceMappingRepository mappingRepository,
                                            MemberRepository memberRepository,
                                            DeviceAuthorizationService authorizationService,
                                            MemberFaceRepository faceRepository,
-                                           DeviceSyncService deviceSyncService) {
+                                           DeviceSyncService deviceSyncService,
+                                           AuditService auditService) {
         this.deviceRepository = deviceRepository;
         this.mappingRepository = mappingRepository;
         this.memberRepository = memberRepository;
         this.authorizationService = authorizationService;
         this.faceRepository = faceRepository;
         this.deviceSyncService = deviceSyncService;
+        this.auditService = auditService;
     }
 
     /** Ensures a mapping on every gateway-assigned device of the tenant; seeds new mappings. */
@@ -208,10 +214,16 @@ public class MemberDeviceProvisioningService {
     @Transactional
     public void removeEverywhere(Member member) {
         deviceSyncService.cancelOpenForMember(member.getId());
-        for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(member.getId())) {
+        List<MemberDeviceMapping> mappings = mappingRepository.findByMemberId(member.getId());
+        for (MemberDeviceMapping mapping : mappings) {
             deviceSyncService.enqueue(member.getTenantId(), mapping.getDeviceId(), member.getId(), null,
                     SyncCommandType.REMOVE_USER, Map.of("deviceUserId", mapping.getDeviceUserId()));
             mappingRepository.delete(mapping);
+        }
+        if (!mappings.isEmpty()) {
+            FlowLog.info("device", "removed member={} from {} device(s)", member.getPublicId(), mappings.size());
+            auditService.record(AuditActions.DEVICE_MAPPING_REMOVED, AuditActions.RESULT_SUCCESS,
+                    "Member", member.getPublicId(), Map.of("devices", mappings.size()));
         }
     }
 

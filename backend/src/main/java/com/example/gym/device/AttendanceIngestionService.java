@@ -12,6 +12,7 @@ import com.example.gym.device.repo.AttendanceEventRepository;
 import com.example.gym.device.repo.AttendanceSyncCursorRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.live.StaffLiveBroadcast;
 import java.time.Instant;
 import java.util.Map;
@@ -114,6 +115,13 @@ public class AttendanceIngestionService {
                         "occurredAt", occurredAt == null ? "" : occurredAt.toString(),
                         "memberLinked", memberId != null,
                         "denyReason", denyReason == null ? "" : denyReason)));
+        if (granted) {
+            FlowLog.debug("attendance", "granted device={} user={} direction={} memberLinked={}",
+                    device.getPublicId(), deviceUserId, event.getDirection(), memberId != null);
+        } else {
+            FlowLog.info("attendance", "denied device={} user={} direction={} reason={} memberLinked={}",
+                    device.getPublicId(), deviceUserId, event.getDirection(), denyReason, memberId != null);
+        }
         return Optional.of(event);
     }
 

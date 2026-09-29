@@ -2,6 +2,7 @@ package com.example.gym.auth;
 
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.security.SecurityProperties;
 import com.example.gym.user.AdminUser;
 import com.example.gym.user.AdminUserRepository;
@@ -46,6 +47,11 @@ public class LoginAttemptService {
         }
         userRepository.save(user);
 
+        if (action.equals(AuditActions.ACCOUNT_LOCKED)) {
+            FlowLog.warn("auth", "account locked username={} attempts={}", user.getUsername(), attempts);
+        } else {
+            FlowLog.debug("auth", "failed login counted username={} attempts={}", user.getUsername(), attempts);
+        }
         auditService.recordAuth(action, AuditActions.RESULT_FAILURE,
                 user.getId(), user.getUsername(), user.getTenantId(), Map.of("attempts", attempts));
     }

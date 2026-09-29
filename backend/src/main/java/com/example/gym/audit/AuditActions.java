@@ -44,6 +44,7 @@ public final class AuditActions {
     public static final String MEMBERSHIP_DELETED = "MEMBERSHIP_DELETED";
 
     public static final String MEMBERSHIP_DATES_UPDATED = "MEMBERSHIP_DATES_UPDATED";
+    public static final String MEMBERSHIP_DISCOUNT = "MEMBERSHIP_DISCOUNT";
     public static final String PAYMENT_RECORDED = "PAYMENT_RECORDED";
     public static final String PAYMENT_REFUNDED = "PAYMENT_REFUNDED";
 

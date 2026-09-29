@@ -3,6 +3,7 @@ package com.example.gym.notification;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberService;
@@ -131,8 +132,9 @@ public class NotificationService {
         requireTenant(tenantId);
         Announcement announcement = announcementRepository.save(
                 new Announcement(tenantId, request.title(), request.body(), request.published()));
+        FlowLog.info("notification", "announcement created id={}", announcement.getPublicId());
         auditService.record(AuditActions.ANNOUNCEMENT_CREATED, AuditActions.RESULT_SUCCESS,
-                "Announcement", announcement.getPublicId(), null);
+                "Announcement", announcement.getPublicId(), Map.of("title", request.title()));
         return announcement;
     }
 
@@ -150,16 +152,28 @@ public class NotificationService {
         String subject = subjectTemplate == null ? null : render(subjectTemplate, member, membership, tenantId);
         OutboundNotification outbound = outboundRepository.save(new OutboundNotification(
                 tenantId, channel, templateKey, recipient, subject, body, member.getId()));
+        boolean sent = true;
         try {
             mockAdapter.send(outbound);
             outbound.markSent();
         } catch (RuntimeException ex) {
+            sent = false;
             outbound.markFailed(ex.getMessage());
+            FlowLog.error("notification", "send failed id={} channel={} member={} reason={}",
+                    outbound.getPublicId(), channel, member.getPublicId(), ex.getMessage());
         }
         outboundRepository.save(outbound);
-        auditService.record(AuditActions.NOTIFICATION_QUEUED, AuditActions.RESULT_SUCCESS,
+        if (sent) {
+            FlowLog.info("notification", "sent id={} channel={} template={} member={}",
+                    outbound.getPublicId(), channel, templateKey, member.getPublicId());
+        }
+        auditService.record(AuditActions.NOTIFICATION_QUEUED,
+                sent ? AuditActions.RESULT_SUCCESS : AuditActions.RESULT_FAILURE,
                 "OutboundNotification", outbound.getPublicId(),
-                Map.of("channel", channel.name(), "member", member.getPublicId()));
+                Map.of("channel", channel.name(),
+                        "template", templateKey,
+                        "member", member.getPublicId(),
+                        "status", outbound.getStatus().name()));
         return outbound;
     }
 

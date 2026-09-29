@@ -4,6 +4,7 @@ import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.auth.RefreshTokenRepository;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.security.SecurityUtils;
 import com.example.gym.security.domain.Role;
 import com.example.gym.security.domain.RoleRepository;
@@ -86,6 +87,7 @@ public class UserService {
         user.setRoles(roles);
         AdminUser saved = userRepository.save(user);
 
+        FlowLog.info("staff", "created username={} roles={}", saved.getUsername(), request.roles());
         auditService.record(AuditActions.USER_CREATED, AuditActions.RESULT_SUCCESS,
                 "AdminUser", saved.getPublicId(),
                 Map.of("username", saved.getUsername(), "roles", request.roles()));
@@ -101,8 +103,9 @@ public class UserService {
         user.setEmail(request.email());
         user.setFullName(request.fullName());
         AdminUser saved = userRepository.save(user);
+        FlowLog.info("staff", "updated username={}", saved.getUsername());
         auditService.record(AuditActions.USER_UPDATED, AuditActions.RESULT_SUCCESS,
-                "AdminUser", saved.getPublicId(), null);
+                "AdminUser", saved.getPublicId(), Map.of("username", saved.getUsername()));
         return saved;
     }
 
@@ -112,8 +115,9 @@ public class UserService {
         Set<Role> roles = resolveRoles(roleNames, user.getTenantId());
         user.setRoles(roles);
         AdminUser saved = userRepository.save(user);
+        FlowLog.info("staff", "roles changed username={} roles={}", saved.getUsername(), roleNames);
         auditService.record(AuditActions.USER_ROLES_CHANGED, AuditActions.RESULT_SUCCESS,
-                "AdminUser", saved.getPublicId(), Map.of("roles", roleNames));
+                "AdminUser", saved.getPublicId(), Map.of("username", saved.getUsername(), "roles", roleNames));
         return saved;
     }
 
@@ -127,8 +131,9 @@ public class UserService {
         userRepository.save(user);
         // Revoke active sessions immediately.
         refreshTokenRepository.revokeAllForUser(user.getId());
+        FlowLog.info("staff", "disabled username={}", user.getUsername());
         auditService.record(AuditActions.USER_DISABLED, AuditActions.RESULT_SUCCESS,
-                "AdminUser", user.getPublicId(), null);
+                "AdminUser", user.getPublicId(), Map.of("username", user.getUsername()));
     }
 
     @Transactional
@@ -141,8 +146,9 @@ public class UserService {
         user.setFailedLoginAttempts(0);
         user.setLockedUntil(null);
         AdminUser saved = userRepository.save(user);
+        FlowLog.info("staff", "enabled username={}", saved.getUsername());
         auditService.record(AuditActions.USER_ENABLED, AuditActions.RESULT_SUCCESS,
-                "AdminUser", saved.getPublicId(), null);
+                "AdminUser", saved.getPublicId(), Map.of("username", saved.getUsername()));
         return saved;
     }
 
@@ -157,8 +163,9 @@ public class UserService {
             throw CommonExceptions.badRequest("New password must be different from the current password");
         }
         applyPassword(user, newPassword);
+        FlowLog.info("staff", "password changed username={}", user.getUsername());
         auditService.record(AuditActions.USER_PASSWORD_CHANGED, AuditActions.RESULT_SUCCESS,
-                "AdminUser", user.getPublicId(), null);
+                "AdminUser", user.getPublicId(), Map.of("username", user.getUsername()));
     }
 
     /**
@@ -176,6 +183,7 @@ public class UserService {
             throw CommonExceptions.badRequest("Use your profile to change your own password");
         }
         applyPassword(user, newPassword);
+        FlowLog.info("staff", "password reset username={}", user.getUsername());
         auditService.record(AuditActions.USER_PASSWORD_SET, AuditActions.RESULT_SUCCESS,
                 "AdminUser", user.getPublicId(), Map.of("username", user.getUsername()));
         return user;

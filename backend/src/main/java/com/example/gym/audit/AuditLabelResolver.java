@@ -54,8 +54,12 @@ public class AuditLabelResolver {
             case "Device" -> deviceRepository.findByPublicId(resourceId)
                     .map(Device::getName)
                     .orElse(shortId(resourceId));
-            default -> detailField(detailsJson, "memberCode")
+            default -> detailField(detailsJson, "username")
                     .or(() -> detailField(detailsJson, "name"))
+                    .or(() -> detailField(detailsJson, "memberCode"))
+                    .or(() -> detailField(detailsJson, "plan"))
+                    .or(() -> detailField(detailsJson, "slug"))
+                    .or(() -> detailField(detailsJson, "title"))
                     .orElse(shortId(resourceId));
         };
     }

@@ -3,6 +3,7 @@ package com.example.gym.device;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.domain.DeviceRole;
@@ -87,8 +88,9 @@ public class DeviceService {
         device.setGatewayId(resolveGatewayId(request.gatewayId(), tenantId));
         Device saved = deviceRepository.save(device);
         provisioning.provisionDevice(saved);
+        FlowLog.info("device", "created id={} name={} role={}", saved.getPublicId(), saved.getName(), saved.getRole());
         auditService.record(AuditActions.DEVICE_CREATED, AuditActions.RESULT_SUCCESS,
-                "Device", saved.getPublicId(), Map.of("name", saved.getName()));
+                "Device", saved.getPublicId(), Map.of("name", saved.getName(), "role", saved.getRole().name()));
         return saved;
     }
 
@@ -107,8 +109,9 @@ public class DeviceService {
         if (saved.getGatewayId() != null && !saved.getGatewayId().equals(previousGatewayId)) {
             provisioning.provisionDevice(saved);
         }
+        FlowLog.info("device", "updated id={} name={}", saved.getPublicId(), saved.getName());
         auditService.record(AuditActions.DEVICE_UPDATED, AuditActions.RESULT_SUCCESS,
-                "Device", saved.getPublicId(), null);
+                "Device", saved.getPublicId(), Map.of("name", saved.getName()));
         return saved;
     }
 

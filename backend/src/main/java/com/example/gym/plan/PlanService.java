@@ -3,6 +3,7 @@ package com.example.gym.plan;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.plan.dto.PlanRequests.CreatePlan;
 import com.example.gym.plan.dto.PlanRequests.UpdatePlan;
 import com.example.gym.tenant.TenantGuard;
@@ -56,6 +57,7 @@ public class PlanService {
         MembershipPlan plan = new MembershipPlan(tenantId, request.name(), request.description(),
                 request.price(), request.currency(), request.durationDays());
         MembershipPlan saved = planRepository.save(plan);
+        FlowLog.info("plan", "created id={} name={}", saved.getPublicId(), saved.getName());
         auditService.record(AuditActions.PLAN_CREATED, AuditActions.RESULT_SUCCESS,
                 "MembershipPlan", saved.getPublicId(), Map.of("name", saved.getName()));
         return saved;
@@ -70,8 +72,9 @@ public class PlanService {
         plan.setCurrency(request.currency());
         plan.setDurationDays(request.durationDays());
         MembershipPlan saved = planRepository.save(plan);
+        FlowLog.info("plan", "updated id={} name={}", saved.getPublicId(), saved.getName());
         auditService.record(AuditActions.PLAN_UPDATED, AuditActions.RESULT_SUCCESS,
-                "MembershipPlan", saved.getPublicId(), null);
+                "MembershipPlan", saved.getPublicId(), Map.of("name", saved.getName()));
         return saved;
     }
 
@@ -80,7 +83,8 @@ public class PlanService {
         MembershipPlan plan = getByPublicId(publicId, tenantId);
         plan.setStatus(PlanStatus.ARCHIVED);
         planRepository.save(plan);
+        FlowLog.info("plan", "archived id={} name={}", plan.getPublicId(), plan.getName());
         auditService.record(AuditActions.PLAN_ARCHIVED, AuditActions.RESULT_SUCCESS,
-                "MembershipPlan", plan.getPublicId(), null);
+                "MembershipPlan", plan.getPublicId(), Map.of("name", plan.getName()));
     }
 }

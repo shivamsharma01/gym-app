@@ -143,4 +143,11 @@ app:
 logging:
   level:
     org.springframework.security: INFO
+    # One line per HTTP call (method, path, status). WARN hides the routine 2xx lines.
     gym.access: INFO
+    # Outcomes of auth, members, memberships, payments, devices, attendance, and notifications.
+    # DEBUG on a child adds step detail. WARN on a child keeps only problems.
+    #   gym.flow.auth: DEBUG
+    #   gym.flow.device: WARN
+    #   gym.flow.attendance: DEBUG
+    gym.flow: INFO

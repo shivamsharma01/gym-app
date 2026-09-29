@@ -113,6 +113,7 @@ export type Attendance = {
   deviceUserId: string | null
   deviceRecNo: number | null
   memberLinked: boolean
+  memberName: string | null
   createdAt: string
 }
 

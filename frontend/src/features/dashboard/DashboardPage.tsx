@@ -177,7 +177,10 @@ export function DashboardPage() {
                   {attendance.data.content.map((row) => (
                     <Tr key={row.id}>
                       <Td className="whitespace-nowrap text-muted">{formatDateTime(row.occurredAt)}</Td>
-                      <Td className="font-medium">{row.deviceUserId ?? 'Unknown'}</Td>
+                      <Td>
+                        <div className="font-medium">{row.memberName ?? 'Unknown member'}</div>
+                        <div className="mt-0.5 font-mono text-[11px] text-muted">{row.deviceUserId ?? '—'}</div>
+                      </Td>
                       <Td>
                         <Badge tone={statusTone(row.result)}>{row.result}</Badge>
                       </Td>

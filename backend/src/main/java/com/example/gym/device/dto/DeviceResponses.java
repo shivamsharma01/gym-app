@@ -164,12 +164,17 @@ public final class DeviceResponses {
             Long deviceRecNo,
             String denyReason,
             boolean memberLinked,
+            String memberName,
             Instant createdAt) {
 
         public static AttendanceView from(AttendanceEvent e) {
+            return from(e, null);
+        }
+
+        public static AttendanceView from(AttendanceEvent e, String memberName) {
             return new AttendanceView(e.getPublicId(), e.getOccurredAt(), e.getDirection().name(),
                     e.getMethod(), e.getResult().name(), e.getDeviceUserId(), e.getDeviceRecNo(),
-                    e.getDenyReason(), e.getMemberId() != null, e.getCreatedAt());
+                    e.getDenyReason(), e.getMemberId() != null, memberName, e.getCreatedAt());
         }
     }
 

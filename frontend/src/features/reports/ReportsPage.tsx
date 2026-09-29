@@ -10,6 +10,7 @@ import {
   Field,
   Input,
   PageHeader,
+  Select,
   Skeleton,
   StatCard,
   Table,
@@ -135,6 +136,89 @@ const methodLabel = (method: string) =>
         .toLowerCase()
         .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
+const PAGE_SIZES = [10, 25, 50, 100] as const;
+
+function PagedTable<T>({
+  rows,
+  resetKey,
+  empty,
+  children,
+}: {
+  rows: T[];
+  resetKey: string;
+  empty: ReactNode;
+  children: (pageRows: T[]) => ReactNode;
+}) {
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(25);
+  const [seenKey, setSeenKey] = useState(resetKey);
+  if (seenKey !== resetKey) {
+    setSeenKey(resetKey);
+    setPage(0);
+  }
+
+  if (rows.length === 0) return <>{empty}</>;
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  if (safePage !== page) setPage(safePage);
+  const start = safePage * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+
+  return (
+      <>
+        {children(pageRows)}
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-muted">
+            {start + 1}–{start + pageRows.length} of {rows.length}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-xs text-muted">
+              Show
+              <Select
+                  aria-label="Rows per page"
+                  className="w-auto py-1.5 pr-8 text-xs"
+                  value={pageSize}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    if (next === 10 || next === 25 || next === 50 || next === 100) {
+                      setPageSize(next);
+                      setPage(0);
+                    }
+                  }}
+              >
+                {PAGE_SIZES.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                ))}
+              </Select>
+            </label>
+            <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage === 0}
+                onClick={() => setPage((n) => Math.max(0, n - 1))}
+            >
+              Previous
+            </Button>
+            <span className="text-xs tabular-nums text-muted">
+              {safePage + 1} / {totalPages}
+            </span>
+            <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage >= totalPages - 1}
+                onClick={() => setPage((n) => n + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      </>
+  );
+}
+
 export function ReportsPage() {
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(today);
@@ -149,6 +233,7 @@ export function ReportsPage() {
       () => `${formatDate(from)} → ${formatDate(to)}`,
       [from, to]
   );
+  const periodKey = `${from}|${to}`;
 
   return (
       <div className="space-y-8">
@@ -296,43 +381,49 @@ export function ReportsPage() {
                       </div>
                   ))}
                 </div>
-                {query.data.payments.length === 0 ? (
-                    <EmptyState
-                        title="No collections"
-                        body={`No payments were recorded for ${periodLabel}.`}
-                    />
-                ) : (
-                    <TableShell>
-                      <Table>
-                        <THead>
-                          <tr>
-                            <Th>Paid on</Th>
-                            <Th>Member</Th>
-                            <Th>Member ID</Th>
-                            <Th>Amount</Th>
-                            <Th>Method</Th>
-                            <Th>Status</Th>
-                          </tr>
-                        </THead>
-                        <tbody>
-                        {query.data.payments.map((p) => (
-                            <Tr key={p.id}>
-                              <Td>{formatDate(p.paidOn)}</Td>
-                              <Td className="font-medium">{p.memberName}</Td>
-                              <Td className="text-muted">{p.memberCode || "—"}</Td>
-                              <Td className="font-medium tabular-nums">
-                                {money(p.amount, p.currency)}
-                              </Td>
-                              <Td>{methodLabel(p.method)}</Td>
-                              <Td>
-                                <Badge tone={statusTone(p.status)}>{p.status}</Badge>
-                              </Td>
-                            </Tr>
-                        ))}
-                        </tbody>
-                      </Table>
-                    </TableShell>
-                )}
+                <PagedTable
+                    rows={query.data.payments}
+                    resetKey={periodKey}
+                    empty={
+                      <EmptyState
+                          title="No collections"
+                          body={`No payments were recorded for ${periodLabel}.`}
+                      />
+                    }
+                >
+                  {(payments) => (
+                      <TableShell>
+                        <Table>
+                          <THead>
+                            <tr>
+                              <Th>Paid on</Th>
+                              <Th>Member</Th>
+                              <Th>Member ID</Th>
+                              <Th>Amount</Th>
+                              <Th>Method</Th>
+                              <Th>Status</Th>
+                            </tr>
+                          </THead>
+                          <tbody>
+                          {payments.map((p) => (
+                              <Tr key={p.id}>
+                                <Td>{formatDate(p.paidOn)}</Td>
+                                <Td className="font-medium">{p.memberName}</Td>
+                                <Td className="text-muted">{p.memberCode || "—"}</Td>
+                                <Td className="font-medium tabular-nums">
+                                  {money(p.amount, p.currency)}
+                                </Td>
+                                <Td>{methodLabel(p.method)}</Td>
+                                <Td>
+                                  <Badge tone={statusTone(p.status)}>{p.status}</Badge>
+                                </Td>
+                              </Tr>
+                          ))}
+                          </tbody>
+                        </Table>
+                      </TableShell>
+                  )}
+                </PagedTable>
               </ReportSection>
 
               <ReportSection
@@ -341,51 +432,57 @@ export function ReportsPage() {
                   count={query.data.overview.outstandingCount}
                   amount={money(query.data.overview.outstandingAmount, "INR")}
               >
-                {query.data.outstandingDues.length === 0 ? (
-                    <EmptyState
-                        title="No outstanding dues"
-                        body="All non-cancelled memberships are fully paid."
-                    />
-                ) : (
-                    <TableShell>
-                      <Table>
-                        <THead>
-                          <tr>
-                            <Th>Member</Th>
-                            <Th>Member ID</Th>
-                            <Th>Plan</Th>
-                            <Th>Status</Th>
-                            <Th>End date</Th>
-                            <Th>Plan amount</Th>
-                            <Th>Paid</Th>
-                            <Th>Due</Th>
-                          </tr>
-                        </THead>
-                        <tbody>
-                        {query.data.outstandingDues.map((r) => (
-                            <Tr key={r.id}>
-                              <Td className="font-medium">{r.memberName}</Td>
-                              <Td className="text-muted">{r.memberCode || "—"}</Td>
-                              <Td>{r.planName}</Td>
-                              <Td>
-                                <Badge tone={statusTone(r.status)}>{r.status}</Badge>
-                              </Td>
-                              <Td>{formatDate(r.endDate)}</Td>
-                              <Td className="tabular-nums">
-                                {money(r.planAmount, "INR")}
-                              </Td>
-                              <Td className="tabular-nums">
-                                {money(r.amountPaid, "INR")}
-                              </Td>
-                              <Td className="font-semibold tabular-nums">
-                                {money(r.balance, "INR")}
-                              </Td>
-                            </Tr>
-                        ))}
-                        </tbody>
-                      </Table>
-                    </TableShell>
-                )}
+                <PagedTable
+                    rows={query.data.outstandingDues}
+                    resetKey={periodKey}
+                    empty={
+                      <EmptyState
+                          title="No outstanding dues"
+                          body="All non-cancelled memberships are fully paid."
+                      />
+                    }
+                >
+                  {(dues) => (
+                      <TableShell>
+                        <Table>
+                          <THead>
+                            <tr>
+                              <Th>Member</Th>
+                              <Th>Member ID</Th>
+                              <Th>Plan</Th>
+                              <Th>Status</Th>
+                              <Th>End date</Th>
+                              <Th>Plan amount</Th>
+                              <Th>Paid</Th>
+                              <Th>Due</Th>
+                            </tr>
+                          </THead>
+                          <tbody>
+                          {dues.map((r) => (
+                              <Tr key={r.id}>
+                                <Td className="font-medium">{r.memberName}</Td>
+                                <Td className="text-muted">{r.memberCode || "—"}</Td>
+                                <Td>{r.planName}</Td>
+                                <Td>
+                                  <Badge tone={statusTone(r.status)}>{r.status}</Badge>
+                                </Td>
+                                <Td>{formatDate(r.endDate)}</Td>
+                                <Td className="tabular-nums">
+                                  {money(r.planAmount, "INR")}
+                                </Td>
+                                <Td className="tabular-nums">
+                                  {money(r.amountPaid, "INR")}
+                                </Td>
+                                <Td className="font-semibold tabular-nums">
+                                  {money(r.balance, "INR")}
+                                </Td>
+                              </Tr>
+                          ))}
+                          </tbody>
+                        </Table>
+                      </TableShell>
+                  )}
+                </PagedTable>
               </ReportSection>
 
               <ReportSection
@@ -393,45 +490,51 @@ export function ReportsPage() {
                   description="Active memberships that will expire today or within the next 7 days. These members should be contacted for renewal."
                   count={query.data.overview.expiringIn7Days}
               >
-                {query.data.expiringIn7Days.length === 0 ? (
-                    <EmptyState
-                        title="No memberships expiring in the next 7 days"
-                        body="There are no active memberships ending today or within the next 7 days."
-                    />
-                ) : (
-                    <TableShell>
-                      <Table>
-                        <THead>
-                          <tr>
-                            <Th>Member</Th>
-                            <Th>Member ID</Th>
-                            <Th>Plan</Th>
-                            <Th>End date</Th>
-                            <Th>Paid</Th>
-                            <Th>Balance</Th>
-                          </tr>
-                        </THead>
-                        <tbody>
-                        {query.data.expiringIn7Days.map((r) => (
-                            <Tr key={r.id}>
-                              <Td className="font-medium">{r.memberName}</Td>
-                              <Td className="text-muted">{r.memberCode || "—"}</Td>
-                              <Td>{r.planName}</Td>
-                              <Td className="font-semibold">
-                                {formatDate(r.endDate)}
-                              </Td>
-                              <Td className="tabular-nums">
-                                {money(r.amountPaid, "INR")}
-                              </Td>
-                              <Td className="font-semibold tabular-nums">
-                                {money(r.balance, "INR")}
-                              </Td>
-                            </Tr>
-                        ))}
-                        </tbody>
-                      </Table>
-                    </TableShell>
-                )}
+                <PagedTable
+                    rows={query.data.expiringIn7Days}
+                    resetKey={periodKey}
+                    empty={
+                      <EmptyState
+                          title="No memberships expiring in the next 7 days"
+                          body="There are no active memberships ending today or within the next 7 days."
+                      />
+                    }
+                >
+                  {(expiring) => (
+                      <TableShell>
+                        <Table>
+                          <THead>
+                            <tr>
+                              <Th>Member</Th>
+                              <Th>Member ID</Th>
+                              <Th>Plan</Th>
+                              <Th>End date</Th>
+                              <Th>Paid</Th>
+                              <Th>Balance</Th>
+                            </tr>
+                          </THead>
+                          <tbody>
+                          {expiring.map((r) => (
+                              <Tr key={r.id}>
+                                <Td className="font-medium">{r.memberName}</Td>
+                                <Td className="text-muted">{r.memberCode || "—"}</Td>
+                                <Td>{r.planName}</Td>
+                                <Td className="font-semibold">
+                                  {formatDate(r.endDate)}
+                                </Td>
+                                <Td className="tabular-nums">
+                                  {money(r.amountPaid, "INR")}
+                                </Td>
+                                <Td className="font-semibold tabular-nums">
+                                  {money(r.balance, "INR")}
+                                </Td>
+                              </Tr>
+                          ))}
+                          </tbody>
+                        </Table>
+                      </TableShell>
+                  )}
+                </PagedTable>
               </ReportSection>
 
               <ReportSection
@@ -439,51 +542,57 @@ export function ReportsPage() {
                   description="Active memberships expiring within the next 30 days."
                   count={query.data.overview.expiringIn30Days}
               >
-                {query.data.expiringMemberships.length === 0 ? (
-                    <EmptyState
-                        title="Nothing expiring soon"
-                        body="No active memberships end within the next 30 days."
-                    />
-                ) : (
-                    <TableShell>
-                      <Table>
-                        <THead>
-                          <tr>
-                            <Th>Member</Th>
-                            <Th>Member ID</Th>
-                            <Th>Plan</Th>
-                            <Th>End date</Th>
-                            <Th>Paid</Th>
-                            <Th>Balance</Th>
-                          </tr>
-                        </THead>
-                        <tbody>
-                        {query.data.expiringMemberships.map((r) => (
-                            <Tr key={r.id}>
-                              <Td className="font-medium">{r.memberName}</Td>
-                              <Td className="text-muted">{r.memberCode || "—"}</Td>
-                              <Td>{r.planName}</Td>
-                              <Td
-                                  className={
-                                    r.endDate <= today()
-                                        ? "font-semibold text-danger"
-                                        : ""
-                                  }
-                              >
-                                {formatDate(r.endDate)}
-                              </Td>
-                              <Td className="tabular-nums">
-                                {money(r.amountPaid, "INR")}
-                              </Td>
-                              <Td className="tabular-nums">
-                                {money(r.balance, "INR")}
-                              </Td>
-                            </Tr>
-                        ))}
-                        </tbody>
-                      </Table>
-                    </TableShell>
-                )}
+                <PagedTable
+                    rows={query.data.expiringMemberships}
+                    resetKey={periodKey}
+                    empty={
+                      <EmptyState
+                          title="Nothing expiring soon"
+                          body="No active memberships end within the next 30 days."
+                      />
+                    }
+                >
+                  {(expiring) => (
+                      <TableShell>
+                        <Table>
+                          <THead>
+                            <tr>
+                              <Th>Member</Th>
+                              <Th>Member ID</Th>
+                              <Th>Plan</Th>
+                              <Th>End date</Th>
+                              <Th>Paid</Th>
+                              <Th>Balance</Th>
+                            </tr>
+                          </THead>
+                          <tbody>
+                          {expiring.map((r) => (
+                              <Tr key={r.id}>
+                                <Td className="font-medium">{r.memberName}</Td>
+                                <Td className="text-muted">{r.memberCode || "—"}</Td>
+                                <Td>{r.planName}</Td>
+                                <Td
+                                    className={
+                                      r.endDate <= today()
+                                          ? "font-semibold text-danger"
+                                          : ""
+                                    }
+                                >
+                                  {formatDate(r.endDate)}
+                                </Td>
+                                <Td className="tabular-nums">
+                                  {money(r.amountPaid, "INR")}
+                                </Td>
+                                <Td className="tabular-nums">
+                                  {money(r.balance, "INR")}
+                                </Td>
+                              </Tr>
+                          ))}
+                          </tbody>
+                        </Table>
+                      </TableShell>
+                  )}
+                </PagedTable>
               </ReportSection>
 
               <div className="grid gap-8 xl:grid-cols-2">
@@ -492,35 +601,41 @@ export function ReportsPage() {
                     description={`Members who joined during ${periodLabel}.`}
                     count={query.data.overview.newMembers}
                 >
-                  {query.data.newMembers.length === 0 ? (
-                      <EmptyState
-                          title="No new members"
-                          body="No members joined during the selected period."
-                      />
-                  ) : (
-                      <TableShell>
-                        <Table>
-                          <THead>
-                            <tr>
-                              <Th>Joined</Th>
-                              <Th>Member</Th>
-                              <Th>Member ID</Th>
-                              <Th>Phone</Th>
-                            </tr>
-                          </THead>
-                          <tbody>
-                          {query.data.newMembers.map((m) => (
-                              <Tr key={m.id}>
-                                <Td>{formatDate(m.joinedOn)}</Td>
-                                <Td className="font-medium">{m.name}</Td>
-                                <Td className="text-muted">{m.memberCode}</Td>
-                                <Td>{m.phone || "—"}</Td>
-                              </Tr>
-                          ))}
-                          </tbody>
-                        </Table>
-                      </TableShell>
-                  )}
+                  <PagedTable
+                      rows={query.data.newMembers}
+                      resetKey={periodKey}
+                      empty={
+                        <EmptyState
+                            title="No new members"
+                            body="No members joined during the selected period."
+                        />
+                      }
+                  >
+                    {(members) => (
+                        <TableShell>
+                          <Table>
+                            <THead>
+                              <tr>
+                                <Th>Joined</Th>
+                                <Th>Member</Th>
+                                <Th>Member ID</Th>
+                                <Th>Phone</Th>
+                              </tr>
+                            </THead>
+                            <tbody>
+                            {members.map((m) => (
+                                <Tr key={m.id}>
+                                  <Td>{formatDate(m.joinedOn)}</Td>
+                                  <Td className="font-medium">{m.name}</Td>
+                                  <Td className="text-muted">{m.memberCode}</Td>
+                                  <Td>{m.phone || "—"}</Td>
+                                </Tr>
+                            ))}
+                            </tbody>
+                          </Table>
+                        </TableShell>
+                    )}
+                  </PagedTable>
                 </ReportSection>
 
                 <ReportSection
@@ -529,41 +644,47 @@ export function ReportsPage() {
                     count={query.data.overview.attendanceCount}
                     amount={`${query.data.overview.uniqueAttendees} unique members`}
                 >
-                  {query.data.attendance.length === 0 ? (
-                      <EmptyState
-                          title="No attendance"
-                          body="No granted attendance events were recorded during the selected period."
-                      />
-                  ) : (
-                      <TableShell>
-                        <Table>
-                          <THead>
-                            <tr>
-                              <Th>Member</Th>
-                              <Th>Member ID</Th>
-                              <Th>Visits</Th>
-                              <Th>Last visit</Th>
-                            </tr>
-                          </THead>
-                          <tbody>
-                          {query.data.attendance.map((r) => (
-                              <Tr key={r.memberId}>
-                                <Td className="font-medium">{r.memberName}</Td>
-                                <Td className="text-muted">{r.memberCode || "—"}</Td>
-                                <Td className="font-semibold tabular-nums">
-                                  {r.visits}
-                                </Td>
-                                <Td>
-                                  {r.lastVisit
-                                      ? new Date(r.lastVisit).toLocaleString()
-                                      : "—"}
-                                </Td>
-                              </Tr>
-                          ))}
-                          </tbody>
-                        </Table>
-                      </TableShell>
-                  )}
+                  <PagedTable
+                      rows={query.data.attendance}
+                      resetKey={periodKey}
+                      empty={
+                        <EmptyState
+                            title="No attendance"
+                            body="No granted attendance events were recorded during the selected period."
+                        />
+                      }
+                  >
+                    {(visits) => (
+                        <TableShell>
+                          <Table>
+                            <THead>
+                              <tr>
+                                <Th>Member</Th>
+                                <Th>Member ID</Th>
+                                <Th>Visits</Th>
+                                <Th>Last visit</Th>
+                              </tr>
+                            </THead>
+                            <tbody>
+                            {visits.map((r) => (
+                                <Tr key={r.memberId}>
+                                  <Td className="font-medium">{r.memberName}</Td>
+                                  <Td className="text-muted">{r.memberCode || "—"}</Td>
+                                  <Td className="font-semibold tabular-nums">
+                                    {r.visits}
+                                  </Td>
+                                  <Td>
+                                    {r.lastVisit
+                                        ? new Date(r.lastVisit).toLocaleString()
+                                        : "—"}
+                                  </Td>
+                                </Tr>
+                            ))}
+                            </tbody>
+                          </Table>
+                        </TableShell>
+                    )}
+                  </PagedTable>
                 </ReportSection>
               </div>
 
@@ -572,35 +693,41 @@ export function ReportsPage() {
                   description={`Active members with no granted attendance during ${periodLabel}.`}
                   count={query.data.inactiveMembers.length}
               >
-                {query.data.inactiveMembers.length === 0 ? (
-                    <EmptyState
-                        title="Everyone has visited"
-                        body="Every active member has at least one granted attendance event in the selected period."
-                    />
-                ) : (
-                    <TableShell>
-                      <Table>
-                        <THead>
-                          <tr>
-                            <Th>Member</Th>
-                            <Th>Member ID</Th>
-                            <Th>Phone</Th>
-                            <Th>Joined</Th>
-                          </tr>
-                        </THead>
-                        <tbody>
-                        {query.data.inactiveMembers.map((m) => (
-                            <Tr key={m.id}>
-                              <Td className="font-medium">{m.name}</Td>
-                              <Td className="text-muted">{m.memberCode}</Td>
-                              <Td>{m.phone || "—"}</Td>
-                              <Td>{formatDate(m.joinedOn)}</Td>
-                            </Tr>
-                        ))}
-                        </tbody>
-                      </Table>
-                    </TableShell>
-                )}
+                <PagedTable
+                    rows={query.data.inactiveMembers}
+                    resetKey={periodKey}
+                    empty={
+                      <EmptyState
+                          title="Everyone has visited"
+                          body="Every active member has at least one granted attendance event in the selected period."
+                      />
+                    }
+                >
+                  {(members) => (
+                      <TableShell>
+                        <Table>
+                          <THead>
+                            <tr>
+                              <Th>Member</Th>
+                              <Th>Member ID</Th>
+                              <Th>Phone</Th>
+                              <Th>Joined</Th>
+                            </tr>
+                          </THead>
+                          <tbody>
+                          {members.map((m) => (
+                              <Tr key={m.id}>
+                                <Td className="font-medium">{m.name}</Td>
+                                <Td className="text-muted">{m.memberCode}</Td>
+                                <Td>{m.phone || "—"}</Td>
+                                <Td>{formatDate(m.joinedOn)}</Td>
+                              </Tr>
+                          ))}
+                          </tbody>
+                        </Table>
+                      </TableShell>
+                  )}
+                </PagedTable>
               </ReportSection>
             </>
         ) : null}
@@ -654,41 +781,48 @@ export function MembershipReportPage() {
         {rows.error ? (
             <QueryError error={rows.error} onRetry={() => void rows.refetch()} />
         ) : null}
-        {rows.data && rows.data.length === 0 ? (
-            <EmptyState
-                title="No memberships"
-                body="Memberships appear here once members are enrolled on a plan."
-            />
-        ) : null}
-        {rows.data && rows.data.length > 0 ? (
-            <TableShell>
-              <Table>
-                <THead>
-                  <tr>
-                    <Th>Plan</Th>
-                    <Th>Status</Th>
-                    <Th>Dates</Th>
-                    <Th>Paid</Th>
-                  </tr>
-                </THead>
-                <tbody>
-                {rows.data.map((row) => (
-                    <Tr key={String(row.id)}>
-                      <Td className="font-medium">{String(row.planName)}</Td>
-                      <Td>
-                        <Badge tone={statusTone(String(row.status))}>
-                          {String(row.status)}
-                        </Badge>
-                      </Td>
-                      <Td className="text-muted">
-                        {String(row.startDate)} → {String(row.endDate)}
-                      </Td>
-                      <Td className="tabular-nums">{String(row.amountPaid)}</Td>
-                    </Tr>
-                ))}
-                </tbody>
-              </Table>
-            </TableShell>
+        {rows.data ? (
+            <PagedTable
+                rows={rows.data}
+                resetKey="memberships"
+                empty={
+                  <EmptyState
+                      title="No memberships"
+                      body="Memberships appear here once members are enrolled on a plan."
+                  />
+                }
+            >
+              {(pageRows) => (
+                  <TableShell>
+                    <Table>
+                      <THead>
+                        <tr>
+                          <Th>Plan</Th>
+                          <Th>Status</Th>
+                          <Th>Dates</Th>
+                          <Th>Paid</Th>
+                        </tr>
+                      </THead>
+                      <tbody>
+                      {pageRows.map((row) => (
+                          <Tr key={String(row.id)}>
+                            <Td className="font-medium">{String(row.planName)}</Td>
+                            <Td>
+                              <Badge tone={statusTone(String(row.status))}>
+                                {String(row.status)}
+                              </Badge>
+                            </Td>
+                            <Td className="text-muted">
+                              {String(row.startDate)} → {String(row.endDate)}
+                            </Td>
+                            <Td className="tabular-nums">{String(row.amountPaid)}</Td>
+                          </Tr>
+                      ))}
+                      </tbody>
+                    </Table>
+                  </TableShell>
+              )}
+            </PagedTable>
         ) : null}
       </div>
   );
@@ -715,27 +849,34 @@ export function DeviceReportPage() {
                 onRetry={() => void summary.refetch()}
             />
         ) : null}
-        {summary.data?.devices?.length === 0 ? (
-            <EmptyState
-                title="No devices"
-                body="Register a gateway and TrueFace terminal to see health here."
-            />
-        ) : null}
-        {summary.data?.devices?.length ? (
-            <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-panel shadow-[var(--shadow-panel)]">
-              {summary.data.devices.map((d) => (
-                  <Link
-                      key={d.id}
-                      to={`/app/devices/${d.id}`}
-                      className="flex items-center justify-between gap-3 px-4 py-3.5 text-sm transition hover:bg-raised/50"
-                  >
-                    <span className="font-medium">{d.name}</span>
-                    <Badge tone={statusTone(d.connectionState)}>
-                      {d.connectionState}
-                    </Badge>
-                  </Link>
-              ))}
-            </div>
+        {summary.data ? (
+            <PagedTable
+                rows={summary.data.devices ?? []}
+                resetKey="devices"
+                empty={
+                  <EmptyState
+                      title="No devices"
+                      body="Register a gateway and TrueFace terminal to see health here."
+                  />
+                }
+            >
+              {(devices) => (
+                  <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-panel shadow-[var(--shadow-panel)]">
+                    {devices.map((d) => (
+                        <Link
+                            key={d.id}
+                            to={`/app/devices/${d.id}`}
+                            className="flex items-center justify-between gap-3 px-4 py-3.5 text-sm transition hover:bg-raised/50"
+                        >
+                          <span className="font-medium">{d.name}</span>
+                          <Badge tone={statusTone(d.connectionState)}>
+                            {d.connectionState}
+                          </Badge>
+                        </Link>
+                    ))}
+                  </div>
+              )}
+            </PagedTable>
         ) : null}
       </div>
   );

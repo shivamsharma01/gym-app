@@ -39,7 +39,8 @@ export function AttendanceLivePage() {
           {attendance.data.content.map((row) => (
             <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3.5 text-sm">
               <div>
-                <div className="font-medium">{row.deviceUserId ?? 'Unknown device user'}</div>
+                <div className="font-medium">{row.memberName ?? 'Unknown member'}</div>
+                <div className="mt-0.5 font-mono text-[11px] text-muted">{row.deviceUserId ?? '—'}</div>
                 <div className="mt-0.5 text-xs text-muted">{formatDateTime(row.occurredAt)}</div>
               </div>
               <Badge tone={statusTone(row.result)}>

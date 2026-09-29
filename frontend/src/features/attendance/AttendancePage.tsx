@@ -64,12 +64,15 @@ export function AttendancePage() {
               {attendance.data.content.map((row) => (
                 <Tr key={row.id}>
                   <Td className="whitespace-nowrap text-muted">{formatDateTime(row.occurredAt)}</Td>
-                  <Td className="font-mono text-xs">{row.deviceUserId ?? '—'}</Td>
+                  <Td>
+                    <div className="font-medium">{row.memberName ?? 'Unknown member'}</div>
+                    <div className="mt-0.5 font-mono text-[11px] text-muted">{row.deviceUserId ?? '—'}</div>
+                  </Td>
                   <Td className="text-muted">{row.direction}</Td>
                   <Td>
                     <Badge tone={statusTone(row.result)}>{row.result}</Badge>
                   </Td>
-                  <Td className="text-muted">{row.memberLinked ? 'Linked' : 'Unlinked'}</Td>
+                  <Td className="text-muted">{row.memberName ?? (row.memberLinked ? 'Linked' : 'Unlinked')}</Td>
                 </Tr>
               ))}
             </tbody>

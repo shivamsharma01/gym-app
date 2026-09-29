@@ -43,3 +43,6 @@ Thumbs.db
 
 # Virtual device server state
 simulator/data/
+
+# Server-side database backups (created on the VPS, not readable by the deploy user)
+/backups/

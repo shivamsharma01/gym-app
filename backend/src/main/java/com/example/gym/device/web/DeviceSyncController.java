@@ -62,7 +62,8 @@ public class DeviceSyncController {
         PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize);
         Page<DeviceSyncCommand> result = deviceSyncService.list(tenantId, deviceInternalId, openOnly, pageable);
         Map<Long, String> names = memberNames(result);
-        return PageResponse.from(result, c -> SyncCommandView.from(c, names.get(c.getMemberId()), deviceUserId(c)));
+        return PageResponse.from(result, c -> SyncCommandView.from(
+                c, memberName(names, c.getMemberId()), deviceUserId(c)));
     }
 
     @GetMapping("/{id}")
@@ -100,14 +101,18 @@ public class DeviceSyncController {
                 .map(DeviceSyncCommand::getMemberId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        if (ids.isEmpty()) {
-            return Map.of();
-        }
         Map<Long, String> names = new HashMap<>();
-        for (Member m : memberRepository.findAllById(ids)) {
-            names.put(m.getId(), m.getFullName());
+        if (!ids.isEmpty()) {
+            for (Member m : memberRepository.findAllById(ids)) {
+                names.put(m.getId(), m.getFullName());
+            }
         }
         return names;
+    }
+
+    /** Immutable maps reject a null key; commands such as reconcile have no member. */
+    private static String memberName(Map<Long, String> names, Long memberId) {
+        return memberId == null ? null : names.get(memberId);
     }
 
     private String deviceUserId(DeviceSyncCommand c) {

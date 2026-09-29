@@ -135,6 +135,19 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void listingSyncCommandsWithoutAMemberDoesNotFail() throws Exception {
+        deviceSyncCommandRepository.deleteAllInBatch();
+        var device = deviceRepository.findAll().getFirst();
+        deviceSyncService.enqueue(device.getTenantId(), device.getId(), null, null,
+                SyncCommandType.RECONCILE_DEVICE, java.util.Map.of("reason", "manual"));
+
+        mockMvc.perform(get("/api/v1/sync-commands").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].memberName").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
     void attendanceIngestIsIdempotentAndDeniedRaisesSecurityEvent() throws Exception {
 
         String occurred = Instant.parse("2026-09-11T06:00:00Z").toString();
@@ -149,7 +162,8 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].direction").value("IN"))
                 .andExpect(jsonPath("$.content[0].result").value("GRANTED"))
-                .andExpect(jsonPath("$.content[0].memberLinked").value(true));
+                .andExpect(jsonPath("$.content[0].memberLinked").value(true))
+                .andExpect(jsonPath("$.content[0].memberName").value("Asha Rao"));
 
         gatewayMessageService.process(envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
                 "{\"deviceUserId\":\"1001\",\"occurredAt\":\"" + occurred

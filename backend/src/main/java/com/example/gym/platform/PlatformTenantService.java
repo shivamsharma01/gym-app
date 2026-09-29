@@ -3,6 +3,7 @@ package com.example.gym.platform;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.member.Member;
@@ -110,6 +111,8 @@ public class PlatformTenantService {
         owner.setRoles(Set.of(ownerRole));
         userRepository.save(owner);
 
+        FlowLog.info("platform", "tenant enrolled id={} slug={} owner={}",
+                tenant.getPublicId(), slug, owner.getUsername());
         auditService.record(AuditActions.TENANT_ENROLLED, AuditActions.RESULT_SUCCESS,
                 "Tenant", tenant.getPublicId(),
                 Map.of("slug", slug, "owner", owner.getUsername()));

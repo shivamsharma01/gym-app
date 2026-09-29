@@ -3,6 +3,7 @@ package com.example.gym.payment;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.DeviceAuthorizationService;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
@@ -109,11 +110,14 @@ public class PaymentService {
             recomputeMembershipPaymentStatus(membership);
         }
 
+        FlowLog.info("payment", "recorded id={} member={} amount={} {}",
+                saved.getPublicId(), member.getPublicId(), saved.getAmount(), currency);
         auditService.record(AuditActions.PAYMENT_RECORDED, AuditActions.RESULT_SUCCESS,
                 "Payment", saved.getPublicId(),
                 Map.of("memberId", member.getPublicId(),
                         "amount", saved.getAmount().toPlainString(),
-                        "currency", currency));
+                        "currency", currency,
+                        "method", saved.getMethod().name()));
         return saved;
     }
 
@@ -133,8 +137,10 @@ public class PaymentService {
                     .ifPresent(this::recomputeMembershipPaymentStatus);
         }
 
+        FlowLog.info("payment", "refunded id={} amount={}", saved.getPublicId(), saved.getAmount());
         auditService.record(AuditActions.PAYMENT_REFUNDED, AuditActions.RESULT_SUCCESS,
-                "Payment", saved.getPublicId(), null);
+                "Payment", saved.getPublicId(),
+                Map.of("amount", saved.getAmount().toPlainString(), "currency", saved.getCurrency()));
         return saved;
     }
 

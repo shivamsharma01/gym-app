@@ -3,6 +3,7 @@ package com.example.gym.member;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.DeviceAuthorizationService;
 import com.example.gym.device.MemberDeviceProvisioningService;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
@@ -74,6 +75,7 @@ public class MemberService {
         Member saved = memberRepository.save(member);
         provisioning.provisionMember(saved, Set.of());
 
+        FlowLog.info("member", "created id={} code={}", saved.getPublicId(), saved.getMemberCode());
         auditService.record(AuditActions.MEMBER_CREATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), Map.of("memberCode", saved.getMemberCode()));
         return saved;
@@ -98,8 +100,9 @@ public class MemberService {
         if (nameChanged) {
             provisioning.pushProfile(saved, Set.of());
         }
+        FlowLog.info("member", "updated id={} nameChanged={}", saved.getPublicId(), nameChanged);
         auditService.record(AuditActions.MEMBER_UPDATED, AuditActions.RESULT_SUCCESS,
-                "Member", saved.getPublicId(), null);
+                "Member", saved.getPublicId(), Map.of("nameChanged", nameChanged));
         return saved;
     }
 
@@ -110,6 +113,7 @@ public class MemberService {
         member.setAccessChangedAt(Instant.now());
         memberRepository.save(member);
         deviceAuthorizationService.syncMember(member);
+        FlowLog.info("member", "deactivated id={}", member.getPublicId());
         auditService.record(AuditActions.MEMBER_DELETED, AuditActions.RESULT_SUCCESS,
                 "Member", member.getPublicId(), null);
     }
@@ -125,6 +129,7 @@ public class MemberService {
         Member saved = memberRepository.save(member);
         deviceAuthorizationService.syncMember(saved);
         provisioning.provisionMember(saved, Set.of());
+        FlowLog.info("member", "reactivated id={}", saved.getPublicId());
         auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), null);
         return saved;

@@ -1,5 +1,6 @@
 package com.example.gym.common.error;
 
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.common.web.CorrelationIdFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -31,23 +32,32 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(ApiException.class)
-    public ProblemDetail handleApi(ApiException ex) {
+    public ProblemDetail handleApi(ApiException ex, HttpServletRequest request) {
+        if (ex.getStatus().is5xxServerError()) {
+            FlowLog.error("api", "{} {} rejected code={} message={}",
+                    request.getMethod(), request.getRequestURI(), ex.getCode(), ex.getMessage());
+        } else {
+            FlowLog.warn("api", "{} {} rejected code={} message={}",
+                    request.getMethod(), request.getRequestURI(), ex.getCode(), ex.getMessage());
+        }
         return problem(ex.getStatus(), ex.getCode(), ex.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ProblemDetail handleValidation(MethodArgumentNotValidException ex) {
+    public ProblemDetail handleValidation(MethodArgumentNotValidException ex, HttpServletRequest request) {
         ProblemDetail pd = problem(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Request validation failed");
         List<String> errors = new ArrayList<>();
         for (FieldError fe : ex.getBindingResult().getFieldErrors()) {
             errors.add(fe.getField() + ": " + fe.getDefaultMessage());
         }
         pd.setProperty("errors", errors);
+        FlowLog.debug("api", "{} {} validation failed: {}", request.getMethod(), request.getRequestURI(), errors);
         return pd;
     }
 
     @ExceptionHandler(AccessDeniedException.class)
-    public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
+    public ProblemDetail handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+        FlowLog.warn("auth", "access denied {} {}", request.getMethod(), request.getRequestURI());
         return problem(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "You do not have permission to perform this action");
     }
 

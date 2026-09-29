@@ -3,6 +3,7 @@ package com.example.gym.settings;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.settings.dto.GymSettingsView;
 import com.example.gym.settings.dto.UpdateGymSettings;
 import com.example.gym.tenant.Tenant;
@@ -55,6 +56,7 @@ public class SettingsService {
         profile.setSectionFacilitiesTitle(blankToNull(request.sectionFacilitiesTitle()));
         profile.setSectionFacilitiesBody(blankToNull(request.sectionFacilitiesBody()));
         profileRepository.save(profile);
+        FlowLog.info("settings", "updated tenant={} name={}", tenant.getPublicId(), tenant.getName());
         auditService.record(AuditActions.SETTINGS_UPDATED, AuditActions.RESULT_SUCCESS,
                 "GymProfile", profile.getPublicId(), Map.of("name", tenant.getName()));
         return toView(tenant, profile);

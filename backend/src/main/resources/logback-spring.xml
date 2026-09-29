@@ -25,7 +25,11 @@
     </rollingPolicy>
   </appender>
 
+  <!-- HTTP access line. Set gym.access=WARN to hide successful requests. -->
   <logger name="gym.access" level="INFO"/>
+  <!-- Business flows. Children (gym.flow.auth, gym.flow.device, …) inherit this level
+       unless logging.level.gym.flow.<name> overrides them. -->
+  <logger name="gym.flow" level="INFO"/>
 
   <springProfile name="prod">
     <root level="INFO">

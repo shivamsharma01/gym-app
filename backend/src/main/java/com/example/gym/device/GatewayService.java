@@ -3,6 +3,7 @@ package com.example.gym.device;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.domain.GatewayStatus;
 import com.example.gym.device.dto.DeviceResponses.DeviceView;
@@ -69,6 +70,7 @@ public class GatewayService {
         gateway.setEnrollmentExpiresAt(now.plus(properties.getEnrollmentTtl()));
         gateway.setEnrollmentConsumedAt(null);
         Gateway saved = gatewayRepository.save(gateway);
+        FlowLog.info("gateway", "registered id={} name={}", saved.getPublicId(), name);
         auditService.record(AuditActions.GATEWAY_REGISTERED, AuditActions.RESULT_SUCCESS,
                 "Gateway", saved.getPublicId(), Map.of("name", name));
         return GatewayCreated.from(saved, enrollment);
@@ -87,6 +89,7 @@ public class GatewayService {
         gateway.setEnrollmentExpiresAt(now.plus(properties.getEnrollmentTtl()));
         gateway.setEnrollmentConsumedAt(null);
         Gateway saved = gatewayRepository.save(gateway);
+        FlowLog.info("gateway", "enrollment reissued id={}", saved.getPublicId());
         auditService.record(AuditActions.GATEWAY_ENROLLMENT_REISSUED, AuditActions.RESULT_SUCCESS,
                 "Gateway", saved.getPublicId(), null);
         return GatewayCreated.from(saved, enrollment);
@@ -124,6 +127,7 @@ public class GatewayService {
         gateway.setEnrollmentConsumedAt(now);
         gatewayRepository.save(gateway);
 
+        FlowLog.info("gateway", "enrolled id={}", gateway.getPublicId());
         auditService.record(AuditActions.GATEWAY_ENROLLED, AuditActions.RESULT_SUCCESS,
                 "Gateway", gateway.getPublicId(), null);
         return new GatewayCredentialResponse(gateway.getPublicId(), credential, expiresAt);
@@ -145,6 +149,7 @@ public class GatewayService {
         gateway.setTokenExpiresAt(expiresAt);
         gatewayRepository.save(gateway);
 
+        FlowLog.info("gateway", "credential rotated id={}", gateway.getPublicId());
         auditService.record(AuditActions.GATEWAY_CREDENTIAL_ROTATED, AuditActions.RESULT_SUCCESS,
                 "Gateway", gateway.getPublicId(), null);
         return new GatewayCredentialResponse(gateway.getPublicId(), credential, expiresAt);

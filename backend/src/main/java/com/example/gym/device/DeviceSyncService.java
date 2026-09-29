@@ -3,6 +3,7 @@ package com.example.gym.device;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.SyncCommandState;
@@ -104,6 +105,8 @@ public class DeviceSyncService {
         DeviceSyncCommand saved = commandRepository.save(command);
 
         markState(saved, DeviceSyncState.PENDING);
+        FlowLog.debug("device", "enqueued type={} command={} deviceId={} memberId={}",
+                type, saved.getPublicId(), deviceId, memberId);
         auditService.record(AuditActions.DEVICE_SYNC_ENQUEUED, AuditActions.RESULT_SUCCESS,
                 "DeviceSyncCommand", saved.getPublicId(), Map.of("type", type.name()));
         return saved;
@@ -449,6 +452,8 @@ public class DeviceSyncService {
             command.setState(SyncCommandState.DEAD_LETTER);
             command.setCompletedAt(Instant.now());
             markState(command, DeviceSyncState.FAILED);
+            FlowLog.warn("device", "command dead-lettered correlation={} type={} attempts={} error={}",
+                    command.getCorrelationId(), command.getType(), command.getAttemptCount(), error);
             log.warn("Command {} dead-lettered after {} attempts: {}",
                     command.getCorrelationId(), command.getAttemptCount(), error);
         } else {

@@ -3,6 +3,7 @@ package com.example.gym.face;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.MemberDeviceProvisioningService;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.member.Member;
@@ -64,6 +65,7 @@ public class MemberFaceService {
         member.setFaceChangedAt(face.getChangedAt());
         memberRepository.save(member);
         provisioning.pushFace(member, face, Set.of());
+        FlowLog.info("face", "photo stored member={} version={}", member.getPublicId(), face.getFaceVersion());
         auditService.record(AuditActions.MEMBER_FACE_UPDATED, AuditActions.RESULT_SUCCESS,
                 "Member", member.getPublicId(), Map.of("faceVersion", face.getFaceVersion()));
         return face;
@@ -110,6 +112,7 @@ public class MemberFaceService {
         member.setFaceChangedAt(Instant.now());
         memberRepository.save(member);
         provisioning.deleteFace(member);
+        FlowLog.info("face", "photo removed member={}", member.getPublicId());
         auditService.record(AuditActions.MEMBER_FACE_DELETED, AuditActions.RESULT_SUCCESS,
                 "Member", member.getPublicId(), null);
     }

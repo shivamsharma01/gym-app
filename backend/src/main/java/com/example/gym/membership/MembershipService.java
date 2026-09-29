@@ -3,6 +3,7 @@ package com.example.gym.membership;
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
 import com.example.gym.member.MemberRepository;
@@ -126,6 +127,8 @@ public class MembershipService {
 
         Membership saved = membershipRepository.save(membership);
 
+        FlowLog.info("membership", "created id={} member={} plan={} discount={}",
+                saved.getPublicId(), member.getPublicId(), plan.getName(), discount);
         auditService.record(
                 AuditActions.MEMBERSHIP_CREATED,
                 AuditActions.RESULT_SUCCESS,
@@ -133,9 +136,11 @@ public class MembershipService {
                 saved.getPublicId(),
                 Map.of(
                         "memberId", member.getPublicId(),
-                        "plan", plan.getName()
+                        "plan", plan.getName(),
+                        "discountAmount", discount.toPlainString()
                 )
         );
+        auditDiscount(saved);
 
         publish(saved, ChangeType.CREATED);
         return saved;
@@ -293,6 +298,8 @@ public class MembershipService {
         Membership saved =
                 membershipRepository.save(renewal);
 
+        FlowLog.info("membership", "renewed id={} from={} plan={} discount={}",
+                saved.getPublicId(), current.getPublicId(), plan.getName(), discount);
         auditService.record(
                 AuditActions.MEMBERSHIP_RENEWED,
                 AuditActions.RESULT_SUCCESS,
@@ -300,9 +307,11 @@ public class MembershipService {
                 saved.getPublicId(),
                 Map.of(
                         "renewedFrom", current.getPublicId(),
-                        "plan", plan.getName()
+                        "plan", plan.getName(),
+                        "discountAmount", discount.toPlainString()
                 )
         );
+        auditDiscount(saved);
 
         publish(saved, ChangeType.RENEWED);
 
@@ -339,6 +348,20 @@ public class MembershipService {
                 );
     }
 
+    private void auditDiscount(Membership saved) {
+        if (saved.getDiscountAmount() == null || saved.getDiscountAmount().signum() <= 0) {
+            return;
+        }
+        String approver = saved.getDiscountApprovedByUsername() == null
+                ? ""
+                : saved.getDiscountApprovedByUsername();
+        FlowLog.info("membership", "discount approved membership={} amount={} by={}",
+                saved.getPublicId(), saved.getDiscountAmount(), approver);
+        auditService.record(AuditActions.MEMBERSHIP_DISCOUNT, AuditActions.RESULT_SUCCESS,
+                "Membership", saved.getPublicId(),
+                Map.of("discountAmount", saved.getDiscountAmount().toPlainString(), "approvedBy", approver));
+    }
+
     private void recordDiscountApproval(Membership membership, BigDecimal discount) {
         if (discount == null || discount.compareTo(BigDecimal.ZERO) <= 0) {
             return;
@@ -362,6 +385,7 @@ public class MembershipService {
         membership.setStatus(MembershipStatus.FROZEN);
         membership.setFrozenOn(today);
         Membership saved = membershipRepository.save(membership);
+        FlowLog.info("membership", "frozen id={}", saved.getPublicId());
         auditService.record(AuditActions.MEMBERSHIP_FROZEN, AuditActions.RESULT_SUCCESS,
                 "Membership", saved.getPublicId(), null);
         publish(saved, ChangeType.FROZEN);
@@ -386,6 +410,7 @@ public class MembershipService {
         membership.setStatus(today.isAfter(membership.getEndDate())
                 ? MembershipStatus.EXPIRED : MembershipStatus.ACTIVE);
         Membership saved = membershipRepository.save(membership);
+        FlowLog.info("membership", "unfrozen id={} extendedDays={}", saved.getPublicId(), frozenDays);
         auditService.record(AuditActions.MEMBERSHIP_UNFROZEN, AuditActions.RESULT_SUCCESS,
                 "Membership", saved.getPublicId(), Map.of("extendedDays", frozenDays));
         publish(saved, ChangeType.UNFROZEN);
@@ -403,6 +428,7 @@ public class MembershipService {
         membership.setCancelledOn(LocalDate.now());
         membership.setCancelReason(StringUtils.hasText(reason) ? reason : null);
         Membership saved = membershipRepository.save(membership);
+        FlowLog.info("membership", "cancelled id={}", saved.getPublicId());
         auditService.record(AuditActions.MEMBERSHIP_CANCELLED, AuditActions.RESULT_SUCCESS,
                 "Membership", saved.getPublicId(), reason == null ? null : Map.of("reason", reason));
         publish(saved, ChangeType.CANCELLED);
@@ -481,6 +507,8 @@ public class MembershipService {
 
         Membership saved = membershipRepository.save(membership);
 
+        FlowLog.info("membership", "updated id={} plan={} discount={}",
+                saved.getPublicId(), plan.getName(), discount);
         auditService.record(
                 AuditActions.MEMBERSHIP_DATES_UPDATED,
                 AuditActions.RESULT_SUCCESS,
@@ -495,6 +523,7 @@ public class MembershipService {
                         "paymentStatus", saved.getPaymentStatus().name()
                 )
         );
+        auditDiscount(saved);
 
         publish(saved, ChangeType.DATES_UPDATED);
         return saved;
@@ -592,6 +621,7 @@ public class MembershipService {
         membership.setDeleted(true);
         membershipRepository.save(membership);
 
+        FlowLog.info("membership", "deleted id={}", membership.getPublicId());
         auditService.record(
                 AuditActions.MEMBERSHIP_DELETED,
                 AuditActions.RESULT_SUCCESS,

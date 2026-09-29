@@ -5,6 +5,7 @@ import com.example.gym.audit.AuditService;
 import com.example.gym.auth.dto.TokenResponse;
 import com.example.gym.auth.dto.UserSummary;
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.security.AppUserPrincipal;
 import com.example.gym.security.JwtService;
 import com.example.gym.tenant.Tenant;
@@ -61,24 +62,28 @@ public class AuthService {
                 .orElse(null);
 
         if (user == null) {
+            FlowLog.warn("auth", "login failed identifier={} reason=unknown_user", usernameOrEmail);
             auditService.recordAuth(AuditActions.LOGIN_FAILURE, AuditActions.RESULT_FAILURE,
                     null, usernameOrEmail, null, Map.of("reason", "unknown_user"));
             throw invalidCredentials();
         }
 
         if (isLocked(user)) {
+            FlowLog.warn("auth", "login failed username={} reason=locked", user.getUsername());
             auditService.recordAuth(AuditActions.LOGIN_FAILURE, AuditActions.RESULT_FAILURE,
                     user.getId(), user.getUsername(), user.getTenantId(), Map.of("reason", "locked"));
             throw CommonExceptions.unauthorized("Account is temporarily locked. Try again later.");
         }
 
         if (user.getStatus() != UserStatus.ACTIVE) {
+            FlowLog.warn("auth", "login failed username={} reason=disabled", user.getUsername());
             auditService.recordAuth(AuditActions.LOGIN_FAILURE, AuditActions.RESULT_FAILURE,
                     user.getId(), user.getUsername(), user.getTenantId(), Map.of("reason", "disabled"));
             throw CommonExceptions.unauthorized("Account is disabled.");
         }
 
         if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
+            FlowLog.warn("auth", "login failed username={} reason=bad_password", user.getUsername());
             // Persist the attempt/lock in a separate transaction (this one rolls back on throw).
             loginAttemptService.recordFailure(user.getId());
             throw invalidCredentials();
@@ -90,6 +95,7 @@ public class AuthService {
         userRepository.save(user);
 
         IssuedTokens issued = issueTokens(user);
+        FlowLog.info("auth", "login succeeded username={} tenantId={}", user.getUsername(), user.getTenantId());
         auditService.recordAuth(AuditActions.LOGIN_SUCCESS, AuditActions.RESULT_SUCCESS,
                 user.getId(), user.getUsername(), user.getTenantId(), null);
         return issued;
@@ -104,6 +110,7 @@ public class AuthService {
         if (token.isRevoked()) {
             // Reuse of a rotated/revoked token indicates theft: revoke the entire chain.
             refreshTokenRepository.revokeAllForUser(token.getUserId());
+            FlowLog.warn("auth", "refresh token reuse userId={} tokenId={}", token.getUserId(), token.getPublicId());
             auditService.recordAuth(AuditActions.TOKEN_REUSE_DETECTED, AuditActions.RESULT_FAILURE,
                     token.getUserId(), null, null, Map.of("tokenId", token.getPublicId()));
             throw CommonExceptions.unauthorized("Refresh token is no longer valid");
@@ -123,6 +130,7 @@ public class AuthService {
         token.setRevoked(true);
         refreshTokenRepository.save(token);
 
+        FlowLog.debug("auth", "token refreshed username={}", user.getUsername());
         auditService.recordAuth(AuditActions.TOKEN_REFRESH, AuditActions.RESULT_SUCCESS,
                 user.getId(), user.getUsername(), user.getTenantId(), null);
         return issued;
@@ -134,6 +142,7 @@ public class AuthService {
         refreshTokenRepository.findByTokenHash(hash).ifPresent(token -> {
             token.setRevoked(true);
             refreshTokenRepository.save(token);
+            FlowLog.info("auth", "logout userId={}", token.getUserId());
             auditService.recordAuth(AuditActions.LOGOUT, AuditActions.RESULT_SUCCESS,
                     token.getUserId(), null, null, null);
         });

@@ -6,10 +6,9 @@ SELECT ur.user_id, staff.id
 FROM user_role ur
          JOIN role desk ON desk.id = ur.role_id AND desk.name = 'FRONT_DESK'
          JOIN role staff ON staff.name = 'STAFF' AND staff.tenant_id IS NULL
-WHERE NOT EXISTS (SELECT 1
-                  FROM user_role existing
-                  WHERE existing.user_id = ur.user_id
-                    AND existing.role_id = staff.id);
+         LEFT JOIN user_role existing
+                   ON existing.user_id = ur.user_id AND existing.role_id = staff.id
+WHERE existing.user_id IS NULL;
 
 DELETE
 FROM role

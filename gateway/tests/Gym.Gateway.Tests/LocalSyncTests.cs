@@ -81,21 +81,24 @@ public class LocalSyncTests
         Assert.Equal("Kiran Device", gw.Entrance.GetUser("1002")!.Name);
         Assert.Equal("Kiran Device", gw.Exit.GetUser("1002")!.Name);
 
+        var newerAt = Iso(DateTimeOffset.UtcNow.AddMinutes(1));
         var newer = await gw.Dispatcher.DispatchAsync(Command("UPDATE_USER", "entrance", new
         {
-            deviceUserId = "1002", name = "Kiran Server", nameChangedAt = Iso(DateTimeOffset.UtcNow.AddMinutes(1))
+            deviceUserId = "1002", name = "Kiran Server", nameChangedAt = newerAt
         }));
         Assert.True(newer.Ok);
         Assert.DoesNotContain("skipped", JsonSerializer.Serialize(newer.Payload));
         Assert.Equal("Kiran Server", gw.Entrance.GetUser("1002")!.Name);
         Assert.Equal("Kiran Server", gw.Exit.GetUser("1002")!.Name);
 
-        // The same command for the exit is now a no-op success.
+        // The same command for the exit was already fanned out: a plain success, not "skipped", so the
+        // server marks the exit as holding it.
         var exitCopy = await gw.Dispatcher.DispatchAsync(Command("UPDATE_USER", "exit", new
         {
-            deviceUserId = "1002", name = "Kiran Server", nameChangedAt = Iso(DateTimeOffset.UtcNow.AddMinutes(1))
+            deviceUserId = "1002", name = "Kiran Server", nameChangedAt = newerAt
         }));
         Assert.True(exitCopy.Ok);
+        Assert.DoesNotContain("skipped", JsonSerializer.Serialize(exitCopy.Payload));
 
         // Gateway writes are never reported back as device edits.
         var before = gw.Published.Count;

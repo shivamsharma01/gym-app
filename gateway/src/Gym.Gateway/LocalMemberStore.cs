@@ -149,14 +149,17 @@ public sealed class LocalMemberStore
                 var name = false;
                 var access = false;
                 var face = false;
+                // A losing change whose value the gateway already holds is not "ignored": the devices
+                // end up with exactly that value, so the command counts as applied.
                 if (change.SetName)
                 {
-                    if (Wins(m.NameAt, at, change.FromServer, !string.Equals(m.Name, change.Name, StringComparison.Ordinal)))
+                    var differs = !string.Equals(m.Name, change.Name, StringComparison.Ordinal);
+                    if (Wins(m.NameAt, at, change.FromServer, differs))
                     {
                         m = m with { Name = change.Name, NameAt = at };
                         name = true;
                     }
-                    else
+                    else if (differs)
                     {
                         ignored.Add($"name '{change.Name}' from {change.Source} at {Fmt(at)} ignored: newer name '{m.Name}' from {Fmt(m.NameAt)}");
                     }
@@ -177,7 +180,7 @@ public sealed class LocalMemberStore
                         };
                         access = true;
                     }
-                    else
+                    else if (differs)
                     {
                         ignored.Add($"access (frozen={change.Frozen}, {change.ValidFrom}..{change.ValidTo}) from {change.Source} at {Fmt(at)} ignored: newer access change from {Fmt(m.AccessAt)}");
                     }
@@ -185,13 +188,13 @@ public sealed class LocalMemberStore
 
                 if (change.SetFace)
                 {
-                    var previous = m.FaceSha256;
-                    if (Wins(m.FaceAt, at, change.FromServer, !string.Equals(previous, change.FaceSha256, StringComparison.Ordinal)))
+                    var differs = !string.Equals(m.FaceSha256, change.FaceSha256, StringComparison.Ordinal);
+                    if (Wins(m.FaceAt, at, change.FromServer, differs))
                     {
                         m = m with { FaceSha256 = change.FaceSha256, FaceAt = at };
                         face = true;
                     }
-                    else
+                    else if (differs)
                     {
                         ignored.Add($"face {(change.FaceSha256 == null ? "removal" : "change")} from {change.Source} at {Fmt(at)} ignored: newer face change from {Fmt(m.FaceAt)}");
                     }

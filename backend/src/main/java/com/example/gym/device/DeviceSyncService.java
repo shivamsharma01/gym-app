@@ -175,9 +175,10 @@ public class DeviceSyncService {
     }
 
     /**
-     * {@code skipped}: the gateway did not apply the command because its devices hold a newer
-     * change of the same fields (that change reaches the server as DEVICE_USER_CHANGED). The
-     * command is complete; the skip is recorded so staff can see what was not applied.
+     * {@code skipped}: the gateway did not apply the command because its devices already hold the
+     * same or a newer change of those fields (a newer change reaches the server as
+     * DEVICE_USER_CHANGED). The gateway converges the device to its latest state either way, so
+     * the device counts as in sync for this command; the skip is recorded so staff can see it.
      */
     @Transactional
     public void handleResult(String correlationId, boolean ok, String error, boolean skipped) {
@@ -190,15 +191,15 @@ public class DeviceSyncService {
             return;
         }
         command.setAcknowledgedAt(Instant.now());
-        if (ok && skipped) {
+        if (ok) {
             command.setState(SyncCommandState.SUCCEEDED);
             command.setCompletedAt(Instant.now());
-            command.setLastError(truncate("Skipped by gateway (newer change on device): " + error, 500));
-            recordSkipped(command, error);
-        } else if (ok) {
-            command.setState(SyncCommandState.SUCCEEDED);
-            command.setCompletedAt(Instant.now());
-            command.setLastError(null);
+            if (skipped) {
+                command.setLastError(truncate("Skipped by gateway (device already up to date): " + error, 500));
+                recordSkipped(command, error);
+            } else {
+                command.setLastError(null);
+            }
             if (isFaceCommand(command)) {
                 applyFaceSuccess(command);
             } else {
@@ -238,6 +239,8 @@ public class DeviceSyncService {
         command.setState(SyncCommandState.CANCELLED);
         command.setCompletedAt(Instant.now());
         DeviceSyncCommand saved = commandRepository.save(command);
+        settleAfterCancel(saved);
+        publishMemberSync(saved);
         auditService.record(AuditActions.DEVICE_SYNC_CANCELLED, AuditActions.RESULT_SUCCESS,
                 "DeviceSyncCommand", saved.getPublicId(), null);
         return saved;
@@ -299,6 +302,43 @@ public class DeviceSyncService {
             SyncCommandState.PENDING, SyncCommandState.DISPATCHED,
             SyncCommandState.ACKNOWLEDGED, SyncCommandState.RETRYING);
 
+    /** Commands that write a member's details / access on a device (the mapping's {@code syncState}). */
+    private static final List<SyncCommandType> USER_TYPES = List.of(
+            SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_USER, SyncCommandType.DISABLE_USER,
+            SyncCommandType.ENABLE_USER, SyncCommandType.UPDATE_VALIDITY, SyncCommandType.UPDATE_ACCESS_POLICY);
+
+    private static final List<SyncCommandType> FACE_TYPES =
+            List.of(SyncCommandType.UPSERT_FACE, SyncCommandType.DELETE_FACE);
+
+    private boolean othersOpen(DeviceSyncCommand command, List<SyncCommandType> types) {
+        if (command.getMemberId() == null) {
+            return false;
+        }
+        return commandRepository.findByDeviceIdAndMemberIdAndTypeInAndStateIn(
+                        command.getDeviceId(), command.getMemberId(), types, OPEN_STATES)
+                .stream().anyMatch(c -> !c.getId().equals(command.getId()));
+    }
+
+    /** A manually cancelled command leaves the device's copy unconfirmed unless other work is queued. */
+    private void settleAfterCancel(DeviceSyncCommand command) {
+        MemberDeviceMapping mapping = faceMapping(command);
+        if (mapping == null) {
+            return;
+        }
+        if (isFaceCommand(command)) {
+            if (!othersOpen(command, FACE_TYPES) && mapping.getFaceSyncState() == DeviceSyncState.PENDING) {
+                mapping.setFaceSyncState(mapping.getFaceVersionSynced() == null
+                        ? DeviceSyncState.NOT_SYNCED : DeviceSyncState.SYNCED);
+                mappingRepository.save(mapping);
+            }
+        } else if (USER_TYPES.contains(command.getType())
+                && !othersOpen(command, USER_TYPES) && mapping.getSyncState() == DeviceSyncState.PENDING) {
+            mapping.setSyncState(DeviceSyncState.NOT_SYNCED);
+            mappingRepository.save(mapping);
+            refreshMembershipSyncState(command.getMembershipId(), command.getMemberId());
+        }
+    }
+
     /**
      * Adds the server's change time for the fields a member command carries. Gateways apply a
      * command only if it is newer than their own change of those fields (latest change wins), so
@@ -348,21 +388,20 @@ public class DeviceSyncService {
         if (mapping == null) {
             return;
         }
-        boolean moreQueued = commandRepository.findByDeviceIdAndMemberIdAndTypeInAndStateIn(
-                        command.getDeviceId(), command.getMemberId(),
-                        List.of(SyncCommandType.UPSERT_FACE, SyncCommandType.DELETE_FACE), OPEN_STATES)
-                .stream().anyMatch(c -> !c.getId().equals(command.getId()));
+        boolean moreQueued = othersOpen(command, FACE_TYPES);
         if (command.getType() == SyncCommandType.DELETE_FACE) {
             mapping.setFaceVersionSynced(null);
             mapping.setFaceSyncState(moreQueued ? DeviceSyncState.PENDING : DeviceSyncState.NOT_SYNCED);
         } else {
             Integer version = payloadInt(command, "faceVersion");
             Integer held = mapping.getFaceVersionSynced();
-            if (version == null || (held != null && version < held)) {
-                return;
+            boolean stale = version == null || (held != null && version < held);
+            if (!stale) {
+                mapping.setFaceVersionSynced(version);
             }
-            mapping.setFaceVersionSynced(version);
-            mapping.setFaceSyncState(moreQueued ? DeviceSyncState.PENDING : DeviceSyncState.SYNCED);
+            boolean holdsFace = mapping.getFaceVersionSynced() != null;
+            mapping.setFaceSyncState(moreQueued ? DeviceSyncState.PENDING
+                    : holdsFace ? DeviceSyncState.SYNCED : DeviceSyncState.NOT_SYNCED);
         }
         mapping.setFaceLastError(null);
         mappingRepository.save(mapping);
@@ -489,9 +528,11 @@ public class DeviceSyncService {
             return;
         }
         if (command.getMemberId() != null) {
+            DeviceSyncState applied = state == DeviceSyncState.SYNCED && othersOpen(command, USER_TYPES)
+                    ? DeviceSyncState.PENDING : state;
             for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(command.getMemberId())) {
                 if (mapping.getDeviceId().equals(command.getDeviceId())) {
-                    mapping.setSyncState(state);
+                    mapping.setSyncState(applied);
                     mappingRepository.save(mapping);
                 }
             }

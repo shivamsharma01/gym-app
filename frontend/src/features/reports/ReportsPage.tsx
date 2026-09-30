@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
+import { Pager } from "@/components/Pager";
 import { QueryError } from "@/components/QueryError";
 import {
   Badge,
@@ -194,25 +195,7 @@ function PagedTable<T>({
                 ))}
               </Select>
             </label>
-            <Button
-                variant="outline"
-                size="sm"
-                disabled={safePage === 0}
-                onClick={() => setPage((n) => Math.max(0, n - 1))}
-            >
-              Previous
-            </Button>
-            <span className="text-xs tabular-nums text-muted">
-              {safePage + 1} / {totalPages}
-            </span>
-            <Button
-                variant="outline"
-                size="sm"
-                disabled={safePage >= totalPages - 1}
-                onClick={() => setPage((n) => n + 1)}
-            >
-              Next
-            </Button>
+            <Pager page={safePage} totalPages={totalPages} onPageChange={setPage} />
           </div>
         </div>
       </>

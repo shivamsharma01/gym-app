@@ -140,6 +140,15 @@ body,
   min-height: 100%;
 }
 
+/* Native controls (date/time pickers, scrollbars) must match the theme or their icons vanish. */
+html {
+  color-scheme: dark;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+}
+
 body {
   margin: 0;
   background: var(--color-canvas);

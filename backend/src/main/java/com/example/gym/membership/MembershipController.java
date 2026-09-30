@@ -1,6 +1,9 @@
 package com.example.gym.membership;
 
+import com.example.gym.common.web.PageResponse;
 import com.example.gym.membership.dto.MembershipRequests.CancelMembership;
+import com.example.gym.membership.dto.PlanActiveMemberResponse;
+import com.example.gym.membership.dto.PlanRosterResponse;
 import com.example.gym.membership.dto.MembershipRequests.CreateMembership;
 import com.example.gym.membership.dto.MembershipRequests.RenewMembership;
 import com.example.gym.membership.dto.MembershipRequests.UpdateMembership;
@@ -25,6 +28,24 @@ public class MembershipController {
 
     public MembershipController(MembershipService membershipService) {
         this.membershipService = membershipService;
+    }
+
+    @GetMapping("/memberships/plans")
+    @PreAuthorize("hasAuthority('MEMBERSHIP_VIEW')")
+    @Operation(summary = "Each plan with how many members are active on it, and how many of those end within 7 days")
+    public List<PlanRosterResponse> planRoster() {
+        return membershipService.planRoster(SecurityUtils.currentTenantId());
+    }
+
+    @GetMapping("/memberships/plans/{planId}/members")
+    @PreAuthorize("hasAuthority('MEMBERSHIP_VIEW')")
+    @Operation(summary = "Active members currently on a plan, soonest end date first")
+    public PageResponse<PlanActiveMemberResponse> activeMembers(
+            @PathVariable String planId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        int safeSize = Math.min(Math.max(size, 1), 100);
+        return membershipService.activeMembers(planId, SecurityUtils.currentTenantId(), Math.max(page, 0), safeSize);
     }
 
     @GetMapping("/members/{memberId}/memberships")
@@ -109,11 +130,4 @@ public class MembershipController {
                 LocalDate.now());
     }
 
-    @DeleteMapping("/memberships/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasAuthority('MEMBERSHIP_DELETE')")
-    @Operation(summary = "Delete a membership")
-    public void delete(@PathVariable("id") String id) {
-        membershipService.delete(id, SecurityUtils.currentTenantId());
-    }
 }

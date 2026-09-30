@@ -7,10 +7,14 @@ import com.example.gym.common.logging.FlowLog;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
 import com.example.gym.member.MemberRepository;
+import com.example.gym.common.web.PageResponse;
 import com.example.gym.membership.dto.MembershipRequests.CreateMembership;
 import com.example.gym.membership.dto.MembershipRequests.RenewMembership;
 import com.example.gym.membership.dto.MembershipRequests.UpdateMembership;
 import com.example.gym.membership.dto.MembershipRequests.UpdateMembershipDates;
+import com.example.gym.membership.dto.PlanActiveMemberResponse;
+import com.example.gym.membership.dto.PlanActivityCount;
+import com.example.gym.membership.dto.PlanRosterResponse;
 import com.example.gym.plan.MembershipPlan;
 import com.example.gym.plan.PlanService;
 import com.example.gym.plan.PlanStatus;
@@ -24,6 +28,10 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -69,6 +77,51 @@ public class MembershipService {
                 .orElseThrow(() -> CommonExceptions.notFound("Membership"));
         TenantGuard.check(membership.getTenantId(), tenantId, "Membership");
         return membership;
+    }
+
+    private static final List<MembershipStatus> OPEN_FOR_ROSTER =
+            List.of(MembershipStatus.ACTIVE, MembershipStatus.PENDING);
+
+    @Transactional(readOnly = true)
+    public List<PlanRosterResponse> planRoster(Long tenantId) {
+        LocalDate today = LocalDate.now();
+        Map<Long, PlanActivityCount> counts = membershipRepository
+                .countActiveByPlan(tenantId, OPEN_FOR_ROSTER, today, today.plusDays(7)).stream()
+                .collect(Collectors.toMap(PlanActivityCount::planId, Function.identity()));
+        return planRepository.findByTenantIdOrderByNameAsc(tenantId).stream()
+                .map(plan -> {
+                    PlanActivityCount count = counts.get(plan.getId());
+                    long active = count == null || count.activeMembers() == null ? 0 : count.activeMembers();
+                    long expiring = count == null || count.expiringWithin7Days() == null
+                            ? 0 : count.expiringWithin7Days();
+                    return PlanRosterResponse.from(plan, active, expiring);
+                })
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<PlanActiveMemberResponse> activeMembers(String planPublicId, Long tenantId,
+                                                                int page, int size) {
+        MembershipPlan plan = planService.getByPublicId(planPublicId, tenantId);
+        LocalDate today = LocalDate.now();
+        LocalDate expiringThrough = today.plusDays(7);
+        var memberships = membershipRepository.findCoveringPlan(
+                tenantId, plan.getId(), OPEN_FOR_ROSTER, today,
+                PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "endDate").and(Sort.by("id"))));
+        Map<Long, com.example.gym.member.Member> members = memberRepository
+                .findAllById(memberships.map(Membership::getMemberId).toList()).stream()
+                .collect(Collectors.toMap(com.example.gym.member.Member::getId, Function.identity()));
+        return PageResponse.from(memberships, membership -> {
+            var member = members.get(membership.getMemberId());
+            return new PlanActiveMemberResponse(
+                    member == null ? null : member.getPublicId(),
+                    member == null ? null : member.getMemberCode(),
+                    member == null ? "Unknown member" : member.getFullName(),
+                    member == null ? null : member.getPhone(),
+                    membership.getStartDate(),
+                    membership.getEndDate(),
+                    !membership.getEndDate().isAfter(expiringThrough));
+        });
     }
 
     @Transactional(readOnly = true)
@@ -596,39 +649,6 @@ public class MembershipService {
                         "overlapsAnotherMembership", overlaps));
         publish(saved, ChangeType.DATES_UPDATED);
         return overlaps;
-    }
-
-    @Transactional
-    public void delete(String membershipPublicId, Long tenantId) {
-        Membership membership = getByPublicId(membershipPublicId, tenantId);
-        requireActiveMemberForMembershipMutation(membership.getMemberId(), tenantId);
-
-        if (membership.getStatus() != MembershipStatus.PENDING && membership.getStatus() != MembershipStatus.ACTIVE) {
-            throw CommonExceptions.badRequest(
-                    "Only pending/active memberships can be deleted");
-        }
-
-        if (membership.getPaymentStatus() != MembershipPaymentStatus.UNPAID) {
-            throw CommonExceptions.badRequest(
-                    "A membership with payment history cannot be deleted");
-        }
-
-        if (membership.getDeviceSyncState() != DeviceSyncState.NOT_SYNCED) {
-            throw CommonExceptions.badRequest(
-                    "A members");
-        }
-
-        membership.setDeleted(true);
-        membershipRepository.save(membership);
-
-        FlowLog.info("membership", "deleted id={}", membership.getPublicId());
-        auditService.record(
-                AuditActions.MEMBERSHIP_DELETED,
-                AuditActions.RESULT_SUCCESS,
-                "Membership",
-                membership.getPublicId(),
-                null
-        );
     }
 
     private BigDecimal validateDiscount(BigDecimal discountAmount, BigDecimal planPrice) {

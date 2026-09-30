@@ -312,23 +312,6 @@ export function MembershipPanel({
     },
   });
 
-  const deleteMembership = useMutation({
-    mutationFn: (id: string) =>
-      api(`/api/v1/memberships/${id}`, {
-        method: 'DELETE',
-      }),
-
-    onSuccess: () => {
-      void qc.invalidateQueries({
-        queryKey: ['memberships', memberId],
-      });
-
-      void qc.invalidateQueries({
-        queryKey: ['access', memberId],
-      });
-    },
-  });
-
   const renew = useMutation({
         mutationFn: () => {
           if (invalidRenewDiscount) {
@@ -534,10 +517,6 @@ export function MembershipPanel({
       {saveMembership.error ? <QueryError error={saveMembership.error} /> : null}
 
       {act.error ? <QueryError error={act.error} /> : null}
-
-      {deleteMembership.error ? (
-        <QueryError error={deleteMembership.error} />
-      ) : null}
 
       {renew.error ? <QueryError error={renew.error} /> : null}
 
@@ -801,30 +780,6 @@ export function MembershipPanel({
                 }}
               >
                 Cancel
-              </Button>
-            ) : null}
-
-            {/* DELETE */}
-            {has('MEMBERSHIP_DELETE') &&
-            !memberStatusIsInactive &&
-            (row.status === 'PENDING' || row.status === 'ACTIVE') &&
-            row.paymentStatus === 'UNPAID' &&
-            row.deviceSyncState === 'NOT_SYNCED' ? (
-              <Button
-                variant="danger"
-                type="button"
-                disabled={deleteMembership.isPending}
-                onClick={() => {
-                  const confirmed = window.confirm(
-                    'Delete this membership? It will be removed from normal views but retained in membership history.',
-                  );
-
-                  if (confirmed) {
-                    deleteMembership.mutate(row.id);
-                  }
-                }}
-              >
-                {deleteMembership.isPending ? 'Deleting...' : 'Delete'}
               </Button>
             ) : null}
           </div>

@@ -255,13 +255,6 @@ public class ReportService {
                 newMemberRows.stream().map(this::memberRow).toList(), attendanceRows, inactiveMembers);
     }
 
-    @Transactional(readOnly = true)
-    public List<Map<String, Object>> memberships(Long tenantId) {
-        requireTenant(tenantId);
-        return membershipRepository.findByTenantIdAndDeletedFalse(tenantId).stream()
-                .map(this::membershipRow).toList();
-    }
-
     private Map<String, Object> deviceRow(Device device) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", device.getPublicId());
@@ -269,20 +262,6 @@ public class ReportService {
         row.put("role", device.getRole().name());
         row.put("connectionState", device.getConnectionState().name());
         row.put("lastSeenAt", device.getLastSeenAt());
-        return row;
-    }
-
-    private Map<String, Object> membershipRow(Membership m) {
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("id", m.getPublicId());
-        row.put("planName", m.getPlanName());
-        row.put("status", m.effectiveStatus(java.time.LocalDate.now()).name());
-        row.put("paymentStatus", m.getPaymentStatus().name());
-        row.put("startDate", m.getStartDate());
-        row.put("endDate", m.getEndDate());
-        row.put("price", m.getPrice());
-        row.put("currency", m.getCurrency());
-        row.put("amountPaid", m.getAmountPaid());
         return row;
     }
 

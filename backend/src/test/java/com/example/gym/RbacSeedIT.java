@@ -29,13 +29,11 @@ class RbacSeedIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void gymAdminCannotManageRoles() {
+    void gymAdminHasEveryPermissionAndGymOwnerIsGone() {
         Role gymAdmin = roleRepository.findByNameAndTenantIdIsNull("GYM_ADMIN").orElseThrow();
-        Set<String> names = gymAdmin.getPermissions().stream()
-                .map(Permission::getName)
-                .collect(Collectors.toSet());
-        assertThat(names).contains("USER_MANAGE", "MEMBER_CREATE");
-        assertThat(names).doesNotContain("ROLE_MANAGE");
+        assertThat(gymAdmin.getPermissions()).hasSize(PermissionCatalog.values().length);
+        assertThat(roleRepository.findByNameAndTenantIdIsNull("GYM_OWNER")).isEmpty();
+        assertThat(roleRepository.findByNameAndTenantIdIsNull("FRONT_DESK")).isEmpty();
     }
 
     private Set<String> roleRepositoryPermissions() {

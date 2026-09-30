@@ -182,7 +182,7 @@ export function MemberDetailPage() {
           {!payments.data?.length ? (
             <EmptyState
               title="No payments"
-              body="This list is history only. Record cash/UPI/card on Payments, pick this member, and link the membership."
+              body="Payments recorded on a membership show up here."
             />
           ) : (
             <>
@@ -199,11 +199,6 @@ export function MemberDetailPage() {
               <Pager {...paymentRows.pager} />
             </>
           )}
-          {has('PAYMENT_CREATE') ? (
-            <Link to="/app/payments" className="mt-3 inline-block text-sm font-medium text-accent hover:underline">
-              Record a payment
-            </Link>
-          ) : null}
         </section>
       ) : null}
 

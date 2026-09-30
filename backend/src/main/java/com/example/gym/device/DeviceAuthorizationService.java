@@ -7,7 +7,6 @@ import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.membership.Membership;
-import com.example.gym.membership.MembershipPaymentStatus;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.membership.MembershipStatus;
 import java.time.LocalDate;
@@ -28,9 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
  * one running today, else the next one. Memberships that run back to back (or overlap) and are
  * both usable are joined into one window. The device refuses entry outside the window by itself,
  * so gaps between memberships are closed without any command. Enabled means: member active, the
- * membership paid (partly paid counts) and not frozen, and either started or the devices enforce
- * the start date themselves. When the last membership has ended the device is disabled and keeps
- * its dates.
+ * membership not frozen, and either started or the devices enforce the start date themselves.
+ * Payment is bookkeeping and does not open or close the door. When the last membership has ended
+ * the device is disabled and keeps its dates.
  */
 @Service
 public class DeviceAuthorizationService {
@@ -103,11 +102,10 @@ public class DeviceAuthorizationService {
         return Optional.of(new AccessWindow(first, last, first.getStartDate(), validTo, enabled));
     }
 
-    /** Paid (fully or partly) and neither frozen, expired nor cancelled. */
+    /** Neither frozen, expired nor cancelled. Payment is not part of this decision. */
     static boolean usable(Membership membership, LocalDate today) {
         MembershipStatus effective = membership.effectiveStatus(today);
-        return (effective == MembershipStatus.ACTIVE || effective == MembershipStatus.PENDING)
-                && membership.getPaymentStatus() != MembershipPaymentStatus.UNPAID;
+        return effective == MembershipStatus.ACTIVE || effective == MembershipStatus.PENDING;
     }
 
     @Transactional(readOnly = true)

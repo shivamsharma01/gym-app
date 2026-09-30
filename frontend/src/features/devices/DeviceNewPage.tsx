@@ -109,9 +109,14 @@ export function DeviceNewPage() {
           </Select>
         </div>
         {create.error ? <QueryError error={create.error} /> : null}
-        <Button type="submit" disabled={create.isPending}>
-          Create
-        </Button>
+        <div className="flex gap-2">
+          <Button type="submit" disabled={create.isPending}>
+            Create
+          </Button>
+          <Button type="button" variant="outline" onClick={() => navigate(-1)}>
+            Cancel
+          </Button>
+        </div>
       </form>
     </div>
   )

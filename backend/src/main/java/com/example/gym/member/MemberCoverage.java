@@ -11,8 +11,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Membership status for staff: a plan that covers today, otherwise the next plan, a lapsed plan,
- * or no plan. This is independent of {@link MemberStatus}, which only records whether the
- * website account is deactivated.
+ * or no plan. Payment is not part of this. This is independent of {@link MemberStatus}, which
+ * records whether the account is deactivated.
  */
 @Component
 public class MemberCoverage {

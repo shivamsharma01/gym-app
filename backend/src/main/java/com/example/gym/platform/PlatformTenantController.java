@@ -45,7 +45,7 @@ public class PlatformTenantController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Enroll a gym: tenant + profile + first GYM_OWNER")
+    @Operation(summary = "Enroll a gym: tenant + profile + first gym admin")
     public EnrollTenantResponse enroll(@Valid @RequestBody EnrollTenantRequest request) {
         return platformTenantService.enroll(request);
     }

@@ -225,18 +225,11 @@ export function ReportsPage() {
             title="Reports"
             description="Day-to-day gym operations: collections, dues, memberships, attendance and member activity."
             actions={
-              <div className="flex flex-wrap gap-2">
-                <Link to="/app/reports/memberships">
-                  <Button variant="outline" size="sm">
-                    Membership snapshot
-                  </Button>
-                </Link>
-                <Link to="/app/reports/devices">
-                  <Button variant="outline" size="sm">
-                    Device health
-                  </Button>
-                </Link>
-              </div>
+              <Link to="/app/reports/devices">
+                <Button variant="outline" size="sm">
+                  Device health
+                </Button>
+              </Link>
             }
         />
 
@@ -746,69 +739,6 @@ function ReportSection({
         </div>
         {children}
       </section>
-  );
-}
-
-export function MembershipReportPage() {
-  const rows = useQuery({
-    queryKey: ["reports", "memberships"],
-    queryFn: () =>
-        api<Record<string, unknown>[]>("/api/v1/reports/memberships"),
-  });
-  return (
-      <div>
-        <PageHeader
-            title="Membership report"
-            description="Current membership rows from the reporting API."
-        />
-        {rows.isLoading ? <Skeleton className="h-40" /> : null}
-        {rows.error ? (
-            <QueryError error={rows.error} onRetry={() => void rows.refetch()} />
-        ) : null}
-        {rows.data ? (
-            <PagedTable
-                rows={rows.data}
-                resetKey="memberships"
-                empty={
-                  <EmptyState
-                      title="No memberships"
-                      body="Memberships appear here once members are enrolled on a plan."
-                  />
-                }
-            >
-              {(pageRows) => (
-                  <TableShell>
-                    <Table>
-                      <THead>
-                        <tr>
-                          <Th>Plan</Th>
-                          <Th>Membership status</Th>
-                          <Th>Dates</Th>
-                          <Th>Paid</Th>
-                        </tr>
-                      </THead>
-                      <tbody>
-                      {pageRows.map((row) => (
-                          <Tr key={String(row.id)}>
-                            <Td className="font-medium">{String(row.planName)}</Td>
-                            <Td>
-                              <Badge tone={statusTone(String(row.status))}>
-                                {membershipStatusLabel(String(row.status))}
-                              </Badge>
-                            </Td>
-                            <Td className="text-muted">
-                              {String(row.startDate)} → {String(row.endDate)}
-                            </Td>
-                            <Td className="tabular-nums">{String(row.amountPaid)}</Td>
-                          </Tr>
-                      ))}
-                      </tbody>
-                    </Table>
-                  </TableShell>
-              )}
-            </PagedTable>
-        ) : null}
-      </div>
   );
 }
 

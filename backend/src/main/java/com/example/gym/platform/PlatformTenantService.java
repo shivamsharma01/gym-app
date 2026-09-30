@@ -88,8 +88,8 @@ public class PlatformTenantService {
             throw CommonExceptions.conflict("Email already exists");
         }
 
-        Role ownerRole = roleRepository.findByNameAndTenantIdIsNull("GYM_OWNER")
-                .orElseThrow(() -> CommonExceptions.badRequest("System role GYM_OWNER is missing"));
+        Role adminRole = roleRepository.findByNameAndTenantIdIsNull("GYM_ADMIN")
+                .orElseThrow(() -> CommonExceptions.badRequest("System role GYM_ADMIN is missing"));
 
         Tenant tenant = tenantRepository.save(new Tenant(request.name().trim(), slug));
 
@@ -108,7 +108,7 @@ public class PlatformTenantService {
                 request.ownerEmail().trim(),
                 passwordEncoder.encode(request.ownerPassword()),
                 request.ownerFullName().trim());
-        owner.setRoles(Set.of(ownerRole));
+        owner.setRoles(Set.of(adminRole));
         userRepository.save(owner);
 
         FlowLog.info("platform", "tenant enrolled id={} slug={} owner={}",

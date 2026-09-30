@@ -29,8 +29,8 @@ import org.springframework.test.web.servlet.ResultActions;
 
 /**
  * What a member's devices hold: one window (dates + enabled) taken from the running or next
- * membership, moved along by the hourly access check, enabled only when paid, and device edits
- * applied as the device holds them (except enabling an unpaid member).
+ * membership, moved along by the hourly access check. Payment does not enable or disable.
+ * Device edits are applied as the device holds them.
  */
 class AccessWindowIT extends AbstractIntegrationTest {
 
@@ -114,19 +114,16 @@ class AccessWindowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void backToBackPaidMembershipsBecomeOneWindowButAnUnpaidOneIsNotJoined() throws Exception {
+    void backToBackMembershipsBecomeOneWindowWhetherOrNotTheyArePaid() throws Exception {
         LocalDate start = today.minusDays(10);
-        String first = membership(start, start.plusDays(29));
-        String second = membership(start.plusDays(30), start.plusDays(59));
-        String third = membership(start.plusDays(60), start.plusDays(89));
-        pay(first);
-        pay(second);
+        membership(start, start.plusDays(29));
+        membership(start.plusDays(30), start.plusDays(59));
+        membership(start.plusDays(60), start.plusDays(89));
 
         AccessWindow w = authorizationService.window(member()).orElseThrow();
         assertThat(w.validFrom()).isEqualTo(start);
-        assertThat(w.validTo()).isEqualTo(start.plusDays(59));
+        assertThat(w.validTo()).isEqualTo(start.plusDays(89));
         assertThat(w.enabled()).isTrue();
-        assertThat(third).isNotNull();
     }
 
     @Test
@@ -142,7 +139,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void accessCheckMovesToTheNextMembershipAndPaymentEnablesIt() throws Exception {
+    void accessCheckMovesToTheNextMembershipEvenWhenItIsUnpaid() throws Exception {
         String ended = membership(today.minusDays(31), today.minusDays(1));
         pay(ended);
         String next = membership(today.plusDays(3), today.plusDays(33));
@@ -154,8 +151,9 @@ class AccessWindowIT extends AbstractIntegrationTest {
         long before = deviceSyncCommandRepository.count();
         assertThat(accessCheck.run()).isEqualTo(1);
         DeviceSyncCommand moved = single(accessCommandsSince(before));
-        assertThat(moved.getType()).isEqualTo(SyncCommandType.DISABLE_USER);
-        assertThat(moved.getPayload()).contains("\"validFrom\":\"" + today.plusDays(3) + "\"")
+        assertThat(moved.getType()).isEqualTo(SyncCommandType.UPDATE_VALIDITY);
+        assertThat(moved.getPayload()).contains("\"enabled\":true")
+                .contains("\"validFrom\":\"" + today.plusDays(3) + "\"")
                 .contains("\"validTo\":\"" + today.plusDays(33) + "\"");
         assertThat(member().getAccessChangedAt()).isAfter(Instant.now().minusSeconds(60));
 
@@ -164,12 +162,10 @@ class AccessWindowIT extends AbstractIntegrationTest {
         assertThat(accessCheck.run()).isZero();
         assertThat(accessCommandsSince(before)).isEmpty();
 
-        // Paid before it starts: enabled now; the device itself waits for the start date.
+        // Recording a payment does not send another access command.
         before = deviceSyncCommandRepository.count();
         pay(next);
-        DeviceSyncCommand enabled = single(accessCommandsSince(before));
-        assertThat(enabled.getType()).isEqualTo(SyncCommandType.UPDATE_VALIDITY);
-        assertThat(enabled.getPayload()).contains("\"validFrom\":\"" + today.plusDays(3) + "\"");
+        assertThat(accessCommandsSince(before)).isEmpty();
     }
 
     @Test
@@ -189,16 +185,17 @@ class AccessWindowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void enablingAnUnpaidMemberOnTheDeviceIsRefusedAndLogged() throws Exception {
+    void enablingAnUnpaidMemberOnTheDeviceIsAccepted() throws Exception {
         membership(today.minusDays(5), today.plusDays(25));
         long before = deviceSyncCommandRepository.count();
 
         deviceUserChanged(access(false, today.minusDays(5), today.plusDays(25), true, false));
 
-        assertThat(accessCommandsSince(before)).isNotEmpty()
-                .allMatch(c -> c.getType() == SyncCommandType.DISABLE_USER);
-        assertThat(auditLogRepository.findAll()).anyMatch(a -> "MEMBER_CHANGED_ON_DEVICE".equals(a.getAction())
-                && a.getDetails() != null && a.getDetails().contains("membership is unpaid"));
+        assertThat(accessCommandsSince(before))
+                .noneMatch(c -> c.getType() == SyncCommandType.DISABLE_USER);
+        assertThat(auditLogRepository.findAll()).noneMatch(a ->
+                a.getDetails() != null && a.getDetails().contains("membership is unpaid"));
+        assertThat(authorizationService.window(member()).orElseThrow().enabled()).isTrue();
     }
 
     @Test

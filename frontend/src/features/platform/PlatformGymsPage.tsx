@@ -145,19 +145,19 @@ export function PlatformGymsPage() {
           <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="H13Gym" />
         </div>
         <div>
-          <Label>Owner full name</Label>
+          <Label>Admin full name</Label>
           <Input value={ownerFullName} onChange={(e) => setOwnerFullName(e.target.value)} required />
         </div>
         <div>
-          <Label>Owner username</Label>
+          <Label>Admin username</Label>
           <Input value={ownerUsername} onChange={(e) => setOwnerUsername(e.target.value)} required />
         </div>
         <div>
-          <Label>Owner email</Label>
+          <Label>Admin email</Label>
           <Input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} required />
         </div>
         <div>
-          <Label>Owner password</Label>
+          <Label>Admin password</Label>
           <Input
             type="password"
             value={ownerPassword}
@@ -169,7 +169,7 @@ export function PlatformGymsPage() {
         {enroll.error ? <QueryError error={enroll.error} /> : null}
         {created ? (
           <p className="text-sm text-ok">
-            Created {created.tenant.displayName}. Owner login: {created.ownerUsername}. Public:{' '}
+            Created {created.tenant.displayName}. Admin login: {created.ownerUsername}. Public:{' '}
             <Link className="underline" to={gymPath(created.tenant.slug)}>
               /g/{created.tenant.slug}
             </Link>

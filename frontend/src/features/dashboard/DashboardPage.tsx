@@ -104,7 +104,7 @@ export function DashboardPage() {
               <StatCard
                 label="Members"
                 value={summary.data.membersTotal}
-                hint={`${summary.data.membersActive} active`}
+                hint={`${summary.data.membersActive} accounts active`}
                 to={has('MEMBER_VIEW') ? '/app/members' : undefined}
               />
               <StatCard
@@ -128,15 +128,10 @@ export function DashboardPage() {
             </div>
           ) : null}
         </>
-      ) : (
-        <Card className="text-sm text-muted">
-          Membership and revenue KPIs are not part of your role. Ask an admin to change your role if you need them.
-          Attendance and member lists still work with your current role.
-        </Card>
-      )}
+      ) : null}
 
-      <div className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,0.8fr)]">
-        <div>
+      <div className={`mt-8 grid gap-6 ${has('ATTENDANCE_VIEW') ? 'xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,0.8fr)]' : ''}`}>
+        {has('ATTENDANCE_VIEW') ? <div>
           <SectionTitle
             title="Recent attendance"
             description="Latest door events from the gateway"
@@ -198,7 +193,7 @@ export function DashboardPage() {
           {attendance.data && attendance.data.content.length > 0 ? (
             <PageNav data={attendance.data} onPageChange={setAttendancePage} />
           ) : null}
-        </div>
+        </div> : null}
 
         <div className="space-y-6">
           <div>

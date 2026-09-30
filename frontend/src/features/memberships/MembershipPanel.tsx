@@ -15,7 +15,7 @@ import { QueryError } from '@/components/QueryError';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { formatDate, money } from '@/lib/cn';
-import { statusTone } from '@/lib/status';
+import { membershipStatusLabel, statusTone } from '@/lib/status';
 import type { Membership, PageResponse, Plan } from '@/lib/types';
 
 function todayIso() {
@@ -407,7 +407,7 @@ export function MembershipPanel({
       {has('MEMBERSHIP_CREATE') ? (
         memberStatusIsInactive ? (
           <div className="rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
-            Member is inactive. Create, edit, renew, freeze, cancel, delete, and payment actions are disabled. Reactivate the member first.
+            Account is inactive. Create, edit, renew, freeze, cancel, delete, and payment actions are disabled. Reactivate the account first.
           </div>
         ) : activePlans.length === 0 ? (
           <p className="text-sm text-muted">
@@ -556,18 +556,19 @@ export function MembershipPanel({
               PENDING: 2,
               FROZEN: 3,
               CANCELLED: 4,
+              EXPIRED: 5,
             }
 
             return (
-                (order[a.status as keyof typeof order] ?? 99) -
-                (order[b.status as keyof typeof order] ?? 99)
+                (order[a.effectiveStatus as keyof typeof order] ?? 99) -
+                (order[b.effectiveStatus as keyof typeof order] ?? 99)
             )
           })
           .map((row) => (
               <Card
                   key={row.id}
                   className={`space-y-2 ${
-                      row.status === 'ACTIVE'
+                      row.effectiveStatus === 'ACTIVE'
                           ? 'border-ok/60 bg-ok/5 ring-1 ring-ok/20'
                           : ''
                   }`}
@@ -576,7 +577,7 @@ export function MembershipPanel({
             <div className="font-semibold">{row.planName}</div>
 
             <Badge tone={statusTone(row.effectiveStatus)}>
-              {row.effectiveStatus}
+              {membershipStatusLabel(row.effectiveStatus)}
             </Badge>
           </div>
 
@@ -722,7 +723,7 @@ export function MembershipPanel({
               </Button>
             ) : null}
 
-            {has('MEMBERSHIP_FREEZE') && !memberStatusIsInactive && row.status === 'ACTIVE' ? (
+            {has('MEMBERSHIP_FREEZE') && !memberStatusIsInactive && row.effectiveStatus === 'ACTIVE' ? (
               <Button
                 variant="outline"
                 onClick={() =>
@@ -753,7 +754,7 @@ export function MembershipPanel({
             {/* RENEW */}
             {has('MEMBERSHIP_CREATE') &&
             !memberStatusIsInactive &&
-            (row.status === 'ACTIVE' || row.status === 'EXPIRED') ? (
+            (row.effectiveStatus === 'ACTIVE' || row.effectiveStatus === 'EXPIRED') ? (
               <Button
                 variant="outline"
                 type="button"
@@ -767,7 +768,7 @@ export function MembershipPanel({
             {has('PAYMENT_CREATE') &&
             !memberStatusIsInactive &&
             row.paymentStatus !== 'PAID' &&
-            (row.status === 'ACTIVE' || row.status === 'PENDING') ? (
+            (row.effectiveStatus === 'ACTIVE' || row.effectiveStatus === 'PENDING') ? (
                 <Button
                     variant="outline"
                     type="button"

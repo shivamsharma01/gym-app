@@ -125,29 +125,6 @@ public class PaymentService {
         return saved;
     }
 
-    @Transactional
-    public Payment refund(String paymentPublicId, Long tenantId) {
-        Payment payment = paymentRepository.findByPublicId(paymentPublicId)
-                .orElseThrow(() -> CommonExceptions.notFound("Payment"));
-        TenantGuard.check(payment.getTenantId(), tenantId, "Payment");
-        if (payment.getStatus() == PaymentStatus.REFUNDED) {
-            throw CommonExceptions.badRequest("Payment is already refunded");
-        }
-        payment.setStatus(PaymentStatus.REFUNDED);
-        Payment saved = paymentRepository.save(payment);
-
-        if (payment.getMembershipId() != null) {
-            membershipRepository.findById(payment.getMembershipId())
-                    .ifPresent(this::recomputeMembershipPaymentStatus);
-        }
-
-        FlowLog.info("payment", "refunded id={} amount={}", saved.getPublicId(), saved.getAmount());
-        auditService.record(AuditActions.PAYMENT_REFUNDED, AuditActions.RESULT_SUCCESS,
-                "Payment", saved.getPublicId(),
-                Map.of("amount", saved.getAmount().toPlainString(), "currency", saved.getCurrency()));
-        return saved;
-    }
-
     private BigDecimal completedTotal(Membership membership) {
         return paymentRepository
                 .findByMembershipIdAndStatus(membership.getId(), PaymentStatus.COMPLETED).stream()

@@ -18,9 +18,10 @@ public record MemberResponse(
         LocalDate joinedOn,
         String notes,
         String creationSource,
-        Instant createdAt) {
+        Instant createdAt,
+        String coverageStatus) {
 
-    public static MemberResponse from(Member m) {
+    public static MemberResponse from(Member m, String coverageStatus) {
         return new MemberResponse(
                 m.getPublicId(),
                 m.getMemberCode(),
@@ -35,6 +36,7 @@ public record MemberResponse(
                 m.getJoinedOn(),
                 m.getNotes(),
                 m.getCreationSource().name(),
-                m.getCreatedAt());
+                m.getCreatedAt(),
+                coverageStatus);
     }
 }

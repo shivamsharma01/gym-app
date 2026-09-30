@@ -5,7 +5,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.PingMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
@@ -62,6 +64,24 @@ public class GatewaySessionRegistry {
         }
         return decorated.computeIfAbsent(session.getId(), id ->
                 new ConcurrentWebSocketSessionDecorator(session, SEND_TIME_LIMIT_MS, SEND_BUFFER_LIMIT_BYTES));
+    }
+
+    /**
+     * Cloudflare closes an idle WebSocket after about 100 seconds without a close frame, which the
+     * gateway reports as "session ended". A ping counts as traffic and is answered by the client stack.
+     */
+    @Scheduled(fixedDelay = 30_000, initialDelay = 30_000)
+    public void pingOpenSessions() {
+        for (WebSocketSession session : sessions.values()) {
+            if (!session.isOpen()) {
+                continue;
+            }
+            try {
+                session.sendMessage(new PingMessage());
+            } catch (IOException | RuntimeException ex) {
+                log.debug("Gateway ping failed for session {}: {}", session.getId(), ex.getMessage());
+            }
+        }
     }
 
     private static boolean write(WebSocketSession session, String text, String target) {

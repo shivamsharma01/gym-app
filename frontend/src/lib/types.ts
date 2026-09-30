@@ -40,6 +40,7 @@ export type Member = {
   notes: string | null
   creationSource: string
   createdAt: string
+  coverageStatus: string
 }
 
 export type Plan = {

@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { Button, FieldError, Input, Label, PageHeader, Select, Textarea } from '@/components/ui'
 import { DateOfBirthField } from '@/features/members/DateOfBirthField'
 import { MemberPhotoField, photoUploadError } from '@/features/members/MemberPhotoField'
@@ -94,9 +94,16 @@ export function MemberNewPage() {
         </div>
         <MemberPhotoField value={photo} onChange={setPhoto} />
         {mutation.error instanceof ApiError ? <p className="text-sm text-danger">{mutation.error.message}</p> : null}
-        <Button type="submit" disabled={mutation.isPending}>
-          {mutation.isPending ? 'Saving…' : 'Save member'}
-        </Button>
+        <div className="flex gap-2">
+          <Button type="submit" disabled={mutation.isPending}>
+            {mutation.isPending ? 'Saving…' : 'Save member'}
+          </Button>
+          <Link to="/app/members">
+            <Button type="button" variant="outline">
+              Cancel
+            </Button>
+          </Link>
+        </div>
       </form>
     </div>
   )

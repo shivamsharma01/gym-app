@@ -1,6 +1,7 @@
 package com.example.gym.membership;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -12,6 +13,11 @@ public interface MembershipRepository extends JpaRepository<Membership, Long> {
     Optional<Membership> findByPublicIdAndDeletedFalse(String publicId);
 
     List<Membership> findByMemberIdAndDeletedFalseOrderByStartDateDesc(Long memberId);
+
+    List<Membership> findByMemberIdInAndDeletedFalse(Collection<Long> memberIds);
+
+    List<Membership> findByDeletedFalseAndStatusInAndEndDateBefore(
+            Collection<MembershipStatus> statuses, LocalDate today);
 
     List<Membership> findByTenantIdAndDeletedFalse(Long tenantId);
 

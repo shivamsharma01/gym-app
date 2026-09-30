@@ -1,6 +1,7 @@
 package com.example.gym.device;
 
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
+import com.example.gym.membership.MembershipExpiry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -50,18 +51,22 @@ public class AccessCheckScheduler {
 
         private final MemberDeviceMappingRepository mappingRepository;
         private final DeviceAuthorizationService authorizationService;
+        private final MembershipExpiry membershipExpiry;
         private final TransactionTemplate transactions;
 
         public AccessCheck(MemberDeviceMappingRepository mappingRepository,
                            DeviceAuthorizationService authorizationService,
+                           MembershipExpiry membershipExpiry,
                            TransactionTemplate transactions) {
             this.mappingRepository = mappingRepository;
             this.authorizationService = authorizationService;
+            this.membershipExpiry = membershipExpiry;
             this.transactions = transactions;
         }
 
         /** Returns how many members got new access commands. */
         public int run() {
+            membershipExpiry.expireElapsed();
             int updated = 0;
             for (Long memberId : mappingRepository.findDistinctMemberIds()) {
                 try {

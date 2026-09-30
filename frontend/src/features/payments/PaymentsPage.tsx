@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form'
 import { useEffect, useState } from 'react'
 import { z } from 'zod'
 import { ConfirmDialog } from '@/components/Dialog'
+import { Pager } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
@@ -866,33 +867,12 @@ export function PaymentsPage() {
 
           {payments.data &&
           payments.data.totalPages > 1 ? (
-              <div className="mt-4 flex gap-2">
-                <Button
-                    variant="outline"
-                    disabled={
-                      payments.data.first
-                    }
-                    onClick={() =>
-                        setPage((n) =>
-                            Math.max(0, n - 1),
-                        )
-                    }
-                >
-                  Previous
-                </Button>
-
-                <Button
-                    variant="outline"
-                    disabled={
-                      payments.data.last
-                    }
-                    onClick={() =>
-                        setPage((n) => n + 1)
-                    }
-                >
-                  Next
-                </Button>
-              </div>
+              <Pager
+                  className="mt-4"
+                  page={page}
+                  totalPages={payments.data.totalPages}
+                  onPageChange={setPage}
+              />
           ) : null}
         </div>
 

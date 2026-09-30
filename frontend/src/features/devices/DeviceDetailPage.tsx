@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { NavLink, useNavigate, useParams } from 'react-router'
+import { ArrowLeft } from 'lucide-react'
+import { Link, NavLink, useNavigate, useParams } from 'react-router'
 import { Badge, Button, Card, Input, Label, PageHeader, Select, Skeleton, Table, TableShell, Textarea, THead, Th, Td, Tr } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
@@ -22,9 +23,23 @@ export function DeviceDetailPage() {
 
   return (
     <div className="space-y-6">
+      <Link
+        to="/app/devices"
+        className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-ink"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to devices
+      </Link>
       <PageHeader
         title={d.name}
         description={`${d.role} · ${d.host ?? 'no host'} · ${d.model ?? 'unknown model'}`}
+        actions={
+          has('DEVICE_MANAGE') ? (
+            <Link to="/app/devices/new">
+              <Button variant="outline">Register another device</Button>
+            </Link>
+          ) : null
+        }
       />
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={statusTone(d.connectionState)}>{d.connectionState}</Badge>

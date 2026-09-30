@@ -135,6 +135,39 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void skippedResultsStillMarkTheDeviceAsHoldingTheMember() {
+        var userCommands = deviceSyncCommandRepository.findAll().stream()
+                .filter(c -> c.getMemberId() != null && c.getType() != SyncCommandType.UPSERT_FACE)
+                .toList();
+        assertThat(userCommands).hasSizeGreaterThanOrEqualTo(2);
+
+        // Another device on the same gateway already got these via the gateway's local fan-out.
+        var first = userCommands.getFirst();
+        gatewayMessageService.process(envelope("SYNC_RESULT", first.getCorrelationId(),
+                "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"));
+        assertThat(memberDeviceMappingRepository.findAll().getFirst().getSyncState().name())
+                .as("other detail commands are still queued").isEqualTo("PENDING");
+
+        for (var command : userCommands.subList(1, userCommands.size())) {
+            gatewayMessageService.process(envelope("SYNC_RESULT", command.getCorrelationId(),
+                    "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"));
+        }
+        var mapping = memberDeviceMappingRepository.findAll().getFirst();
+        assertThat(mapping.getSyncState().name()).isEqualTo("SYNCED");
+
+        var face = deviceSyncService.enqueue(mapping.getTenantId(), mapping.getDeviceId(), mapping.getMemberId(),
+                null, SyncCommandType.UPSERT_FACE,
+                java.util.Map.of("deviceUserId", "1001", "faceVersion", 1, "sha256", "abc"));
+        assertThat(memberDeviceMappingRepository.findAll().getFirst().getFaceSyncState().name()).isEqualTo("PENDING");
+        gatewayMessageService.process(envelope("SYNC_RESULT", face.getCorrelationId(),
+                "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"));
+
+        mapping = memberDeviceMappingRepository.findAll().getFirst();
+        assertThat(mapping.getFaceSyncState().name()).isEqualTo("SYNCED");
+        assertThat(mapping.getFaceVersionSynced()).isEqualTo(1);
+    }
+
+    @Test
     void listingSyncCommandsWithoutAMemberDoesNotFail() throws Exception {
         deviceSyncCommandRepository.deleteAllInBatch();
         var device = deviceRepository.findAll().getFirst();

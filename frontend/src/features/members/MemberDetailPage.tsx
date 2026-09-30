@@ -1,7 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
 import { ConfirmDialog } from '@/components/Dialog'
+import { Pager } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, EmptyState, PageHeader, SectionTitle, Skeleton } from '@/components/ui'
 import { useMemberPhotoUrl } from '@/features/members/MemberPhotoField'
@@ -11,6 +12,8 @@ import { useAuth } from '@/lib/auth'
 import { formatDate, formatDateTime, money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
 import type { AccessStatus, Attendance, Member, MemberDeviceSync, Membership, PageResponse, Payment } from '@/lib/types'
+
+const ATTENDANCE_PAGE_SIZE = 20
 
 export function MemberDetailPage() {
   const { id } = useParams()
@@ -26,10 +29,13 @@ export function MemberDetailPage() {
     queryKey: ['access', id],
     queryFn: () => api<AccessStatus>(`/api/v1/members/${id}/access`),
   })
+  const [attendancePage, setAttendancePage] = useState(0)
   const attendance = useQuery({
-    queryKey: ['member-attendance', id],
-    queryFn: () => api<PageResponse<Attendance>>(`/api/v1/members/${id}/attendance?page=0&size=20`),
+    queryKey: ['member-attendance', id, attendancePage],
+    queryFn: () =>
+      api<PageResponse<Attendance>>(`/api/v1/members/${id}/attendance?page=${attendancePage}&size=${ATTENDANCE_PAGE_SIZE}`),
     enabled: has('ATTENDANCE_VIEW'),
+    placeholderData: keepPreviousData,
   })
   const payments = useQuery({
     queryKey: ['member-payments', id],
@@ -191,16 +197,30 @@ export function MemberDetailPage() {
           {!attendance.data?.content.length ? (
             <p className="text-sm text-muted">No attendance for this member yet.</p>
           ) : (
-            <Card padded={false} className="divide-y divide-line overflow-hidden">
-              {attendance.data.content.map((row) => (
-                <div key={row.id} className="flex justify-between gap-3 px-4 py-3 text-sm">
-                  <span>{formatDateTime(row.occurredAt)}</span>
-                  <span className="text-muted">
-                    {row.result} · {row.method}
-                  </span>
-                </div>
-              ))}
-            </Card>
+            <>
+              <Card padded={false} className="divide-y divide-line overflow-hidden">
+                {attendance.data.content.map((row) => (
+                  <div key={row.id} className="flex justify-between gap-3 px-4 py-3 text-sm">
+                    <span>{formatDateTime(row.occurredAt)}</span>
+                    <span className="text-muted">
+                      {row.result} · {row.method}
+                    </span>
+                  </div>
+                ))}
+              </Card>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-muted">
+                  {attendance.data.totalElements} {attendance.data.totalElements === 1 ? 'entry' : 'entries'}
+                </p>
+                {attendance.data.totalPages > 1 ? (
+                  <Pager
+                    page={attendancePage}
+                    totalPages={attendance.data.totalPages}
+                    onPageChange={setAttendancePage}
+                  />
+                ) : null}
+              </div>
+            </>
           )}
         </section>
       ) : null}

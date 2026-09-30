@@ -10,6 +10,7 @@ import {
   Label,
   Select,
 } from '@/components/ui';
+import { DateField } from '@/components/DateField';
 import { QueryError } from '@/components/QueryError';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -466,23 +467,23 @@ export function MembershipPanel({
                 <div>
                   <Label htmlFor="membership-start">Start</Label>
 
-                  <Input
+                  <DateField
                     id="membership-start"
-                    type="date"
                     value={startDate}
-                    onChange={(e) => applyStart(e.target.value)}
+                    onChange={applyStart}
+                    ariaLabel="Membership start date"
                   />
                 </div>
 
                 <div>
                   <Label htmlFor="membership-end">End</Label>
 
-                  <Input
+                  <DateField
                     id="membership-end"
-                    type="date"
                     value={endDate}
                     min={startDate}
-                    onChange={(e) => setEndDate(e.target.value)}
+                    onChange={setEndDate}
+                    ariaLabel="Membership end date"
                   />
                 </div>
               </div>
@@ -610,21 +611,23 @@ export function MembershipPanel({
               </div>
 
               <div>
-                <Label>Start</Label>
-                <Input
-                  type="date"
+                <Label htmlFor={`edit-start-${row.id}`}>Start</Label>
+                <DateField
+                  id={`edit-start-${row.id}`}
                   value={editStart}
-                  onChange={(e) => setEditStart(e.target.value)}
+                  onChange={setEditStart}
+                  ariaLabel="Membership start date"
                 />
               </div>
 
               <div>
-                <Label>End</Label>
-                <Input
-                  type="date"
+                <Label htmlFor={`edit-end-${row.id}`}>End</Label>
+                <DateField
+                  id={`edit-end-${row.id}`}
                   value={editEnd}
                   min={editStart}
-                  onChange={(e) => setEditEnd(e.target.value)}
+                  onChange={setEditEnd}
+                  ariaLabel="Membership end date"
                 />
               </div>
 
@@ -920,13 +923,12 @@ export function MembershipPanel({
                     Start Date
                   </Label>
 
-                  <Input
+                  <DateField
                       id="renew-start"
-                      type="date"
                       value={renewStartDate}
                       min={renewingMembership ? addDays(renewingMembership.endDate, 1) : undefined}
-                      onChange={(e) => applyRenewStart(e.target.value)}
-                      className="border-line bg-canvas text-ink"
+                      onChange={applyRenewStart}
+                      ariaLabel="Renewal start date"
                   />
                 </div>
 
@@ -935,13 +937,12 @@ export function MembershipPanel({
                     End Date
                   </Label>
 
-                  <Input
+                  <DateField
                     id="renew-end"
-                    type="date"
                     value={renewEndDate}
                     min={renewStartDate}
-                    onChange={(e) => setRenewEndDate(e.target.value)}
-                    className="border-line bg-canvas text-ink"
+                    onChange={setRenewEndDate}
+                    ariaLabel="Renewal end date"
                   />
                 </div>
               </div>
@@ -1147,12 +1148,12 @@ export function MembershipPanel({
 
                 <div className="space-y-2">
                   <Label htmlFor="payment-date">Paid On</Label>
-                  <Input
+                  <DateField
                       id="payment-date"
-                      type="date"
                       value={paymentDate}
-                      onChange={(e) => setPaymentDate(e.target.value)}
-                      className="border-line bg-canvas text-ink"
+                      max={todayIso()}
+                      onChange={setPaymentDate}
+                      ariaLabel="Payment date"
                   />
                 </div>
 

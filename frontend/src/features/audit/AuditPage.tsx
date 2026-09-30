@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Pager } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
-  Button,
   EmptyState,
   PageHeader,
   Select,
@@ -145,15 +145,7 @@ export function AuditPage() {
                   ))}
                 </Select>
               </label>
-              <Button variant="outline" size="sm" disabled={logs.data.first} onClick={() => setPage((n) => Math.max(0, n - 1))}>
-                Previous
-              </Button>
-              <span className="text-xs tabular-nums text-muted">
-                {page + 1} / {Math.max(logs.data.totalPages, 1)}
-              </span>
-              <Button variant="outline" size="sm" disabled={logs.data.last} onClick={() => setPage((n) => n + 1)}>
-                Next
-              </Button>
+              <Pager page={page} totalPages={logs.data.totalPages} onPageChange={setPage} />
             </div>
           </div>
         </>

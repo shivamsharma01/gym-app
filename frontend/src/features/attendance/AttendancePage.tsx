@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Activity } from 'lucide-react'
 import { Link } from 'react-router'
 import { useState } from 'react'
+import { Pager } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
@@ -80,14 +81,7 @@ export function AttendancePage() {
         </TableShell>
       ) : null}
       {attendance.data && attendance.data.totalPages > 1 ? (
-        <div className="mt-4 flex gap-2">
-          <Button variant="outline" size="sm" disabled={attendance.data.first} onClick={() => setPage((n) => Math.max(0, n - 1))}>
-            Previous
-          </Button>
-          <Button variant="outline" size="sm" disabled={attendance.data.last} onClick={() => setPage((n) => n + 1)}>
-            Next
-          </Button>
-        </div>
+        <Pager className="mt-4" page={page} totalPages={attendance.data.totalPages} onPageChange={setPage} />
       ) : null}
     </div>
   )

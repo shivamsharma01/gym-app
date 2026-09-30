@@ -22,7 +22,7 @@ import {
 } from '@/components/ui'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { statusTone } from '@/lib/status'
+import { accountStatusLabel, membershipStatusLabel, statusTone } from '@/lib/status'
 import type { Member, PageResponse } from '@/lib/types'
 
 export function MembersPage() {
@@ -72,17 +72,17 @@ export function MembersPage() {
           aria-label="Search members"
         />
         <Select
-          aria-label="Filter by status"
+          aria-label="Account status"
           value={status}
           onChange={(e) => {
             setStatus(e.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')
             setPage(0)
           }}
-          className="w-40"
+          className="w-48"
         >
-          <option value="ALL">All statuses</option>
-          <option value="ACTIVE">Active</option>
-          <option value="INACTIVE">Inactive</option>
+          <option value="ALL">All account statuses</option>
+          <option value="ACTIVE">Account active</option>
+          <option value="INACTIVE">Account inactive</option>
         </Select>
       </Toolbar>
       {members.isLoading ? <Skeleton className="h-48" /> : null}
@@ -110,7 +110,8 @@ export function MembersPage() {
                 <Th>Code</Th>
                 <Th>Phone</Th>
                 <Th>Source</Th>
-                <Th>Status</Th>
+                <Th>Membership status</Th>
+                <Th>Account status</Th>
               </tr>
             </THead>
             <tbody>
@@ -130,7 +131,10 @@ export function MembersPage() {
                     </Badge>
                   </Td>
                   <Td>
-                    <Badge tone={statusTone(m.status)}>{m.status}</Badge>
+                    <Badge tone={statusTone(m.coverageStatus)}>{membershipStatusLabel(m.coverageStatus)}</Badge>
+                  </Td>
+                  <Td>
+                    <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
                   </Td>
                 </Tr>
               ))}

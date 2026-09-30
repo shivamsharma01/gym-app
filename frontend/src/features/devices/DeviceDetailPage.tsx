@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
-import { Link, NavLink, useNavigate, useParams } from 'react-router'
+import { Link, NavLink, Navigate, useNavigate, useParams } from 'react-router'
 import { Badge, Button, Card, Input, Label, PageHeader, Select, Skeleton, Table, TableShell, Textarea, THead, Th, Td, Tr } from '@/components/ui'
 import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
@@ -21,6 +21,11 @@ export function DeviceDetailPage() {
   if (device.isLoading) return <Skeleton className="h-40" />
   if (device.error || !device.data) return <QueryError error={device.error ?? new Error('Not found')} />
   const d = device.data
+  const showEvents = has('SECURITY_ALERT_VIEW')
+  const showSettings = has('DEVICE_MANAGE')
+  if ((tab === 'events' && !showEvents) || (tab === 'settings' && !showSettings)) {
+    return <Navigate to={`/app/devices/${d.id}`} replace />
+  }
 
   return (
     <div className="space-y-6">
@@ -61,9 +66,9 @@ export function DeviceDetailPage() {
       <nav className="flex flex-wrap gap-2 border-b border-line pb-3 text-sm">
         {[
           ['overview', 'Overview'],
-          ['events', 'Events'],
+          ...(showEvents ? [['events', 'Events']] : []),
           ['sync', 'Sync'],
-          ['settings', 'Settings'],
+          ...(showSettings ? [['settings', 'Settings']] : []),
         ].map(([key, label]) => (
           <NavLink
             key={key}
@@ -285,9 +290,6 @@ function Events() {
     enabled: has('SECURITY_ALERT_VIEW'),
     placeholderData: keepPreviousData,
   })
-  if (!has('SECURITY_ALERT_VIEW')) {
-    return <p className="text-sm text-muted">Security events are not part of your role. Ask an admin to change your role if you need them.</p>
-  }
   if (events.isLoading) return <Skeleton className="h-32" />
   if (events.error) return <QueryError error={events.error} />
   if (!events.data?.content.length) return <p className="text-sm text-muted">No security events yet.</p>
@@ -423,7 +425,6 @@ function Sync({ deviceId }: { deviceId: string }) {
 }
 
 function Settings({ device }: { device: Device }) {
-  const { has } = useAuth()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const gateways = useQuery({
@@ -460,9 +461,6 @@ function Settings({ device }: { device: Device }) {
       navigate(`/app/devices/${device.id}`)
     },
   })
-  if (!has('DEVICE_MANAGE')) {
-    return <p className="text-sm text-muted">Read-only. Changing device settings is not part of your role; ask an admin to change your role if you need it.</p>
-  }
   return (
     <form
       className="max-w-xl space-y-3"

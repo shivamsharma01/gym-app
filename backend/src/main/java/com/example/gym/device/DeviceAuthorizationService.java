@@ -86,10 +86,10 @@ public class DeviceAuthorizationService {
         Membership first = memberships.get(start);
         Membership last = first;
         LocalDate validTo = first.getEndDate();
-        boolean usable = usable(first);
+        boolean usable = usable(first, today);
         for (int i = start + 1; usable && i < memberships.size(); i++) {
             Membership next = memberships.get(i);
-            if (!usable(next) || next.getStartDate().isAfter(validTo.plusDays(1))) {
+            if (!usable(next, today) || next.getStartDate().isAfter(validTo.plusDays(1))) {
                 break;
             }
             if (next.getEndDate().isAfter(validTo)) {
@@ -104,8 +104,9 @@ public class DeviceAuthorizationService {
     }
 
     /** Paid (fully or partly) and neither frozen, expired nor cancelled. */
-    static boolean usable(Membership membership) {
-        return (membership.getStatus() == MembershipStatus.ACTIVE || membership.getStatus() == MembershipStatus.PENDING)
+    static boolean usable(Membership membership, LocalDate today) {
+        MembershipStatus effective = membership.effectiveStatus(today);
+        return (effective == MembershipStatus.ACTIVE || effective == MembershipStatus.PENDING)
                 && membership.getPaymentStatus() != MembershipPaymentStatus.UNPAID;
     }
 

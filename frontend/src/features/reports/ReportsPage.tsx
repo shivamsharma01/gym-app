@@ -23,7 +23,7 @@ import {
 } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatDate, money } from "@/lib/cn";
-import { statusTone } from "@/lib/status";
+import { membershipStatusLabel, statusTone } from "@/lib/status";
 
 type Operations = {
   overview: {
@@ -385,7 +385,7 @@ export function ReportsPage() {
                               <Th>Member ID</Th>
                               <Th>Amount</Th>
                               <Th>Method</Th>
-                              <Th>Status</Th>
+                              <Th>Payment status</Th>
                             </tr>
                           </THead>
                           <tbody>
@@ -434,7 +434,7 @@ export function ReportsPage() {
                               <Th>Member</Th>
                               <Th>Member ID</Th>
                               <Th>Plan</Th>
-                              <Th>Status</Th>
+                              <Th>Membership status</Th>
                               <Th>End date</Th>
                               <Th>Plan amount</Th>
                               <Th>Paid</Th>
@@ -448,7 +448,7 @@ export function ReportsPage() {
                                 <Td className="text-muted">{r.memberCode || "—"}</Td>
                                 <Td>{r.planName}</Td>
                                 <Td>
-                                  <Badge tone={statusTone(r.status)}>{r.status}</Badge>
+                                  <Badge tone={statusTone(r.status)}>{membershipStatusLabel(r.status)}</Badge>
                                 </Td>
                                 <Td>{formatDate(r.endDate)}</Td>
                                 <Td className="tabular-nums">
@@ -782,7 +782,7 @@ export function MembershipReportPage() {
                       <THead>
                         <tr>
                           <Th>Plan</Th>
-                          <Th>Status</Th>
+                          <Th>Membership status</Th>
                           <Th>Dates</Th>
                           <Th>Paid</Th>
                         </tr>
@@ -793,7 +793,7 @@ export function MembershipReportPage() {
                             <Td className="font-medium">{String(row.planName)}</Td>
                             <Td>
                               <Badge tone={statusTone(String(row.status))}>
-                                {String(row.status)}
+                                {membershipStatusLabel(String(row.status))}
                               </Badge>
                             </Td>
                             <Td className="text-muted">

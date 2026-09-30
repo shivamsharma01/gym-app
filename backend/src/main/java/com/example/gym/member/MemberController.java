@@ -5,6 +5,7 @@ import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
 import com.example.gym.member.dto.MemberResponse;
 import com.example.gym.security.SecurityUtils;
+import java.util.Map;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -31,9 +32,11 @@ public class MemberController {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final MemberService memberService;
+    private final MemberCoverage memberCoverage;
 
-    public MemberController(MemberService memberService) {
+    public MemberController(MemberService memberService, MemberCoverage memberCoverage) {
         this.memberService = memberService;
+        this.memberCoverage = memberCoverage;
     }
 
     @GetMapping
@@ -48,16 +51,16 @@ public class MemberController {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize,
                 Sort.by(Sort.Direction.DESC, "createdAt"));
-        return PageResponse.from(
-                memberService.search(SecurityUtils.currentTenantId(), q, status, creationSource, pageable),
-                MemberResponse::from);
+        var members = memberService.search(SecurityUtils.currentTenantId(), q, status, creationSource, pageable);
+        Map<Long, String> coverage = memberCoverage.ofAll(members.getContent());
+        return PageResponse.from(members, member -> MemberResponse.from(member, coverage.get(member.getId())));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('MEMBER_VIEW')")
     @Operation(summary = "Get a member")
     public MemberResponse get(@PathVariable String id) {
-        return MemberResponse.from(memberService.getByPublicId(id, SecurityUtils.currentTenantId()));
+        return respond(memberService.getByPublicId(id, SecurityUtils.currentTenantId()));
     }
 
     @PostMapping
@@ -65,14 +68,14 @@ public class MemberController {
     @PreAuthorize("hasAuthority('MEMBER_CREATE')")
     @Operation(summary = "Create a member")
     public MemberResponse create(@Valid @RequestBody CreateMember request) {
-        return MemberResponse.from(memberService.create(request, SecurityUtils.currentTenantId()));
+        return respond(memberService.create(request, SecurityUtils.currentTenantId()));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('MEMBER_UPDATE')")
     @Operation(summary = "Update a member")
     public MemberResponse update(@PathVariable String id, @Valid @RequestBody UpdateMember request) {
-        return MemberResponse.from(memberService.update(id, request, SecurityUtils.currentTenantId()));
+        return respond(memberService.update(id, request, SecurityUtils.currentTenantId()));
     }
 
     @DeleteMapping("/{id}")
@@ -87,6 +90,10 @@ public class MemberController {
     @PreAuthorize("hasAuthority('MEMBER_DELETE')")
     @Operation(summary = "Reactivate an inactive member account")
     public MemberResponse reactivate(@PathVariable String id) {
-        return MemberResponse.from(memberService.reactivate(id, SecurityUtils.currentTenantId()));
+        return respond(memberService.reactivate(id, SecurityUtils.currentTenantId()));
+    }
+
+    private MemberResponse respond(Member member) {
+        return MemberResponse.from(member, memberCoverage.of(member));
     }
 }

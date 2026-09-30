@@ -10,7 +10,7 @@ import { MembershipPanel } from '@/features/memberships/MembershipPanel'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatDateTime, money } from '@/lib/cn'
-import { statusTone } from '@/lib/status'
+import { accountStatusLabel, membershipStatusLabel, statusTone } from '@/lib/status'
 import { usePagedRows } from '@/lib/usePagedRows'
 import type { AccessStatus, Attendance, Member, MemberDeviceSync, Membership, PageResponse, Payment } from '@/lib/types'
 
@@ -118,8 +118,19 @@ export function MemberDetailPage() {
             : 'No photo yet. Add one with Edit, or enrol the face on any device.'}
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Badge tone={statusTone(m.status)}>{m.status}</Badge>
+      <div className="flex flex-wrap items-end gap-6">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Membership status</div>
+          <div className="mt-1">
+            <Badge tone={statusTone(m.coverageStatus)}>{membershipStatusLabel(m.coverageStatus)}</Badge>
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Account status</div>
+          <div className="mt-1">
+            <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
+          </div>
+        </div>
         <Badge tone={m.creationSource === 'DEVICE_IMPORT' ? 'warn' : 'ok'}>
           {m.creationSource === 'DEVICE_IMPORT' ? 'Created from device' : 'Created manually'}
         </Badge>

@@ -73,13 +73,6 @@ public class PaymentController {
         return toResponse(paymentService.record(request, SecurityUtils.currentTenantId()));
     }
 
-    @PostMapping("/payments/{id}/refund")
-    @PreAuthorize("hasAuthority('PAYMENT_CREATE')")
-    @Operation(summary = "Refund a payment")
-    public PaymentResponse refund(@PathVariable String id) {
-        return toResponse(paymentService.refund(id, SecurityUtils.currentTenantId()));
-    }
-
     private PaymentResponse toResponse(com.example.gym.payment.Payment payment) {
         Member member = memberRepository.findById(payment.getMemberId())
                 .orElseThrow(() -> CommonExceptions.notFound("Member"));

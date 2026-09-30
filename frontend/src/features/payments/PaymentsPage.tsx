@@ -1,14 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { useEffect, useState } from 'react'
 import { z } from 'zod'
-import { ConfirmDialog } from '@/components/Dialog'
 import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
-  Button,
   Card,
   EmptyState,
   Field,
@@ -23,7 +21,6 @@ import {
   Tr,
 } from '@/components/ui'
 import { api } from '@/lib/api'
-import { useAuth } from '@/lib/auth'
 import { formatDate, money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
 import type {
@@ -64,9 +61,6 @@ const gstRates = [0, 5, 12, 18, 28]
 
 type Form = z.infer<typeof schema>
 export function PaymentsPage() {
-  const { has } = useAuth()
-  const qc = useQueryClient()
-
   const now = new Date()
 
   /*
@@ -92,9 +86,6 @@ export function PaymentsPage() {
   const [page, setPage] = useState(0)
 
   const [member] = useState<Member | null>(null)
-
-  const [refundId, setRefundId] =
-      useState<string | null>(null)
 
   /*
    * Month values:
@@ -455,25 +446,6 @@ export function PaymentsPage() {
     form,
   ])
 
-  /*
-   * Refund mutation.
-   */
-  const refund = useMutation({
-    mutationFn: (id: string) =>
-        api<Payment>(
-            `/api/v1/payments/${id}/refund`,
-            {
-              method: 'POST',
-            },
-        ),
-
-    onSuccess: () => {
-      qc.invalidateQueries({
-        queryKey: ['payments'],
-      })
-    },
-  })
-
   const selectedMonthLabel =
       months.find(
           (month) =>
@@ -793,10 +765,7 @@ export function PaymentsPage() {
                         <Th>Paid on</Th>
                         <Th>Amount</Th>
                         <Th>Method</Th>
-                        <Th>Status</Th>
-                        <Th className="text-right">
-                          Actions
-                        </Th>
+                        <Th>Payment status</Th>
                       </tr>
                     </THead>
 
@@ -832,26 +801,6 @@ export function PaymentsPage() {
                                   {p.status}
                                 </Badge>
                               </Td>
-
-                              <Td className="text-right">
-                                {has(
-                                    'PAYMENT_CREATE',
-                                ) &&
-                                p.status ===
-                                'COMPLETED' ? (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() =>
-                                            setRefundId(
-                                                p.id,
-                                            )
-                                        }
-                                    >
-                                      Refund
-                                    </Button>
-                                ) : null}
-                              </Td>
                             </Tr>
                         ),
                     )}
@@ -873,31 +822,6 @@ export function PaymentsPage() {
               />
           ) : null}
         </div>
-
-        {/* ================================================== */}
-        {/* Refund Dialog */}
-        {/* ================================================== */}
-
-        <ConfirmDialog
-            open={Boolean(refundId)}
-            onClose={() => setRefundId(null)}
-            title="Refund payment?"
-            description="This marks the payment as refunded. Only continue if you have already processed the money return."
-            confirmLabel="Refund"
-            danger
-            busy={refund.isPending}
-            onConfirm={() => {
-              if (!refundId) return
-
-              refund.mutate(
-                  refundId,
-                  {
-                    onSettled: () =>
-                        setRefundId(null),
-                  },
-              )
-            }}
-        />
       </div>
      )
 }

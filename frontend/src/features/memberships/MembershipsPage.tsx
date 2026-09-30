@@ -6,6 +6,7 @@ import { PageHeader, Skeleton } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { MembershipPanel } from '@/features/memberships/MembershipPanel'
 import { api } from '@/lib/api'
+import { accountStatusLabel, membershipStatusLabel } from '@/lib/status'
 import type { Member, Membership } from '@/lib/types'
 
 export function MembershipsPage() {
@@ -31,6 +32,10 @@ export function MembershipsPage() {
           <Link className="font-semibold text-ink hover:underline" to={`/app/members/${member.id}`}>
             {member.fullName}
           </Link>
+          {' · '}
+          Membership status {membershipStatusLabel(member.coverageStatus)}
+          {' · '}
+          Account status {accountStatusLabel(member.status)}
         </p>
       ) : null}
       {memberships.isLoading ? <Skeleton className="h-32" /> : null}

@@ -59,7 +59,17 @@ public class GatewayWebSocketHandler extends TextWebSocketHandler {
     }
 
     @Override
+    public void handleTransportError(WebSocketSession session, Throwable exception) {
+        Object gatewayId = session.getAttributes().get(GATEWAY_ID_ATTR);
+        log.warn("Gateway websocket transport error gateway={} session={}: {}",
+                gatewayId, session.getId(), exception.getMessage());
+    }
+
+    @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        Object closedGatewayId = session.getAttributes().get(GATEWAY_ID_ATTR);
+        log.info("Gateway websocket closed gateway={} code={} reason={}",
+                closedGatewayId, status.getCode(), status.getReason());
         registry.removeBySession(session);
         Object gatewayId = session.getAttributes().get(GATEWAY_ID_ATTR);
         if (gatewayId != null) {

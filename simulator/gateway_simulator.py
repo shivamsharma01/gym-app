@@ -130,6 +130,7 @@ def poll_loop(interval: float) -> None:
             except json.JSONDecodeError:
                 commands = []
             for cmd in commands:
+                print("COMMAND RECEIVED:", json.dumps(cmd, indent=2))
                 result = apply_command(cmd)
                 send(envelope("SYNC_RESULT", result, cmd.get("deviceId"), cmd.get("correlationId")))
                 print(f"  {cmd.get('type')} -> {result}")

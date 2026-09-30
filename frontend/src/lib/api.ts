@@ -5,12 +5,29 @@ import type { TokenResponse } from '@/lib/types'
 export class ApiError extends Error {
   status: number
   code?: string
+  /** Per-field problems from a validation failure, already readable (e.g. "Password: size must be …"). */
+  errors: string[]
 
-  constructor(status: number, message: string, code?: string) {
-    super(message)
+  constructor(status: number, message: string, code?: string, errors: string[] = []) {
+    super(errors.length ? errors.join(' · ') : message)
     this.status = status
     this.code = code
+    this.errors = errors
   }
+}
+
+/** "fullName: must not be blank" → "Full name: must not be blank". */
+function readableError(raw: string) {
+  const split = raw.indexOf(': ')
+  if (split < 0) return raw
+  const field = raw
+    .slice(0, split)
+    .replace(/\[\d+\]/g, '')
+    .split('.')
+    .pop()!
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+  return `${field.charAt(0).toUpperCase()}${field.slice(1)}: ${raw.slice(split + 2)}`
 }
 
 type RefreshHandler = () => Promise<boolean>
@@ -66,7 +83,10 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
   }
   if (!res.ok) {
     const detail = (json.detail as string) || (json.title as string) || res.statusText
-    throw new ApiError(res.status, detail, json.code as string | undefined)
+    const errors = Array.isArray(json.errors)
+      ? json.errors.filter((e): e is string => typeof e === 'string').map(readableError)
+      : []
+    throw new ApiError(res.status, detail, json.code as string | undefined, errors)
   }
   return json as T
 }

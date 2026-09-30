@@ -58,7 +58,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ProblemDetail handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
         FlowLog.warn("auth", "access denied {} {}", request.getMethod(), request.getRequestURI());
-        return problem(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "You do not have permission to perform this action");
+        return problem(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "Your role does not allow this action. Ask an admin to change your role if you need it.");
     }
 
     @ExceptionHandler(AuthenticationException.class)

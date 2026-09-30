@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Pager } from '@/components/Pager'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
@@ -53,10 +53,6 @@ export function AuditPage() {
     queryKey: ['audit', page, pageSize],
     queryFn: () => api<PageResponse<Audit>>(`/api/v1/audit-logs?page=${page}&size=${pageSize}`),
   })
-
-  const total = logs.data?.totalElements ?? 0
-  const start = total === 0 ? 0 : page * pageSize + 1
-  const end = logs.data ? page * pageSize + logs.data.content.length : 0
 
   return (
     <div>
@@ -119,11 +115,10 @@ export function AuditPage() {
               </tbody>
             </Table>
           </TableShell>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs text-muted">
-              {start}–{end} of {total}
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
+          <PageNav
+            data={logs.data}
+            onPageChange={setPage}
+            extra={
               <label className="flex items-center gap-2 text-xs text-muted">
                 Show
                 <Select
@@ -145,9 +140,8 @@ export function AuditPage() {
                   ))}
                 </Select>
               </label>
-              <Pager page={page} totalPages={logs.data.totalPages} onPageChange={setPage} />
-            </div>
-          </div>
+            }
+          />
         </>
       ) : null}
     </div>

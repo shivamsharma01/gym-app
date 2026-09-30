@@ -17,13 +17,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 /**
- * Creates a Member (DEVICE_IMPORT) plus an "Unknown" plan membership from a user found on a device.
+ * Creates a Member (DEVICE_IMPORT) plus a fallback-plan membership from a user found on a device.
  * Shared by the manual roster import and live device-change handling.
  */
 @Component
 public class DeviceMemberImporter {
 
-    public static final String UNKNOWN_PLAN_NAME = "Unknown";
+    public static final String UNKNOWN_PLAN_NAME = "Fallback Membership plan for quick access";
 
     private final MemberRepository memberRepository;
     private final MembershipRepository membershipRepository;
@@ -51,7 +51,7 @@ public class DeviceMemberImporter {
     }
 
     /**
-     * Adds an "Unknown" plan membership from the device validity when the member has no current
+     * Adds a fallback-plan membership from the device validity when the member has no current
      * membership. Returns true when the end date had to be inferred. No MembershipChangedEvent is
      * published — the device already holds this user.
      */

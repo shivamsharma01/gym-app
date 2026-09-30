@@ -61,6 +61,13 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.allowed").value(false))
                 .andExpect(jsonPath("$.reason").value("PAYMENT_OVERDUE"));
 
+        // More than the unpaid balance is refused.
+        post("/api/v1/payments",
+                "{\"memberId\":\"" + memberId + "\",\"membershipId\":\"" + membershipId
+                        + "\",\"amount\":1000.01,\"method\":\"CASH\"}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("unpaid balance")));
+
         // Pay in full -> membership becomes PAID and access is allowed.
         post("/api/v1/payments",
                 "{\"memberId\":\"" + memberId + "\",\"membershipId\":\"" + membershipId
@@ -68,6 +75,12 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.receivedBy").value("flow-admin"));
+
+        post("/api/v1/payments",
+                "{\"memberId\":\"" + memberId + "\",\"membershipId\":\"" + membershipId
+                        + "\",\"amount\":1.00,\"method\":\"CASH\"}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("This membership is already fully paid"));
 
         getAccess(memberId)
                 .andExpect(jsonPath("$.allowed").value(true))

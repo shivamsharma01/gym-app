@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Activity } from 'lucide-react'
 import { Link } from 'react-router'
 import { useState } from 'react'
-import { Pager } from '@/components/Pager'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
@@ -80,8 +80,8 @@ export function AttendancePage() {
           </Table>
         </TableShell>
       ) : null}
-      {attendance.data && attendance.data.totalPages > 1 ? (
-        <Pager className="mt-4" page={page} totalPages={attendance.data.totalPages} onPageChange={setPage} />
+      {attendance.data && attendance.data.content.length > 0 ? (
+        <PageNav data={attendance.data} onPageChange={setPage} />
       ) : null}
     </div>
   )

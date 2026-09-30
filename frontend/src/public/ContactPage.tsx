@@ -8,6 +8,7 @@ import { brandDisplayName } from '@/lib/brand'
 import { useGymSlug } from '@/lib/GymSlug'
 import { publicApi } from '@/lib/publicApi'
 import { usePublicPlans, usePublicSite } from '@/public/HomePage'
+import { FEATURES } from '@/lib/features'
 
 const schema = z.object({
   name: z.string().min(1, 'Required'),
@@ -51,50 +52,54 @@ export function ContactPage() {
         <p className="mt-2 text-white/60">
           {site.data?.phone || ''} {site.data?.email || ''}
         </p>
-        <p className="mt-6 text-sm text-white/40">
-          This form creates a real enquiry in the gym inbox. It does not send email until a provider is wired.
-        </p>
+        {FEATURES.enquiries ? (
+          <p className="mt-6 text-sm text-white/40">
+            This form creates a real enquiry in the gym inbox. It does not send email until a provider is wired.
+          </p>
+        ) : null}
       </div>
-      <form
-        className="space-y-4 border border-white/10 p-6"
-        onSubmit={form.handleSubmit((v) => send.mutate(v))}
-      >
-        <div>
-          <Label>Name</Label>
-          <Input {...form.register('name')} />
-          <FieldError message={form.formState.errors.name?.message} />
-        </div>
-        <div>
-          <Label>Email</Label>
-          <Input type="email" {...form.register('email')} />
-          <FieldError message={form.formState.errors.email?.message} />
-        </div>
-        <div>
-          <Label>Phone</Label>
-          <Input {...form.register('phone')} />
-        </div>
-        <div>
-          <Label>Plan interest</Label>
-          <Select {...form.register('planInterest')}>
-            <option value="">Not sure yet</option>
-            {(plans.data ?? []).map((plan) => (
-              <option key={plan.id} value={plan.name}>
-                {plan.name}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div>
-          <Label>Message</Label>
-          <Textarea rows={4} {...form.register('message')} />
-          <FieldError message={form.formState.errors.message?.message} />
-        </div>
-        {send.error ? <QueryError error={send.error} /> : null}
-        {send.isSuccess ? <p className="text-sm text-ok">Received. Staff will see this in Enquiries.</p> : null}
-        <Button type="submit" disabled={send.isPending}>
-          Send
-        </Button>
-      </form>
+      {FEATURES.enquiries ? (
+        <form
+          className="space-y-4 border border-white/10 p-6"
+          onSubmit={form.handleSubmit((v) => send.mutate(v))}
+        >
+          <div>
+            <Label>Name</Label>
+            <Input {...form.register('name')} />
+            <FieldError message={form.formState.errors.name?.message} />
+          </div>
+          <div>
+            <Label>Email</Label>
+            <Input type="email" {...form.register('email')} />
+            <FieldError message={form.formState.errors.email?.message} />
+          </div>
+          <div>
+            <Label>Phone</Label>
+            <Input {...form.register('phone')} />
+          </div>
+          <div>
+            <Label>Plan interest</Label>
+            <Select {...form.register('planInterest')}>
+              <option value="">Not sure yet</option>
+              {(plans.data ?? []).map((plan) => (
+                <option key={plan.id} value={plan.name}>
+                  {plan.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label>Message</Label>
+            <Textarea rows={4} {...form.register('message')} />
+            <FieldError message={form.formState.errors.message?.message} />
+          </div>
+          {send.error ? <QueryError error={send.error} /> : null}
+          {send.isSuccess ? <p className="text-sm text-ok">Received. Staff will see this in Enquiries.</p> : null}
+          <Button type="submit" disabled={send.isPending}>
+            Send
+          </Button>
+        </form>
+      ) : null}
     </div>
   )
 }

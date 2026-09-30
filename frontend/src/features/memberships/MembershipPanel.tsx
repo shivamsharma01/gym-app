@@ -105,6 +105,10 @@ export function MembershipPanel({
   const paymentMembership = rows.find(
       (row) => row.id === paymentMembershipId,
   )
+  const paymentUnpaid = paymentMembership
+      ? Math.max(Number(paymentMembership.netAmount ?? paymentMembership.price) - Number(paymentMembership.amountPaid ?? 0), 0)
+      : 0
+  const paymentTooHigh = Number(paymentAmount || 0) > paymentUnpaid + 0.005
   const currentPlan = (plans.data?.content ?? []).find(
     (p) => p.name === renewingMembership?.planName,
   );
@@ -762,6 +766,7 @@ export function MembershipPanel({
 
             {has('PAYMENT_CREATE') &&
             !memberStatusIsInactive &&
+            row.paymentStatus !== 'PAID' &&
             (row.status === 'ACTIVE' || row.status === 'PENDING') ? (
                 <Button
                     variant="outline"
@@ -1100,11 +1105,17 @@ export function MembershipPanel({
                       id="payment-amount"
                       type="number"
                       min="0"
+                      max={paymentUnpaid}
                       step="0.01"
                       value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}
                       className="border-line bg-canvas text-ink"
                   />
+                  {paymentTooHigh ? (
+                      <p className="text-xs text-danger">
+                        Cannot be more than the unpaid balance of {money(paymentUnpaid, paymentMembership.currency)}.
+                      </p>
+                  ) : null}
                 </div>
 
                 <div className="space-y-2">
@@ -1182,54 +1193,11 @@ export function MembershipPanel({
                         recordPayment.isPending ||
                         !paymentAmount ||
                         Number(paymentAmount) <= 0 ||
+                        paymentTooHigh ||
                         !paymentDate
                     }
                     className="bg-ok text-accent-ink hover:brightness-110 disabled:opacity-40"
-                    onClick={() => {
-                      const paidAmount = Number(paymentMembership?.amountPaid ?? 0)
-                      const enteredAmount = Number(paymentAmount)
-                      const membershipAmount = Number(
-                          paymentMembership?.netAmount ?? paymentMembership?.price ?? 0,
-                      )
-
-                      if (paidAmount + enteredAmount > membershipAmount) {
-                        const excessAmount =
-                            paidAmount + enteredAmount - membershipAmount
-
-                        const confirmed = window.confirm(
-                            `The payment exceeds the remaining membership amount.\n\n` +
-                            `Plan Amount: ${money(
-                                Number(paymentMembership?.price ?? 0),
-                                paymentMembership?.currency ?? 'INR',
-                            )}\n` +
-                            `Discount: ${money(
-                                Number(paymentMembership?.discountAmount ?? 0),
-                                paymentMembership?.currency ?? 'INR',
-                            )}\n` +
-                            `Net Amount: ${money(
-                                membershipAmount,
-                                paymentMembership?.currency ?? 'INR',
-                            )}\n` +
-                            `Already Paid: ${money(
-                                paidAmount,
-                                paymentMembership?.currency ?? 'INR',
-                            )}\n` +
-                            `New Payment: ${money(
-                                enteredAmount,
-                                paymentMembership?.currency ?? 'INR',
-                            )}\n` +
-                            `Excess: ${money(
-                                excessAmount,
-                                paymentMembership?.currency ?? 'INR',
-                            )}\n\n` +
-                            `Do you want to record this payment anyway?`,
-                        )
-
-                        if (!confirmed) return
-                      }
-
-                      recordPayment.mutate()
-                    }}
+                    onClick={() => recordPayment.mutate()}
                 >
                   {recordPayment.isPending ? 'Recording...' : 'Record Payment'}
                 </Button>

@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Link } from 'react-router'
 import {
   Activity,
@@ -7,6 +8,7 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
@@ -51,10 +53,12 @@ export function DashboardPage() {
     queryFn: () => api<Summary>('/api/v1/reports/summary'),
     enabled: canReport,
   })
+  const [attendancePage, setAttendancePage] = useState(0)
   const attendance = useQuery({
-    queryKey: ['attendance', 'recent'],
-    queryFn: () => api<PageResponse<Attendance>>('/api/v1/attendance?page=0&size=8'),
+    queryKey: ['attendance', 'recent', attendancePage],
+    queryFn: () => api<PageResponse<Attendance>>(`/api/v1/attendance?page=${attendancePage}&size=8`),
     enabled: has('ATTENDANCE_VIEW'),
+    placeholderData: keepPreviousData,
   })
 
   const firstName = user?.fullName?.split(/\s+/)[0] ?? 'there'
@@ -126,8 +130,8 @@ export function DashboardPage() {
         </>
       ) : (
         <Card className="text-sm text-muted">
-          Ask an admin for <span className="font-medium text-ink">REPORT_VIEW</span> to see membership and revenue KPIs.
-          Attendance and member lists still work with your current permissions.
+          Membership and revenue KPIs are not part of your role. Ask an admin to change your role if you need them.
+          Attendance and member lists still work with your current role.
         </Card>
       )}
 
@@ -191,6 +195,9 @@ export function DashboardPage() {
               </Table>
             </TableShell>
           ) : null}
+          {attendance.data && attendance.data.content.length > 0 ? (
+            <PageNav data={attendance.data} onPageChange={setAttendancePage} />
+          ) : null}
         </div>
 
         <div className="space-y-6">
@@ -198,7 +205,7 @@ export function DashboardPage() {
             <SectionTitle title="Quick actions" />
             <div className="grid gap-2">
               <QuickLink to="/app/members" icon={Users} label="Browse members" show={has('MEMBER_VIEW')} />
-              <QuickLink to="/app/plans" icon={CreditCard} label="Manage plans" show={has('MEMBERSHIP_VIEW')} />
+              <QuickLink to="/app/plans" icon={CreditCard} label="Manage plans" show={has('MEMBERSHIP_CREATE') || has('MEMBERSHIP_UPDATE')} />
               <QuickLink to="/app/devices" icon={MonitorSmartphone} label="Devices & gateways" show={has('DEVICE_VIEW')} />
               <QuickLink to="/app/reports" icon={Activity} label="Full reports" show={has('REPORT_VIEW')} />
             </div>

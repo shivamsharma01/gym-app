@@ -2,11 +2,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { Button, Input, Label, PageHeader, Skeleton } from '@/components/ui'
+import { Pager } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
 import { apiUrl } from '@/lib/backendUrls'
 import { gymPath } from '@/lib/brand'
 import { getAccessToken } from '@/lib/tokens'
+import { usePagedRows } from '@/lib/usePagedRows'
 
 type TenantSummary = {
   id: string
@@ -28,6 +30,7 @@ export function PlatformGymsPage() {
     queryKey: ['platform-tenants'],
     queryFn: () => api<TenantSummary[]>('/api/v1/platform/tenants'),
   })
+  const gymRows = usePagedRows(gyms.data ?? [], 20)
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -74,7 +77,7 @@ export function PlatformGymsPage() {
         {gyms.isLoading ? <Skeleton className="h-32" /> : null}
         {gyms.error ? <QueryError error={gyms.error} /> : null}
         <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-panel shadow-[var(--shadow-panel)]">
-          {(gyms.data ?? []).map((g) => (
+          {gymRows.pageRows.map((g) => (
             <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-4 text-sm">
               <div>
                 <div className="text-base font-bold tracking-tight">{g.displayName}</div>
@@ -111,6 +114,7 @@ export function PlatformGymsPage() {
             </li>
           ))}
         </ul>
+        {gyms.data?.length ? <Pager {...gymRows.pager} /> : null}
         {gyms.data?.length === 0 ? <p className="mt-4 text-sm text-muted">No gyms yet. Enroll the first one.</p> : null}
       </div>
 

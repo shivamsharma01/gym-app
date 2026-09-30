@@ -95,6 +95,10 @@ public class PaymentService {
             }
         }
 
+        if (membership != null) {
+            rejectOverpayment(membership, request.amount());
+        }
+
         String currency = resolveCurrency(request.currency(), membership);
         LocalDate paidOn = request.paidOn() != null ? request.paidOn() : LocalDate.now();
 
@@ -144,12 +148,27 @@ public class PaymentService {
         return saved;
     }
 
-    /** Recomputes a membership's amountPaid + payment status from its COMPLETED payments. */
-    private void recomputeMembershipPaymentStatus(Membership membership) {
-        BigDecimal paid = paymentRepository
+    private BigDecimal completedTotal(Membership membership) {
+        return paymentRepository
                 .findByMembershipIdAndStatus(membership.getId(), PaymentStatus.COMPLETED).stream()
                 .map(Payment::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private void rejectOverpayment(Membership membership, BigDecimal amount) {
+        BigDecimal unpaid = membership.getNetAmount().subtract(completedTotal(membership));
+        if (unpaid.signum() <= 0) {
+            throw CommonExceptions.badRequest("This membership is already fully paid");
+        }
+        if (amount.compareTo(unpaid) > 0) {
+            throw CommonExceptions.badRequest("Amount is more than the unpaid balance of "
+                    + unpaid.toPlainString() + " " + membership.getCurrency());
+        }
+    }
+
+    /** Recomputes a membership's amountPaid + payment status from its COMPLETED payments. */
+    private void recomputeMembershipPaymentStatus(Membership membership) {
+        BigDecimal paid = completedTotal(membership);
 
         membership.setAmountPaid(paid);
         if (paid.signum() <= 0) {

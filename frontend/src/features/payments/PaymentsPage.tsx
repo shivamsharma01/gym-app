@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form'
 import { useEffect, useState } from 'react'
 import { z } from 'zod'
 import { ConfirmDialog } from '@/components/Dialog'
-import { Pager } from '@/components/Pager'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
@@ -866,11 +866,9 @@ export function PaymentsPage() {
           {/* ================================================== */}
 
           {payments.data &&
-          payments.data.totalPages > 1 ? (
-              <Pager
-                  className="mt-4"
-                  page={page}
-                  totalPages={payments.data.totalPages}
+          payments.data.content.length > 0 ? (
+              <PageNav
+                  data={payments.data}
                   onPageChange={setPage}
               />
           ) : null}

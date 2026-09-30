@@ -4,6 +4,7 @@ import { brandDisplayName, brandLogo, gymPath, type PublicSite } from '@/lib/bra
 import { useGymSlug } from '@/lib/GymSlug'
 import { publicApi } from '@/lib/publicApi'
 import { cn } from '@/lib/cn'
+import { FEATURES } from '@/lib/features'
 
 const linkDefs = [
   ['', 'Home'],
@@ -84,7 +85,7 @@ export function PublicLayout() {
             </p>
           </div>
           <div className="flex flex-col gap-2">
-            <Link to={gymPath(slug, '/contact')}>Enquire</Link>
+            <Link to={gymPath(slug, '/contact')}>{FEATURES.enquiries ? 'Enquire' : 'Contact'}</Link>
             <Link to={gymPath(slug, '/membership-plans')}>Membership plans</Link>
             <Link to="/app/login">Staff</Link>
           </div>

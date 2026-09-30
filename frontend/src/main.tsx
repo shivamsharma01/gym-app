@@ -19,7 +19,7 @@ import { MemberDetailPage } from '@/features/members/MemberDetailPage'
 import { MemberEditPage } from '@/features/members/MemberEditPage'
 import { MemberNewPage } from '@/features/members/MemberNewPage'
 import { MembersPage } from '@/features/members/MembersPage'
-import { MembershipsPage } from '@/features/memberships/MembershipsPage'
+import { MembershipPlanMembersPage, MembershipsPage } from '@/features/memberships/MembershipsPage'
 import { AnnouncementsPage, NotificationTemplatesPage, NotificationsPage } from '@/features/notifications/NotificationsPage'
 import { NotFoundPage } from '@/features/NotFoundPage'
 import { PaymentsPage } from '@/features/payments/PaymentsPage'
@@ -83,6 +83,7 @@ const gymChildren = [
   { path: 'members/:id/edit', element: <MemberEditPage /> },
   { path: 'plans', element: <PlansPage /> },
   { path: 'memberships', element: <MembershipsPage /> },
+  { path: 'memberships/:planId', element: <MembershipPlanMembersPage /> },
   { path: 'payments', element: <PaymentsPage /> },
   { path: 'attendance', element: <AttendancePage /> },
   { path: 'attendance/live', element: <AttendanceLivePage /> },

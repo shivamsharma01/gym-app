@@ -1,5 +1,6 @@
 package com.example.gym.plan;
 
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -10,6 +11,8 @@ public interface MembershipPlanRepository extends JpaRepository<MembershipPlan, 
     Optional<MembershipPlan> findByPublicId(String publicId);
 
     Page<MembershipPlan> findByTenantId(Long tenantId, Pageable pageable);
+
+    List<MembershipPlan> findByTenantIdOrderByNameAsc(Long tenantId);
 
     Page<MembershipPlan> findByTenantIdAndStatus(Long tenantId, PlanStatus status, Pageable pageable);
 

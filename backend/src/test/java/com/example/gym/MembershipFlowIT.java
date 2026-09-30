@@ -161,6 +161,45 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.endDate").value(newEnd.toString()));
     }
 
+    @Test
+    void planRosterCountsActiveMembersAndThoseEndingWithinSevenDays() throws Exception {
+        token = tokenFor("flow-admin");
+        String planId = readJson(post("/api/v1/plans",
+                "{\"name\":\"Monthly\",\"price\":1000.00,\"currency\":\"INR\",\"durationDays\":30}")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        String staying = readJson(post("/api/v1/members", "{\"firstName\":\"Stay\",\"lastName\":\"Long\"}")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        String leaving = readJson(post("/api/v1/members", "{\"firstName\":\"Leave\",\"lastName\":\"Soon\"}")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        LocalDate today = LocalDate.now();
+        post("/api/v1/memberships",
+                "{\"memberId\":\"" + staying + "\",\"planId\":\"" + planId
+                        + "\",\"startDate\":\"" + today.minusDays(5) + "\",\"endDate\":\"" + today.plusDays(20) + "\"}")
+                .andExpect(status().isCreated());
+        post("/api/v1/memberships",
+                "{\"memberId\":\"" + leaving + "\",\"planId\":\"" + planId
+                        + "\",\"startDate\":\"" + today.minusDays(10) + "\",\"endDate\":\"" + today.plusDays(3) + "\"}")
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/v1/memberships/plans").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(planId))
+                .andExpect(jsonPath("$[0].activeMembers").value(2))
+                .andExpect(jsonPath("$[0].expiringWithin7Days").value(1));
+
+        mockMvc.perform(get("/api/v1/memberships/plans/" + planId + "/members")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.content[0].fullName").value("Leave Soon"))
+                .andExpect(jsonPath("$.content[0].expiringWithin7Days").value(true))
+                .andExpect(jsonPath("$.content[1].fullName").value("Stay Long"))
+                .andExpect(jsonPath("$.content[1].expiringWithin7Days").value(false));
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     private ResultActions post(String path, String body) throws Exception {

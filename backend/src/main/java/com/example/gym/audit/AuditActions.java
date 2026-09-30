@@ -41,7 +41,6 @@ public final class AuditActions {
     public static final String MEMBERSHIP_FROZEN = "MEMBERSHIP_FROZEN";
     public static final String MEMBERSHIP_UNFROZEN = "MEMBERSHIP_UNFROZEN";
     public static final String MEMBERSHIP_CANCELLED = "MEMBERSHIP_CANCELLED";
-    public static final String MEMBERSHIP_DELETED = "MEMBERSHIP_DELETED";
 
     public static final String MEMBERSHIP_DATES_UPDATED = "MEMBERSHIP_DATES_UPDATED";
     public static final String MEMBERSHIP_DISCOUNT = "MEMBERSHIP_DISCOUNT";

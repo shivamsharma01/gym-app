@@ -1,8 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { Link, NavLink, useNavigate, useParams } from 'react-router'
 import { Badge, Button, Card, Input, Label, PageHeader, Select, Skeleton, Table, TableShell, Textarea, THead, Th, Td, Tr } from '@/components/ui'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -96,9 +97,12 @@ function Overview({ device }: { device: Device }) {
     queryKey: ['device-health', device.id],
     queryFn: () => api<DeviceHealth>(`/api/v1/devices/${device.id}/health`),
   })
+  const [conflictPage, setConflictPage] = useState(0)
   const conflicts = useQuery({
-    queryKey: ['device-conflicts', device.id],
-    queryFn: () => api<PageResponse<ReconciliationConflict>>(`/api/v1/devices/${device.id}/conflicts?size=20`),
+    queryKey: ['device-conflicts', device.id, conflictPage],
+    queryFn: () =>
+      api<PageResponse<ReconciliationConflict>>(`/api/v1/devices/${device.id}/conflicts?page=${conflictPage}&size=20`),
+    placeholderData: keepPreviousData,
   })
   const reconcile = useMutation({
     mutationFn: () => api<SyncCommand>(`/api/v1/devices/${device.id}/reconcile`, { method: 'POST' }),
@@ -227,7 +231,7 @@ function Overview({ device }: { device: Device }) {
       {conflicts.data && conflicts.data.content.length > 0 ? (
         <Card className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-            Reconciliation conflicts ({conflicts.data.content.length})
+            Reconciliation conflicts ({conflicts.data.totalElements})
           </h2>
           <ul className="divide-y divide-line">
             {conflicts.data.content.map((c) => (
@@ -261,6 +265,7 @@ function Overview({ device }: { device: Device }) {
               </li>
             ))}
           </ul>
+          <PageNav data={conflicts.data} onPageChange={setConflictPage} />
         </Card>
       ) : null}
       <p className="text-sm text-muted">
@@ -273,29 +278,34 @@ function Overview({ device }: { device: Device }) {
 
 function Events() {
   const { has } = useAuth()
+  const [page, setPage] = useState(0)
   const events = useQuery({
-    queryKey: ['security-events'],
-    queryFn: () => api<PageResponse<SecurityEvent>>('/api/v1/security-events?size=30'),
+    queryKey: ['security-events', page],
+    queryFn: () => api<PageResponse<SecurityEvent>>(`/api/v1/security-events?page=${page}&size=30`),
     enabled: has('SECURITY_ALERT_VIEW'),
+    placeholderData: keepPreviousData,
   })
   if (!has('SECURITY_ALERT_VIEW')) {
-    return <p className="text-sm text-muted">You do not have permission to view security events.</p>
+    return <p className="text-sm text-muted">Security events are not part of your role. Ask an admin to change your role if you need them.</p>
   }
   if (events.isLoading) return <Skeleton className="h-32" />
   if (events.error) return <QueryError error={events.error} />
   if (!events.data?.content.length) return <p className="text-sm text-muted">No security events yet.</p>
   return (
-    <ul className="divide-y divide-line rounded-xl border border-line">
-      {events.data.content.map((e) => (
-        <li key={e.id} className="px-4 py-3 text-sm">
-          <div className="flex justify-between gap-2">
-            <span className="font-semibold">{e.type}</span>
-            <span className="text-muted">{formatDateTime(e.occurredAt)}</span>
-          </div>
-          <p className="mt-1 text-muted">{e.details ?? '—'}</p>
-        </li>
-      ))}
-    </ul>
+    <div>
+      <ul className="divide-y divide-line rounded-xl border border-line">
+        {events.data.content.map((e) => (
+          <li key={e.id} className="px-4 py-3 text-sm">
+            <div className="flex justify-between gap-2">
+              <span className="font-semibold">{e.type}</span>
+              <span className="text-muted">{formatDateTime(e.occurredAt)}</span>
+            </div>
+            <p className="mt-1 text-muted">{e.details ?? '—'}</p>
+          </li>
+        ))}
+      </ul>
+      <PageNav data={events.data} onPageChange={setPage} />
+    </div>
   )
 }
 
@@ -303,13 +313,15 @@ function Sync({ deviceId }: { deviceId: string }) {
   const { has } = useAuth()
   const qc = useQueryClient()
   const [openOnly, setOpenOnly] = useState(true)
+  const [page, setPage] = useState(0)
   const commands = useQuery({
-    queryKey: ['sync-commands', deviceId, openOnly],
+    queryKey: ['sync-commands', deviceId, openOnly, page],
     queryFn: () =>
       api<PageResponse<SyncCommand>>(
-        `/api/v1/sync-commands?deviceId=${deviceId}&size=50&openOnly=${openOnly}`,
+        `/api/v1/sync-commands?deviceId=${deviceId}&page=${page}&size=25&openOnly=${openOnly}`,
       ),
     refetchInterval: 15_000,
+    placeholderData: keepPreviousData,
   })
   const retry = useMutation({
     mutationFn: (id: string) => api<SyncCommand>(`/api/v1/sync-commands/${id}/retry`, { method: 'POST' }),
@@ -335,10 +347,10 @@ function Sync({ deviceId }: { deviceId: string }) {
           here until they can be delivered.
         </p>
         <div className="flex gap-2">
-          <Button size="sm" variant={openOnly ? 'primary' : 'outline'} onClick={() => setOpenOnly(true)}>
+          <Button size="sm" variant={openOnly ? 'primary' : 'outline'} onClick={() => { setOpenOnly(true); setPage(0) }}>
             Open queue
           </Button>
-          <Button size="sm" variant={!openOnly ? 'primary' : 'outline'} onClick={() => setOpenOnly(false)}>
+          <Button size="sm" variant={!openOnly ? 'primary' : 'outline'} onClick={() => { setOpenOnly(false); setPage(0) }}>
             All history
           </Button>
         </div>
@@ -403,6 +415,9 @@ function Sync({ deviceId }: { deviceId: string }) {
           </Table>
         </TableShell>
       ) : null}
+      {commands.data && commands.data.content.length > 0 ? (
+        <PageNav data={commands.data} onPageChange={setPage} />
+      ) : null}
     </div>
   )
 }
@@ -446,7 +461,7 @@ function Settings({ device }: { device: Device }) {
     },
   })
   if (!has('DEVICE_MANAGE')) {
-    return <p className="text-sm text-muted">Read-only. You need DEVICE_MANAGE to change settings.</p>
+    return <p className="text-sm text-muted">Read-only. Changing device settings is not part of your role; ask an admin to change your role if you need it.</p>
   }
   return (
     <form
@@ -530,7 +545,7 @@ function DoorControl({ deviceId }: { deviceId: string }) {
     <Card className="max-w-lg space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Remote door</h2>
       <p className="text-sm text-muted">
-        High-risk physical operation. Requires confirmation, a reason, and DEVICE_REMOTE_CONTROL. The command is queued;
+        High-risk physical operation. Requires confirmation and a reason. The command is queued;
         this screen does not claim the lock moved.
       </p>
       <Select value={action} onChange={(e) => setAction(e.target.value)}>

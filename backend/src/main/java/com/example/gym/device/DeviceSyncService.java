@@ -335,7 +335,7 @@ public class DeviceSyncService {
                 && !othersOpen(command, USER_TYPES) && mapping.getSyncState() == DeviceSyncState.PENDING) {
             mapping.setSyncState(DeviceSyncState.NOT_SYNCED);
             mappingRepository.save(mapping);
-            refreshMembershipSyncState(command.getMembershipId(), command.getMemberId());
+            refreshMembershipSyncState(command.getMemberId());
         }
     }
 
@@ -536,45 +536,45 @@ public class DeviceSyncService {
                     mappingRepository.save(mapping);
                 }
             }
-            refreshMembershipSyncState(command.getMembershipId(), command.getMemberId());
+            refreshMembershipSyncState(command.getMemberId());
         } else if (command.getMembershipId() != null) {
             Membership membership = membershipRepository.findById(command.getMembershipId()).orElse(null);
             if (membership != null) {
-                refreshMembershipSyncState(command.getMembershipId(), membership.getMemberId());
+                refreshMembershipSyncState(membership.getMemberId());
             }
         }
     }
 
-    private void refreshMembershipSyncState(Long membershipId, Long memberId) {
-        if (membershipId == null || memberId == null) {
+    /**
+     * Membership {@code device_sync_state} summarises every device of the member, so it is
+     * recomputed for all of the member's memberships whenever any mapping changes, whatever
+     * command caused it.
+     */
+    private void refreshMembershipSyncState(Long memberId) {
+        if (memberId == null) {
             return;
         }
-        Membership membership = membershipRepository.findById(membershipId).orElse(null);
-        if (membership == null) {
+        List<Membership> memberships = membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(memberId);
+        if (memberships.isEmpty()) {
             return;
         }
         List<MemberDeviceMapping> mappings = mappingRepository.findByMemberId(memberId);
+        DeviceSyncState summary;
         if (mappings.isEmpty()) {
-            membership.setDeviceSyncState(DeviceSyncState.NOT_SYNCED);
-            membershipRepository.save(membership);
-            return;
-        }
-        boolean anyFailed = mappings.stream().anyMatch(m -> m.getSyncState() == DeviceSyncState.FAILED);
-        boolean anyPending = mappings.stream().anyMatch(m ->
-                m.getSyncState() == DeviceSyncState.PENDING
-                        || m.getSyncState() == DeviceSyncState.NOT_SYNCED
-                        || m.getSyncState() == DeviceSyncState.OFFLINE);
-        boolean allSynced = mappings.stream().allMatch(m -> m.getSyncState() == DeviceSyncState.SYNCED);
-        if (allSynced) {
-            membership.setDeviceSyncState(DeviceSyncState.SYNCED);
-        } else if (anyFailed) {
-            membership.setDeviceSyncState(DeviceSyncState.FAILED);
-        } else if (anyPending) {
-            membership.setDeviceSyncState(DeviceSyncState.PENDING);
+            summary = DeviceSyncState.NOT_SYNCED;
+        } else if (mappings.stream().allMatch(m -> m.getSyncState() == DeviceSyncState.SYNCED)) {
+            summary = DeviceSyncState.SYNCED;
+        } else if (mappings.stream().anyMatch(m -> m.getSyncState() == DeviceSyncState.FAILED)) {
+            summary = DeviceSyncState.FAILED;
         } else {
-            membership.setDeviceSyncState(DeviceSyncState.PENDING);
+            summary = DeviceSyncState.PENDING;
         }
-        membershipRepository.save(membership);
+        for (Membership membership : memberships) {
+            if (membership.getDeviceSyncState() != summary) {
+                membership.setDeviceSyncState(summary);
+                membershipRepository.save(membership);
+            }
+        }
     }
 
     private String truncate(String value, int max) {

@@ -1,7 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
@@ -29,15 +30,20 @@ export function MembersPage() {
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
   const [status, setStatus] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL')
+  const [page, setPage] = useState(0)
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(q), 300)
+    const t = setTimeout(() => {
+      setDebounced(q)
+      setPage(0)
+    }, 300)
     return () => clearTimeout(t)
   }, [q])
 
   const members = useQuery({
-    queryKey: ['members', debounced, status],
+    queryKey: ['members', debounced, status, page],
+    placeholderData: keepPreviousData,
     queryFn: () => {
-      const params = new URLSearchParams({ page: '0', size: '50' })
+      const params = new URLSearchParams({ page: String(page), size: '25' })
       if (debounced) params.set('q', debounced)
       if (status !== 'ALL') params.set('status', status)
       return api<PageResponse<Member>>(`/api/v1/members?${params}`)
@@ -68,7 +74,10 @@ export function MembersPage() {
         <Select
           aria-label="Filter by status"
           value={status}
-          onChange={(e) => setStatus(e.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')}
+          onChange={(e) => {
+            setStatus(e.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')
+            setPage(0)
+          }}
           className="w-40"
         >
           <option value="ALL">All statuses</option>
@@ -128,6 +137,9 @@ export function MembersPage() {
             </tbody>
           </Table>
         </TableShell>
+      ) : null}
+      {members.data && members.data.content.length > 0 ? (
+        <PageNav data={members.data} onPageChange={setPage} />
       ) : null}
     </div>
   )

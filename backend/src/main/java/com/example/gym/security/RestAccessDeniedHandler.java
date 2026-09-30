@@ -28,7 +28,7 @@ public class RestAccessDeniedHandler implements AccessDeniedHandler {
     public void handle(HttpServletRequest request, HttpServletResponse response,
                        AccessDeniedException accessDeniedException) throws IOException {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(
-                HttpStatus.FORBIDDEN, "You do not have permission to perform this action");
+                HttpStatus.FORBIDDEN, "Your role does not allow this action. Ask an admin to change your role if you need it.");
         pd.setType(URI.create("urn:gym:error:access_denied"));
         pd.setTitle(HttpStatus.FORBIDDEN.getReasonPhrase());
         pd.setProperty("code", "ACCESS_DENIED");

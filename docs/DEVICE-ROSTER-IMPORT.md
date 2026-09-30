@@ -13,7 +13,7 @@ Face templates **stay on the devices**. This flow only creates Member / membersh
 | Topic | Decision |
 |--------|----------|
 | Same person on entrance + exit | One Member, mapped to **both** devices (matched by the device user id). |
-| Membership plan on import | Auto-create a plan named **Unknown** (price 0). Admins replace it later with the real plan. |
+| Membership plan on import | Auto-create a plan named **Fallback Membership plan for quick access** (price 0). Admins replace it later with the real plan. |
 | End date from device | Use the device validity end date when present. |
 | Missing end date | Set end date to **today + 1 year** and mark **end date inferred**. Never treat missing data as lifetime access. |
 | Start date | Device begin date if present; otherwise today. |
@@ -42,11 +42,11 @@ Face templates **stay on the devices**. This flow only creates Member / membersh
 
 ### After import (manual work — required)
 
-7. **Replace Unknown plans**  
-   For each imported member, change membership to the correct plan (cancel/create or use your normal membership flows). The Unknown plan is only a placeholder so access bookkeeping can exist without guessing the real product.
+7. **Replace fallback plans**  
+   For each imported member, change membership to the correct plan (cancel/create or use your normal membership flows). The fallback plan is only a placeholder so access bookkeeping can exist without guessing the real product.
 
 8. **Fix inferred end dates**  
-   On memberships marked “(end date inferred — review)”, set the real end date. Filter or scan members whose source is **Device** and plan is **Unknown**.
+   On memberships marked “(end date inferred — review)”, set the real end date. Filter or scan members whose source is **Device** and plan is the **fallback plan**.
 
 9. **Review frozen / inactive members**  
    Anyone who was frozen on the device is **INACTIVE** in the app. Confirm that is correct. Do not reactivate them unless the gym intends to restore access (and then unfreeze on the device as well via normal ops).
@@ -77,7 +77,7 @@ Face templates **stay on the devices**. This flow only creates Member / membersh
 ## What this does *not* do
 
 - Does not move faces off the device.
-- Does not invent the correct gym plan (always Unknown until staff fix it).
+- Does not invent the correct gym plan (always the fallback plan until staff fix it).
 - Does not auto-activate people who were disabled/frozen on the device.
 - Does not create payment receipts for imported memberships.
 - Does not replace a careful review of dates for anyone marked inferred.
@@ -88,5 +88,5 @@ Face templates **stay on the devices**. This flow only creates Member / membersh
 
 1. Sync Now on entrance and exit.  
 2. Import device users (once or twice).  
-3. Work the Unknown + inferred queues until plans and dates are correct.  
+3. Work the fallback-plan + inferred queues until plans and dates are correct.  
 4. Spot-check a few members at the door (app access status + device still recognizes them).

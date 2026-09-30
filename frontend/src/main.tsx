@@ -35,6 +35,7 @@ import { UsersPage } from '@/features/users/UsersPage'
 import { ApiError } from '@/lib/api'
 import { AuthProvider, useAuth } from '@/lib/auth'
 import { DEFAULT_GYM_SLUG } from '@/lib/brand'
+import { FEATURES } from '@/lib/features'
 import { GymSlugFromRoute } from '@/lib/GymSlug'
 import { isPlatformSuperAdmin, platformHomePath } from '@/lib/platform'
 import { AboutPage, FacilitiesPage, ServicesPage } from '@/public/ContentPages'
@@ -89,15 +90,19 @@ const gymChildren = [
   { path: 'devices/new', element: <DeviceNewPage /> },
   { path: 'devices/:id', element: <DeviceDetailPage /> },
   { path: 'devices/:id/:section', element: <DeviceDetailPage /> },
-  { path: 'enquiries', element: <EnquiriesPage /> },
+  ...(FEATURES.enquiries ? [{ path: 'enquiries', element: <EnquiriesPage /> }] : []),
   { path: 'reports', element: <ReportsPage /> },
   { path: 'reports/memberships', element: <MembershipReportPage /> },
   { path: 'reports/attendance', element: <Navigate to="/app/attendance" replace /> },
   { path: 'reports/payments', element: <Navigate to="/app/payments" replace /> },
   { path: 'reports/devices', element: <DeviceReportPage /> },
-  { path: 'notifications', element: <NotificationsPage /> },
-  { path: 'notifications/templates', element: <NotificationTemplatesPage /> },
-  { path: 'announcements', element: <AnnouncementsPage /> },
+  ...(FEATURES.notifications
+    ? [
+        { path: 'notifications', element: <NotificationsPage /> },
+        { path: 'notifications/templates', element: <NotificationTemplatesPage /> },
+        { path: 'announcements', element: <AnnouncementsPage /> },
+      ]
+    : []),
   { path: 'users', element: <UsersPage /> },
   { path: 'roles', element: <RolesPage /> },
   { path: 'settings', element: <SettingsPage /> },

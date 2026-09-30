@@ -1,7 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { ConfirmDialog } from '@/components/Dialog'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, EmptyState, Input, Label, PageHeader, Select, Skeleton } from '@/components/ui'
 import { api } from '@/lib/api'
@@ -28,9 +29,11 @@ function roleLabel(name: string) {
 export function UsersPage() {
   const { user: current } = useAuth()
   const qc = useQueryClient()
+  const [page, setPage] = useState(0)
   const users = useQuery({
-    queryKey: ['users'],
-    queryFn: () => api<PageResponse<StaffUser>>('/api/v1/users?size=50'),
+    queryKey: ['users', page],
+    queryFn: () => api<PageResponse<StaffUser>>(`/api/v1/users?page=${page}&size=20`),
+    placeholderData: keepPreviousData,
   })
   const catalog = useQuery({
     queryKey: ['roles'],
@@ -43,6 +46,7 @@ export function UsersPage() {
   const [role, setRole] = useState('STAFF')
   const [disableId, setDisableId] = useState<string | null>(null)
   const [enableId, setEnableId] = useState<string | null>(null)
+  const [roleChange, setRoleChange] = useState<{ user: StaffUser; role: string } | null>(null)
   const available = new Set((catalog.data ?? []).map((r) => r.name))
   const assignable = STAFF_ROLES.filter((r) => available.has(r.name))
   const selected = STAFF_ROLES.find((r) => r.name === role)
@@ -74,6 +78,11 @@ export function UsersPage() {
     mutationFn: (id: string) => api(`/api/v1/users/${id}/enable`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   })
+  const changeRole = useMutation({
+    mutationFn: ({ user, role }: { user: StaffUser; role: string }) =>
+      api(`/api/v1/users/${user.id}/roles`, { method: 'PUT', body: JSON.stringify({ roles: [role] }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
@@ -97,7 +106,24 @@ export function UsersPage() {
                     {u.username} · {u.roles.map(roleLabel).join(', ')}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {u.id !== current?.id && assignable.length > 0 ? (
+                    <Select
+                      aria-label={`Role for ${u.fullName}`}
+                      className="w-auto py-1.5 pr-8 text-xs"
+                      value={u.roles[0] ?? ''}
+                      onChange={(e) => setRoleChange({ user: u, role: e.target.value })}
+                    >
+                      {u.roles[0] && !assignable.some((r) => r.name === u.roles[0]) ? (
+                        <option value={u.roles[0]}>{roleLabel(u.roles[0])}</option>
+                      ) : null}
+                      {assignable.map((r) => (
+                        <option key={r.name} value={r.name}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </Select>
+                  ) : null}
                   <Badge tone={statusTone(u.status)}>{u.status}</Badge>
                   {u.status === 'ACTIVE' && u.id !== current?.id ? (
                     <Button variant="danger" size="sm" onClick={() => setDisableId(u.id)}>
@@ -113,6 +139,12 @@ export function UsersPage() {
               </div>
             ))}
           </Card>
+        ) : null}
+        {users.data && users.data.content.length > 0 ? <PageNav data={users.data} onPageChange={setPage} /> : null}
+        {changeRole.error ? (
+          <div className="mt-3">
+            <QueryError error={changeRole.error} />
+          </div>
         ) : null}
       </div>
       <Card>
@@ -139,6 +171,7 @@ export function UsersPage() {
         <Input value={fullName} onChange={(e) => setFullName(e.target.value)} />
         <Label htmlFor="new-user-password">Password</Label>
         <Input id="new-user-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <p className="text-xs text-muted">At least 10 characters.</p>
         <Label htmlFor="new-user-role">App role</Label>
         <Select id="new-user-role" value={role} onChange={(e) => setRole(e.target.value)} disabled={catalog.isLoading}>
           {assignable.length === 0 ? <option value={role}>{roleLabel(role)}</option> : null}
@@ -167,6 +200,22 @@ export function UsersPage() {
         onConfirm={() => {
           if (!disableId) return
           disable.mutate(disableId, { onSettled: () => setDisableId(null) })
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(roleChange)}
+        onClose={() => setRoleChange(null)}
+        title="Change this staff member's role?"
+        description={
+          roleChange
+            ? `${roleChange.user.fullName} becomes ${roleLabel(roleChange.role)}. Their permissions change to that role's set the next time their session refreshes.`
+            : ''
+        }
+        confirmLabel="Change role"
+        busy={changeRole.isPending}
+        onConfirm={() => {
+          if (!roleChange) return
+          changeRole.mutate(roleChange, { onSettled: () => setRoleChange(null) })
         }}
       />
       <ConfirmDialog

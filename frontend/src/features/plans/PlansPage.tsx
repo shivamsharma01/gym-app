@@ -1,9 +1,10 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { ConfirmDialog } from '@/components/Dialog'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, EmptyState, FieldError, Input, Label, PageHeader, Select, Skeleton, Textarea } from '@/components/ui'
 import { api } from '@/lib/api'
@@ -28,9 +29,11 @@ export function PlansPage() {
   const qc = useQueryClient()
   const [editing, setEditing] = useState<Plan | null>(null)
   const [archiveId, setArchiveId] = useState<string | null>(null)
+  const [page, setPage] = useState(0)
   const plans = useQuery({
-    queryKey: ['plans'],
-    queryFn: () => api<PageResponse<Plan>>('/api/v1/plans?size=50'),
+    queryKey: ['plans', 'page', page],
+    queryFn: () => api<PageResponse<Plan>>(`/api/v1/plans?page=${page}&size=20`),
+    placeholderData: keepPreviousData,
   })
   const form = useForm<Form>({
     resolver: zodResolver(schema),
@@ -108,6 +111,7 @@ export function PlansPage() {
             </Card>
           ))}
         </div>
+        {plans.data && plans.data.content.length > 0 ? <PageNav data={plans.data} onPageChange={setPage} /> : null}
       </div>
       {has('MEMBERSHIP_CREATE') || (editing && has('MEMBERSHIP_UPDATE')) ? (
         <Card>

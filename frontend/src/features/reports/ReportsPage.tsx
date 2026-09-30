@@ -169,11 +169,13 @@ function PagedTable<T>({
   return (
       <>
         {children(pageRows)}
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-muted">
-            {start + 1}–{start + pageRows.length} of {rows.length}
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
+        <Pager
+            page={safePage}
+            totalPages={totalPages}
+            totalElements={rows.length}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            extra={
             <label className="flex items-center gap-2 text-xs text-muted">
               Show
               <Select
@@ -195,9 +197,8 @@ function PagedTable<T>({
                 ))}
               </Select>
             </label>
-            <Pager page={safePage} totalPages={totalPages} onPageChange={setPage} />
-          </div>
-        </div>
+            }
+        />
       </>
   );
 }

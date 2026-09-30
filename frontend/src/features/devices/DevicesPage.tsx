@@ -1,8 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { MonitorSmartphone } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { Dialog } from '@/components/Dialog'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
@@ -30,13 +31,17 @@ import type { Device, Gateway, GatewayCreated, PageResponse } from '@/lib/types'
 export function DevicesPage() {
   const { has } = useAuth()
   const qc = useQueryClient()
+  const [devicePage, setDevicePage] = useState(0)
+  const [gatewayPage, setGatewayPage] = useState(0)
   const devices = useQuery({
-    queryKey: ['devices'],
-    queryFn: () => api<PageResponse<Device>>('/api/v1/devices?size=50'),
+    queryKey: ['devices', 'page', devicePage],
+    queryFn: () => api<PageResponse<Device>>(`/api/v1/devices?page=${devicePage}&size=20`),
+    placeholderData: keepPreviousData,
   })
   const gateways = useQuery({
-    queryKey: ['gateways'],
-    queryFn: () => api<PageResponse<Gateway>>('/api/v1/gateways?size=50'),
+    queryKey: ['gateways', 'page', gatewayPage],
+    queryFn: () => api<PageResponse<Gateway>>(`/api/v1/gateways?page=${gatewayPage}&size=10`),
+    placeholderData: keepPreviousData,
   })
   const [gwName, setGwName] = useState('')
   const [issued, setIssued] = useState<GatewayCreated | null>(null)
@@ -110,6 +115,9 @@ export function DevicesPage() {
           </Table>
         </TableShell>
       ) : null}
+      {devices.data && devices.data.content.length > 0 ? (
+        <PageNav data={devices.data} onPageChange={setDevicePage} />
+      ) : null}
 
       <section>
         <SectionTitle title="Gateways" description="Windows agents that bridge tablets to this backend" />
@@ -137,6 +145,9 @@ export function DevicesPage() {
             </Card>
           ))}
         </div>
+        {gateways.data && gateways.data.content.length > 0 ? (
+          <PageNav data={gateways.data} onPageChange={setGatewayPage} />
+        ) : null}
         {has('DEVICE_MANAGE') ? (
           <Card className="mt-4 max-w-lg space-y-3">
             <h3 className="text-sm font-semibold tracking-tight">Create gateway</h3>

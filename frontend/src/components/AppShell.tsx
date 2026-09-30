@@ -30,6 +30,7 @@ import { brandDisplayName, brandLogo, type PublicSite } from '@/lib/brand'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useStaffLive } from '@/lib/live'
+import { FEATURES } from '@/lib/features'
 import { isPlatformSuperAdmin } from '@/lib/platform'
 import { cycleTheme, readStoredTheme, type ThemeMode } from '@/lib/theme'
 import type { Gateway, PageResponse } from '@/lib/types'
@@ -47,8 +48,10 @@ const operations: NavItem[] = [
 
 const facility: NavItem[] = [
   { to: '/app/devices', label: 'Devices', icon: MonitorSmartphone, perm: 'DEVICE_VIEW' },
-  { to: '/app/enquiries', label: 'Enquiries', icon: Inbox, perm: 'ENQUIRY_VIEW' },
-  { to: '/app/notifications', label: 'Notifications', icon: Bell, perm: 'NOTIFICATION_SEND' },
+  ...(FEATURES.enquiries ? [{ to: '/app/enquiries', label: 'Enquiries', icon: Inbox, perm: 'ENQUIRY_VIEW' }] : []),
+  ...(FEATURES.notifications
+    ? [{ to: '/app/notifications', label: 'Notifications', icon: Bell, perm: 'NOTIFICATION_SEND' }]
+    : []),
   { to: '/app/reports', label: 'Reports', icon: BarChart3, perm: 'REPORT_VIEW' },
 ]
 

@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.DeviceMemberImporter;
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.domain.EnrollmentStatus;
 import com.example.gym.device.domain.SyncCommandType;
@@ -128,7 +129,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-        assertThat(readJson(memberships).get(0).get("planName").asString()).isEqualTo("Unknown");
+        assertThat(readJson(memberships).get(0).get("planName").asString()).isEqualTo(DeviceMemberImporter.UNKNOWN_PLAN_NAME);
         assertThat(readJson(memberships).get(0).get("paymentStatus").asString())
                 .isEqualTo(MembershipPaymentStatus.PAID.name());
         assertThat(readJson(memberships).get(0).get("endDateInferred").asBoolean()).isFalse();

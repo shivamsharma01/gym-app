@@ -84,4 +84,4 @@ See [deploy/README.md](../deploy/README.md) for TLS, bootstrap, rate limits, and
 
 ## Device roster import (IAS / existing TrueFace users)
 
-When a gym already has users enrolled on TrueFace devices and needs them as app Members: see [DEVICE-ROSTER-IMPORT.md](DEVICE-ROSTER-IMPORT.md) for product decisions and the admin checklist (Unknown plan, inferred end dates, frozen → inactive, no face export).
+When a gym already has users enrolled on TrueFace devices and needs them as app Members: see [DEVICE-ROSTER-IMPORT.md](DEVICE-ROSTER-IMPORT.md) for product decisions and the admin checklist (fallback plan, inferred end dates, frozen → inactive, no face export).

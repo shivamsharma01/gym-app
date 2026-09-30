@@ -168,6 +168,31 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void membershipDeviceStateFollowsCommandsThatCarryNoMembership() {
+        for (var command : deviceSyncCommandRepository.findAll()) {
+            if (command.getMemberId() != null) {
+                gatewayMessageService.process(envelope("SYNC_RESULT", command.getCorrelationId(), "{\"ok\":true}"));
+            }
+        }
+        var mapping = memberDeviceMappingRepository.findAll().getFirst();
+        mapping.setSyncState(com.example.gym.membership.DeviceSyncState.FAILED);
+        memberDeviceMappingRepository.save(mapping);
+        var membership = membershipRepository.findByPublicIdAndDeletedFalse(membershipId).orElseThrow();
+        membership.setDeviceSyncState(com.example.gym.membership.DeviceSyncState.FAILED);
+        membershipRepository.save(membership);
+
+        // A later profile push (no membership on the command) brings the device back in line.
+        var update = deviceSyncService.enqueue(mapping.getTenantId(), mapping.getDeviceId(), mapping.getMemberId(),
+                null, SyncCommandType.UPDATE_USER, java.util.Map.of("deviceUserId", mapping.getDeviceUserId()));
+        assertThat(membershipRepository.findByPublicIdAndDeletedFalse(membershipId).orElseThrow().getDeviceSyncState().name())
+                .isEqualTo("PENDING");
+        gatewayMessageService.process(envelope("SYNC_RESULT", update.getCorrelationId(), "{\"ok\":true}"));
+
+        assertThat(membershipRepository.findByPublicIdAndDeletedFalse(membershipId).orElseThrow().getDeviceSyncState().name())
+                .isEqualTo("SYNCED");
+    }
+
+    @Test
     void listingSyncCommandsWithoutAMemberDoesNotFail() throws Exception {
         deviceSyncCommandRepository.deleteAllInBatch();
         var device = deviceRepository.findAll().getFirst();

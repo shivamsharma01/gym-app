@@ -1,5 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Activity } from 'lucide-react'
+import { useState } from 'react'
+import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton } from '@/components/ui'
 import { api } from '@/lib/api'
@@ -8,10 +10,12 @@ import { statusTone } from '@/lib/status'
 import type { Attendance, PageResponse } from '@/lib/types'
 
 export function AttendanceLivePage() {
+  const [page, setPage] = useState(0)
   const attendance = useQuery({
-    queryKey: ['attendance', 'live'],
-    queryFn: () => api<PageResponse<Attendance>>('/api/v1/attendance?page=0&size=25'),
+    queryKey: ['attendance', 'live', page],
+    queryFn: () => api<PageResponse<Attendance>>(`/api/v1/attendance?page=${page}&size=25`),
     refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
   })
 
   return (
@@ -49,6 +53,9 @@ export function AttendanceLivePage() {
             </div>
           ))}
         </Card>
+      ) : null}
+      {attendance.data && attendance.data.content.length > 0 ? (
+        <PageNav data={attendance.data} onPageChange={setPage} />
       ) : null}
     </div>
   )

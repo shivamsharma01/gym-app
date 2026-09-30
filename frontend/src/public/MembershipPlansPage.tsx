@@ -3,6 +3,7 @@ import { gymPath } from '@/lib/brand'
 import { money } from '@/lib/cn'
 import { useGymSlug } from '@/lib/GymSlug'
 import { usePublicPlans } from '@/public/HomePage'
+import { FEATURES } from '@/lib/features'
 
 export function MembershipPlansPage() {
   const slug = useGymSlug()
@@ -19,7 +20,7 @@ export function MembershipPlansPage() {
             <div className="mt-6 text-3xl font-extrabold text-[#c8f542]">{money(plan.price, plan.currency)}</div>
             <div className="text-sm text-white/50">{plan.durationDays} days</div>
             <Link to={gymPath(slug, '/contact')} className="mt-6 text-sm font-bold text-[#c8f542]">
-              Enquire
+              {FEATURES.enquiries ? 'Enquire' : 'Contact us'}
             </Link>
           </article>
         ))}

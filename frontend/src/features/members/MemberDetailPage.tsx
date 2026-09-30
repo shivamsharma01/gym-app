@@ -2,7 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
 import { ConfirmDialog } from '@/components/Dialog'
-import { Pager } from '@/components/Pager'
+import { PageNav, Pager } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, EmptyState, PageHeader, SectionTitle, Skeleton } from '@/components/ui'
 import { useMemberPhotoUrl } from '@/features/members/MemberPhotoField'
@@ -11,6 +11,7 @@ import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatDateTime, money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
+import { usePagedRows } from '@/lib/usePagedRows'
 import type { AccessStatus, Attendance, Member, MemberDeviceSync, Membership, PageResponse, Payment } from '@/lib/types'
 
 const ATTENDANCE_PAGE_SIZE = 20
@@ -42,6 +43,7 @@ export function MemberDetailPage() {
     queryFn: () => api<Payment[]>(`/api/v1/members/${id}/payments`),
     enabled: has('PAYMENT_VIEW'),
   })
+  const paymentRows = usePagedRows(payments.data ?? [], 10)
   const photo = useMemberPhotoUrl(id)
   const sync = useQuery({
     queryKey: ['member-device-sync', id],
@@ -172,16 +174,19 @@ export function MemberDetailPage() {
               body="This list is history only. Record cash/UPI/card on Payments, pick this member, and link the membership."
             />
           ) : (
-            <Card padded={false} className="divide-y divide-line overflow-hidden">
-              {payments.data.map((p) => (
-                <div key={p.id} className="flex justify-between gap-3 px-4 py-3 text-sm">
-                  <span>
-                    {money(p.amount, p.currency)} · {p.method}
-                  </span>
-                  <Badge tone={statusTone(p.status)}>{p.status}</Badge>
-                </div>
-              ))}
-            </Card>
+            <>
+              <Card padded={false} className="divide-y divide-line overflow-hidden">
+                {paymentRows.pageRows.map((p) => (
+                  <div key={p.id} className="flex justify-between gap-3 px-4 py-3 text-sm">
+                    <span>
+                      {money(p.amount, p.currency)} · {p.method}
+                    </span>
+                    <Badge tone={statusTone(p.status)}>{p.status}</Badge>
+                  </div>
+                ))}
+              </Card>
+              <Pager {...paymentRows.pager} />
+            </>
           )}
           {has('PAYMENT_CREATE') ? (
             <Link to="/app/payments" className="mt-3 inline-block text-sm font-medium text-accent hover:underline">
@@ -208,18 +213,7 @@ export function MemberDetailPage() {
                   </div>
                 ))}
               </Card>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-muted">
-                  {attendance.data.totalElements} {attendance.data.totalElements === 1 ? 'entry' : 'entries'}
-                </p>
-                {attendance.data.totalPages > 1 ? (
-                  <Pager
-                    page={attendancePage}
-                    totalPages={attendance.data.totalPages}
-                    onPageChange={setAttendancePage}
-                  />
-                ) : null}
-              </div>
+              <PageNav data={attendance.data} onPageChange={setAttendancePage} />
             </>
           )}
         </section>

@@ -18,8 +18,6 @@ export const DEVICE_MODELS = ['TrueFace 3000'] as const
 /** Staff-login roles for /app/users. Gym members are a different record and are not listed here. */
 export const STAFF_ROLES = [
   { name: 'STAFF', label: 'Staff', description: 'Day-to-day members, memberships, and payments' },
-  { name: 'FRONT_DESK', label: 'Front desk', description: 'Check-in, member lookup, and taking payment' },
   { name: 'REPORT_VIEWER', label: 'Report viewer', description: 'Read-only reports' },
-  { name: 'GYM_ADMIN', label: 'Gym admin', description: 'Run the gym, including staff accounts and devices' },
-  { name: 'GYM_OWNER', label: 'Gym owner', description: 'Full gym access, including roles' },
+  { name: 'GYM_ADMIN', label: 'Gym admin', description: 'Full gym access, including staff accounts, devices, and roles' },
 ] as const

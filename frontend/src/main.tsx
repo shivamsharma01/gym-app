@@ -28,7 +28,7 @@ import { PlatformActuatorPage } from '@/features/platform/PlatformActuatorPage'
 import { PlatformGymsPage } from '@/features/platform/PlatformGymsPage'
 import { PlatformStaffPasswordPage } from '@/features/platform/PlatformStaffPasswordPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
-import { DeviceReportPage, MembershipReportPage, ReportsPage } from '@/features/reports/ReportsPage'
+import { DeviceReportPage, ReportsPage } from '@/features/reports/ReportsPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { RolesPage } from '@/features/users/RolesPage'
 import { UsersPage } from '@/features/users/UsersPage'
@@ -92,7 +92,6 @@ const gymChildren = [
   { path: 'devices/:id/:section', element: <DeviceDetailPage /> },
   ...(FEATURES.enquiries ? [{ path: 'enquiries', element: <EnquiriesPage /> }] : []),
   { path: 'reports', element: <ReportsPage /> },
-  { path: 'reports/memberships', element: <MembershipReportPage /> },
   { path: 'reports/attendance', element: <Navigate to="/app/attendance" replace /> },
   { path: 'reports/payments', element: <Navigate to="/app/payments" replace /> },
   { path: 'reports/devices', element: <DeviceReportPage /> },

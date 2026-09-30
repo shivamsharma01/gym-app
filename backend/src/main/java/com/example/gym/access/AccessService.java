@@ -4,7 +4,6 @@ import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.membership.Membership;
-import com.example.gym.membership.MembershipPaymentStatus;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.membership.MembershipStatus;
 import java.time.LocalDate;
@@ -60,9 +59,7 @@ public class AccessService {
             case FROZEN -> deny(member, m, today, AccessReason.MEMBERSHIP_FROZEN);
             case EXPIRED -> deny(member, m, today, AccessReason.MEMBERSHIP_EXPIRED);
             case CANCELLED -> deny(member, m, today, AccessReason.MEMBERSHIP_CANCELLED);
-            case ACTIVE -> m.getPaymentStatus() == MembershipPaymentStatus.UNPAID
-                    ? deny(member, m, today, AccessReason.PAYMENT_OVERDUE)
-                    : allow(member, m, today);
+            case ACTIVE -> allow(member, m, today);
             case PENDING -> deny(member, m, today, AccessReason.NO_ACTIVE_MEMBERSHIP);
         };
     }

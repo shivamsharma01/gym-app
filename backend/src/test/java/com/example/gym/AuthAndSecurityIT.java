@@ -25,7 +25,7 @@ class AuthAndSecurityIT extends AbstractIntegrationTest {
         resetDatabase();
         tenant = createTenant("Acme Gym", "acme-gym");
         createUser(tenant.getId(), "acme-admin", "admin@acme.local", "GYM_ADMIN");
-        createUser(tenant.getId(), "acme-frontdesk", "fd@acme.local", "FRONT_DESK");
+        createUser(tenant.getId(), "acme-staff", "staff@acme.local", "STAFF");
     }
 
     @Test
@@ -60,8 +60,8 @@ class AuthAndSecurityIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void frontDeskWithoutUserManageIsForbidden() throws Exception {
-        String token = login("acme-frontdesk", DEFAULT_PASSWORD);
+    void staffWithoutUserManageIsForbidden() throws Exception {
+        String token = login("acme-staff", DEFAULT_PASSWORD);
         mockMvc.perform(get("/api/v1/users").header("Authorization", "Bearer " + token))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
@@ -166,13 +166,13 @@ class AuthAndSecurityIT extends AbstractIntegrationTest {
         for (int i = 0; i < 5; i++) {
             mockMvc.perform(post("/api/v1/auth/login")
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content(loginBody("acme-frontdesk", "wrong-password")))
+                            .content(loginBody("acme-staff", "wrong-password")))
                     .andExpect(status().isUnauthorized());
         }
         // Even the correct password is now rejected because the account is locked.
         mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(loginBody("acme-frontdesk", DEFAULT_PASSWORD)))
+                        .content(loginBody("acme-staff", DEFAULT_PASSWORD)))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("locked")));
     }

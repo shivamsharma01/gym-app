@@ -24,7 +24,7 @@ class MemberCoverageTest {
     }
 
     @Test
-    void aPlanCoveringTodayStaysActiveEvenWhenTheAccountIsDeactivated() {
+    void aPlanCoveringTodayStaysActiveEvenWhenNothingHasBeenPaid() {
         LocalDate today = LocalDate.now();
         Membership current = membership("Gold", today.minusDays(1), today.plusDays(10), MembershipStatus.ACTIVE);
 

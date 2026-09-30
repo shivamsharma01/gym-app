@@ -94,7 +94,7 @@ export function UsersPage() {
         {users.isLoading ? <Skeleton className="h-32" /> : null}
         {users.error ? <QueryError error={users.error} onRetry={() => void users.refetch()} /> : null}
         {users.data && users.data.content.length === 0 ? (
-          <EmptyState title="No staff accounts" body="Create a login for front-desk or gym admins." />
+          <EmptyState title="No staff accounts" body="Create a login for staff or gym admins." />
         ) : null}
         {users.data && users.data.content.length > 0 ? (
           <Card padded={false} className="divide-y divide-line overflow-hidden">

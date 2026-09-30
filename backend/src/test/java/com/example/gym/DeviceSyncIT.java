@@ -85,7 +85,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void newMemberIsAutoMappedAndUnpaidMembershipDisablesAccess() throws Exception {
+    void newMemberIsAutoMappedAndActiveMembershipEnablesAccess() throws Exception {
         var mappings = memberDeviceMappingRepository.findAll();
         assertThat(mappings).hasSize(1);
         assertThat(mappings.getFirst().getDeviceUserId()).isEqualTo("1001");
@@ -93,7 +93,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
         var commands = deviceSyncCommandRepository.findAll();
         assertThat(commands).extracting(c -> c.getType())
-                .contains(SyncCommandType.CREATE_USER, SyncCommandType.DISABLE_USER)
+                .contains(SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_VALIDITY)
                 .doesNotContain(SyncCommandType.UPSERT_FACE);
 
         mockMvc.perform(get("/api/v1/devices/" + deviceId + "/health")
@@ -131,7 +131,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .isEqualTo(SyncCommandState.SUCCEEDED);
         mockMvc.perform(get("/api/v1/members/" + memberId + "/access")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(jsonPath("$.reason").value("PAYMENT_OVERDUE"));
+                .andExpect(jsonPath("$.reason").value("ALLOWED"));
     }
 
     @Test
@@ -235,14 +235,6 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
     @Test
     void freezeEnqueuesDisableAndRemoteDoorRequiresConfirmation() throws Exception {
-        // Unpaid: already disabled. Paying the running membership enables it right away.
-        long paidAt = deviceSyncCommandRepository.count();
-        postJson("/api/v1/payments", "{\"memberId\":\"" + memberId + "\",\"membershipId\":\"" + membershipId
-                + "\",\"amount\":1000.00,\"method\":\"CASH\"}")
-                .andExpect(status().isCreated());
-        assertThat(deviceSyncCommandRepository.findAll().stream().skip(paidAt))
-                .anyMatch(c -> c.getType() == SyncCommandType.UPDATE_VALIDITY);
-
         long before = deviceSyncCommandRepository.count();
 
         postJson("/api/v1/memberships/" + membershipId + "/freeze", null)

@@ -21,7 +21,6 @@ import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberService;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.membership.Membership;
-import com.example.gym.membership.MembershipPaymentStatus;
 import com.example.gym.membership.MembershipService;
 import com.example.gym.membership.MembershipStatus;
 import java.time.Instant;
@@ -385,8 +384,9 @@ public class DeviceUserChangeService {
     /**
      * Applies frozen / validity edited on the device (only the device changed this, or its change is
      * the later one). Dates are applied as the device holds them; disabling freezes, enabling
-     * unfreezes. The payment rule is the only thing that can undo a device edit: enabling a member
-     * whose membership is unpaid is refused and the device is disabled again. Whenever the result
+     * unfreezes. A device enable is refused only when the member or membership cannot be active
+     * (inactive account, frozen, ended, or not started). Payment is not a reason to disable.
+     * Whenever the result
      * differs from what the device holds, the access change time becomes now so gateways take the
      * server's version.
      */
@@ -426,9 +426,6 @@ public class DeviceUserChangeService {
         }
         if (m.getStatus() == MembershipStatus.FROZEN) {
             return "membership is frozen";
-        }
-        if (m.getPaymentStatus() == MembershipPaymentStatus.UNPAID) {
-            return "membership is unpaid";
         }
         return "membership has not started";
     }

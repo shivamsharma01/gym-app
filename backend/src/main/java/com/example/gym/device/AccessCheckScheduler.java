@@ -13,10 +13,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Moves members' devices along as memberships start and end: when the membership on the devices
- * has ended, the next one's dates are sent (enabled if paid), or the member is disabled when there
- * is none; a membership that must wait for its start day is enabled on that day. Runs hourly
- * (only members whose window actually changed get commands) and once at startup to catch up after
- * downtime. "Today" is the server's local date, so the server must run in the gym's time zone.
+ * has ended, the next one's dates are sent (enabled when that plan is in force), or the member is
+ * disabled when there is none; a membership that must wait for its start day is enabled on that
+ * day. Payment is not consulted. Runs hourly (only members whose window actually changed get
+ * commands) and once at startup to catch up after downtime. "Today" is the server's local date,
+ * so the server must run in the gym's time zone.
  */
 @Component
 @ConditionalOnProperty(prefix = "app.gateway.outbox", name = "dispatcher-enabled",

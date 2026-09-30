@@ -56,10 +56,10 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.deviceSyncState").value("NOT_SYNCED"))
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
-        // Active but unpaid -> denied for payment.
+        // Active with nothing paid is still allowed. Payment is bookkeeping.
         getAccess(memberId)
-                .andExpect(jsonPath("$.allowed").value(false))
-                .andExpect(jsonPath("$.reason").value("PAYMENT_OVERDUE"));
+                .andExpect(jsonPath("$.allowed").value(true))
+                .andExpect(jsonPath("$.reason").value("ALLOWED"));
 
         // More than the unpaid balance is refused.
         post("/api/v1/payments",

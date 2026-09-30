@@ -455,6 +455,19 @@ class JsonHandler(BaseHTTPRequestHandler):
         raise NotImplementedError
 
     def body_bytes(self) -> bytes:
+        if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            chunks = []
+            while True:
+                line = self.rfile.readline().strip()
+                if not line:
+                    break
+                chunk_len = int(line, 16)
+                if chunk_len == 0:
+                    self.rfile.readline() # trailing CRLF
+                    break
+                chunks.append(self.rfile.read(chunk_len))
+                self.rfile.readline() # chunk trailing CRLF
+            return b"".join(chunks)
         length = int(self.headers.get("Content-Length") or 0)
         return self.rfile.read(length) if length > 0 else b""
 

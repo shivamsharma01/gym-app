@@ -169,4 +169,4 @@ Only a successful login to the real TrueFace3000 establishes practical compatibi
 
 ## What this is not
 
-Do not grow this project into the production gateway. After a real-device PASS, the next work is a separate .NET 10 Device Gateway with `DeviceAdapter`, WSS, outbox, etc.
+This folder is only the Linux SDK login check. The production gateway is `gateway/`.

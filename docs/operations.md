@@ -124,9 +124,4 @@ Open `gym.jfr` in JDK Mission Control. Do **not** expose JFR or heap dumps over 
 7. Hikari metrics if DB-ish slowness
 8. JFR if CPU/allocation mystery remains
 
-## Manual VPS notes
-
-- Ensure `LOG_PATH` writable (compose volume `gym-backend-logs`).
-- Do not publish backend `:8080` publicly if nginx is the edge; prefer bind to localhost or private network.
-- Point an external monitor at `/actuator/health` every 1–5 minutes.
-- After first prod SUPER_ADMIN bootstrap, clear `APP_BOOTSTRAP_SUPERADMIN_PASSWORD`.
+Deploy, log files, and the bootstrap password: [deploy/README.md](../deploy/README.md). Point an external monitor at `/actuator/health` every 1–5 minutes.

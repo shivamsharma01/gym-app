@@ -1,18 +1,14 @@
 # Docs
 
-Living documentation for the gym platform. Numbered **phase** write-ups (0–9) were delivery
-notes for a completed roadmap; they were removed — use git history if you need the old text.
+| Doc | Use it for |
+|-----|------------|
+| [deploy/README.md](../deploy/README.md) | VPS, Cloudflare SPA, backups, go-live |
+| [operations.md](operations.md) | Health, logs, rate limits, incidents |
+| [product.md](product.md) | How membership, devices, and import behave |
+| [device-sdk.md](device-sdk.md) | TrueFace / Dahua calls that are verified |
+| [notifications.md](notifications.md) | SMS events still waiting on the gym owner |
+| [architecture/0001-architecture-technology-decisions.md](architecture/0001-architecture-technology-decisions.md) | Why the stack is shaped this way |
 
-| Doc | Purpose |
-|-----|---------|
-| [deploy/README.md](../deploy/README.md) | **VPS deploy & go-live** (Docker, Nginx edge, Cloudflare, gateway cutover) |
-| [operations.md](operations.md) | Actuator, logs, rate limits, incident basics |
-| [product.md](product.md) | Open product decisions / follow-ups |
-| [DEVICE-ROSTER-IMPORT.md](DEVICE-ROSTER-IMPORT.md) | Import existing TrueFace users → Members (decisions + gym checklist) |
-| [device-sdk.md](device-sdk.md) | TrueFace / Dahua SDK capability notes |
-| [notifications.md](notifications.md) | Notification product requirements (future) |
-| [architecture/0001-architecture-technology-decisions.md](architecture/0001-architecture-technology-decisions.md) | ADRs |
-| [history.md](history.md) | What the phase roadmap covered (index only) |
+Component steps: [frontend](../frontend/README.md), [gateway](../gateway/README.md).
 
-Per-component READMEs: [frontend](../frontend/README.md), [gateway](../gateway/README.md).
-POC notes stay under `TrueFaceWindowsPOC/` / `TrueFaceLinuxPOC/`.
+The original build brief is [Smart_Gym_Copilot_Master_Prompt.md](../Smart_Gym_Copilot_Master_Prompt.md). It is requirements, not the runbook. Numbered phase notes were removed; `git log --all -- docs/PHASE-*.md` still has them.

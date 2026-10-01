@@ -3,21 +3,9 @@
 Public marketing pages live under `/g/{slug}`. Staff app is `/app/*`.
 Platform SUPER_ADMIN enrolls gyms at `/app/platform/gyms`.
 
-## Same-origin API (multi-domain SaaS)
+## Production
 
-Production builds leave `VITE_API_BASE` empty. The SPA calls relative paths against the
-current browser origin:
-
-| Path | Purpose |
-|------|---------|
-| `/api/*` | REST (JWT) |
-| `/live` | Staff WebSocket |
-| `/actuator/*` | Platform SUPER_ADMIN Actuator UI |
-| `/gateway` | **Not used by React** — Windows device gateway only |
-
-So `https://gym.kainazi.co.in` and `https://gym.heavyreps.in` can share one build.
-Cloudflare (or equivalent) must proxy `/api`, `/live`, `/gateway`, and `/actuator` to the
-VPS Nginx edge; static assets stay on Pages/Workers.
+Leave `VITE_API_BASE` empty. `/api`, `/live`, and `/actuator` are proxied to the VPS. `/gateway` is the Windows gateway, not this app. Deploy steps: [deploy/README.md](../deploy/README.md).
 
 ## Develop
 

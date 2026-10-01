@@ -131,6 +131,14 @@ export function MemberDetailPage() {
             <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
           </div>
         </div>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Terminal Level</div>
+          <div className="mt-1">
+            <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'neutral'}>
+              {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'Standard User'}
+            </Badge>
+          </div>
+        </div>
         <Badge tone={m.creationSource === 'DEVICE_IMPORT' ? 'warn' : 'ok'}>
           {m.creationSource === 'DEVICE_IMPORT' ? 'Created from device' : 'Created manually'}
         </Badge>
@@ -160,9 +168,14 @@ export function MemberDetailPage() {
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Gender</div>
             <div className="mt-1">{m.gender}</div>
           </div>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Terminal User Level</div>
+            <div className="mt-1 font-medium">
+              {m.deviceAuthority === 'ADMIN' ? 'Admin (Staff / Owner)' : 'Standard User (Member)'}
+            </div>
+          </div>
           <div className="sm:col-span-2">
-            Notes
-            <br />
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Notes</div>
             <span className="text-muted">{m.notes || '—'}</span>
           </div>
         </Card>
@@ -172,7 +185,7 @@ export function MemberDetailPage() {
         <section>
           <SectionTitle title="Membership" />
           {memberships.error ? <QueryError error={memberships.error} /> : null}
-          <MembershipPanel memberId={m.id} memberStatus={m.status} rows={memberships.data ?? []} />
+          <MembershipPanel memberId={m.id} memberStatus={m.status} memberAuthority={m.deviceAuthority} rows={memberships.data ?? []} />
         </section>
       ) : null}
 

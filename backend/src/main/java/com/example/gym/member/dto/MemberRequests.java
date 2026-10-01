@@ -24,7 +24,8 @@ public final class MemberRequests {
             Gender gender,
             @Size(max = 1000) String notes,
             /** Optional; auto-generated when blank. */
-            @Size(max = 32) String memberCode) {
+            @Size(max = 32) String memberCode,
+            String deviceAuthority) {
     }
 
     public record UpdateMember(
@@ -35,6 +36,11 @@ public final class MemberRequests {
             @Size(max = 10) String phone,
             @Past LocalDate dateOfBirth,
             Gender gender,
-            @Size(max = 1000) String notes) {
+            @Size(max = 1000) String notes,
+            String deviceAuthority) {
+    }
+
+    public record UpdateDeviceAuthority(
+            @NotBlank String authority) {
     }
 }

@@ -28,6 +28,7 @@ export function MemberEditPage() {
       dateOfBirth: member.data.dateOfBirth ?? '',
       gender: member.data.gender,
       notes: member.data.notes ?? '',
+      deviceAuthority: (member.data.deviceAuthority as 'USER' | 'ADMIN') ?? 'USER',
     })
   }, [member.data, form])
 
@@ -100,6 +101,13 @@ export function MemberEditPage() {
             <option value="FEMALE">Female</option>
             <option value="MALE">Male</option>
             <option value="OTHER">Other</option>
+          </Select>
+        </div>
+        <div>
+          <Label>Terminal Authority (Device User Level)</Label>
+          <Select {...form.register('deviceAuthority')}>
+            <option value="USER">Standard User (Member)</option>
+            <option value="ADMIN">Terminal Admin (Staff / Owner)</option>
           </Select>
         </div>
         <div>

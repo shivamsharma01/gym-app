@@ -12,6 +12,7 @@ export const memberFormSchema = z.object({
   dateOfBirth: z.string().optional(),
   gender: z.string(),
   notes: z.string().optional(),
+  deviceAuthority: z.enum(['USER', 'ADMIN']).optional(),
 })
 
 export type MemberFormValues = z.infer<typeof memberFormSchema>

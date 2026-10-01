@@ -7,6 +7,7 @@ export const PLAN_DURATIONS = [
   { days: 90, label: '3 months (90 days)' },
   { days: 180, label: '6 months (180 days)' },
   { days: 365, label: '1 year (365 days)' },
+  { days: 3650, label: '10 years (3650 days - Lifetime Pass)' },
 ] as const
 
 export const NOTIFICATION_TEMPLATE_KEYS = ['EXPIRY_REMINDER', 'WELCOME'] as const

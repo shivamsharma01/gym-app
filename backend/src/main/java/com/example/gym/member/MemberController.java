@@ -78,6 +78,16 @@ public class MemberController {
         return respond(memberService.update(id, request, SecurityUtils.currentTenantId()));
     }
 
+    @PutMapping("/{id}/authority")
+    @PreAuthorize("hasAuthority('ROLE_GYM_ADMIN') or hasAuthority('USER_MANAGE')")
+    @Operation(summary = "Update a member's terminal authority (USER or ADMIN)")
+    public MemberResponse updateAuthority(
+            @PathVariable String id,
+            @Valid @RequestBody com.example.gym.member.dto.MemberRequests.UpdateDeviceAuthority request) {
+        DeviceAuthority auth = DeviceAuthority.fromString(request.authority());
+        return respond(memberService.updateAuthority(id, auth, SecurityUtils.currentTenantId()));
+    }
+
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @PreAuthorize("hasAuthority('MEMBER_DELETE')")

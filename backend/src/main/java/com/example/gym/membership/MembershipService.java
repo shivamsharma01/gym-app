@@ -151,6 +151,10 @@ public class MembershipService {
 
         MembershipPlan plan = planService.requireActive(request.planId(), tenantId);
 
+        if (plan.getDurationDays() >= 3650 && member.getDeviceAuthority() != com.example.gym.member.DeviceAuthority.ADMIN) {
+            throw CommonExceptions.conflict("Lifetime pass (10 years) can only be assigned to members with Admin authority.");
+        }
+
         LocalDate start =
                 request.startDate() != null
                         ? request.startDate()
@@ -245,7 +249,7 @@ public class MembershipService {
     ) {
         Membership current =
                 getByPublicId(membershipPublicId, tenantId);
-        requireActiveMemberForMembershipMutation(current.getMemberId(), tenantId);
+        Member member = requireActiveMemberForMembershipMutation(current.getMemberId(), tenantId);
 
         MembershipPlan plan =
                 resolveRenewalPlan(
@@ -253,6 +257,10 @@ public class MembershipService {
                         request.planId(),
                         tenantId
                 );
+
+        if (plan.getDurationDays() >= 3650 && member.getDeviceAuthority() != com.example.gym.member.DeviceAuthority.ADMIN) {
+            throw CommonExceptions.conflict("Lifetime pass (10 years) can only be assigned to members with Admin authority.");
+        }
 
 
         LocalDate start = request.startDate();

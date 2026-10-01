@@ -30,7 +30,8 @@ public sealed record DeviceUserMutation(
     string? Name = null,
     bool? Enabled = null,
     DateTimeOffset? ValidFrom = null,
-    DateTimeOffset? ValidTo = null);
+    DateTimeOffset? ValidTo = null,
+    string? Authority = null);
 
 public sealed record DeviceCommandResult(bool Ok, string? Error)
 {
@@ -87,7 +88,8 @@ public sealed record DeviceUserSnapshot(
     string? Name,
     bool Frozen,
     DateTimeOffset? ValidFrom = null,
-    DateTimeOffset? ValidTo = null);
+    DateTimeOffset? ValidTo = null,
+    string? Authority = null);
 
 /// <summary>
 /// Raw evidence from a remote face INSERT attempt. Never treat as product success —

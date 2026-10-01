@@ -774,6 +774,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             ["deviceUserId"] = user.DeviceUserId,
             ["name"] = user.Name,
             ["frozen"] = user.Frozen,
+            ["authority"] = user.Authority ?? "USER",
             ["validFrom"] = Iso(user.ValidFrom),
             ["validTo"] = Iso(user.ValidTo),
             ["deviceChangedAt"] = Iso(at),
@@ -783,6 +784,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             ["nameChanged"] = diff.Name,
             ["frozenChanged"] = diff.Frozen,
             ["validityChanged"] = diff.Validity,
+            ["authorityChanged"] = diff.Authority,
             ["faceChanged"] = faceChanged,
             ["faceRemoved"] = faceChanged && faceSha == null,
             ["faceSha256"] = faceChanged ? faceSha : null

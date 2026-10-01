@@ -303,7 +303,7 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
     }
 
     private static DeviceUserSnapshot ToSnapshot(RemoteUserDto u) =>
-        new(u.DeviceUserId, u.Name, Frozen: u.Enabled == false, ValidFrom: u.ValidFrom, ValidTo: u.ValidTo);
+        new(u.DeviceUserId, u.Name, Frozen: u.Enabled == false, ValidFrom: u.ValidFrom, ValidTo: u.ValidTo, Authority: u.Authority ?? "USER");
 
     // --- connection state and events ---------------------------------------------------------------
 
@@ -446,7 +446,8 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
         string? Name,
         bool? Enabled,
         DateTimeOffset? ValidFrom,
-        DateTimeOffset? ValidTo);
+        DateTimeOffset? ValidTo,
+        string? Authority);
 
     private sealed record RemoteAttendanceDto(
         string? DeviceUserId,

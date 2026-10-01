@@ -39,6 +39,7 @@ export type Member = {
   joinedOn: string
   notes: string | null
   creationSource: string
+  deviceAuthority?: 'USER' | 'ADMIN' | string
   createdAt: string
   coverageStatus: string
 }

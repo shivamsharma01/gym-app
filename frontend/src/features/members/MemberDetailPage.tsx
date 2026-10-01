@@ -134,7 +134,7 @@ export function MemberDetailPage() {
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Terminal Level</div>
           <div className="mt-1">
-            <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'neutral'}>
+            <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>
               {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'Standard User'}
             </Badge>
           </div>

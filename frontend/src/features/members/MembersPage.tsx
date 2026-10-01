@@ -132,7 +132,7 @@ export function MembersPage() {
                   <Td className="font-mono text-xs text-muted">{m.memberCode}</Td>
                   <Td className="text-muted">{m.phone ?? '—'}</Td>
                   <Td>
-                    <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'neutral'}>
+                    <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>
                       {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'User'}
                     </Badge>
                   </Td>

@@ -72,6 +72,9 @@ public class MemberService {
         member.setGender(request.gender());
         member.setNotes(request.notes());
         member.setCreationSource(MemberCreationSource.MANUAL);
+        if (StringUtils.hasText(request.deviceAuthority())) {
+            member.setDeviceAuthority(DeviceAuthority.fromString(request.deviceAuthority()));
+        }
         Member saved = memberRepository.save(member);
         provisioning.provisionMember(saved, Set.of());
 
@@ -92,12 +95,20 @@ public class MemberService {
         member.setDateOfBirth(request.dateOfBirth());
         member.setGender(request.gender());
         member.setNotes(request.notes());
+        boolean authorityChanged = false;
+        if (StringUtils.hasText(request.deviceAuthority())) {
+            DeviceAuthority newAuth = DeviceAuthority.fromString(request.deviceAuthority());
+            if (newAuth != member.getDeviceAuthority()) {
+                member.setDeviceAuthority(newAuth);
+                authorityChanged = true;
+            }
+        }
         boolean nameChanged = !previousName.equals(member.getFullName());
-        if (nameChanged) {
+        if (nameChanged || authorityChanged) {
             member.setProfileChangedAt(Instant.now());
         }
         Member saved = memberRepository.save(member);
-        if (nameChanged) {
+        if (nameChanged || authorityChanged) {
             provisioning.pushProfile(saved, Set.of());
         }
         FlowLog.info("member", "updated id={} nameChanged={}", saved.getPublicId(), nameChanged);
@@ -133,6 +144,22 @@ public class MemberService {
         auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), null);
         return saved;
+    }
+
+    @Transactional
+    public Member updateAuthority(String publicId, DeviceAuthority authority, Long tenantId) {
+        Member member = getByPublicId(publicId, tenantId);
+        if (member.getDeviceAuthority() != authority) {
+            member.setDeviceAuthority(authority);
+            member.setProfileChangedAt(Instant.now());
+            Member saved = memberRepository.save(member);
+            provisioning.pushProfile(saved, Set.of());
+            FlowLog.info("member", "authority updated id={} authority={}", saved.getPublicId(), authority);
+            auditService.record(AuditActions.MEMBER_UPDATED, AuditActions.RESULT_SUCCESS,
+                    "Member", saved.getPublicId(), Map.of("deviceAuthority", authority.name()));
+            return saved;
+        }
+        return member;
     }
 
     /** A new, unused member code in the app's format (codes are never typed by staff). */

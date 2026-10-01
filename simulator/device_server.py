@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS users (
     enabled          INTEGER NOT NULL,
     valid_from       TEXT,
     valid_to         TEXT,
+    authority        TEXT DEFAULT 'USER',
     photo            BLOB,
     photo_updated_at TEXT,
     PRIMARY KEY (device_id, user_id)
@@ -182,11 +183,14 @@ class DeviceUser:
     valid_to: Optional[datetime]
     has_photo: bool
     photo_updated_at: Optional[datetime]
+    authority: str = "USER"
 
     @staticmethod
     def from_row(r: sqlite3.Row) -> "DeviceUser":
+        authority = r["authority"] if "authority" in r.keys() and r["authority"] else "USER"
         return DeviceUser(r["user_id"], r["name"], bool(r["enabled"]), parse_time(r["valid_from"]),
-                          parse_time(r["valid_to"]), r["has_photo"] == 1, parse_time(r["photo_updated_at"]))
+                          parse_time(r["valid_to"]), r["has_photo"] == 1, parse_time(r["photo_updated_at"]),
+                          authority)
 
     def to_dict(self) -> dict:
         return {
@@ -195,6 +199,7 @@ class DeviceUser:
             "enabled": self.enabled,
             "validFrom": iso(self.valid_from),
             "validTo": iso(self.valid_to),
+            "authority": self.authority,
             "hasPhoto": self.has_photo,
             "photoUpdatedAt": iso(self.photo_updated_at),
         }
@@ -232,7 +237,7 @@ class Faults:
         }
 
 
-USER_COLUMNS = ("user_id, name, enabled, valid_from, valid_to, photo_updated_at, "
+USER_COLUMNS = ("user_id, name, enabled, valid_from, valid_to, COALESCE(authority, 'USER') AS authority, photo_updated_at, "
                 "CASE WHEN photo IS NULL THEN 0 ELSE 1 END AS has_photo")
 
 
@@ -274,13 +279,14 @@ class VirtualDevice:
             existing = self.get_user(user_id)
             if existing is None:
                 self.store.execute(
-                    "INSERT INTO users (device_id, user_id, name, enabled, valid_from, valid_to) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO users (device_id, user_id, name, enabled, valid_from, valid_to, authority) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (self.device_id, user_id, changes.get("name") or user_id,
                      1 if changes.get("enabled", True) else 0,
-                     iso(changes.get("valid_from")), iso(changes.get("valid_to"))))
+                     iso(changes.get("valid_from")), iso(changes.get("valid_to")),
+                     changes.get("authority", "USER")))
             else:
-                for column in ("name", "enabled", "valid_from", "valid_to"):
+                for column in ("name", "enabled", "valid_from", "valid_to", "authority"):
                     if column in changes:
                         value = changes[column]
                         value = iso(value) if isinstance(value, datetime) else value
@@ -515,6 +521,8 @@ def user_changes(body: dict) -> Dict[str, Any]:
         if not isinstance(body["enabled"], bool):
             raise BadRequest("enabled must be true or false")
         changes["enabled"] = body["enabled"]
+    if "authority" in body and body["authority"] is not None:
+        changes["authority"] = str(body["authority"]).upper()
     if "validFrom" in body:
         changes["valid_from"] = parse_time(body["validFrom"], "validFrom")
     if "validTo" in body:

@@ -55,7 +55,8 @@ public sealed record KnownUser(
     bool DeviceCreated = false,
     DateTimeOffset? NameAt = null,
     DateTimeOffset? AccessAt = null,
-    DateTimeOffset? FaceAt = null)
+    DateTimeOffset? FaceAt = null,
+    string? Authority = null)
 {
     public static string? Date(DateTimeOffset? value) => value?.UtcDateTime.ToString("yyyy-MM-dd");
 
@@ -72,7 +73,8 @@ public sealed record KnownUser(
             Name = user.Name,
             Frozen = user.Frozen,
             ValidFrom = Date(user.ValidFrom),
-            ValidTo = Date(user.ValidTo)
+            ValidTo = Date(user.ValidTo),
+            Authority = user.Authority ?? previous?.Authority ?? "USER"
         };
 
     public bool SameProfile(DeviceUserSnapshot user) => Diff(user) == ProfileDiff.None;
@@ -81,16 +83,17 @@ public sealed record KnownUser(
         new(
             !string.Equals(Name ?? "", user.Name ?? "", StringComparison.Ordinal),
             Frozen != user.Frozen,
-            ValidFrom != Date(user.ValidFrom) || ValidTo != Date(user.ValidTo));
+            ValidFrom != Date(user.ValidFrom) || ValidTo != Date(user.ValidTo),
+            !string.Equals(Authority ?? "USER", user.Authority ?? "USER", StringComparison.OrdinalIgnoreCase));
 }
 
 /// <summary>Which profile fields changed on the device since the gateway last saw or wrote them.</summary>
-public readonly record struct ProfileDiff(bool Name, bool Frozen, bool Validity)
+public readonly record struct ProfileDiff(bool Name, bool Frozen, bool Validity, bool Authority = false)
 {
-    public static readonly ProfileDiff None = new(false, false, false);
-    public static readonly ProfileDiff All = new(true, true, true);
+    public static readonly ProfileDiff None = new(false, false, false, false);
+    public static readonly ProfileDiff All = new(true, true, true, true);
 
-    public bool Any => Name || Frozen || Validity;
+    public bool Any => Name || Frozen || Validity || Authority;
 }
 
 /// <summary>

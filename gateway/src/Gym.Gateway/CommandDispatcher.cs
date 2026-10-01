@@ -154,7 +154,8 @@ public sealed class CommandDispatcher
             Text(payload, "name"),
             Bool(payload, "enabled"),
             Instant(payload, "validFrom"),
-            Instant(payload, "validTo"));
+            Instant(payload, "validTo"),
+            Text(payload, "authority"));
 
         switch (command.Type)
         {

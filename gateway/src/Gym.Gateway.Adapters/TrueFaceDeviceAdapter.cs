@@ -727,6 +727,13 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             user.nUserStatus = mutation.Enabled.Value ? 0u : 1u;
         }
 
+        if (!string.IsNullOrWhiteSpace(mutation.Authority))
+        {
+            user.emAuthority = string.Equals(mutation.Authority, "ADMIN", StringComparison.OrdinalIgnoreCase)
+                ? EM_ATTENDANCE_AUTHORITY.Administrators
+                : EM_ATTENDANCE_AUTHORITY.Customer;
+        }
+
         if (mutation.ValidFrom.HasValue)
         {
             user.stuValidBeginTime = NET_TIME.FromDateTime(mutation.ValidFrom.Value.UtcDateTime);
@@ -749,7 +756,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             NullIfEmpty(user.szName),
             Frozen: user.nUserStatus != 0,
             ValidFrom: NetTimeOrNull(user.stuValidBeginTime),
-            ValidTo: NetTimeOrNull(user.stuValidEndTime));
+            ValidTo: NetTimeOrNull(user.stuValidEndTime),
+            Authority: user.emAuthority == EM_ATTENDANCE_AUTHORITY.Administrators ? "ADMIN" : "USER");
 
     private static NET_ACCESS_USER_INFO BuildUser(DeviceUserMutation mutation, bool freeze)
     {
@@ -758,6 +766,9 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             szUserID = mutation.DeviceUserId,
             szName = Truncate(mutation.Name ?? mutation.DeviceUserId, 31),
             emUserType = EM_USER_TYPE.NORMAL,
+            emAuthority = string.Equals(mutation.Authority, "ADMIN", StringComparison.OrdinalIgnoreCase)
+                ? EM_ATTENDANCE_AUTHORITY.Administrators
+                : EM_ATTENDANCE_AUTHORITY.Customer,
             nUserStatus = freeze ? 1u : 0u,
             nDoorNum = 1,
             nDoors = new int[32],

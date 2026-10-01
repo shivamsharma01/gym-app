@@ -111,7 +111,8 @@ public class DeviceUserChangeService {
     private record Report(String deviceUserId, Instant changedAt, String name, boolean frozen,
                           LocalDate validFrom, LocalDate validTo, boolean isNew, boolean nameChanged,
                           boolean frozenChanged, boolean validityChanged, boolean faceChanged,
-                          boolean faceRemoved, GatewayFaceUpload upload, Instant faceChangedAt) {
+                          boolean faceRemoved, GatewayFaceUpload upload, Instant faceChangedAt,
+                          com.example.gym.member.DeviceAuthority authority, boolean authorityChanged) {
     }
 
     @Transactional
@@ -184,6 +185,24 @@ public class DeviceUserChangeService {
                 serverKept = true;
                 ignored.add("Name '%s' from the device (%s) ignored: name '%s' changed on the server at %s"
                         .formatted(r.name(), changedAt, member.getFullName(), member.getProfileChangedAt()));
+            }
+        }
+
+        if (r.authorityChanged() && r.authority() != null && r.authority() != member.getDeviceAuthority()) {
+            if (isAfter(changedAt, member.getProfileChangedAt())) {
+                member.setDeviceAuthority(r.authority());
+                member.setProfileChangedAt(changedAt);
+                memberRepository.save(member);
+                provisioning.pushProfile(member, Set.of(device.getId()));
+                if (r.authority() == com.example.gym.member.DeviceAuthority.ADMIN) {
+                    importer.ensureUnknownMembership(member, r.validFrom(), r.validTo());
+                }
+                updated = true;
+                notes.add("Authority set to %s from device %s".formatted(r.authority(), device.getPublicId()));
+            } else {
+                serverKept = true;
+                ignored.add("Authority '%s' from device (%s) ignored: profile changed on server at %s"
+                        .formatted(r.authority(), changedAt, member.getProfileChangedAt()));
             }
         }
 
@@ -283,7 +302,7 @@ public class DeviceUserChangeService {
     // --- cases -----------------------------------------------------------------------------------
 
     private void createFromDevice(Device device, Report r) {
-        Member member = importer.createMember(device.getTenantId(), r.deviceUserId(), r.name(), r.frozen());
+        Member member = importer.createMember(device.getTenantId(), r.deviceUserId(), r.name(), r.frozen(), r.authority());
         member.setProfileChangedAt(r.changedAt());
         member.setAccessChangedAt(r.changedAt());
         member.setFaceChangedAt(r.changedAt());
@@ -308,7 +327,7 @@ public class DeviceUserChangeService {
      */
     private void applyCodeClash(Device device, Member existing, Report r) {
         String code = memberService.allocateMemberCode(device.getTenantId());
-        Member created = importer.createMember(device.getTenantId(), code, r.name(), r.frozen());
+        Member created = importer.createMember(device.getTenantId(), code, r.name(), r.frozen(), r.authority());
         created.setProfileChangedAt(r.changedAt());
         created.setAccessChangedAt(r.changedAt());
         created.setFaceChangedAt(r.changedAt());
@@ -535,6 +554,9 @@ public class DeviceUserChangeService {
         String deviceSha = text(payload, "faceSha256");
         Instant faceChangedAt = upload != null && deviceSha != null && !deviceSha.equalsIgnoreCase(upload.getSha256())
                 ? Instant.now() : changedAt;
+        String authorityText = text(payload, "authority");
+        com.example.gym.member.DeviceAuthority auth = com.example.gym.member.DeviceAuthority.fromString(authorityText);
+        boolean authorityChanged = payload.has("authorityChanged") ? bool(payload, "authorityChanged") : profileChanged;
         return new Report(
                 deviceUserId,
                 changedAt,
@@ -549,7 +571,9 @@ public class DeviceUserChangeService {
                 bool(payload, "faceChanged"),
                 bool(payload, "faceRemoved"),
                 upload,
-                faceChangedAt);
+                faceChangedAt,
+                auth,
+                authorityChanged);
     }
 
     /** Deleted on a device: inactive and on no device (an admin deactivation keeps the mappings). */

@@ -24,6 +24,8 @@ import org.springframework.util.StringUtils;
 public class DeviceMemberImporter {
 
     public static final String UNKNOWN_PLAN_NAME = "Fallback Membership plan for quick access";
+    public static final String LIFETIME_PLAN_NAME = "Staff/Owner Lifetime Pass";
+    public static final int LIFETIME_PLAN_DAYS = 3650;
 
     private final MemberRepository memberRepository;
     private final MembershipRepository membershipRepository;
@@ -38,6 +40,10 @@ public class DeviceMemberImporter {
     }
 
     public Member createMember(Long tenantId, String deviceUserId, String deviceName, boolean frozen) {
+        return createMember(tenantId, deviceUserId, deviceName, frozen, com.example.gym.member.DeviceAuthority.USER);
+    }
+
+    public Member createMember(Long tenantId, String deviceUserId, String deviceName, boolean frozen, com.example.gym.member.DeviceAuthority authority) {
         String code = truncateCode(deviceUserId);
         if (memberRepository.existsByTenantIdAndMemberCode(tenantId, code)) {
             code = truncateCode("DEV-" + deviceUserId);
@@ -47,6 +53,7 @@ public class DeviceMemberImporter {
         member.setLastName(names.lastName());
         member.setCreationSource(MemberCreationSource.DEVICE_IMPORT);
         member.setStatus(frozen ? MemberStatus.INACTIVE : MemberStatus.ACTIVE);
+        member.setDeviceAuthority(authority != null ? authority : com.example.gym.member.DeviceAuthority.USER);
         return memberRepository.save(member);
     }
 
@@ -64,12 +71,13 @@ public class DeviceMemberImporter {
         if (hasCurrent) {
             return false;
         }
-        MembershipPlan plan = ensureUnknownPlan(member.getTenantId());
+        boolean isAdmin = member.getDeviceAuthority() == com.example.gym.member.DeviceAuthority.ADMIN;
+        MembershipPlan plan = isAdmin ? ensureLifetimePlan(member.getTenantId()) : ensureUnknownPlan(member.getTenantId());
         LocalDate start = validFrom != null ? validFrom : today;
         boolean inferred = validTo == null;
-        LocalDate end = inferred ? today.plusYears(1) : validTo;
+        LocalDate end = inferred ? (isAdmin ? today.plusDays(LIFETIME_PLAN_DAYS) : today.plusYears(1)) : validTo;
         if (end.isBefore(start)) {
-            end = start.plusYears(1);
+            end = isAdmin ? start.plusDays(LIFETIME_PLAN_DAYS) : start.plusYears(1);
             inferred = true;
         }
         Membership membership = new Membership(
@@ -92,6 +100,17 @@ public class DeviceMemberImporter {
                         BigDecimal.ZERO,
                         "INR",
                         365)));
+    }
+
+    public MembershipPlan ensureLifetimePlan(Long tenantId) {
+        return planRepository.findFirstByTenantIdAndNameIgnoreCase(tenantId, LIFETIME_PLAN_NAME)
+                .orElseGet(() -> planRepository.save(new MembershipPlan(
+                        tenantId,
+                        LIFETIME_PLAN_NAME,
+                        "10-year lifetime pass for gym staff/owners/device administrators.",
+                        BigDecimal.ZERO,
+                        "INR",
+                        LIFETIME_PLAN_DAYS)));
     }
 
     public static String truncateCode(String raw) {

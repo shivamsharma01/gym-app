@@ -66,9 +66,10 @@ optimistic locking; FKs and constraints; indexes matched to real query patterns.
 - **Aggressive device polling for events** — rejected (§58): push callbacks + reconciliation.
 - **JWT in localStorage by default** — rejected (§58): httpOnly cookie / in-memory + rotation.
 
-## Open items carried into later phases
-1. Obtain `libdhnetsdk.so` (Linux) from Dahua/TimeWatch (blocks Linux Phase 4).
-2. Re-verify face enrollment / remote capture on hardware; confirm error-code semantics.
-3. Gateway authentication is a **per-gateway hashed token** issued at create time, with an optional
-   deployment-wide shared token (`APP_GATEWAY_SHARED_TOKEN`). mTLS remains a future hardening option.
-4. Confirm device offline-authorization behaviour to finalise connectivity-state UX.
+## What changed after this ADR
+
+Current behaviour is [product.md](../product.md), not the open list below.
+
+- Remote JPEG insert was verified on hardware on 2026-09-13. The app stores one resized JPEG per member and pushes it to every device. Templates stay on the device.
+- Gateway auth is a one-time enrollment token, then a rotating operational credential. mTLS is still unused.
+- Linux `libdhnetsdk.so` loads in `TrueFaceLinuxPOC`. A physical Linux login was not run.

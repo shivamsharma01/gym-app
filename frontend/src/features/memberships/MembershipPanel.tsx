@@ -37,10 +37,12 @@ function addDays(iso: string, days: number) {
 export function MembershipPanel({
   memberId,
   memberStatus,
+  memberAuthority,
   rows,
 }: {
   memberId: string;
   memberStatus: string;
+  memberAuthority?: string;
   rows: Membership[];
 }) {
   const { has } = useAuth();
@@ -406,7 +408,9 @@ export function MembershipPanel({
             <Select value={planId} onChange={(e) => applyPlan(e.target.value)}>
               <option value="">Select a plan</option>
 
-              {activePlans.map((p) => (
+              {activePlans
+                .filter((p) => (p.durationDays ?? 0) < 3650 || memberAuthority === 'ADMIN')
+                .map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} · {p.durationDays} days
                 </option>
@@ -845,7 +849,9 @@ export function MembershipPanel({
                 >
                   <option value="">Select plan</option>
 
-                  {activePlans.map((plan) => (
+                  {activePlans
+                    .filter((plan) => (plan.durationDays ?? 0) < 3650 || memberAuthority === 'ADMIN')
+                    .map((plan) => (
                     <option key={plan.id} value={plan.id}>
                       {plan.name} — {money(plan.price, plan.currency)}
                     </option>

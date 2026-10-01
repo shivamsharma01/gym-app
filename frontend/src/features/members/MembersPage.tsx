@@ -109,6 +109,7 @@ export function MembersPage() {
                 <Th>Member</Th>
                 <Th>Code</Th>
                 <Th>Phone</Th>
+                <Th>Terminal Level</Th>
                 <Th>Source</Th>
                 <Th>Membership status</Th>
                 <Th>Account status</Th>
@@ -118,13 +119,23 @@ export function MembersPage() {
               {members.data.content.map((m) => (
                 <Tr key={m.id}>
                   <Td>
-                    <Link className="font-semibold text-ink hover:text-accent" to={`/app/members/${m.id}`}>
-                      {m.fullName}
-                    </Link>
+                    <div className="flex items-center gap-1.5">
+                      <Link className="font-semibold text-ink hover:text-accent" to={`/app/members/${m.id}`}>
+                        {m.fullName}
+                      </Link>
+                      {m.deviceAuthority === 'ADMIN' ? (
+                        <Badge tone="danger">Admin</Badge>
+                      ) : null}
+                    </div>
                     {m.email ? <div className="mt-0.5 text-xs text-muted">{m.email}</div> : null}
                   </Td>
                   <Td className="font-mono text-xs text-muted">{m.memberCode}</Td>
                   <Td className="text-muted">{m.phone ?? '—'}</Td>
+                  <Td>
+                    <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>
+                      {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'User'}
+                    </Badge>
+                  </Td>
                   <Td>
                     <Badge tone={m.creationSource === 'DEVICE_IMPORT' ? 'warn' : 'muted'}>
                       {m.creationSource === 'DEVICE_IMPORT' ? 'Device' : 'Manual'}

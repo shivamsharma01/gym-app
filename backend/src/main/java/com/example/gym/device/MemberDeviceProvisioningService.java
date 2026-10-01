@@ -321,6 +321,7 @@ public class MemberDeviceProvisioningService {
         payload.put("deviceUserId", deviceUserId);
         payload.put("memberCode", member.getMemberCode());
         payload.put("name", member.getFullName());
+        payload.put("authority", member.getDeviceAuthority() != null ? member.getDeviceAuthority().name() : "USER");
         return payload;
     }
 }

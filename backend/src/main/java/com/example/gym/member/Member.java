@@ -57,6 +57,10 @@ public class Member extends TenantAwareEntity {
     @Column(name = "creation_source", nullable = false, length = 16)
     private MemberCreationSource creationSource = MemberCreationSource.MANUAL;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "device_authority", nullable = false, length = 32)
+    private DeviceAuthority deviceAuthority = DeviceAuthority.USER;
+
     /** When the name last changed on the server (latest-change-wins vs devices). */
     @Column(name = "profile_changed_at")
     private Instant profileChangedAt;
@@ -221,6 +225,14 @@ public class Member extends TenantAwareEntity {
 
     public void setCreationSource(MemberCreationSource creationSource) {
         this.creationSource = creationSource == null ? MemberCreationSource.MANUAL : creationSource;
+    }
+
+    public DeviceAuthority getDeviceAuthority() {
+        return deviceAuthority;
+    }
+
+    public void setDeviceAuthority(DeviceAuthority deviceAuthority) {
+        this.deviceAuthority = deviceAuthority == null ? DeviceAuthority.USER : deviceAuthority;
     }
 
     public String getFullName() {

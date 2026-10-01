@@ -22,6 +22,7 @@ export function MemberNewPage() {
       dateOfBirth: '',
       gender: 'UNSPECIFIED',
       notes: '',
+      deviceAuthority: 'USER',
     },
   })
   const [photo, setPhoto] = useState<File | null>(null)
@@ -86,6 +87,13 @@ export function MemberNewPage() {
             <option value="FEMALE">Female</option>
             <option value="MALE">Male</option>
             <option value="OTHER">Other</option>
+          </Select>
+        </div>
+        <div>
+          <Label>Terminal Authority (Device User Level)</Label>
+          <Select {...form.register('deviceAuthority')}>
+            <option value="USER">Standard User (Member)</option>
+            <option value="ADMIN">Terminal Admin (Staff / Owner)</option>
           </Select>
         </div>
         <div>

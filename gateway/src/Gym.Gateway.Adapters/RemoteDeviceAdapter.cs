@@ -44,6 +44,9 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
     {
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         _pollHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(35) };
+        // Free ngrok HTTP tunnels answer with an HTML warning page unless this header is set.
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("ngrok-skip-browser-warning", "1");
+        _pollHttp.DefaultRequestHeaders.TryAddWithoutValidation("ngrok-skip-browser-warning", "1");
         _minRetryDelay = minRetryDelay ?? TimeSpan.FromSeconds(2);
         _maxRetryDelay = maxRetryDelay ?? TimeSpan.FromSeconds(30);
     }
@@ -55,7 +58,7 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
     public DeviceConnectionStatus Connect(DeviceConnectionConfig config)
     {
         _config = config;
-        _baseUrl = $"http://{config.Ip}:{config.Port}";
+        _baseUrl = DeviceBaseUrl(config.Ip, config.Port);
         var error = ProbeAsync(_cts.Token).GetAwaiter().GetResult();
         if (error == null)
         {
@@ -218,6 +221,13 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
 
     // --- requests --------------------------------------------------------------------------------
 
+    /// <summary>
+    /// <paramref name="ip"/> may be a host (<c>10.0.0.4</c>, <c>0.tcp.ngrok.io</c>) or a full
+    /// ngrok URL (<c>https://name.ngrok-free.app</c>). A URL is used as-is; a host is joined with the port.
+    /// </summary>
+    internal static string DeviceBaseUrl(string ip, int port) =>
+        ip.Contains("://", StringComparison.Ordinal) ? ip.TrimEnd('/') : $"http://{ip}:{port}";
+
     private string UserUrl(string deviceUserId) => $"{_baseUrl}/device/users/{Uri.EscapeDataString(deviceUserId)}";
 
     /// <summary>
@@ -303,7 +313,7 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
     }
 
     private static DeviceUserSnapshot ToSnapshot(RemoteUserDto u) =>
-        new(u.DeviceUserId, u.Name, Frozen: u.Enabled == false, ValidFrom: u.ValidFrom, ValidTo: u.ValidTo);
+        new(u.DeviceUserId, u.Name, Frozen: u.Enabled == false, ValidFrom: u.ValidFrom, ValidTo: u.ValidTo, Authority: u.Authority ?? "USER");
 
     // --- connection state and events ---------------------------------------------------------------
 
@@ -446,7 +456,8 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
         string? Name,
         bool? Enabled,
         DateTimeOffset? ValidFrom,
-        DateTimeOffset? ValidTo);
+        DateTimeOffset? ValidTo,
+        string? Authority);
 
     private sealed record RemoteAttendanceDto(
         string? DeviceUserId,

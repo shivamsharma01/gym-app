@@ -70,18 +70,36 @@ Live door allow can succeed without the SDK delivering `ALARM_ACCESS_CTL_EVENT` 
 
 Gateway cutover should use the same defense in depth when wiring attendance to the backend.
 
-## Deferred product (not blocking go-live of staff UI)
+## Existing users already on the devices
 
-- Real SMS/email notifications (mock today)
+Reconcile imports them. The **Import device users** button is only a fallback. Face templates stay on the devices. The server stores the photo and the member row.
+
+| Topic | Rule |
+|--------|------|
+| Same person on entrance and exit | One member, mapped to both devices by device user id |
+| Plan | **Fallback Membership plan for quick access**, price 0. Staff replace it |
+| End date missing | Today + 1 year, marked **end date inferred**. Never lifetime |
+| Start date missing | Today. Otherwise the device begin date |
+| Payment | Membership marked paid. No payment row |
+| Frozen or disabled on the device | Member is **Inactive**. Import does not enable them |
+| Re-run | Safe. No duplicate members |
+
+1. Both devices online and assigned to the gateway. Run **Sync Now** and wait until it finishes.
+2. If import did not happen, open the device and click **Import device users**. A second click should mostly skip.
+3. Replace each fallback plan with the real plan.
+4. Set real end dates where the membership says the end date was inferred.
+5. Leave frozen people inactive unless the gym wants them back.
+6. Fix names. The first word is the first name. The member code is usually the device user id.
+7. Confirm people who use both doors have both device mappings.
+8. Spot-check the door. Imported memberships have no payment receipt.
+
+Members list **Source** is Manual or Device. SUPER_ADMIN CSV export has no face data.
+
+## Still open
+
+- Real SMS/email ([notifications.md](notifications.md)); providers are mock
 - Real payment provider
-- Forgot-password email flow
-- SUPER_ADMIN “act as gym” UX
-- Custom domains / CDN / email invites
-
-## Ops
-
-See [deploy/README.md](../deploy/README.md) for TLS, bootstrap, rate limits, and Windows gateway cutover.
-
-## Device roster import (IAS / existing TrueFace users)
-
-When a gym already has users enrolled on TrueFace devices and needs them as app Members: see [DEVICE-ROSTER-IMPORT.md](DEVICE-ROSTER-IMPORT.md) for product decisions and the admin checklist (fallback plan, inferred end dates, frozen → inactive, no face export).
+- Forgot-password email (the screen tells staff to contact a super admin)
+- Super admin acting as a gym
+- Changing plan mid-cycle (dates can be edited; the plan cannot)
+- Member profile payments omit the paid-on date

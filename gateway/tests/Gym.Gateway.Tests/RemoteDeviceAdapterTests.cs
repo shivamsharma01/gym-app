@@ -40,6 +40,13 @@ public sealed class RemoteDeviceAdapterTests : IDisposable
     private DeviceConnectionConfig Config => new("dev-test-1", "127.0.0.1", (ushort)_port, "admin", "pass");
 
     [Fact]
+    public void DeviceBaseUrl_accepts_a_host_or_a_full_ngrok_url()
+    {
+        Assert.Equal("http://127.0.0.1:9003", RemoteDeviceAdapter.DeviceBaseUrl("127.0.0.1", 9003));
+        Assert.Equal("https://device3.ngrok-free.app", RemoteDeviceAdapter.DeviceBaseUrl("https://device3.ngrok-free.app/", 80));
+    }
+
+    [Fact]
     public void Connect_ReturnsOnline_WhenServerResponds()
     {
         var status = _adapter.Connect(Config);

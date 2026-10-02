@@ -258,7 +258,7 @@ public sealed class GatewayWorker : BackgroundService
     private Task AcceptCommand(GatewayEnvelope command)
     {
         var key = string.IsNullOrWhiteSpace(command.DeviceId) ? "" : command.DeviceId;
-        var channel = _inbox.GetOrAdd(key, _ =>
+        var channel = _inbox.GetOrAdd(key, deviceId =>
         {
             var created = Channel.CreateUnbounded<GatewayEnvelope>(new UnboundedChannelOptions
             {

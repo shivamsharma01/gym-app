@@ -70,6 +70,11 @@ export function useStaffLive() {
           void qc.invalidateQueries({ queryKey: ['sync-commands'] })
           return
         }
+        if (message.type === 'ATTENDANCE_LINKED') {
+          void qc.invalidateQueries({ queryKey: ['attendance'] })
+          void qc.invalidateQueries({ queryKey: ['member-attendance'] })
+          return
+        }
         void qc.invalidateQueries({ queryKey: ['attendance'] })
         void qc.invalidateQueries({ queryKey: ['devices'] })
         void qc.invalidateQueries({ queryKey: ['security-events'] })

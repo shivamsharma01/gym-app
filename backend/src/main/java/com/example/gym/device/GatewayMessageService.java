@@ -193,12 +193,13 @@ public class GatewayMessageService {
                         attendanceIngestionService.markReconciliationRequired(
                                 device.getTenantId(), device.getId(), true);
                     } else {
+                        // Users first, so punches by users this snapshot maps are credited on insert.
+                        reconciliationService.applyDeviceUserSnapshot(device, message.payload());
                         JsonNode eventNodes = message.payload() == null ? null
                                 : message.payload().get("events");
                         if (eventNodes != null && eventNodes.isArray()) {
                             eventNodes.forEach(e -> ingestEvent(device, e, message.timestamp()));
                         }
-                        reconciliationService.applyDeviceUserSnapshot(device, message.payload());
                         attendanceIngestionService.markReconciliationRequired(
                                 device.getTenantId(), device.getId(), false);
                     }

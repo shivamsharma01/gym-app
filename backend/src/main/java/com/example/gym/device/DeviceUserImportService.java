@@ -47,6 +47,7 @@ public class DeviceUserImportService {
     private final DeviceMemberImporter importer;
     private final DeviceService deviceService;
     private final AuditService auditService;
+    private final AttendanceLinker attendanceLinker;
 
     public DeviceUserImportService(DeviceRepository deviceRepository,
                                    DeviceUserSnapshotRepository snapshotRepository,
@@ -55,7 +56,8 @@ public class DeviceUserImportService {
                                    ReconciliationConflictRepository conflictRepository,
                                    DeviceMemberImporter importer,
                                    DeviceService deviceService,
-                                   AuditService auditService) {
+                                   AuditService auditService,
+                                   AttendanceLinker attendanceLinker) {
         this.deviceRepository = deviceRepository;
         this.snapshotRepository = snapshotRepository;
         this.mappingRepository = mappingRepository;
@@ -64,6 +66,7 @@ public class DeviceUserImportService {
         this.importer = importer;
         this.deviceService = deviceService;
         this.auditService = auditService;
+        this.attendanceLinker = attendanceLinker;
     }
 
     /**
@@ -167,7 +170,7 @@ public class DeviceUserImportService {
             mapping.setEnrollmentStatus(EnrollmentStatus.ENROLLED);
             mapping.setSyncState(DeviceSyncState.SYNCED);
             mapping.setEnrolledAt(Instant.now());
-            mappingRepository.save(mapping);
+            attendanceLinker.linkEarlierEvents(mappingRepository.save(mapping));
             added++;
         }
         return added;

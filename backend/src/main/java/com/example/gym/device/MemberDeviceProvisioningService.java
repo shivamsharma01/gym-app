@@ -47,6 +47,7 @@ public class MemberDeviceProvisioningService {
     private final MemberFaceRepository faceRepository;
     private final DeviceSyncService deviceSyncService;
     private final AuditService auditService;
+    private final AttendanceLinker attendanceLinker;
 
     public MemberDeviceProvisioningService(DeviceRepository deviceRepository,
                                            MemberDeviceMappingRepository mappingRepository,
@@ -54,7 +55,8 @@ public class MemberDeviceProvisioningService {
                                            DeviceAuthorizationService authorizationService,
                                            MemberFaceRepository faceRepository,
                                            DeviceSyncService deviceSyncService,
-                                           AuditService auditService) {
+                                           AuditService auditService,
+                                           AttendanceLinker attendanceLinker) {
         this.deviceRepository = deviceRepository;
         this.mappingRepository = mappingRepository;
         this.memberRepository = memberRepository;
@@ -62,6 +64,7 @@ public class MemberDeviceProvisioningService {
         this.faceRepository = faceRepository;
         this.deviceSyncService = deviceSyncService;
         this.auditService = auditService;
+        this.attendanceLinker = attendanceLinker;
     }
 
     /** Ensures a mapping on every gateway-assigned device of the tenant; seeds new mappings. */
@@ -104,10 +107,10 @@ public class MemberDeviceProvisioningService {
     @Transactional
     public MemberDeviceMapping markHeldBySource(Member member, Device device, String deviceUserId,
                                                 Integer faceVersion) {
-        MemberDeviceMapping mapping = mappingRepository
-                .findByDeviceIdAndMemberId(device.getId(), member.getId())
-                .orElseGet(() -> new MemberDeviceMapping(member.getTenantId(), member.getId(),
-                        device.getId(), deviceUserId));
+        MemberDeviceMapping existing = mappingRepository
+                .findByDeviceIdAndMemberId(device.getId(), member.getId()).orElse(null);
+        MemberDeviceMapping mapping = existing != null ? existing
+                : new MemberDeviceMapping(member.getTenantId(), member.getId(), device.getId(), deviceUserId);
         mapping.setEnrollmentStatus(EnrollmentStatus.ENROLLED);
         mapping.setSyncState(DeviceSyncState.SYNCED);
         if (mapping.getEnrolledAt() == null) {
@@ -119,7 +122,11 @@ public class MemberDeviceProvisioningService {
             mapping.setFaceSyncState(DeviceSyncState.SYNCED);
             mapping.setFaceLastError(null);
         }
-        return mappingRepository.save(mapping);
+        MemberDeviceMapping saved = mappingRepository.save(mapping);
+        if (existing == null) {
+            attendanceLinker.linkEarlierEvents(saved);
+        }
+        return saved;
     }
 
     /** Pushes the member's current face to every mapped device not in {@code skipDeviceIds}. */

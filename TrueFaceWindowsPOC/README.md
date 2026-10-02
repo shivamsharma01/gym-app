@@ -21,3 +21,14 @@ dotnet test
 ```
 
 Never commit device passwords or face images. Logs: `poc-run-<timestamp>.log`.
+
+## Re-adding people a restore skipped
+
+Stop the `Gym Gateway` service and close IAS, then from PowerShell in this folder:
+
+```powershell
+.\scripts\Import-MissingDeviceUsers.ps1 -Csv C:\gym\missing.csv -Ip 192.168.x.x          # dry run
+.\scripts\Import-MissingDeviceUsers.ps1 -Csv C:\gym\missing.csv -Ip 192.168.x.x -Apply   # write
+```
+
+The CSV needs `deviceUserId,name,valid_from,valid_to` and optionally `photo_base64`. Ids already on the device are skipped and never modified, so the import can be rerun safely. If PowerShell blocks the script, run `powershell -ExecutionPolicy Bypass -File .\scripts\Import-MissingDeviceUsers.ps1 ...`.

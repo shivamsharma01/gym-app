@@ -20,6 +20,8 @@ public sealed class PocOptions
     public bool SelfCheckOnly { get; init; }
     public bool UseMockAdapter { get; init; }
     public int DoorWaitSeconds { get; init; } = 90;
+    public string? ImportCsvPath { get; init; }
+    public bool Apply { get; init; }
 
     public bool HasConnectionTarget =>
         !string.IsNullOrWhiteSpace(Ip) && !string.IsNullOrWhiteSpace(Username);
@@ -41,6 +43,11 @@ public sealed class PocOptions
           --self-check              Load native DLL path only (Windows) / mock connect (any OS)
           --help
 
+        Import people a restore skipped (columns deviceUserId,name,valid_from,valid_to[,photo_base64]):
+          --import-csv <path.csv>   Dry run: lists who would be created. Ids already on the device are skipped.
+          --apply                   Actually create the users (and upload photo_base64 faces)
+          --skip-face-upload        Create users without uploading faces
+
         Never commit device passwords. Prefer env TRUEFACE_PASSWORD over --password.
         """;
 
@@ -57,6 +64,8 @@ public sealed class PocOptions
         var selfCheck = false;
         var mock = false;
         var doorWait = 90;
+        string? importCsv = null;
+        var apply = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -110,6 +119,12 @@ public sealed class PocOptions
                 case "--mock":
                     mock = true;
                     break;
+                case "--import-csv":
+                    importCsv = Next("--import-csv");
+                    break;
+                case "--apply":
+                    apply = true;
+                    break;
                 case "--help":
                 case "-h":
                     throw new PocConfigException("HELP");
@@ -139,11 +154,14 @@ public sealed class PocOptions
             SkipFaceUpload = skipFace,
             SelfCheckOnly = selfCheck,
             UseMockAdapter = mock,
-            DoorWaitSeconds = doorWait
+            DoorWaitSeconds = doorWait,
+            ImportCsvPath = string.IsNullOrWhiteSpace(importCsv) ? null : importCsv.Trim(),
+            Apply = apply
         };
     }
 
     public override string ToString() =>
         $"ip={Ip} port={Port} username={Username} password={(string.IsNullOrEmpty(Password) ? "(empty)" : "***")} " +
-        $"faceImage={(FaceImagePath ?? "(none)")} skipDoor={SkipDoor} skipFace={SkipFaceUpload} mock={UseMockAdapter}";
+        $"faceImage={(FaceImagePath ?? "(none)")} skipDoor={SkipDoor} skipFace={SkipFaceUpload} mock={UseMockAdapter}" +
+        (ImportCsvPath == null ? "" : $" importCsv={ImportCsvPath} apply={Apply}");
 }

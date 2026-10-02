@@ -5,5 +5,7 @@ obj/
 poc-run-*.log
 poc-run-*.log.txt
 cmd.txt
+# Member import CSVs contain names and face photos.
+*.csv
 *.user
 .vs/

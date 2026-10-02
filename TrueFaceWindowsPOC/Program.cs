@@ -44,6 +44,11 @@ internal static class Program
 
         log.Info($"Options: {options}");
 
+        if (options.ImportCsvPath != null)
+        {
+            return RunImport(log, options);
+        }
+
         Console.CancelKeyPress += OnCancel;
 
         var undo = new SessionUndo();
@@ -279,6 +284,75 @@ internal static class Program
 
             s_adapter = null;
             s_undo = null;
+        }
+    }
+
+    /// <summary>Never registers created users with <see cref="SessionUndo"/>: imported people must stay on the device.</summary>
+    private static int RunImport(PocLogger log, PocOptions options)
+    {
+        IReadOnlyList<ImportRow> rows;
+        try
+        {
+            rows = CsvImport.Load(options.ImportCsvPath!);
+        }
+        catch (PocConfigException ex)
+        {
+            log.Error(ex.Message);
+            return 2;
+        }
+
+        log.Info($"CSV rows={rows.Count} withFace={rows.Count(r => r.Photo != null)} ids={string.Join(",", rows.Select(r => r.DeviceUserId))}");
+
+        if (!options.UseMockAdapter && !options.HasConnectionTarget)
+        {
+            log.Error("Missing --ip and/or --username (or TRUEFACE_* env).");
+            return 2;
+        }
+
+        var password = options.Password;
+        if (!options.UseMockAdapter && string.IsNullOrEmpty(password))
+        {
+            password = ReadPassword();
+        }
+
+        using IDeviceAdapter adapter = options.UseMockAdapter ? new MockDeviceAdapter() : new TrueFaceDeviceAdapter();
+        try
+        {
+            log.Step("CONNECT");
+            var status = adapter.Connect(new DeviceConnectionConfig(
+                "import",
+                options.UseMockAdapter ? "127.0.0.1" : options.Ip,
+                options.Port,
+                options.UseMockAdapter ? "mock" : options.Username,
+                options.UseMockAdapter ? "x" : password,
+                options.NativeDir));
+            if (!status.Ok)
+            {
+                log.Error($"Connect failed: {status.Error}");
+                return 6;
+            }
+
+            var info = adapter.GetDeviceInfo();
+            log.Ok($"Connected state={status.ConnectionState} serial={info.SerialNumber ?? "(none)"}");
+            return CsvImport.Run(log, adapter, rows, options.Apply, options.SkipFaceUpload);
+        }
+        catch (Exception ex)
+        {
+            log.Error($"Unexpected exception: {ex.GetType().Name}: {ex.Message}");
+            log.Error(ex.ToString());
+            return 5;
+        }
+        finally
+        {
+            try
+            {
+                adapter.Disconnect();
+                log.Info("Disconnected");
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"Disconnect: {ex.Message}");
+            }
         }
     }
 

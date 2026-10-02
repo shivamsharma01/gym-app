@@ -11,6 +11,9 @@ public static class WindowsNativeBootstrap
 {
     public const string PrimaryLibrary = "dhnetsdk.dll";
 
+    private static readonly object Gate = new();
+    private static string? _configuredDir;
+
     public static string ResolveNativeDirectory(string? configured)
     {
         if (!string.IsNullOrWhiteSpace(configured))
@@ -41,33 +44,50 @@ public static class WindowsNativeBootstrap
 
     public static bool TryConfigure(string nativeDir, out string error)
     {
-        var path = Path.Combine(nativeDir, PrimaryLibrary);
+        var fullDir = Path.GetFullPath(nativeDir);
+        var path = Path.Combine(fullDir, PrimaryLibrary);
         if (!File.Exists(path))
         {
             error = $"Native library not found: {path}";
             return false;
         }
 
-        try
+        lock (Gate)
         {
-            NativeLibrary.SetDllImportResolver(typeof(NETClient).Assembly, (name, _, _) =>
+            if (_configuredDir != null)
             {
-                var fileName = name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? name : name + ".dll";
-                var candidate = Path.Combine(nativeDir, fileName);
-                if (File.Exists(candidate))
+                if (string.Equals(_configuredDir, fullDir, StringComparison.OrdinalIgnoreCase))
                 {
-                    return NativeLibrary.Load(candidate);
+                    error = "";
+                    return true;
                 }
 
-                return IntPtr.Zero;
-            });
-            error = "";
-            return true;
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-            return false;
+                error = $"Native libraries are already loaded from {_configuredDir}";
+                return false;
+            }
+
+            try
+            {
+                NativeLibrary.SetDllImportResolver(typeof(NETClient).Assembly, (name, _, _) =>
+                {
+                    var fileName = name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? name : name + ".dll";
+                    var candidate = Path.Combine(fullDir, fileName);
+                    if (File.Exists(candidate))
+                    {
+                        return NativeLibrary.Load(candidate);
+                    }
+
+                    return IntPtr.Zero;
+                });
+                _configuredDir = fullDir;
+                error = "";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
         }
     }
 }

@@ -224,9 +224,13 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
     /// <summary>
     /// <paramref name="ip"/> may be a host (<c>10.0.0.4</c>, <c>0.tcp.ngrok.io</c>) or a full
     /// ngrok URL (<c>https://name.ngrok-free.app</c>). A URL is used as-is; a host is joined with the port.
+    /// Local devices and the simulator speak cleartext HTTP. Switching the default to HTTPS would
+    /// stop them connecting. An https URL passed in is kept.
     /// </summary>
+#pragma warning disable S5332 // cleartext HTTP is the device protocol; https URLs are accepted as-is
     internal static string DeviceBaseUrl(string ip, int port) =>
         ip.Contains("://", StringComparison.Ordinal) ? ip.TrimEnd('/') : $"http://{ip}:{port}";
+#pragma warning restore S5332
 
     private string UserUrl(string deviceUserId) => $"{_baseUrl}/device/users/{Uri.EscapeDataString(deviceUserId)}";
 

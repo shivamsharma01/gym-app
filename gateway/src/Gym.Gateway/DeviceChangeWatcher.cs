@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using Gym.Gateway.Adapters;
@@ -54,6 +55,9 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
     /// <summary>How far the current face pass has walked each device's user list.</summary>
     private readonly Dictionary<string, int> _faceCursor = new(StringComparer.Ordinal);
+
+    /// <summary>Users a reader missed while it was offline or a write failed. Applied on its next scan.</summary>
+    private readonly ConcurrentDictionary<string, HashSet<string>> _catchUp = new(StringComparer.Ordinal);
 
     public DeviceChangeWatcher(
         IReadOnlyDictionary<string, IDeviceAdapter> adapters,
@@ -417,6 +421,73 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                 }
             }
         }
+
+        CatchUpLocked(deviceId, adapter);
+    }
+
+    /// <summary>
+    /// Writes only the users this reader missed. The first baseline does not call this, and a scan
+    /// does not walk the whole local store.
+    /// </summary>
+    private void CatchUpLocked(string deviceId, IDeviceAdapter adapter)
+    {
+        if (!_catchUp.TryGetValue(deviceId, out var pending))
+        {
+            return;
+        }
+
+        List<string> ids;
+        lock (pending)
+        {
+            if (pending.Count == 0)
+            {
+                return;
+            }
+
+            ids = pending.ToList();
+        }
+
+        foreach (var id in ids)
+        {
+            var member = _store.Find(id);
+            if (member == null)
+            {
+                lock (pending)
+                {
+                    pending.Remove(id);
+                }
+
+                continue;
+            }
+
+            var error = ConvergeUser(deviceId, adapter, member, _roster.Find(deviceId, id));
+            if (error == null)
+            {
+                lock (pending)
+                {
+                    pending.Remove(id);
+                }
+            }
+            else
+            {
+                _log.LogWarning("Could not update {User} on {DeviceId}: {Error} (will retry)", id, deviceId, error);
+            }
+        }
+    }
+
+    private void RememberCatchUp(string deviceId, IEnumerable<string> userIds)
+    {
+        var pending = _catchUp.GetOrAdd(deviceId, _ => new HashSet<string>(StringComparer.Ordinal));
+        lock (pending)
+        {
+            foreach (var id in userIds)
+            {
+                if (!string.IsNullOrWhiteSpace(id))
+                {
+                    pending.Add(id);
+                }
+            }
+        }
     }
 
     /// <summary>Re-reads one user before the gateway writes it, so an undetected local edit is merged first.</summary>
@@ -688,7 +759,8 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             {
                 if (adapter.GetHealth().ConnectionState != "ONLINE" || !_roster.HasBaseline(deviceId))
                 {
-                    continue; // caught up by its next scan
+                    RememberCatchUp(deviceId, fanOut.Users);
+                    continue;
                 }
 
                 foreach (var userId in fanOut.Users)
@@ -698,6 +770,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                     var error = m == null ? null : ConvergeUser(deviceId, adapter, m, _roster.Find(deviceId, userId));
                     if (error != null)
                     {
+                        RememberCatchUp(deviceId, [userId]);
                         _log.LogWarning("Could not update {User} on {DeviceId}: {Error} (will retry)", userId, deviceId, error);
                     }
                 }

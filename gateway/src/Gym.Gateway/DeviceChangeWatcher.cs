@@ -480,12 +480,9 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         var pending = _catchUp.GetOrAdd(deviceId, _ => new HashSet<string>(StringComparer.Ordinal));
         lock (pending)
         {
-            foreach (var id in userIds)
+            foreach (var id in userIds.Where(id => !string.IsNullOrWhiteSpace(id)))
             {
-                if (!string.IsNullOrWhiteSpace(id))
-                {
-                    pending.Add(id);
-                }
+                pending.Add(id);
             }
         }
     }

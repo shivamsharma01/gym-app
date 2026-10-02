@@ -36,6 +36,7 @@ public sealed class GatewayWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _stop = stoppingToken;
         foreach (var device in _options.Devices.Where(d => !string.IsNullOrWhiteSpace(d.DeviceId)))
         {
             var adapter = DeviceAdapterFactory.Create(_options.Adapter);
@@ -75,7 +76,6 @@ public sealed class GatewayWorker : BackgroundService
             _logFactory.CreateLogger<DeviceChangeWatcher>(),
             TimeSpan.FromMinutes(Math.Max(1, _options.FaceSweepMinutes)),
             store: new LocalMemberStore(LocalMemberStore.DefaultDirectory()));
-        _stop = stoppingToken;
         _dispatcher = new CommandDispatcher(
             _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _link, _roster, _locks,
             (deviceId, userId) => _watcher!.ReportUserAsync(deviceId, userId, stoppingToken),
@@ -334,7 +334,7 @@ public sealed class GatewayWorker : BackgroundService
             ProtocolTypes.DeviceStatus,
             deviceId,
             new { connectionState = status.ConnectionState, error = status.Error },
-            null));
+            null), _stop);
 
     private sealed class ForwardingListener : IDeviceEventListener
     {

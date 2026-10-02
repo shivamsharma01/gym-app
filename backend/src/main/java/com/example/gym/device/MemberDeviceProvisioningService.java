@@ -124,6 +124,8 @@ public class MemberDeviceProvisioningService {
         }
         MemberDeviceMapping saved = mappingRepository.save(mapping);
         if (existing == null) {
+            FlowLog.debug("device", "mapped member={} on device={} as user={} (reader already holds it)",
+                    member.getPublicId(), device.getPublicId(), saved.getDeviceUserId());
             attendanceLinker.linkEarlierEvents(saved);
         }
         return saved;
@@ -289,6 +291,9 @@ public class MemberDeviceProvisioningService {
             mapping.setPendingDeviceUserId(serial);
             mapping.setSyncState(DeviceSyncState.PENDING);
             mappingRepository.save(mapping);
+            FlowLog.info("device", "serial move started member={} device={} user {} -> {} (old id kept until "
+                    + "the reader confirms the new one)", member.getPublicId(), mapping.getDeviceId(),
+                    mapping.getDeviceUserId(), serial);
             deviceSyncService.enqueue(member.getTenantId(), mapping.getDeviceId(), member.getId(), null,
                     SyncCommandType.CREATE_USER, userPayload(member, serial));
         }
@@ -360,6 +365,8 @@ public class MemberDeviceProvisioningService {
         }
         MemberDeviceMapping mapping = mappingRepository.save(new MemberDeviceMapping(
                 member.getTenantId(), member.getId(), device.getId(), deviceUserId));
+        FlowLog.debug("device", "mapped member={} on device={} as user={}; sending create, access and photo",
+                member.getPublicId(), device.getPublicId(), deviceUserId);
         seed(member, device, mapping);
         return true;
     }

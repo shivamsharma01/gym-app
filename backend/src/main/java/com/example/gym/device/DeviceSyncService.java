@@ -100,6 +100,8 @@ public class DeviceSyncService {
             command.setCompletedAt(Instant.now());
             command.setLastError("Superseded by a newer change");
             commandRepository.save(command);
+            FlowLog.debug("sync", "superseded {} corr={} device={} member={} (a newer change replaces it)",
+                    command.getType(), command.getCorrelationId(), deviceId, memberId);
         }
     }
 
@@ -124,8 +126,8 @@ public class DeviceSyncService {
         DeviceSyncCommand saved = commandRepository.save(command);
 
         markState(saved, DeviceSyncState.PENDING);
-        FlowLog.debug("device", "enqueued type={} command={} deviceId={} memberId={}",
-                type, saved.getPublicId(), deviceId, memberId);
+        FlowLog.debug("sync", "enqueued {} corr={} device={} member={} user={}",
+                type, correlationId, deviceId, memberId, payload == null ? null : payload.get("deviceUserId"));
         auditService.record(AuditActions.DEVICE_SYNC_ENQUEUED, AuditActions.RESULT_SUCCESS,
                 "DeviceSyncCommand", saved.getPublicId(), Map.of("type", type.name()));
         return saved;
@@ -200,6 +202,8 @@ public class DeviceSyncService {
                         Instant.now(),
                         PageRequest.of(0, properties.getOutbox().getBatchSize()));
         int dispatched = 0;
+        int waiting = 0;
+        int failed = 0;
         for (DeviceSyncCommand command : due) {
             GatewayCommandTransport.Outcome outcome;
             try {
@@ -214,11 +218,24 @@ public class DeviceSyncService {
                     command.setDispatchedAt(Instant.now());
                     command.setAttemptCount(command.getAttemptCount() + 1);
                     dispatched++;
+                    FlowLog.debug("sync", "dispatched {} corr={} device={} member={} attempt={}",
+                            command.getType(), command.getCorrelationId(), command.getDeviceId(),
+                            command.getMemberId(), command.getAttemptCount());
                 }
-                case NOT_CONNECTED -> waitForGateway(command);
-                case FAILED -> failAttempt(command, "Delivery to the gateway failed");
+                case NOT_CONNECTED -> {
+                    waitForGateway(command);
+                    waiting++;
+                }
+                case FAILED -> {
+                    failAttempt(command, "Delivery to the gateway failed");
+                    failed++;
+                }
             }
             commandRepository.save(command);
+        }
+        if (!due.isEmpty()) {
+            FlowLog.info("sync", "dispatch batch: due={} sent={} waitingForGateway={} deliveryFailed={}",
+                    due.size(), dispatched, waiting, failed);
         }
         return dispatched;
     }
@@ -243,9 +260,16 @@ public class DeviceSyncService {
             return;
         }
         if (command.getState().isTerminal()) {
+            FlowLog.debug("sync", "late result for {} corr={} ignored: already {}",
+                    command.getType(), correlationId, command.getState());
             return;
         }
         command.setAcknowledgedAt(Instant.now());
+        if (ok && !skipped && FlowLog.isDebugEnabled("sync")) {
+            FlowLog.debug("sync", "{} succeeded corr={} device={} member={} user={} attempt={} took={}ms",
+                    command.getType(), correlationId, command.getDeviceId(), command.getMemberId(),
+                    payloadText(command, "deviceUserId"), command.getAttemptCount(), sinceDispatch(command));
+        }
         if (ok) {
             command.setState(SyncCommandState.SUCCEEDED);
             command.setCompletedAt(Instant.now());
@@ -285,6 +309,8 @@ public class DeviceSyncService {
         command.setLastError(null);
         command.setCompletedAt(null);
         DeviceSyncCommand saved = commandRepository.save(command);
+        FlowLog.info("sync", "manual retry of {} corr={} device={} member={}",
+                saved.getType(), saved.getCorrelationId(), saved.getDeviceId(), saved.getMemberId());
         markState(saved, DeviceSyncState.PENDING);
         auditService.record(AuditActions.DEVICE_SYNC_RETRIED, AuditActions.RESULT_SUCCESS,
                 "DeviceSyncCommand", saved.getPublicId(), null);
@@ -300,6 +326,8 @@ public class DeviceSyncService {
         command.setState(SyncCommandState.CANCELLED);
         command.setCompletedAt(Instant.now());
         DeviceSyncCommand saved = commandRepository.save(command);
+        FlowLog.info("sync", "manual cancel of {} corr={} device={} member={}",
+                saved.getType(), saved.getCorrelationId(), saved.getDeviceId(), saved.getMemberId());
         settleAfterCancel(saved);
         publishMemberSync(saved);
         auditService.record(AuditActions.DEVICE_SYNC_CANCELLED, AuditActions.RESULT_SUCCESS,
@@ -348,6 +376,9 @@ public class DeviceSyncService {
             command.setCompletedAt(Instant.now());
         }
         commandRepository.saveAll(open);
+        if (!open.isEmpty()) {
+            FlowLog.info("sync", "cancelled {} open command(s) for member={}", open.size(), memberId);
+        }
         return open.size();
     }
 
@@ -546,6 +577,8 @@ public class DeviceSyncService {
         command.setState(SyncCommandState.RETRYING);
         command.setLastError("Waiting for the gateway to connect");
         command.setNextAttemptAt(Instant.now().plus(properties.getOutbox().getOfflineRecheck()));
+        FlowLog.debug("sync", "{} corr={} device={} waits: gateway offline, recheck at {}",
+                command.getType(), command.getCorrelationId(), command.getDeviceId(), command.getNextAttemptAt());
     }
 
     /** Makes every waiting command of the gateway's devices due now (called when it connects). */
@@ -554,8 +587,10 @@ public class DeviceSyncService {
         if (deviceIds.isEmpty()) {
             return 0;
         }
-        return commandRepository.makeDueNow(deviceIds,
+        int released = commandRepository.makeDueNow(deviceIds,
                 List.of(SyncCommandState.PENDING, SyncCommandState.RETRYING), Instant.now());
+        FlowLog.info("sync", "gateway connected: {} waiting command(s) made due for devices {}", released, deviceIds);
+        return released;
     }
 
     private void failAttempt(DeviceSyncCommand command, String error) {
@@ -582,7 +617,15 @@ public class DeviceSyncService {
         } else {
             command.setState(SyncCommandState.RETRYING);
             command.setNextAttemptAt(Instant.now().plus(backoff(command.getAttemptCount())));
+            FlowLog.info("sync", "{} failed corr={} device={} member={} attempt {}/{}, retry at {}: {}",
+                    command.getType(), command.getCorrelationId(), command.getDeviceId(), command.getMemberId(),
+                    command.getAttemptCount(), command.getMaxAttempts(), command.getNextAttemptAt(), error);
         }
+    }
+
+    private Long sinceDispatch(DeviceSyncCommand command) {
+        return command.getDispatchedAt() == null ? null
+                : Duration.between(command.getDispatchedAt(), Instant.now()).toMillis();
     }
 
     private Duration backoff(int attempt) {

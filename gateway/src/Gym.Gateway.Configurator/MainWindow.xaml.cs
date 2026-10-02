@@ -181,6 +181,7 @@ public partial class MainWindow : Window
                 RenewBefore = TimeSpan.FromDays(7),
                 Adapter = "TrueFace",
                 UseWebSocket = true,
+                LogLevel = store.TryLoad()?.LogLevel,
                 Devices = _devices.Select(d => new PersistedDeviceConfig
                 {
                     DeviceId = d.DeviceId,

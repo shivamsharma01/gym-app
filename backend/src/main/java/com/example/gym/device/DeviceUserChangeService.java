@@ -2,6 +2,7 @@ package com.example.gym.device;
 
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.DeviceAuthorizationService.AccessWindow;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.MemberDeviceMapping;
@@ -589,13 +590,20 @@ public class DeviceUserChangeService {
     private Optional<Member> findMember(Device device, String deviceUserId) {
         Optional<MemberDeviceMapping> mapping = mappingRepository.findByDeviceIdAndDeviceUserId(
                 device.getId(), deviceUserId);
+        String via = "reader mapping";
         if (mapping.isEmpty()) {
             mapping = mappingRepository.findFirstByDeviceIdAndPendingDeviceUserId(device.getId(), deviceUserId);
+            via = "pending serial move";
         }
         if (mapping.isPresent()) {
+            FlowLog.debug("device", "device={} user={} -> member={} via {}",
+                    device.getPublicId(), deviceUserId, mapping.get().getMemberId(), via);
             return memberRepository.findById(mapping.get().getMemberId());
         }
-        return importer.findBySerial(device.getTenantId(), deviceUserId);
+        Optional<Member> bySerial = importer.findBySerial(device.getTenantId(), deviceUserId);
+        FlowLog.debug("device", "device={} user={} has no mapping on this reader; serial/legacy code match: {}",
+                device.getPublicId(), deviceUserId, bySerial.map(m -> m.getPublicId()).orElse("none (new member)"));
+        return bySerial;
     }
 
     private void closeExtraConflict(Device device, String deviceUserId) {

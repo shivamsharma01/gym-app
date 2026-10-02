@@ -98,6 +98,10 @@ public sealed class GatewayConfigStore
         options.Adapter = string.IsNullOrWhiteSpace(config.Adapter) ? "TrueFace" : config.Adapter;
         options.UseWebSocket = config.UseWebSocket;
         options.NativeDirectory = config.NativeDirectory;
+        if (!string.IsNullOrWhiteSpace(config.LogLevel))
+        {
+            options.LogLevel = config.LogLevel;
+        }
         options.Devices = config.Devices.Select(d => new DeviceEndpointOptions
         {
             DeviceId = d.DeviceId,
@@ -122,6 +126,7 @@ public sealed class GatewayConfigStore
             Adapter = options.Adapter,
             UseWebSocket = options.UseWebSocket,
             NativeDirectory = options.NativeDirectory,
+            LogLevel = previous?.LogLevel,
             Devices = options.Devices.Select(d => new PersistedDeviceConfig
             {
                 DeviceId = d.DeviceId,

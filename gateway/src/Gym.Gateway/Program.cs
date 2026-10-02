@@ -6,12 +6,18 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 var logDir = Path.Combine(GatewayConfigStore.DefaultConfigDirectory(), "logs");
 Directory.CreateDirectory(logDir);
 
+// Raised after the configuration is read (Gateway:LogLevel, config.json logLevel, or GYM_GATEWAY_LOG_LEVEL).
+var levelSwitch = new LoggingLevelSwitch(LogEventLevel.Information);
 Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
+    .MinimumLevel.ControlledBy(levelSwitch)
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Information)
+    .MinimumLevel.Override("System", LogEventLevel.Information)
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .WriteTo.File(
@@ -58,6 +64,21 @@ try
         options.OverlayEnvironment(env);
     }
 
+    var envLevel = Environment.GetEnvironmentVariable("GYM_GATEWAY_LOG_LEVEL");
+    if (!string.IsNullOrWhiteSpace(envLevel))
+    {
+        options.LogLevel = envLevel;
+    }
+
+    if (Enum.TryParse<LogEventLevel>(options.LogLevel, ignoreCase: true, out var level))
+    {
+        levelSwitch.MinimumLevel = level;
+    }
+    else
+    {
+        Log.Warning("Unknown log level '{Level}'; using Information (use Debug for sync troubleshooting)", options.LogLevel);
+    }
+
     var errors = options.Validate();
     if (errors.Count > 0)
     {
@@ -86,8 +107,8 @@ try
     builder.Services.AddHostedService<CredentialRotationService>();
 
     Log.Information(
-        "Starting gym device gateway id={Id} adapter={Adapter} backend={Backend} devices={DeviceCount}",
-        options.Id, options.Adapter, options.BackendUrl, options.Devices.Count);
+        "Starting gym device gateway id={Id} adapter={Adapter} backend={Backend} devices={DeviceCount} logLevel={Level}",
+        options.Id, options.Adapter, options.BackendUrl, options.Devices.Count, levelSwitch.MinimumLevel);
 
     await builder.Build().RunAsync().ConfigureAwait(false);
     return 0;

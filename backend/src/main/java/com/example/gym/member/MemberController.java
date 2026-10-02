@@ -5,12 +5,15 @@ import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
 import com.example.gym.member.dto.MemberResponse;
 import com.example.gym.security.SecurityUtils;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.JpaSort;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -41,19 +44,39 @@ public class MemberController {
 
     @GetMapping
     @PreAuthorize("hasAuthority('MEMBER_VIEW')")
-    @Operation(summary = "Search/list members (by name, phone, member code; optional status filter)")
+    @Operation(summary = "Search/list members (by name, phone, serial, member code; optional status filter). "
+            + "sort=name|serial (default newest first), direction=asc|desc")
     public PageResponse<MemberResponse> list(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) MemberStatus status,
             @RequestParam(required = false) MemberCreationSource creationSource,
+            @RequestParam(required = false) String sort,
+            @RequestParam(defaultValue = "asc") String direction,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
-        PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize,
-                Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize, listSort(sort, direction));
         var members = memberService.search(SecurityUtils.currentTenantId(), q, status, creationSource, pageable);
         Map<Long, String> coverage = memberCoverage.ofAll(members.getContent());
         return PageResponse.from(members, member -> MemberResponse.from(member, coverage.get(member.getId())));
+    }
+
+    /** Serials sort as numbers ("2" before "10"); members without a serial come last either way. */
+    static Sort listSort(String sort, String direction) {
+        Sort.Direction dir = "desc".equalsIgnoreCase(direction) ? Sort.Direction.DESC : Sort.Direction.ASC;
+        if ("name".equalsIgnoreCase(sort)) {
+            return Sort.by(new Sort.Order(dir, "firstName"), new Sort.Order(dir, "lastName"), Sort.Order.asc("id"));
+        }
+        if ("serial".equalsIgnoreCase(sort)) {
+            List<Sort.Order> orders = new ArrayList<>();
+            for (Sort.Order byLength : JpaSort.unsafe(dir, "length(m.serialNumber)")) {
+                orders.add(byLength.with(Sort.NullHandling.NULLS_LAST));
+            }
+            orders.add(new Sort.Order(dir, "serialNumber", Sort.NullHandling.NULLS_LAST));
+            orders.add(Sort.Order.asc("id"));
+            return Sort.by(orders);
+        }
+        return Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
     }
 
     @GetMapping("/next-serial")

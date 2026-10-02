@@ -90,6 +90,7 @@ public sealed class CredentialRotationService : BackgroundService
             Adapter = _options.Adapter,
             UseWebSocket = _options.UseWebSocket,
             NativeDirectory = _options.NativeDirectory,
+            LogLevel = previous?.LogLevel,
             Devices = previous?.Devices ?? _options.Devices.Select(d => new PersistedDeviceConfig
             {
                 DeviceId = d.DeviceId,

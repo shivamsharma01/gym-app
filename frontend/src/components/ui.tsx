@@ -1,4 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority'
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 import type {
   ButtonHTMLAttributes,
   HTMLAttributes,
@@ -317,6 +318,38 @@ export function THead({ children }: { children: ReactNode }) {
 
 export function Th({ className, ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return <th className={cn('px-4 py-3 font-semibold', className)} {...props} />
+}
+
+export type SortDirection = 'asc' | 'desc'
+
+/** Column header that toggles sorting. `direction` is set only on the active column. */
+export function SortableTh({
+  children,
+  direction,
+  onSort,
+  className,
+}: {
+  children: ReactNode
+  direction?: SortDirection
+  onSort: () => void
+  className?: string
+}) {
+  const Icon = direction === 'asc' ? ArrowUp : direction === 'desc' ? ArrowDown : ArrowUpDown
+  return (
+    <Th
+      className={className}
+      aria-sort={direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none'}
+    >
+      <button
+        type="button"
+        onClick={onSort}
+        className={cn('inline-flex items-center gap-1 hover:text-ink', direction ? 'text-ink' : undefined)}
+      >
+        {children}
+        <Icon className={cn('h-3.5 w-3.5', direction ? 'opacity-100' : 'opacity-40')} aria-hidden />
+      </button>
+    </Th>
+  )
 }
 
 export function Td({ className, ...props }: TdHTMLAttributes<HTMLTableCellElement>) {

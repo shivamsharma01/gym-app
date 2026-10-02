@@ -219,6 +219,31 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         assertThat(linkedBroadcasts()).isZero();
     }
 
+    @Test
+    void attendanceIsOrderedByTimeThenStoredOrder() throws Exception {
+        String sameTime = "2026-10-02T07:00:00Z";
+        for (String user : List.of("a1", "a2", "a3")) {
+            long n = recNo.getAndIncrement();
+            gatewayMessageService.process(envelope(entranceId, "DEVICE_EVENT", """
+                    {"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}
+                    """.formatted(user, sameTime, n)));
+        }
+        punch(entranceId, "early");
+
+        assertThat(listedUsers("desc")).containsExactly("a3", "a2", "a1", "early");
+        assertThat(listedUsers("asc")).containsExactly("early", "a1", "a2", "a3");
+    }
+
+    private List<String> listedUsers(String direction) throws Exception {
+        String body = mockMvc.perform(get("/api/v1/attendance").param("direction", direction)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<String> users = new java.util.ArrayList<>();
+        readJson(body).get("content").forEach(e -> users.add(e.get("deviceUserId").asString()));
+        return users;
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     private void moveSerial(Member member, String serial) throws Exception {

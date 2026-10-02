@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Text.Json;
 using System.Threading.Channels;
 using Gym.Gateway.Adapters;
 using Microsoft.Extensions.Hosting;
@@ -169,10 +171,45 @@ public sealed class GatewayWorker : BackgroundService
 
     private async Task HandleCommandAsync(BackendLink link, CommandDispatcher dispatcher, GatewayEnvelope command)
     {
-        _log.LogInformation("Command {Type} device={DeviceId} corr={Corr}",
-            command.Type, command.DeviceId, command.CorrelationId);
+        var userId = CommandDispatcher.Text(command.Payload, "deviceUserId");
+        _log.LogDebug("Command start {Type} device={DeviceId} user={User} corr={Corr}",
+            command.Type, command.DeviceId, userId, command.CorrelationId);
+        var timer = Stopwatch.StartNew();
         var outcome = await dispatcher.DispatchAsync(command).ConfigureAwait(false);
+        timer.Stop();
+        LogOutcome(command, userId, outcome, timer.ElapsedMilliseconds);
         await PublishOutcome(link, command, outcome).ConfigureAwait(false);
+    }
+
+    /// <summary>One line per command: what ran, on which reader and user, the result and how long it took.</summary>
+    private void LogOutcome(GatewayEnvelope command, string? userId, DispatchOutcome outcome, long elapsedMs)
+    {
+        if (outcome.ResultType == ProtocolTypes.ReconciliationResult)
+        {
+            _log.LogInformation("Command {Type} device={DeviceId} corr={Corr} -> reconcile sent ({Events} event(s)) in {Ms}ms",
+                command.Type, command.DeviceId, command.CorrelationId, outcome.Events?.Count ?? 0, elapsedMs);
+            return;
+        }
+
+        var result = JsonSerializer.SerializeToElement(outcome.Payload, JsonOptions.Outbound);
+        var error = CommandDispatcher.Text(result, "error");
+        var skipped = CommandDispatcher.Bool(result, "skipped") == true;
+        if (!outcome.Ok)
+        {
+            _log.LogWarning("Command {Type} device={DeviceId} user={User} corr={Corr} -> FAILED in {Ms}ms: {Error}",
+                command.Type, command.DeviceId, userId, command.CorrelationId, elapsedMs, error);
+        }
+        else if (skipped)
+        {
+            _log.LogInformation("Command {Type} device={DeviceId} user={User} corr={Corr} -> skipped in {Ms}ms: {Reason}",
+                command.Type, command.DeviceId, userId, command.CorrelationId, elapsedMs,
+                CommandDispatcher.Text(result, "reason"));
+        }
+        else
+        {
+            _log.LogInformation("Command {Type} device={DeviceId} user={User} corr={Corr} -> ok in {Ms}ms",
+                command.Type, command.DeviceId, userId, command.CorrelationId, elapsedMs);
+        }
     }
 
     private async Task PublishOutcome(BackendLink link, GatewayEnvelope command, DispatchOutcome outcome)
@@ -271,6 +308,11 @@ public sealed class GatewayWorker : BackgroundService
         if (!channel.Writer.TryWrite(command))
         {
             _log.LogWarning("Dropped command {Type} for {DeviceId}", command.Type, command.DeviceId);
+        }
+        else
+        {
+            _log.LogDebug("Queued {Type} device={DeviceId} corr={Corr}; {Depth} waiting for this reader",
+                command.Type, command.DeviceId, command.CorrelationId, channel.Reader.Count);
         }
 
         return Task.CompletedTask;

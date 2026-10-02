@@ -13,11 +13,18 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code gym.flow.auth=DEBUG} — extra steps for sign-in and refresh</li>
  *   <li>{@code gym.flow.device=WARN} — hide routine device sync, keep failures</li>
  *   <li>{@code gym.flow.attendance=DEBUG} — include granted door events as well as denials</li>
+ *   <li>{@code gym.flow.sync=DEBUG} — every outbox command: enqueue, supersede, dispatch, result</li>
+ *   <li>{@code gym.flow.gateway=DEBUG} — every inbound gateway message (except heartbeats)</li>
  * </ul>
  */
 public final class FlowLog {
 
     private FlowLog() {
+    }
+
+    /** Guards debug lines whose arguments cost something to build (e.g. parsing a payload). */
+    public static boolean isDebugEnabled(String flow) {
+        return logger(flow).isDebugEnabled();
     }
 
     public static void debug(String flow, String message, Object... args) {

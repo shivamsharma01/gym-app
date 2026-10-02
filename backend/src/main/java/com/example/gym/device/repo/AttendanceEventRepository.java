@@ -25,10 +25,9 @@ public interface AttendanceEventRepository extends JpaRepository<AttendanceEvent
             Long tenantId, Long deviceId, String deviceUserId, Instant occurredAt, String method,
             AccessResult result);
 
-    Page<AttendanceEvent> findByTenantIdOrderByOccurredAtDesc(Long tenantId, Pageable pageable);
+    Page<AttendanceEvent> findByTenantId(Long tenantId, Pageable pageable);
 
-    Page<AttendanceEvent> findByTenantIdAndMemberIdOrderByOccurredAtDesc(
-            Long tenantId, Long memberId, Pageable pageable);
+    Page<AttendanceEvent> findByTenantIdAndMemberId(Long tenantId, Long memberId, Pageable pageable);
 
     long countByTenantIdAndOccurredAtGreaterThanEqualAndOccurredAtLessThan(
             Long tenantId, Instant from, Instant to);

@@ -18,6 +18,27 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
 
     Optional<MemberDeviceMapping> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
+    Optional<MemberDeviceMapping> findFirstByDeviceIdAndPendingDeviceUserId(Long deviceId, String pendingDeviceUserId);
+
+    /** Every reader id in use or being moved to in the tenant, with the member holding it. */
+    @org.springframework.data.jpa.repository.Query("""
+            select m from MemberDeviceMapping m
+            where m.tenantId = :tenantId
+              and (m.deviceUserId = :deviceUserId or m.pendingDeviceUserId = :deviceUserId)
+            """)
+    List<MemberDeviceMapping> findHolding(@org.springframework.data.repository.query.Param("tenantId") Long tenantId,
+                                          @org.springframework.data.repository.query.Param("deviceUserId") String deviceUserId);
+
+    @org.springframework.data.jpa.repository.Query(
+            "select m.deviceUserId from MemberDeviceMapping m where m.tenantId = :tenantId")
+    List<String> findDeviceUserIds(@org.springframework.data.repository.query.Param("tenantId") Long tenantId);
+
+    @org.springframework.data.jpa.repository.Query("""
+            select m.pendingDeviceUserId from MemberDeviceMapping m
+            where m.tenantId = :tenantId and m.pendingDeviceUserId is not null
+            """)
+    List<String> findPendingDeviceUserIds(@org.springframework.data.repository.query.Param("tenantId") Long tenantId);
+
     boolean existsByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
     boolean existsByDeviceIdAndMemberId(Long deviceId, Long memberId);

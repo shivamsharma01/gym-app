@@ -19,6 +19,9 @@ public sealed class PersistedGatewayConfig
 
     public string? NativeDirectory { get; set; }
 
+    /// <summary>Optional: "Debug" to log every sync step. Missing means Information.</summary>
+    public string? LogLevel { get; set; }
+
     public List<PersistedDeviceConfig> Devices { get; set; } = [];
 }
 

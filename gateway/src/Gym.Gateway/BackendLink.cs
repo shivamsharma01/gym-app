@@ -355,10 +355,16 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 {
                     TryAcknowledgeFromEnvelope(envelope);
                 }
+                else if (envelope.Type == ProtocolTypes.Error)
+                {
+                    LogServerError(envelope);
+                }
 
                 continue;
             }
 
+            _log.LogDebug("Received {Type} device={DeviceId} corr={Corr} from server",
+                envelope.Type, envelope.DeviceId, envelope.CorrelationId);
             await onMessage(envelope).ConfigureAwait(false);
         }
     }
@@ -384,6 +390,14 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
     }
 
+    /// <summary>The server could not process a message; it stays in the outbox and is resent on reconnect.</summary>
+    private void LogServerError(GatewayEnvelope envelope)
+    {
+        var error = envelope.Payload.ValueKind == JsonValueKind.Object
+                    && envelope.Payload.TryGetProperty("error", out var e) ? e.ToString() : "unknown";
+        _log.LogWarning("Server rejected a gateway message corr={Corr}: {Error}", envelope.CorrelationId, error);
+    }
+
     private void TryAcknowledgeFromReply(string body)
     {
         if (string.IsNullOrWhiteSpace(body) || body == "{}")
@@ -397,6 +411,10 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             if (envelope != null && envelope.Type == ProtocolTypes.Ack)
             {
                 TryAcknowledgeFromEnvelope(envelope);
+            }
+            else if (envelope != null && envelope.Type == ProtocolTypes.Error)
+            {
+                LogServerError(envelope);
             }
         }
         catch

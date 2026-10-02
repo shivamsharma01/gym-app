@@ -2,6 +2,7 @@ package com.example.gym.device;
 
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberCreationSource;
+import com.example.gym.member.MemberNumbers;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.membership.DeviceSyncState;
@@ -13,6 +14,7 @@ import com.example.gym.plan.MembershipPlan;
 import com.example.gym.plan.MembershipPlanRepository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Optional;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -30,26 +32,34 @@ public class DeviceMemberImporter {
     private final MemberRepository memberRepository;
     private final MembershipRepository membershipRepository;
     private final MembershipPlanRepository planRepository;
+    private final MemberNumbers numbers;
 
     public DeviceMemberImporter(MemberRepository memberRepository,
                                 MembershipRepository membershipRepository,
-                                MembershipPlanRepository planRepository) {
+                                MembershipPlanRepository planRepository,
+                                MemberNumbers numbers) {
         this.memberRepository = memberRepository;
         this.membershipRepository = membershipRepository;
         this.planRepository = planRepository;
+        this.numbers = numbers;
     }
 
     public Member createMember(Long tenantId, String deviceUserId, String deviceName, boolean frozen) {
         return createMember(tenantId, deviceUserId, deviceName, frozen, com.example.gym.member.DeviceAuthority.USER);
     }
 
+    /** A member for a user found on a reader: the reader's id becomes the serial when it is free. */
     public Member createMember(Long tenantId, String deviceUserId, String deviceName, boolean frozen, com.example.gym.member.DeviceAuthority authority) {
-        String code = truncateCode(deviceUserId);
-        if (memberRepository.existsByTenantIdAndMemberCode(tenantId, code)) {
-            code = truncateCode("DEV-" + deviceUserId);
-        }
-        NameParts names = parseName(deviceName, deviceUserId);
-        Member member = new Member(tenantId, code, names.firstName());
+        return createMemberWithSerial(tenantId, numbers.serialForImport(tenantId, deviceUserId), deviceUserId,
+                deviceName, frozen, authority);
+    }
+
+    /** A member with a generated member code and the given serial (may be null). */
+    public Member createMemberWithSerial(Long tenantId, String serial, String fallbackName, String deviceName,
+                                         boolean frozen, com.example.gym.member.DeviceAuthority authority) {
+        NameParts names = parseName(deviceName, fallbackName);
+        Member member = new Member(tenantId, numbers.newMemberCode(tenantId), names.firstName());
+        member.setSerialNumber(serial);
         member.setLastName(names.lastName());
         member.setCreationSource(MemberCreationSource.DEVICE_IMPORT);
         member.setStatus(frozen ? MemberStatus.INACTIVE : MemberStatus.ACTIVE);
@@ -111,6 +121,16 @@ public class DeviceMemberImporter {
                         BigDecimal.ZERO,
                         "INR",
                         LIFETIME_PLAN_DAYS)));
+    }
+
+    /**
+     * The member a reader id belongs to when no reader mapping says so: the member with that serial,
+     * or an older member without a serial whose code was used as the reader id.
+     */
+    public Optional<Member> findBySerial(Long tenantId, String deviceUserId) {
+        return memberRepository.findByTenantIdAndSerialNumber(tenantId, deviceUserId)
+                .or(() -> memberRepository.findByTenantIdAndMemberCode(tenantId, truncateCode(deviceUserId))
+                        .filter(m -> m.getSerialNumber() == null));
     }
 
     public static String truncateCode(String raw) {

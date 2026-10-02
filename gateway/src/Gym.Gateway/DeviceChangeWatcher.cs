@@ -82,7 +82,11 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
     }
 
     /// <summary>Called from device event callbacks; never blocks.</summary>
-    public void Trigger(string deviceId, string? deviceUserId) => _triggers.Writer.TryWrite((deviceId, deviceUserId));
+    public void Trigger(string deviceId, string? deviceUserId)
+    {
+        _log.LogDebug("Reader {DeviceId} announced a user change (user={User}); scanning shortly", deviceId, deviceUserId);
+        _triggers.Writer.TryWrite((deviceId, deviceUserId));
+    }
 
     public async Task RunAsync(TimeSpan pollInterval, CancellationToken cancellationToken)
     {
@@ -168,6 +172,10 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             {
                 ScanLocked(deviceId, adapter, faceFocus, faceSweep, fanOut);
             }
+            else
+            {
+                _log.LogDebug("Skipped change scan of {DeviceId}: reader is not online", deviceId);
+            }
         }
         finally
         {
@@ -249,6 +257,9 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
             result = _store.Merge(change);
             LogIgnored(result, $"server {command.Type}");
+            _log.LogDebug(
+                "Server {Type} user={User} on {DeviceId}: name={Name} access={Access} face={Face} deleted={Deleted} ignored={Ignored}",
+                command.Type, userId, deviceId, result.Name, result.Access, result.Face, result.Deleted, result.Ignored.Count);
             var m = _store.Find(userId);
             error = m == null ? null : ConvergeUser(deviceId, adapter, m, _roster.Find(deviceId, userId));
         }
@@ -308,6 +319,8 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                     else if (upload.UploadId == null)
                     {
                         // Server unreachable: keep this and later reports (order matters), retry next scan.
+                        _log.LogInformation("Paused sending device changes: server unreachable; {Count} report(s) kept for the next scan",
+                            _store.Reports().Count - sent);
                         break;
                     }
                     else
@@ -319,6 +332,12 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                 await _publish(report.DeviceId, payload).ConfigureAwait(false);
                 _store.CompleteReport(report.Id);
                 sent++;
+                _log.LogInformation(
+                    "Reported reader change to server: device={DeviceId} user={User} new={IsNew} deleted={Deleted} "
+                    + "name={Name} access={Access} face={Face} changedAt={ChangedAt}",
+                    report.DeviceId, report.DeviceUserId, Flag(payload, "isNew"), Flag(payload, "deleted"),
+                    Flag(payload, "nameChanged"), Flag(payload, "frozenChanged") || Flag(payload, "validityChanged"),
+                    Flag(payload, "faceChanged") || Flag(payload, "faceRemoved"), payload["deviceChangedAt"]?.ToString());
             }
 
             return sent;
@@ -328,6 +347,9 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             _flushGate.Release();
         }
     }
+
+    private static bool Flag(JsonObject payload, string name) =>
+        payload[name] is JsonValue value && value.TryGetValue<bool>(out var flag) && flag;
 
     // --- scanning --------------------------------------------------------------------------------
 
@@ -393,6 +415,10 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                 _lastFaceSweep[deviceId] = now;
             }
         }
+
+        _log.LogDebug(
+            "Scanned {DeviceId}: {Users} user(s), {FaceReads} sweep face read(s) from #{Start}, focus={Focus}, more faces pending={More}",
+            deviceId, users.Count, faceReads, start, faceFocus?.Count ?? 0, moreFaces);
 
         // An empty list is treated as a read failure, never as "everyone was deleted".
         if (users.Count > 0)

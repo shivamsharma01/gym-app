@@ -79,6 +79,8 @@ public class MemberDeviceSyncService {
                     device.getConnectionState() == null ? null : device.getConnectionState().name(),
                     device.getGatewayId() != null,
                     mapping.getDeviceUserId(),
+                    mapping.getPendingDeviceUserId(),
+                    member.getSerialNumber() != null && !member.getSerialNumber().equals(mapping.getDeviceUserId()),
                     mapping.getSyncState() == null ? null : mapping.getSyncState().name(),
                     mapping.getFaceSyncState() == null ? null : mapping.getFaceSyncState().name(),
                     mapping.getFaceVersionSynced(),
@@ -117,6 +119,10 @@ public class MemberDeviceSyncService {
             String connectionState,
             boolean hasGateway,
             String deviceUserId,
+            /** The serial this reader is moving the member to; null when not moving. */
+            String pendingDeviceUserId,
+            /** True when this reader holds the member under an id other than their serial. */
+            boolean differsFromSerial,
             String userSyncState,
             String faceSyncState,
             Integer faceVersionSynced,

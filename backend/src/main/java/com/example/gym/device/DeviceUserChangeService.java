@@ -2,6 +2,7 @@ package com.example.gym.device;
 
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.DeviceAuthorizationService.AccessWindow;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.MemberDeviceMapping;
@@ -326,8 +327,9 @@ public class DeviceUserChangeService {
      * code (with fresh change times so gateways replace the device user). Flagged for staff.
      */
     private void applyCodeClash(Device device, Member existing, Report r) {
-        String code = memberService.allocateMemberCode(device.getTenantId());
-        Member created = importer.createMember(device.getTenantId(), code, r.name(), r.frozen(), r.authority());
+        String serial = memberService.nextSerial(device.getTenantId());
+        Member created = importer.createMemberWithSerial(device.getTenantId(), serial, r.deviceUserId(), r.name(),
+                r.frozen(), r.authority());
         created.setProfileChangedAt(r.changedAt());
         created.setAccessChangedAt(r.changedAt());
         created.setFaceChangedAt(r.changedAt());
@@ -348,15 +350,17 @@ public class DeviceUserChangeService {
         String details = ("User '%s' was enrolled on %s while offline with id %s, which belongs to member %s (%s). "
                 + "It was saved as a separate member %s (%s); the device user id is now %s.")
                 .formatted(r.name(), device.getName(), r.deviceUserId(), existing.getMemberCode(),
-                        existing.getFullName(), created.getMemberCode(), created.getFullName(), code);
+                        existing.getFullName(), created.getMemberCode(), created.getFullName(), serial);
         conflictRepository.save(new ReconciliationConflict(device.getTenantId(), device.getId(), r.deviceUserId(),
                 ReconciliationConflictType.DEVICE_CODE_CLASH, details));
         Map<String, Object> audit = new LinkedHashMap<>();
         audit.put("device", device.getName());
         audit.put("deviceUserId", r.deviceUserId());
         audit.put("existingMember", existing.getPublicId());
+        audit.put("existingSerialNumber", existing.getSerialNumber());
         audit.put("newMember", created.getPublicId());
-        audit.put("newCode", code);
+        audit.put("newCode", created.getMemberCode());
+        audit.put("serialNumber", serial);
         auditService.recordSystem(AuditActions.DEVICE_CODE_CLASH, AuditActions.RESULT_SUCCESS,
                 "Member", created.getPublicId(), device.getTenantId(), DEVICE_ACTOR, audit);
         broadcast(device, created, "CREATED");
@@ -393,6 +397,7 @@ public class DeviceUserChangeService {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("device", device.getName());
         details.put("deviceUserId", deviceUserId);
+        details.put("serialNumber", member.getSerialNumber());
         auditService.recordSystem(AuditActions.MEMBER_DELETED_ON_DEVICE, AuditActions.RESULT_SUCCESS,
                 "Member", member.getPublicId(), device.getTenantId(), DEVICE_ACTOR, details);
         broadcast(device, member, "DELETED");
@@ -585,11 +590,20 @@ public class DeviceUserChangeService {
     private Optional<Member> findMember(Device device, String deviceUserId) {
         Optional<MemberDeviceMapping> mapping = mappingRepository.findByDeviceIdAndDeviceUserId(
                 device.getId(), deviceUserId);
+        String via = "reader mapping";
+        if (mapping.isEmpty()) {
+            mapping = mappingRepository.findFirstByDeviceIdAndPendingDeviceUserId(device.getId(), deviceUserId);
+            via = "pending serial move";
+        }
         if (mapping.isPresent()) {
+            FlowLog.debug("device", "device={} user={} -> member={} via {}",
+                    device.getPublicId(), deviceUserId, mapping.get().getMemberId(), via);
             return memberRepository.findById(mapping.get().getMemberId());
         }
-        return memberRepository.findByTenantIdAndMemberCode(device.getTenantId(),
-                DeviceMemberImporter.truncateCode(deviceUserId));
+        Optional<Member> bySerial = importer.findBySerial(device.getTenantId(), deviceUserId);
+        FlowLog.debug("device", "device={} user={} has no mapping on this reader; serial/legacy code match: {}",
+                device.getPublicId(), deviceUserId, bySerial.map(m -> m.getPublicId()).orElse("none (new member)"));
+        return bySerial;
     }
 
     private void closeExtraConflict(Device device, String deviceUserId) {
@@ -608,6 +622,7 @@ public class DeviceUserChangeService {
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("device", device.getName());
             details.put("deviceUserId", deviceUserId);
+            details.put("serialNumber", member.getSerialNumber());
             details.put("ignored", ignored);
             auditService.recordSystem(AuditActions.SYNC_CHANGE_IGNORED, AuditActions.RESULT_SUCCESS,
                     "Member", member.getPublicId(), device.getTenantId(), DEVICE_ACTOR, details);
@@ -619,6 +634,7 @@ public class DeviceUserChangeService {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("device", device.getName());
         details.put("deviceUserId", deviceUserId);
+        details.put("serialNumber", member.getSerialNumber());
         details.put("outcome", outcome);
         details.put("faceApplied", faceApplied);
         if (!notes.isEmpty()) {

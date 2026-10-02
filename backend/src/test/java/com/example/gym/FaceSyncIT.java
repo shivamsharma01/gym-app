@@ -151,7 +151,8 @@ class FaceSyncIT extends AbstractIntegrationTest {
                 """.formatted(Instant.now(), uploadId));
 
         Member member = memberRepository.findAll().stream()
-                .filter(m -> "7001".equals(m.getMemberCode())).findFirst().orElseThrow();
+                .filter(m -> "7001".equals(m.getSerialNumber())).findFirst().orElseThrow();
+        assertThat(member.getMemberCode()).startsWith("MBR-");
         assertThat(member.getCreationSource()).isEqualTo(MemberCreationSource.DEVICE_IMPORT);
         assertThat(member.getFullName()).isEqualTo("Ravi Kumar");
         MemberFace face = memberFaceRepository.findByMemberId(member.getId()).orElseThrow();
@@ -389,7 +390,7 @@ class FaceSyncIT extends AbstractIntegrationTest {
         LocalDate today = LocalDate.now();
         deviceUserChanged(entranceId, access("7002", "Om Prakash", false, today.minusDays(10), today.plusDays(20),
                 Instant.now(), true, true, true));
-        Member member = memberRepository.findByTenantIdAndMemberCode(
+        Member member = memberRepository.findByTenantIdAndSerialNumber(
                 deviceRepository.findById(entrance).orElseThrow().getTenantId(), "7002").orElseThrow();
 
         long before = deviceSyncCommandRepository.count();
@@ -417,7 +418,7 @@ class FaceSyncIT extends AbstractIntegrationTest {
         Instant created = Instant.now();
         deviceUserChanged(entranceId, access("7003", "Lata", false, today.minusDays(5), today.plusDays(30),
                 created, true, true, true));
-        Member member = memberRepository.findByTenantIdAndMemberCode(
+        Member member = memberRepository.findByTenantIdAndSerialNumber(
                 deviceRepository.findById(entrance).orElseThrow().getTenantId(), "7003").orElseThrow();
 
         // Offline freeze made before the server's last access change: server keeps its state.
@@ -492,7 +493,8 @@ class FaceSyncIT extends AbstractIntegrationTest {
 
     private String createMember(String firstName, String code) throws Exception {
         return readJson(postJson("/api/v1/members",
-                "{\"firstName\":\"" + firstName + "\",\"lastName\":\"Test\",\"memberCode\":\"" + code + "\"}")
+                "{\"firstName\":\"" + firstName + "\",\"lastName\":\"Test\",\"memberCode\":\"" + code
+                        + "\",\"serialNumber\":\"" + code + "\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
     }

@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.audit.AuditLogRepository;
 import com.example.gym.device.DeviceSyncService;
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.domain.SyncCommandState;
@@ -32,6 +34,9 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
     @Autowired
     private DeviceSyncService deviceSyncService;
+
+    @Autowired
+    private AuditLogRepository auditLogRepository;
 
     private String token;
     private String gatewayId;
@@ -72,9 +77,9 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
-        // Every member is auto-mapped to every gateway device with deviceUserId = memberCode.
+        // Every member is auto-mapped to every gateway device with deviceUserId = serialNumber.
         memberId = readJson(postJson("/api/v1/members",
-                "{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"memberCode\":\"1001\"}")
+                "{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"memberCode\":\"1001\",\"serialNumber\":\"1001\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
@@ -307,6 +312,82 @@ class DeviceSyncIT extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/v1/devices/" + deviceId)
                         .header("Authorization", "Bearer " + otherToken))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void newMemberGetsTheNextFreeSerialAndATakenSerialIsRejected() throws Exception {
+        mockMvc.perform(get("/api/v1/members/next-serial").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.serialNumber").value("1"));
+
+        String binaId = readJson(postJson("/api/v1/members", "{\"firstName\":\"Bina\"}")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.serialNumber").value("1"))
+                .andExpect(jsonPath("$.memberCode").value(org.hamcrest.Matchers.startsWith("MBR-")))
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+
+        postJson("/api/v1/members", "{\"firstName\":\"Chetan\",\"serialNumber\":\"1001\"}")
+                .andExpect(status().isConflict());
+
+        long commandsBefore = deviceSyncCommandRepository.count();
+        mockMvc.perform(put("/api/v1/members/" + binaId).header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"firstName\":\"Bina Renamed\",\"serialNumber\":\"1001\"}"))
+                .andExpect(status().isConflict());
+
+        var bina = memberRepository.findByPublicId(binaId).orElseThrow();
+        assertThat(bina.getSerialNumber()).isEqualTo("1");
+        assertThat(bina.getFirstName()).isEqualTo("Bina");
+        var asha = memberRepository.findByPublicId(memberId).orElseThrow();
+        assertThat(asha.getSerialNumber()).isEqualTo("1001");
+        assertThat(deviceSyncCommandRepository.count()).isEqualTo(commandsBefore);
+    }
+
+    @Test
+    void changingTheSerialMovesTheReaderOnlyAfterTheNewUserExists() throws Exception {
+        Long ashaId = memberRepository.findByPublicId(memberId).orElseThrow().getId();
+        mockMvc.perform(put("/api/v1/members/" + memberId).header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"serialNumber\":\"7\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.serialNumber").value("7"))
+                .andExpect(jsonPath("$.memberCode").value("1001"));
+
+        var mapping = memberDeviceMappingRepository.findByMemberId(ashaId).getFirst();
+        assertThat(mapping.getDeviceUserId()).isEqualTo("1001");
+        assertThat(mapping.getPendingDeviceUserId()).isEqualTo("7");
+        assertThat(memberRepository.findAll()).hasSize(1);
+
+        // A punch under the new id still credits the same member while the reader is moving.
+        gatewayMessageService.process(envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
+                "{\"deviceUserId\":\"7\",\"occurredAt\":\"2026-09-11T07:00:00Z\","
+                        + "\"method\":\"FACE\",\"granted\":true,\"recNo\":77}"));
+        assertThat(attendanceEventRepository.findAll()).singleElement()
+                .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(ashaId));
+
+        var create = deviceSyncCommandRepository.findAll().stream()
+                .filter(c -> c.getType() == SyncCommandType.CREATE_USER
+                        && c.getState() != SyncCommandState.CANCELLED
+                        && c.getPayload().contains("\"deviceUserId\":\"7\""))
+                .findFirst().orElseThrow();
+        assertThat(deviceSyncCommandRepository.findAll())
+                .noneMatch(c -> c.getType() == SyncCommandType.REMOVE_USER);
+
+        gatewayMessageService.process(envelope("SYNC_RESULT", create.getCorrelationId(), "{\"ok\":true}"));
+
+        mapping = memberDeviceMappingRepository.findByMemberId(ashaId).getFirst();
+        assertThat(mapping.getDeviceUserId()).isEqualTo("7");
+        assertThat(mapping.getPendingDeviceUserId()).isNull();
+        assertThat(deviceSyncCommandRepository.findAll())
+                .anyMatch(c -> c.getType() == SyncCommandType.REMOVE_USER
+                        && c.getPayload().contains("\"deviceUserId\":\"1001\""))
+                .anyMatch(c -> c.getType() == SyncCommandType.UPDATE_VALIDITY
+                        && c.getState() == SyncCommandState.PENDING
+                        && c.getPayload().contains("\"deviceUserId\":\"7\""));
+        assertThat(auditLogRepository.findAll())
+                .anyMatch(a -> "MEMBER_DEVICE_USER_MOVED".equals(a.getAction())
+                        && a.getDetails().contains("\"serialNumber\":\"7\"")
+                        && a.getDetails().contains("\"previousDeviceUserId\":\"1001\""));
     }
 
     // --- helpers ---------------------------------------------------------------------------------

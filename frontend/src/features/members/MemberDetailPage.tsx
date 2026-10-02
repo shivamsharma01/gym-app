@@ -82,7 +82,7 @@ export function MemberDetailPage() {
     <div className="space-y-8">
       <PageHeader
         title={m.fullName}
-        description={`${m.memberCode} · joined ${formatDate(m.joinedOn)}`}
+        description={`${m.serialNumber ? `Serial ${m.serialNumber} · ` : ''}${m.memberCode} · joined ${formatDate(m.joinedOn)}`}
         actions={
           <div className="flex gap-2">
             {has('MEMBER_UPDATE') ? (
@@ -238,7 +238,7 @@ export function MemberDetailPage() {
         </section>
       ) : null}
 
-      <DeviceSyncPanel memberId={m.id} />
+      <DeviceSyncPanel memberId={m.id} serialNumber={m.serialNumber} />
 
       <ConfirmDialog
         open={confirmDeactivate}
@@ -284,7 +284,7 @@ function faceStateLabel(row: MemberDeviceSync['devices'][number], face: MemberDe
   return { label: 'Photo waiting', tone: 'warn' as const }
 }
 
-function DeviceSyncPanel({ memberId }: { memberId: string }) {
+function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialNumber: string | null }) {
   const { has } = useAuth()
   const sync = useQuery({
     queryKey: ['member-device-sync', memberId],
@@ -326,6 +326,16 @@ function DeviceSyncPanel({ memberId }: { memberId: string }) {
                       {row.deviceName}{' '}
                       <span className="text-xs text-muted">· device user {row.deviceUserId}</span>
                     </div>
+                    {row.pendingDeviceUserId ? (
+                      <div className="text-xs text-warn">
+                        Moving to {row.pendingDeviceUserId}. Uses {row.deviceUserId} until the reader confirms.
+                      </div>
+                    ) : row.differsFromSerial ? (
+                      <div className="text-xs text-warn">
+                        This reader uses a different id than serial {serialNumber}. It is not changed
+                        automatically; saving a new serial moves it.
+                      </div>
+                    ) : null}
                     <div className="flex flex-wrap gap-2">
                       <Badge tone={statusTone(row.connectionState)}>{row.connectionState ?? 'UNKNOWN'}</Badge>
                       <Badge tone={statusTone(row.userSyncState)}>

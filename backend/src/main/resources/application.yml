@@ -150,4 +150,9 @@ logging:
     #   gym.flow.auth: DEBUG
     #   gym.flow.device: WARN
     #   gym.flow.attendance: DEBUG
+    # Device sync troubleshooting (env: LOGGING_LEVEL_GYM_FLOW_SYNC=DEBUG etc.):
+    #   gym.flow.sync: DEBUG       every outbox command (enqueue, supersede, dispatch, result + latency)
+    #   gym.flow.gateway: DEBUG    every inbound gateway message with its key fields
+    #   gym.flow.device: DEBUG     how a reader user was matched to a member, new mappings
+    #   gym.flow.reconcile: DEBUG  per-user reconcile findings (INFO already logs a summary)
     gym.flow: INFO

@@ -143,7 +143,7 @@ public class DeviceService {
         Device device = getByPublicId(devicePublicId, tenantId);
         Member member = memberService.getByPublicId(memberPublicId, tenantId);
         final String deviceUserId = StringUtils.hasText(requestedDeviceUserId)
-                ? requestedDeviceUserId.trim() : member.getMemberCode();
+                ? requestedDeviceUserId.trim() : member.getDeviceUserId();
 
         if (mappingRepository.existsByDeviceIdAndMemberId(device.getId(), member.getId())) {
             throw CommonExceptions.conflict("Member is already mapped to this device");

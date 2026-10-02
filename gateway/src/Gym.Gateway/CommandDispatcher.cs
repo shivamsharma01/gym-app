@@ -82,9 +82,13 @@ public sealed class CommandDispatcher
                 var synced = await _memberSync.TryApplyAsync(command, face, CancellationToken.None).ConfigureAwait(false);
                 if (synced != null)
                 {
+                    _log.LogDebug("{Type} corr={Corr} handled through local member state (latest change wins)",
+                        command.Type, command.CorrelationId);
                     return synced;
                 }
             }
+
+            _log.LogDebug("{Type} corr={Corr} goes straight to the reader adapter", command.Type, command.CorrelationId);
 
             var gate = _locks.For(command.DeviceId);
             await gate.WaitAsync().ConfigureAwait(false);
@@ -142,10 +146,12 @@ public sealed class CommandDispatcher
             return (null, "Face image sha256 mismatch (stale or corrupted download)");
         }
 
+        _log.LogDebug("Downloaded face member={Member} version={Version} ({Bytes} bytes)",
+            memberId, version, download.Bytes.Length);
         return (download.Bytes, null);
     }
 
-    private static DispatchOutcome Dispatch(IDeviceAdapter adapter, GatewayEnvelope command, byte[]? face)
+    private DispatchOutcome Dispatch(IDeviceAdapter adapter, GatewayEnvelope command, byte[]? face)
     {
         var payload = command.Payload;
         var userId = Text(payload, "deviceUserId");
@@ -198,9 +204,16 @@ public sealed class CommandDispatcher
                 var fromUtc = Instant(payload, "fromUtc");
                 var toUtc = Instant(payload, "toUtc");
                 var recon = adapter.Reconcile(fromUtc, toUtc);
-                return recon.Ok
-                    ? DispatchOutcome.Reconciliation(recon)
-                    : DispatchOutcome.SyncFail(recon.Error ?? "reconcile failed");
+                if (recon.Ok)
+                {
+                    _log.LogInformation(
+                        "Reconcile read device={DeviceId}: {Users} user(s), {Events} attendance record(s) for {From}..{To}",
+                        command.DeviceId, recon.Users.Count, recon.Events.Count, fromUtc, toUtc);
+                    return DispatchOutcome.Reconciliation(recon);
+                }
+
+                _log.LogWarning("Reconcile read failed device={DeviceId}: {Error}", command.DeviceId, recon.Error);
+                return DispatchOutcome.SyncFail(recon.Error ?? "reconcile failed");
             case "CLEAR_DEVICE_LOGS":
                 return DispatchOutcome.SyncFail("CLEAR_DEVICE_LOGS has no verified SDK API in this adapter");
             default:

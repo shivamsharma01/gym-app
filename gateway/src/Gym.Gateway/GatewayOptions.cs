@@ -37,6 +37,9 @@ public sealed class GatewayOptions
     /// <summary>How often every user's face is re-read to catch changes the device did not announce.</summary>
     public int FaceSweepMinutes { get; set; } = 30;
 
+    /// <summary>Serilog level: Information (default) or Debug for per-command sync detail.</summary>
+    public string LogLevel { get; set; } = "Information";
+
     public void OverlayEnvironment(IDictionary<string, string?> env)
     {
         Overlay(env, "GYM_GATEWAY_ID", v => Id = v);

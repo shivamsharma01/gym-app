@@ -2,6 +2,7 @@ package com.example.gym.device;
 
 import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceUserSnapshotRow;
 import com.example.gym.device.domain.MemberDeviceMapping;
@@ -98,6 +99,8 @@ public class DeviceReconciliationService {
 
         List<MemberDeviceMapping> mappings = mappingRepository.findByDeviceId(device.getId());
         Set<String> mappedIds = new HashSet<>();
+        int missing = 0;
+        int mismatched = 0;
         for (MemberDeviceMapping mapping : mappings) {
             mappedIds.add(mapping.getDeviceUserId());
             boolean onDevice = deviceUserIds.contains(mapping.getDeviceUserId());
@@ -107,6 +110,9 @@ public class DeviceReconciliationService {
                 openConflict(device, mapping.getDeviceUserId(),
                         ReconciliationConflictType.MISSING_ON_DEVICE,
                         "Mapped user missing on device");
+                missing++;
+                FlowLog.debug("reconcile", "device={} user={} member={} is mapped but missing on the reader",
+                        device.getPublicId(), mapping.getDeviceUserId(), mapping.getMemberId());
                 continue;
             }
 
@@ -122,6 +128,9 @@ public class DeviceReconciliationService {
                 openConflict(device, mapping.getDeviceUserId(),
                         ReconciliationConflictType.AUTH_MISMATCH,
                         "Device freeze=" + frozen + " desiredEnabled=" + desiredEnabled);
+                mismatched++;
+                FlowLog.debug("reconcile", "device={} user={} frozen={} but server wants enabled={}",
+                        device.getPublicId(), mapping.getDeviceUserId(), frozen, desiredEnabled);
             } else if (window.isPresent() && reported != null && reported.validFrom() != null
                     && reported.validTo() != null
                     && (!reported.validFrom().equals(window.get().validFrom())
@@ -130,22 +139,36 @@ public class DeviceReconciliationService {
                         ReconciliationConflictType.AUTH_MISMATCH,
                         "Device validity " + reported.validFrom() + ".." + reported.validTo()
                                 + " desired " + window.get().validFrom() + ".." + window.get().validTo());
+                mismatched++;
+                FlowLog.debug("reconcile", "device={} user={} validity {}..{} but server wants {}..{}",
+                        device.getPublicId(), mapping.getDeviceUserId(), reported.validFrom(), reported.validTo(),
+                        window.get().validFrom(), window.get().validTo());
             }
         }
 
+        int imported = 0;
+        int deferred = 0;
         for (String deviceUserId : deviceUserIds) {
             if (mappedIds.contains(deviceUserId)) {
                 continue;
             }
             ParsedUser u = parsedUsers.get(deviceUserId);
-            boolean imported = deviceUserChangeService.importFromReconcile(
+            boolean done = deviceUserChangeService.importFromReconcile(
                     device, deviceUserId, u.name(), u.frozen(), u.validFrom(), u.validTo());
-            if (!imported) {
+            if (done) {
+                imported++;
+            } else {
                 openConflict(device, deviceUserId,
                         ReconciliationConflictType.EXTRA_DEVICE_USER,
                         "Device user has no member_device_mapping; import deferred");
+                deferred++;
+                FlowLog.debug("reconcile", "device={} user={} not imported (removal in flight or member "
+                        + "inactive/already mapped); EXTRA_DEVICE_USER conflict opened", device.getPublicId(), deviceUserId);
             }
         }
+        FlowLog.info("reconcile", "device={} readerUsers={} mappings={} missingOnReader={} accessMismatch={} "
+                        + "importedOrLinked={} deferred={}", device.getPublicId(), deviceUserIds.size(),
+                mappings.size(), missing, mismatched, imported, deferred);
     }
 
     private void replaceSnapshotCache(Device device, Map<String, ParsedUser> users) {

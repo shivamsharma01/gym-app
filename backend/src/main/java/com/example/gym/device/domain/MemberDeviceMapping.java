@@ -27,6 +27,13 @@ public class MemberDeviceMapping extends TenantAwareEntity {
     @Column(name = "device_user_id", nullable = false, length = 64)
     private String deviceUserId;
 
+    /**
+     * The serial this reader is moving the member to. The member keeps {@link #deviceUserId} until
+     * the reader confirms the new user exists.
+     */
+    @Column(name = "pending_device_user_id", length = 64)
+    private String pendingDeviceUserId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "enrollment_status", nullable = false, length = 20)
     private EnrollmentStatus enrollmentStatus = EnrollmentStatus.PENDING_ENROLL;
@@ -75,6 +82,14 @@ public class MemberDeviceMapping extends TenantAwareEntity {
 
     public void setDeviceUserId(String deviceUserId) {
         this.deviceUserId = deviceUserId;
+    }
+
+    public String getPendingDeviceUserId() {
+        return pendingDeviceUserId;
+    }
+
+    public void setPendingDeviceUserId(String pendingDeviceUserId) {
+        this.pendingDeviceUserId = pendingDeviceUserId;
     }
 
     public EnrollmentStatus getEnrollmentStatus() {

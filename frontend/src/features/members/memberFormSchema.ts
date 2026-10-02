@@ -13,6 +13,10 @@ export const memberFormSchema = z.object({
   gender: z.string(),
   notes: z.string().optional(),
   deviceAuthority: z.enum(['USER', 'ADMIN']).optional(),
+  serialNumber: z
+    .string()
+    .optional()
+    .refine((v) => !v || /^[A-Za-z0-9_-]{1,31}$/.test(v.trim()), "Use letters, digits, '-' or '_' (up to 31)"),
 })
 
 export type MemberFormValues = z.infer<typeof memberFormSchema>

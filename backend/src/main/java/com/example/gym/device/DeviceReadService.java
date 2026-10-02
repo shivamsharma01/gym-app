@@ -68,15 +68,14 @@ public class DeviceReadService {
 
     @Transactional(readOnly = true)
     public Page<AttendanceEvent> attendance(Long tenantId, Pageable pageable) {
-        return attendanceRepository.findByTenantIdOrderByOccurredAtDesc(tenantId, pageable);
+        return attendanceRepository.findByTenantId(tenantId, pageable);
     }
 
     @Transactional(readOnly = true)
     public Page<AttendanceEvent> attendanceForMember(String memberPublicId, Long tenantId,
                                                      Pageable pageable) {
         Member member = memberService.getByPublicId(memberPublicId, tenantId);
-        return attendanceRepository.findByTenantIdAndMemberIdOrderByOccurredAtDesc(
-                tenantId, member.getId(), pageable);
+        return attendanceRepository.findByTenantIdAndMemberId(tenantId, member.getId(), pageable);
     }
 
     @Transactional(readOnly = true)

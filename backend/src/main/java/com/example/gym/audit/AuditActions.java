@@ -32,6 +32,7 @@ public final class AuditActions {
     public static final String MEMBER_FACE_DELETED = "MEMBER_FACE_DELETED";
     public static final String MEMBER_CHANGED_ON_DEVICE = "MEMBER_CHANGED_ON_DEVICE";
     public static final String MEMBER_DELETED_ON_DEVICE = "MEMBER_DELETED_ON_DEVICE";
+    public static final String MEMBER_DEVICE_USER_MOVED = "MEMBER_DEVICE_USER_MOVED";
     /** A change (from a device or the server) not applied because a newer change of the same field won. */
     public static final String SYNC_CHANGE_IGNORED = "SYNC_CHANGE_IGNORED";
     /** A user enrolled offline on a device reused a code that belongs to a different member. */

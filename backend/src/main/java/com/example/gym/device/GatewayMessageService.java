@@ -1,5 +1,6 @@
 package com.example.gym.device;
 
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.domain.EnrollmentStatus;
@@ -123,6 +124,11 @@ public class GatewayMessageService {
             return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
                     Map.of("error", "unknown type: " + message.type())));
         }
+        if (type != GatewayMessageType.HEARTBEAT && type != GatewayMessageType.DEVICE_STATUS
+                && FlowLog.isDebugEnabled("gateway")) {
+            FlowLog.debug("gateway", "received {} device={} corr={} msg={}{}", type, message.deviceId(),
+                    message.correlationId(), message.messageId(), describe(type, message.payload()));
+        }
 
         return switch (type) {
             case REGISTER_GATEWAY -> {
@@ -189,16 +195,20 @@ public class GatewayMessageService {
                 resolveDevice(message).ifPresent(device -> {
                     boolean ok = message.payload() == null || !message.payload().has("ok")
                             || message.payload().get("ok").asBoolean();
+                    FlowLog.info("gateway", "reconcile result device={} ok={} users={} events={} error={}",
+                            device.getPublicId(), ok, arraySize(message.payload(), "deviceUsers"),
+                            arraySize(message.payload(), "events"), text(message.payload(), "error"));
                     if (!ok) {
                         attendanceIngestionService.markReconciliationRequired(
                                 device.getTenantId(), device.getId(), true);
                     } else {
+                        // Users first, so punches by users this snapshot maps are credited on insert.
+                        reconciliationService.applyDeviceUserSnapshot(device, message.payload());
                         JsonNode eventNodes = message.payload() == null ? null
                                 : message.payload().get("events");
                         if (eventNodes != null && eventNodes.isArray()) {
                             eventNodes.forEach(e -> ingestEvent(device, e, message.timestamp()));
                         }
-                        reconciliationService.applyDeviceUserSnapshot(device, message.payload());
                         attendanceIngestionService.markReconciliationRequired(
                                 device.getTenantId(), device.getId(), false);
                     }
@@ -225,6 +235,31 @@ public class GatewayMessageService {
 
     String impersonationError() {
         return reply(GatewayMessageType.ERROR, null, Map.of("error", "gateway identity mismatch"));
+    }
+
+    private static int arraySize(JsonNode payload, String field) {
+        JsonNode node = payload == null ? null : payload.get(field);
+        return node != null && node.isArray() ? node.size() : 0;
+    }
+
+    /** Short, safe summary of the fields that explain a message (no photos or credentials). */
+    private String describe(GatewayMessageType type, JsonNode payload) {
+        if (payload == null) {
+            return "";
+        }
+        return switch (type) {
+            case SYNC_RESULT -> " ok=" + text(payload, "ok") + " skipped=" + text(payload, "skipped")
+                    + " error=" + text(payload, "error") + " reason=" + text(payload, "reason");
+            case DEVICE_EVENT -> " user=" + text(payload, "deviceUserId") + " granted=" + text(payload, "granted")
+                    + " recNo=" + text(payload, "recNo") + " at=" + text(payload, "occurredAt");
+            case DEVICE_USER_CHANGED -> " user=" + text(payload, "deviceUserId") + " isNew=" + text(payload, "isNew")
+                    + " deleted=" + text(payload, "deleted") + " nameChanged=" + text(payload, "nameChanged")
+                    + " accessChanged=" + text(payload, "frozenChanged") + "/" + text(payload, "validityChanged")
+                    + " faceChanged=" + text(payload, "faceChanged") + " changedAt=" + text(payload, "deviceChangedAt");
+            case RECONCILIATION_RESULT -> " users=" + arraySize(payload, "deviceUsers")
+                    + " events=" + arraySize(payload, "events");
+            default -> "";
+        };
     }
 
     private void ingestEvent(Device device, JsonNode payload, Instant messageTimestamp) {

@@ -12,6 +12,8 @@ import {
   PageHeader,
   Select,
   Skeleton,
+  SortableTh,
+  type SortDirection,
   Table,
   TableShell,
   THead,
@@ -25,12 +27,23 @@ import { useAuth } from '@/lib/auth'
 import { accountStatusLabel, membershipStatusLabel, statusTone } from '@/lib/status'
 import type { Member, PageResponse } from '@/lib/types'
 
+type SortKey = 'name' | 'serial'
+
 export function MembersPage() {
   const { has } = useAuth()
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
   const [status, setStatus] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL')
   const [page, setPage] = useState(0)
+  const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection } | null>(null)
+  const toggleSort = (key: SortKey) => {
+    // asc → desc → back to the default order (newest first)
+    setSort((current) =>
+      current?.key !== key ? { key, direction: 'asc' } : current.direction === 'asc' ? { key, direction: 'desc' } : null,
+    )
+    setPage(0)
+  }
+  const directionFor = (key: SortKey) => (sort?.key === key ? sort.direction : undefined)
   useEffect(() => {
     const t = setTimeout(() => {
       setDebounced(q)
@@ -40,12 +53,16 @@ export function MembersPage() {
   }, [q])
 
   const members = useQuery({
-    queryKey: ['members', debounced, status, page],
+    queryKey: ['members', debounced, status, page, sort],
     placeholderData: keepPreviousData,
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), size: '25' })
-      if (debounced) params.set('q', debounced)
+      if (debounced.trim()) params.set('q', debounced)
       if (status !== 'ALL') params.set('status', status)
+      if (sort) {
+        params.set('sort', sort.key)
+        params.set('direction', sort.direction)
+      }
       return api<PageResponse<Member>>(`/api/v1/members?${params}`)
     },
   })
@@ -54,7 +71,7 @@ export function MembersPage() {
     <div>
       <PageHeader
         title="Members"
-        description="Search by name, phone, or member code."
+        description="Search by name, phone, serial, or member code. Click Member or Serial to sort."
         actions={
           has('MEMBER_CREATE') ? (
             <Link to="/app/members/new">
@@ -65,7 +82,7 @@ export function MembersPage() {
       />
       <Toolbar>
         <Input
-          placeholder="Search members…"
+          placeholder="Search by name, phone, serial or code…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           className="max-w-md"
@@ -106,7 +123,12 @@ export function MembersPage() {
           <Table>
             <THead>
               <tr>
-                <Th>Member</Th>
+                <SortableTh direction={directionFor('name')} onSort={() => toggleSort('name')}>
+                  Member
+                </SortableTh>
+                <SortableTh direction={directionFor('serial')} onSort={() => toggleSort('serial')}>
+                  Serial
+                </SortableTh>
                 <Th>Code</Th>
                 <Th>Phone</Th>
                 <Th>Terminal Level</Th>
@@ -129,6 +151,7 @@ export function MembersPage() {
                     </div>
                     {m.email ? <div className="mt-0.5 text-xs text-muted">{m.email}</div> : null}
                   </Td>
+                  <Td className="font-mono text-xs">{m.serialNumber ?? '—'}</Td>
                   <Td className="font-mono text-xs text-muted">{m.memberCode}</Td>
                   <Td className="text-muted">{m.phone ?? '—'}</Td>
                   <Td>

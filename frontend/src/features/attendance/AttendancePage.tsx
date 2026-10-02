@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Activity } from 'lucide-react'
 import { Link } from 'react-router'
 import { useState } from 'react'
@@ -10,6 +10,8 @@ import {
   EmptyState,
   PageHeader,
   Skeleton,
+  SortableTh,
+  type SortDirection,
   Table,
   TableShell,
   THead,
@@ -24,9 +26,11 @@ import type { Attendance, PageResponse } from '@/lib/types'
 
 export function AttendancePage() {
   const [page, setPage] = useState(0)
+  const [direction, setDirection] = useState<SortDirection>('desc')
   const attendance = useQuery({
-    queryKey: ['attendance', page],
-    queryFn: () => api<PageResponse<Attendance>>(`/api/v1/attendance?page=${page}&size=30`),
+    queryKey: ['attendance', page, direction],
+    queryFn: () => api<PageResponse<Attendance>>(`/api/v1/attendance?page=${page}&size=30&direction=${direction}`),
+    placeholderData: keepPreviousData,
   })
 
   return (
@@ -54,7 +58,15 @@ export function AttendancePage() {
           <Table className="min-w-[720px]">
             <THead>
               <tr>
-                <Th>When</Th>
+                <SortableTh
+                  direction={direction}
+                  onSort={() => {
+                    setDirection((d) => (d === 'desc' ? 'asc' : 'desc'))
+                    setPage(0)
+                  }}
+                >
+                  When
+                </SortableTh>
                 <Th>Device user</Th>
                 <Th>Direction</Th>
                 <Th>Result</Th>

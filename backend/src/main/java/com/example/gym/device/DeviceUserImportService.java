@@ -99,8 +99,7 @@ public class DeviceUserImportService {
         for (MergedDeviceUser user : merged.values()) {
             Optional<Member> known = findAnyMapping(devices, user.deviceUserId())
                     .flatMap(m -> memberRepository.findById(m.getMemberId()))
-                    .or(() -> memberRepository.findByTenantIdAndMemberCode(
-                            tenantId, DeviceMemberImporter.truncateCode(user.deviceUserId())));
+                    .or(() -> importer.findBySerial(tenantId, user.deviceUserId()));
             Member member;
             if (known.isPresent()) {
                 member = known.get();

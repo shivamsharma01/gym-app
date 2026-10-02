@@ -28,6 +28,8 @@ export type TokenResponse = {
 export type Member = {
   id: string
   memberCode: string
+  /** The id staff use on readers (device user id); null for older members whose readers disagree. */
+  serialNumber: string | null
   firstName: string
   lastName: string
   fullName: string
@@ -230,6 +232,8 @@ export type MemberDeviceSync = {
     connectionState: string | null
     hasGateway: boolean
     deviceUserId: string
+    pendingDeviceUserId: string | null
+    differsFromSerial: boolean
     userSyncState: string | null
     faceSyncState: string | null
     faceVersionSynced: number | null

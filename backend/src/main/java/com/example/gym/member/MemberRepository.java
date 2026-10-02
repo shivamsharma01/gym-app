@@ -17,6 +17,15 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
 
     Optional<Member> findByTenantIdAndMemberCode(Long tenantId, String memberCode);
 
+    Optional<Member> findByTenantIdAndSerialNumber(Long tenantId, String serialNumber);
+
+    @Query("select m.serialNumber from Member m where m.tenantId = :tenantId and m.serialNumber is not null")
+    List<String> findSerialNumbers(@Param("tenantId") Long tenantId);
+
+    /** Member codes still used as the reader id: members created before serial numbers. */
+    @Query("select m.memberCode from Member m where m.tenantId = :tenantId and m.serialNumber is null")
+    List<String> findCodesWithoutSerial(@Param("tenantId") Long tenantId);
+
     /**
      * Tenant-scoped search over name/phone/member-code with optional status and creation-source
      * filters. All filters are optional (pass {@code null} to skip). Case-insensitive substring
@@ -31,6 +40,7 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
                    or lower(m.firstName) like lower(concat('%', :q, '%'))
                    or lower(m.lastName) like lower(concat('%', :q, '%'))
                    or lower(m.memberCode) like lower(concat('%', :q, '%'))
+                   or lower(m.serialNumber) like lower(concat('%', :q, '%'))
                    or m.phone like concat('%', :q, '%'))
             """)
     Page<Member> search(@Param("tenantId") Long tenantId,

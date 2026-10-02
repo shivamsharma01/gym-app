@@ -9,8 +9,8 @@ import com.example.gym.device.MemberDeviceProvisioningService;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
 import com.example.gym.tenant.TenantGuard;
-import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.data.domain.Page;
@@ -22,23 +22,21 @@ import org.springframework.util.StringUtils;
 @Service
 public class MemberService {
 
-    private static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    private static final int CODE_LENGTH = 6;
-    private static final int MAX_CODE_ATTEMPTS = 10;
-
     private final MemberRepository memberRepository;
     private final AuditService auditService;
     private final DeviceAuthorizationService deviceAuthorizationService;
     private final MemberDeviceProvisioningService provisioning;
-    private final SecureRandom random = new SecureRandom();
+    private final MemberNumbers numbers;
 
     public MemberService(MemberRepository memberRepository, AuditService auditService,
                          DeviceAuthorizationService deviceAuthorizationService,
-                         MemberDeviceProvisioningService provisioning) {
+                         MemberDeviceProvisioningService provisioning,
+                         MemberNumbers numbers) {
         this.memberRepository = memberRepository;
         this.auditService = auditService;
         this.deviceAuthorizationService = deviceAuthorizationService;
         this.provisioning = provisioning;
+        this.numbers = numbers;
     }
 
     @Transactional(readOnly = true)
@@ -59,12 +57,17 @@ public class MemberService {
     public Member create(CreateMember request, Long tenantId) {
         String code = StringUtils.hasText(request.memberCode())
                 ? request.memberCode().trim()
-                : generateUniqueCode(tenantId);
+                : numbers.newMemberCode(tenantId);
         if (memberRepository.existsByTenantIdAndMemberCode(tenantId, code)) {
             throw CommonExceptions.conflict("Member code already exists");
         }
+        String serial = StringUtils.hasText(request.serialNumber())
+                ? request.serialNumber().trim()
+                : numbers.nextSerial(tenantId);
+        requireFreeSerial(tenantId, serial, null);
 
         Member member = new Member(tenantId, code, request.firstName());
+        member.setSerialNumber(serial);
         member.setLastName(request.lastName());
         member.setEmail(request.email());
         member.setPhone(request.phone());
@@ -78,15 +81,22 @@ public class MemberService {
         Member saved = memberRepository.save(member);
         provisioning.provisionMember(saved, Set.of());
 
-        FlowLog.info("member", "created id={} code={}", saved.getPublicId(), saved.getMemberCode());
+        FlowLog.info("member", "created id={} code={} serial={}", saved.getPublicId(), saved.getMemberCode(), serial);
         auditService.record(AuditActions.MEMBER_CREATED, AuditActions.RESULT_SUCCESS,
-                "Member", saved.getPublicId(), Map.of("memberCode", saved.getMemberCode()));
+                "Member", saved.getPublicId(),
+                Map.of("memberCode", saved.getMemberCode(), "serialNumber", serial));
         return saved;
     }
 
     @Transactional
     public Member update(String publicId, UpdateMember request, Long tenantId) {
         Member member = getByPublicId(publicId, tenantId);
+        String previousSerial = member.getSerialNumber();
+        String newSerial = StringUtils.hasText(request.serialNumber()) ? request.serialNumber().trim() : null;
+        boolean serialChanged = newSerial != null && !newSerial.equals(previousSerial);
+        if (serialChanged) {
+            requireFreeSerial(tenantId, newSerial, member.getId());
+        }
         String previousName = member.getFullName();
         member.setFirstName(request.firstName());
         member.setLastName(request.lastName());
@@ -104,17 +114,45 @@ public class MemberService {
             }
         }
         boolean nameChanged = !previousName.equals(member.getFullName());
-        if (nameChanged || authorityChanged) {
+        if (nameChanged || authorityChanged || serialChanged) {
             member.setProfileChangedAt(Instant.now());
         }
+        if (serialChanged) {
+            // Gateways apply the old id's removal only when it is newer than their own copy.
+            member.setAccessChangedAt(member.getProfileChangedAt());
+            member.setSerialNumber(newSerial);
+        }
         Member saved = memberRepository.save(member);
+        if (serialChanged) {
+            provisioning.moveToSerial(saved);
+        }
         if (nameChanged || authorityChanged) {
             provisioning.pushProfile(saved, Set.of());
         }
-        FlowLog.info("member", "updated id={} nameChanged={}", saved.getPublicId(), nameChanged);
+        FlowLog.info("member", "updated id={} nameChanged={} serialChanged={}", saved.getPublicId(),
+                nameChanged, serialChanged);
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("nameChanged", nameChanged);
+        details.put("serialNumber", saved.getSerialNumber());
+        if (serialChanged) {
+            details.put("previousSerialNumber", previousSerial);
+        }
         auditService.record(AuditActions.MEMBER_UPDATED, AuditActions.RESULT_SUCCESS,
-                "Member", saved.getPublicId(), Map.of("nameChanged", nameChanged));
+                "Member", saved.getPublicId(), details);
         return saved;
+    }
+
+    /** The number the create form starts with. */
+    @Transactional(readOnly = true)
+    public String nextSerial(Long tenantId) {
+        return numbers.nextSerial(tenantId);
+    }
+
+    private void requireFreeSerial(Long tenantId, String serial, Long memberId) {
+        if (numbers.isTaken(tenantId, serial, memberId)) {
+            throw CommonExceptions.conflict(
+                    "Serial number " + serial + " is already used by another member or on a reader");
+        }
     }
 
     @Transactional
@@ -126,7 +164,7 @@ public class MemberService {
         deviceAuthorizationService.syncMember(member);
         FlowLog.info("member", "deactivated id={}", member.getPublicId());
         auditService.record(AuditActions.MEMBER_DELETED, AuditActions.RESULT_SUCCESS,
-                "Member", member.getPublicId(), null);
+                "Member", member.getPublicId(), serialDetails(member));
     }
 
     @Transactional
@@ -142,7 +180,7 @@ public class MemberService {
         provisioning.provisionMember(saved, Set.of());
         FlowLog.info("member", "reactivated id={}", saved.getPublicId());
         auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,
-                "Member", saved.getPublicId(), null);
+                "Member", saved.getPublicId(), serialDetails(saved));
         return saved;
     }
 
@@ -155,34 +193,18 @@ public class MemberService {
             Member saved = memberRepository.save(member);
             provisioning.pushProfile(saved, Set.of());
             FlowLog.info("member", "authority updated id={} authority={}", saved.getPublicId(), authority);
+            Map<String, Object> details = serialDetails(saved);
+            details.put("deviceAuthority", authority.name());
             auditService.record(AuditActions.MEMBER_UPDATED, AuditActions.RESULT_SUCCESS,
-                    "Member", saved.getPublicId(), Map.of("deviceAuthority", authority.name()));
+                    "Member", saved.getPublicId(), details);
             return saved;
         }
         return member;
     }
 
-    /** A new, unused member code in the app's format (codes are never typed by staff). */
-    @Transactional(readOnly = true)
-    public String allocateMemberCode(Long tenantId) {
-        return generateUniqueCode(tenantId);
-    }
-
-    private String generateUniqueCode(Long tenantId) {
-        for (int attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
-            String code = "MBR-" + randomCode();
-            if (!memberRepository.existsByTenantIdAndMemberCode(tenantId, code)) {
-                return code;
-            }
-        }
-        throw CommonExceptions.conflict("Unable to allocate a unique member code; please retry");
-    }
-
-    private String randomCode() {
-        StringBuilder sb = new StringBuilder(CODE_LENGTH);
-        for (int i = 0; i < CODE_LENGTH; i++) {
-            sb.append(CODE_ALPHABET.charAt(random.nextInt(CODE_ALPHABET.length())));
-        }
-        return sb.toString();
+    private static Map<String, Object> serialDetails(Member member) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("serialNumber", member.getSerialNumber());
+        return details;
     }
 }

@@ -18,6 +18,14 @@ export function MemberFormFields({ form }: { form: UseFormReturn<MemberFormValue
         </div>
       </div>
       <div>
+        <Label>Serial number</Label>
+        <Input inputMode="numeric" className="font-mono" {...form.register('serialNumber')} />
+        <p className="mt-1 text-xs text-muted">
+          The number on the face readers. Changing it moves this member on the readers; their record stays the same.
+        </p>
+        <FieldError message={form.formState.errors.serialNumber?.message} />
+      </div>
+      <div>
         <Label>Email</Label>
         <Input type="email" {...form.register('email')} />
         <FieldError message={form.formState.errors.email?.message} />

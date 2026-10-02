@@ -22,11 +22,13 @@ import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Keeps every member on every gateway-assigned device ({@code deviceUserId = memberCode}) and fans
+ * Keeps every member on every gateway-assigned device ({@code deviceUserId = serialNumber}, or the
+ * member code for older members without a serial) and fans
  * member, authorization and face changes out as outbox commands. The server is the hub: a change
  * from React or from one device is stored first, then pushed to every device except the ones that
  * already hold it ({@code skipDeviceIds}).
@@ -183,13 +185,13 @@ public class MemberDeviceProvisioningService {
             MemberDeviceMapping mapping = mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())
                     .orElse(null);
             if (mapping == null) {
-                if (mappingRepository.existsByDeviceIdAndDeviceUserId(device.getId(), member.getMemberCode())) {
+                if (mappingRepository.existsByDeviceIdAndDeviceUserId(device.getId(), member.getDeviceUserId())) {
                     log.warn("Device {} already uses user id {} for another member; not re-creating {}",
-                            device.getPublicId(), member.getMemberCode(), member.getPublicId());
+                            device.getPublicId(), member.getDeviceUserId(), member.getPublicId());
                     continue;
                 }
                 mapping = new MemberDeviceMapping(member.getTenantId(), member.getId(), device.getId(),
-                        member.getMemberCode());
+                        member.getDeviceUserId());
             }
             mapping.setSyncState(DeviceSyncState.PENDING);
             mapping = mappingRepository.save(mapping);
@@ -255,6 +257,81 @@ public class MemberDeviceProvisioningService {
         enqueueAuthorization(member, deviceId, mapping.getDeviceUserId());
     }
 
+    /**
+     * The member's serial changed. Each reader that holds the member under another id gets the same
+     * person created under the serial; the old id stays mapped (and keeps opening the door) until
+     * the reader confirms the create, then {@link #completeMove} removes it. Readers already on the
+     * serial are not rewritten. The member row is never replaced.
+     */
+    @Transactional
+    public void moveToSerial(Member member) {
+        String serial = member.getSerialNumber();
+        if (serial == null) {
+            return;
+        }
+        for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(member.getId())) {
+            if (serial.equals(mapping.getDeviceUserId())) {
+                if (mapping.getPendingDeviceUserId() != null) {
+                    deviceSyncService.supersede(mapping.getDeviceId(), member.getId(),
+                            List.of(SyncCommandType.CREATE_USER));
+                    mapping.setPendingDeviceUserId(null);
+                    mappingRepository.save(mapping);
+                }
+                continue;
+            }
+            mapping.setPendingDeviceUserId(serial);
+            mapping.setSyncState(DeviceSyncState.PENDING);
+            mappingRepository.save(mapping);
+            deviceSyncService.enqueue(member.getTenantId(), mapping.getDeviceId(), member.getId(), null,
+                    SyncCommandType.CREATE_USER, userPayload(member, serial));
+        }
+    }
+
+    /**
+     * A reader created the member under the serial it was moving to: the mapping switches to it, the
+     * old id is removed from that reader, and access and photo follow under the new id. The removal
+     * goes first because it replaces every earlier open write for the member on that reader, and a
+     * reader may refuse the same face on two users.
+     */
+    @EventListener
+    @Transactional
+    public void completeMove(DeviceUserCreated created) {
+        MemberDeviceMapping mapping = mappingRepository
+                .findByDeviceIdAndMemberId(created.deviceId(), created.memberId()).orElse(null);
+        if (mapping == null || !created.deviceUserId().equals(mapping.getPendingDeviceUserId())) {
+            return;
+        }
+        Member member = memberRepository.findById(created.memberId()).orElse(null);
+        if (member == null) {
+            return;
+        }
+        if (mappingRepository.findByDeviceIdAndDeviceUserId(created.deviceId(), created.deviceUserId())
+                .filter(other -> !other.getId().equals(mapping.getId())).isPresent()) {
+            log.warn("Device {} already maps user id {} to another member; member {} keeps id {}",
+                    created.deviceId(), created.deviceUserId(), member.getPublicId(), mapping.getDeviceUserId());
+            return;
+        }
+        String previous = mapping.getDeviceUserId();
+        mapping.setDeviceUserId(created.deviceUserId());
+        mapping.setPendingDeviceUserId(null);
+        MemberDeviceMapping saved = mappingRepository.save(mapping);
+
+        deviceSyncService.enqueue(member.getTenantId(), saved.getDeviceId(), member.getId(), null,
+                SyncCommandType.REMOVE_USER, Map.of("deviceUserId", previous));
+        enqueueAuthorization(member, saved.getDeviceId(), saved.getDeviceUserId());
+        faceRepository.findByMemberId(member.getId()).ifPresent(face -> enqueueFace(member, saved, face));
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("deviceId", saved.getDeviceId());
+        details.put("serialNumber", member.getSerialNumber());
+        details.put("deviceUserId", saved.getDeviceUserId());
+        details.put("previousDeviceUserId", previous);
+        auditService.recordSystem(AuditActions.MEMBER_DEVICE_USER_MOVED, AuditActions.RESULT_SUCCESS,
+                "Member", member.getPublicId(), member.getTenantId(), "gateway", details);
+        log.info("Member {} moved from device user {} to {} on device {}", member.getPublicId(), previous,
+                saved.getDeviceUserId(), saved.getDeviceId());
+    }
+
     /** Asks the gateway to send this device user's current profile + face (DEVICE_USER_CHANGED). */
     @Transactional
     public void requestDeviceReport(Member member, Device device, String deviceUserId) {
@@ -268,7 +345,7 @@ public class MemberDeviceProvisioningService {
         if (mappingRepository.existsByDeviceIdAndMemberId(device.getId(), member.getId())) {
             return false;
         }
-        String deviceUserId = member.getMemberCode();
+        String deviceUserId = member.getDeviceUserId();
         if (mappingRepository.existsByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)) {
             log.warn("Device {} already uses user id {} for another member; skipping auto-map of {}",
                     device.getPublicId(), deviceUserId, member.getPublicId());

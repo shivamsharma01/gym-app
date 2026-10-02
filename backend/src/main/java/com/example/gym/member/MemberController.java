@@ -56,6 +56,13 @@ public class MemberController {
         return PageResponse.from(members, member -> MemberResponse.from(member, coverage.get(member.getId())));
     }
 
+    @GetMapping("/next-serial")
+    @PreAuthorize("hasAuthority('MEMBER_CREATE')")
+    @Operation(summary = "The next free serial number (smallest number no member or reader uses)")
+    public Map<String, String> nextSerial() {
+        return Map.of("serialNumber", memberService.nextSerial(SecurityUtils.currentTenantId()));
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('MEMBER_VIEW')")
     @Operation(summary = "Get a member")

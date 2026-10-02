@@ -24,6 +24,13 @@ public class Member extends TenantAwareEntity {
     @Column(name = "member_code", nullable = false, length = 32)
     private String memberCode;
 
+    /**
+     * The id staff use for this member on readers (device user id). Editable; unique within a
+     * tenant. Null for older members whose readers disagree on their id.
+     */
+    @Column(name = "serial_number", length = 32)
+    private String serialNumber;
+
     @Column(name = "first_name", nullable = false, length = 80)
     private String firstName;
 
@@ -145,6 +152,19 @@ public class Member extends TenantAwareEntity {
 
     public void setMemberCode(String memberCode) {
         this.memberCode = memberCode;
+    }
+
+    public String getSerialNumber() {
+        return serialNumber;
+    }
+
+    public void setSerialNumber(String serialNumber) {
+        this.serialNumber = serialNumber;
+    }
+
+    /** The id new reader slots get: the serial, or the member code for members without one. */
+    public String getDeviceUserId() {
+        return serialNumber != null ? serialNumber : memberCode;
     }
 
     public String getFirstName() {

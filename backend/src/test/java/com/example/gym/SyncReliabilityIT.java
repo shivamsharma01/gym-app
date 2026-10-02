@@ -81,7 +81,7 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
 
     @Test
     void commandsWaitForAnOfflineGatewayWithoutUsingUpAttemptsAndReconnectReleasesThem() throws Exception {
-        postJson("/api/v1/members", "{\"firstName\":\"Om\",\"lastName\":\"Das\",\"memberCode\":\"9001\"}")
+        postJson("/api/v1/members", "{\"firstName\":\"Om\",\"lastName\":\"Das\",\"memberCode\":\"9001\",\"serialNumber\":\"9001\"}")
                 .andExpect(status().isCreated());
 
         // Far more delivery rounds than the 6 allowed attempts.
@@ -124,11 +124,11 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
 
         assertThat(gatewayMessageService.process(message).orElseThrow()).contains("ERROR");
         assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isFalse();
-        assertThat(memberRepository.findByTenantIdAndMemberCode(tenant.getId(), "9100")).isEmpty();
+        assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "9100")).isEmpty();
 
         // Resent (the gateway keeps it until ACK): processed this time, then deduplicated.
         assertThat(gatewayMessageService.process(message).orElseThrow()).contains("ACK");
-        assertThat(memberRepository.findByTenantIdAndMemberCode(tenant.getId(), "9100")).isPresent();
+        assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "9100")).isPresent();
         gatewayMessageService.process(message);
         verify(deviceUserChangeService, times(2)).apply(any(), any());
         doCallRealMethod().when(deviceUserChangeService).apply(any(), any());

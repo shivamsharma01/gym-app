@@ -67,7 +67,7 @@ public class MemberFaceService {
         provisioning.pushFace(member, face, Set.of());
         FlowLog.info("face", "photo stored member={} version={}", member.getPublicId(), face.getFaceVersion());
         auditService.record(AuditActions.MEMBER_FACE_UPDATED, AuditActions.RESULT_SUCCESS,
-                "Member", member.getPublicId(), Map.of("faceVersion", face.getFaceVersion()));
+                "Member", member.getPublicId(), serialDetails(member, "faceVersion", face.getFaceVersion()));
         return face;
     }
 
@@ -114,7 +114,16 @@ public class MemberFaceService {
         provisioning.deleteFace(member);
         FlowLog.info("face", "photo removed member={}", member.getPublicId());
         auditService.record(AuditActions.MEMBER_FACE_DELETED, AuditActions.RESULT_SUCCESS,
-                "Member", member.getPublicId(), null);
+                "Member", member.getPublicId(), serialDetails(member, null, null));
+    }
+
+    private static Map<String, Object> serialDetails(Member member, String key, Object value) {
+        Map<String, Object> details = new java.util.LinkedHashMap<>();
+        details.put("serialNumber", member.getSerialNumber());
+        if (key != null) {
+            details.put(key, value);
+        }
+        return details;
     }
 
     /** A face was removed on a device and that change wins: drop it here and on the other devices. */

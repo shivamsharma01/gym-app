@@ -108,7 +108,8 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/v1/members?q=Ada").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].creationSource").value("DEVICE_IMPORT"))
-                .andExpect(jsonPath("$.content[0].memberCode").value("2001"))
+                .andExpect(jsonPath("$.content[0].serialNumber").value("2001"))
+                .andExpect(jsonPath("$.content[0].memberCode").value(org.hamcrest.Matchers.startsWith("MBR-")))
                 .andExpect(jsonPath("$.content[0].status").value("ACTIVE"));
 
         mockMvc.perform(get("/api/v1/members?q=Frozen").header("Authorization", "Bearer " + token))

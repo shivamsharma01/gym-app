@@ -264,6 +264,12 @@ public class DeviceSyncService {
             failAttempt(command, error);
         }
         commandRepository.save(command);
+        if (ok && command.getType() == SyncCommandType.CREATE_USER && command.getMemberId() != null) {
+            String deviceUserId = payloadText(command, "deviceUserId");
+            if (deviceUserId != null) {
+                events.publishEvent(new DeviceUserCreated(command.getDeviceId(), command.getMemberId(), deviceUserId));
+            }
+        }
         publishMemberSync(command);
     }
 
@@ -488,6 +494,18 @@ public class DeviceSyncService {
         try {
             JsonNode node = jsonMapper.readTree(command.getPayload()).get(field);
             return node == null || node.isNull() ? null : node.asInt();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private String payloadText(DeviceSyncCommand command, String field) {
+        if (command.getPayload() == null) {
+            return null;
+        }
+        try {
+            JsonNode node = jsonMapper.readTree(command.getPayload()).get(field);
+            return node == null || node.isNull() ? null : node.asString();
         } catch (RuntimeException ex) {
             return null;
         }

@@ -88,7 +88,10 @@ public class AttendanceIngestionService {
         }
 
         MemberDeviceMapping mapping = deviceUserId == null ? null
-                : mappingRepository.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null);
+                : mappingRepository.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                        .or(() -> mappingRepository.findFirstByDeviceIdAndPendingDeviceUserId(
+                                device.getId(), deviceUserId))
+                        .orElse(null);
         Long memberId = mapping == null ? null : mapping.getMemberId();
 
         AttendanceEvent event = new AttendanceEvent(tenantId, device.getId(), memberId, deviceUserId,

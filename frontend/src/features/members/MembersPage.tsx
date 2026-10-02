@@ -65,7 +65,7 @@ export function MembersPage() {
       />
       <Toolbar>
         <Input
-          placeholder="Search members…"
+          placeholder="Search by name, phone, serial or code…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           className="max-w-md"
@@ -107,6 +107,7 @@ export function MembersPage() {
             <THead>
               <tr>
                 <Th>Member</Th>
+                <Th>Serial</Th>
                 <Th>Code</Th>
                 <Th>Phone</Th>
                 <Th>Terminal Level</Th>
@@ -129,6 +130,7 @@ export function MembersPage() {
                     </div>
                     {m.email ? <div className="mt-0.5 text-xs text-muted">{m.email}</div> : null}
                   </Td>
+                  <Td className="font-mono text-xs">{m.serialNumber ?? '—'}</Td>
                   <Td className="font-mono text-xs text-muted">{m.memberCode}</Td>
                   <Td className="text-muted">{m.phone ?? '—'}</Td>
                   <Td>

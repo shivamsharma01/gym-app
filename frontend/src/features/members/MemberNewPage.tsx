@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router'
 import { Button, PageHeader } from '@/components/ui'
@@ -23,8 +23,18 @@ export function MemberNewPage() {
       gender: 'UNSPECIFIED',
       notes: '',
       deviceAuthority: 'USER',
+      serialNumber: '',
     },
   })
+  const nextSerial = useQuery({
+    queryKey: ['members', 'next-serial'],
+    queryFn: () => api<{ serialNumber: string }>('/api/v1/members/next-serial'),
+  })
+  useEffect(() => {
+    if (nextSerial.data && !form.getValues('serialNumber')) {
+      form.setValue('serialNumber', nextSerial.data.serialNumber)
+    }
+  }, [nextSerial.data, form])
   const [photo, setPhoto] = useState<File | null>(null)
   const mutation = useMutation({
     mutationFn: async (body: MemberFormValues) => {
@@ -36,6 +46,7 @@ export function MemberNewPage() {
           lastName: body.lastName || null,
           phone: body.phone || null,
           dateOfBirth: body.dateOfBirth || null,
+          serialNumber: body.serialNumber?.trim() || null,
           memberCode: null,
         }),
       })
@@ -46,7 +57,7 @@ export function MemberNewPage() {
 
   return (
     <div className="max-w-xl">
-      <PageHeader title="New member" description="The gym assigns a member code automatically." />
+      <PageHeader title="New member" description="The serial number starts at the next free number; change it if needed." />
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => mutation.mutate(v))}>
         <MemberFormFields form={form} />
         <MemberPhotoField value={photo} onChange={setPhoto} />

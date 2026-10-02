@@ -54,6 +54,10 @@ public class FaceSyncTests
         Assert.Equal("upload-1", change.GetProperty("faceUploadId").GetString());
         Assert.Equal(PhotoB, Assert.Single(faces.Uploaded));
 
+        // The baseline did not read photos. The face pass uploads the one that was already there.
+        Assert.Equal(1, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None));
+        Assert.Equal("1001", published[^1].GetProperty("deviceUserId").GetString());
+
         // Nothing changed: nothing reported.
         Assert.Equal(0, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None));
 

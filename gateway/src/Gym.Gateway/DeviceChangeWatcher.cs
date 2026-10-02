@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using Gym.Gateway.Adapters;
@@ -18,8 +19,9 @@ public interface ILocalMemberSync
 ///   <item>Detects users created, changed or deleted directly on a device (device alarm triggers an
 ///         immediate scan; a periodic roster diff catches firmware that sends no events).</item>
 ///   <item>Merges each change into <see cref="LocalMemberStore"/> (latest change wins per field group)
-///         and immediately brings every other device on the gateway up to date, even when the
-///         server is unreachable.</item>
+///         and copies that edit to the other devices, even when the server is unreachable.
+///         The first read of a reader only records who is already there. It does not rewrite them,
+///         and it does not copy that roster onto another reader.</item>
 ///   <item>Queues the change for the server (DEVICE_USER_CHANGED; face uploaded from the local cache
 ///         first). The queue is on disk, so outages and restarts do not lose changes.</item>
 ///   <item>Applies timestamped server commands the same way; a command older than a local change
@@ -47,6 +49,15 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
     /// <summary>More disappearances than this (and than 20% of the roster) in one scan are not reported.</summary>
     private const int MaxUnguardedDeletes = 5;
+
+    /// <summary>Face reads per scan, so a full photo pass does not hold the reader while commands wait.</summary>
+    private const int FaceReadsPerScan = 40;
+
+    /// <summary>How far the current face pass has walked each device's user list.</summary>
+    private readonly Dictionary<string, int> _faceCursor = new(StringComparer.Ordinal);
+
+    /// <summary>Users a reader missed while it was offline or a write failed. Applied on its next scan.</summary>
+    private readonly ConcurrentDictionary<string, HashSet<string>> _catchUp = new(StringComparer.Ordinal);
 
     public DeviceChangeWatcher(
         IReadOnlyDictionary<string, IDeviceAdapter> adapters,
@@ -104,10 +115,13 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                 }
 
                 var periodic = DateTimeOffset.UtcNow >= nextPoll;
-                var deviceIds = periodic ? _adapters.Keys.ToList() : focus.Keys.ToList();
+                var deviceIds = periodic
+                    ? _adapters.Keys.ToList()
+                    : focus.Keys.Concat(_faceCursor.Where(e => e.Value > 0).Select(e => e.Key))
+                        .Distinct(StringComparer.Ordinal).ToList();
                 foreach (var deviceId in deviceIds)
                 {
-                    var sweep = periodic && DueForFaceSweep(deviceId);
+                    var sweep = DueForFaceSweep(deviceId) && (periodic || _faceCursor.GetValueOrDefault(deviceId) > 0);
                     focus.TryGetValue(deviceId, out var users);
                     await ScanDeviceAsync(deviceId, users, sweep, cancellationToken).ConfigureAwait(false);
                 }
@@ -323,22 +337,36 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         var baseline = _roster.HasBaseline(deviceId);
         var users = adapter.ListUsers();
         var now = DateTimeOffset.UtcNow;
+        var start = faceSweep ? _faceCursor.GetValueOrDefault(deviceId) : 0;
+        var seen = 0;
+        var faceReads = 0;
+        var moreFaces = false;
         foreach (var user in users)
         {
             var known = _roster.Find(deviceId, user.DeviceUserId);
             var awaitingFace = known is { FaceSha256: null, DeviceCreated: true }
                                && now - known.FirstSeenAt < _newUserFaceWatch;
-            var readFace = known == null || faceSweep || awaitingFace
-                           || (faceFocus?.Contains(user.DeviceUserId) ?? false);
+            var focused = faceFocus?.Contains(user.DeviceUserId) ?? false;
+            var inBatch = faceSweep && seen >= start;
+            seen++;
+            // The first pass records names and dates only. Photos follow in short batches.
+            var readFace = baseline && (focused || awaitingFace || known == null
+                                        || (inBatch && faceReads < FaceReadsPerScan));
+            if (baseline && inBatch && !focused && !awaitingFace && known != null && faceReads >= FaceReadsPerScan)
+            {
+                moreFaces = true;
+            }
+
+            if (readFace && inBatch && !focused && !awaitingFace && known != null)
+            {
+                faceReads++;
+            }
+
             var face = readFace ? adapter.GetFace(user.DeviceUserId) : null;
 
             if (!baseline)
             {
-                _roster.Upsert(deviceId, KnownUser.From(user, known) with
-                {
-                    FaceSha256 = face is { Ok: true } ? Sha(face.Photo) : known?.FaceSha256,
-                    FaceCheckedAt = face is { Ok: true } ? now : known?.FaceCheckedAt
-                });
+                _roster.Upsert(deviceId, KnownUser.From(user, known));
                 continue;
             }
 
@@ -348,8 +376,22 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         if (!baseline)
         {
             _roster.MarkBaseline(deviceId);
+            _faceCursor[deviceId] = 0;
             _log.LogInformation("Recorded roster baseline for {DeviceId}: {Count} user(s)", deviceId, users.Count);
             return;
+        }
+
+        if (faceSweep)
+        {
+            if (moreFaces)
+            {
+                _faceCursor[deviceId] = start + faceReads;
+            }
+            else
+            {
+                _faceCursor[deviceId] = 0;
+                _lastFaceSweep[deviceId] = now;
+            }
         }
 
         // An empty list is treated as a read failure, never as "everyone was deleted".
@@ -380,13 +422,67 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             }
         }
 
-        foreach (var member in _store.All())
+        CatchUpLocked(deviceId, adapter);
+    }
+
+    /// <summary>
+    /// Writes only the users this reader missed. The first baseline does not call this, and a scan
+    /// does not walk the whole local store.
+    /// </summary>
+    private void CatchUpLocked(string deviceId, IDeviceAdapter adapter)
+    {
+        if (!_catchUp.TryGetValue(deviceId, out var pending))
         {
-            var error = ConvergeUser(deviceId, adapter, member, _roster.Find(deviceId, member.DeviceUserId));
-            if (error != null)
+            return;
+        }
+
+        List<string> ids;
+        lock (pending)
+        {
+            if (pending.Count == 0)
             {
-                _log.LogWarning("Could not update {User} on {DeviceId}: {Error} (will retry)",
-                    member.DeviceUserId, deviceId, error);
+                return;
+            }
+
+            ids = pending.ToList();
+        }
+
+        foreach (var id in ids)
+        {
+            var member = _store.Find(id);
+            if (member == null)
+            {
+                lock (pending)
+                {
+                    pending.Remove(id);
+                }
+
+                continue;
+            }
+
+            var error = ConvergeUser(deviceId, adapter, member, _roster.Find(deviceId, id));
+            if (error == null)
+            {
+                lock (pending)
+                {
+                    pending.Remove(id);
+                }
+            }
+            else
+            {
+                _log.LogWarning("Could not update {User} on {DeviceId}: {Error} (will retry)", id, deviceId, error);
+            }
+        }
+    }
+
+    private void RememberCatchUp(string deviceId, IEnumerable<string> userIds)
+    {
+        var pending = _catchUp.GetOrAdd(deviceId, _ => new HashSet<string>(StringComparer.Ordinal));
+        lock (pending)
+        {
+            foreach (var id in userIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+            {
+                pending.Add(id);
             }
         }
     }
@@ -419,8 +515,12 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
         if (known == null || diff.Any || faceChanged)
         {
-            var result = HandleDetected(deviceId, user, known, face, faceSha, diff, faceChanged, deleted: false, now);
-            if (result.Any)
+            var firstFaceSample = known is { FaceCheckedAt: null, FaceSha256: null } && faceChanged && !diff.Any;
+            var result = HandleDetected(deviceId, user, known, face, faceSha, diff, faceChanged, deleted: false, now,
+                firstFaceSample);
+            // The first time a photo is read off a user who was already on the reader is a sample,
+            // not an edit, so it is not copied onto the other reader.
+            if (result.Any && !firstFaceSample)
             {
                 fanOut.Add(user.DeviceUserId, result.Face);
             }
@@ -433,7 +533,8 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
     /// <summary>A device edit: merge into local state, record what the device holds, queue the report.</summary>
     private MergeResult HandleDetected(string deviceId, DeviceUserSnapshot user, KnownUser? known,
-        DeviceFaceRead? face, string? faceSha, ProfileDiff diff, bool faceChanged, bool deleted, DateTimeOffset now)
+        DeviceFaceRead? face, string? faceSha, ProfileDiff diff, bool faceChanged, bool deleted, DateTimeOffset now,
+        bool initialSample = false)
     {
         var id = user.DeviceUserId;
         var isNew = !deleted && known == null && _store.Find(id) == null
@@ -478,7 +579,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             });
         }
 
-        QueueReport(deviceId, user, at, deleted, isNew, diff, faceChanged, faceSha);
+        QueueReport(deviceId, user, at, deleted, isNew, diff, faceChanged, faceSha, initialSample);
         _log.LogInformation(
             "Device {DeviceId} user {User} changed locally (new={New} deleted={Deleted} name={Name} "
             + "frozen={Frozen} validity={Validity} face={Face}; applied locally: {Applied})",
@@ -655,7 +756,8 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             {
                 if (adapter.GetHealth().ConnectionState != "ONLINE" || !_roster.HasBaseline(deviceId))
                 {
-                    continue; // caught up by its next scan
+                    RememberCatchUp(deviceId, fanOut.Users);
+                    continue;
                 }
 
                 foreach (var userId in fanOut.Users)
@@ -665,6 +767,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                     var error = m == null ? null : ConvergeUser(deviceId, adapter, m, _roster.Find(deviceId, userId));
                     if (error != null)
                     {
+                        RememberCatchUp(deviceId, [userId]);
                         _log.LogWarning("Could not update {User} on {DeviceId}: {Error} (will retry)", userId, deviceId, error);
                     }
                 }
@@ -767,7 +870,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
     }
 
     private void QueueReport(string deviceId, DeviceUserSnapshot user, DateTimeOffset at, bool deleted, bool isNew,
-        ProfileDiff diff, bool faceChanged, string? faceSha)
+        ProfileDiff diff, bool faceChanged, string? faceSha, bool initialSample = false)
     {
         var payload = new JsonObject
         {
@@ -787,7 +890,8 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             ["authorityChanged"] = diff.Authority,
             ["faceChanged"] = faceChanged,
             ["faceRemoved"] = faceChanged && faceSha == null,
-            ["faceSha256"] = faceChanged ? faceSha : null
+            ["faceSha256"] = faceChanged ? faceSha : null,
+            ["initialSample"] = initialSample
         };
         _store.AddReport(new PendingReport(Guid.NewGuid().ToString("N"), deviceId, user.DeviceUserId, payload,
             faceChanged ? faceSha : null));
@@ -808,14 +912,13 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
     private bool DueForFaceSweep(string deviceId)
     {
-        var now = DateTimeOffset.UtcNow;
-        if (_lastFaceSweep.TryGetValue(deviceId, out var last) && now - last < _faceSweepInterval)
+        if (_faceCursor.GetValueOrDefault(deviceId) > 0)
         {
-            return false;
+            return true;
         }
 
-        _lastFaceSweep[deviceId] = now;
-        return true;
+        var now = DateTimeOffset.UtcNow;
+        return !_lastFaceSweep.TryGetValue(deviceId, out var last) || now - last >= _faceSweepInterval;
     }
 
     private static void AddFocus(Dictionary<string, HashSet<string>> focus, (string DeviceId, string? UserId) trigger)

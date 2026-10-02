@@ -14,7 +14,6 @@ import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.DeviceUserSnapshotRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.ReconciliationConflictRepository;
-import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
@@ -34,8 +33,8 @@ import org.springframework.util.StringUtils;
 
 /**
  * Manual, idempotent import of cached device user lists into Members + Unknown memberships +
- * mappings. Reconcile now imports automatically; this remains as a fallback. Imported members are
- * fanned out to the devices that do not have them, and their faces are requested from a device.
+ * mappings. Reconcile now imports automatically; this remains as a fallback. Import records the
+ * users a reader already holds and does not enqueue a write to any reader.
  */
 @Service
 public class DeviceUserImportService {
@@ -45,9 +44,7 @@ public class DeviceUserImportService {
     private final MemberDeviceMappingRepository mappingRepository;
     private final MemberRepository memberRepository;
     private final ReconciliationConflictRepository conflictRepository;
-    private final MemberFaceRepository faceRepository;
     private final DeviceMemberImporter importer;
-    private final MemberDeviceProvisioningService provisioning;
     private final DeviceService deviceService;
     private final AuditService auditService;
 
@@ -56,9 +53,7 @@ public class DeviceUserImportService {
                                    MemberDeviceMappingRepository mappingRepository,
                                    MemberRepository memberRepository,
                                    ReconciliationConflictRepository conflictRepository,
-                                   MemberFaceRepository faceRepository,
                                    DeviceMemberImporter importer,
-                                   MemberDeviceProvisioningService provisioning,
                                    DeviceService deviceService,
                                    AuditService auditService) {
         this.deviceRepository = deviceRepository;
@@ -66,9 +61,7 @@ public class DeviceUserImportService {
         this.mappingRepository = mappingRepository;
         this.memberRepository = memberRepository;
         this.conflictRepository = conflictRepository;
-        this.faceRepository = faceRepository;
         this.importer = importer;
-        this.provisioning = provisioning;
         this.deviceService = deviceService;
         this.auditService = auditService;
     }
@@ -126,7 +119,6 @@ public class DeviceUserImportService {
             if (known.isPresent() && added == 0) {
                 skipped++;
             }
-            fanOut(member, user, devices);
             closeExtraConflicts(user);
         }
 
@@ -138,18 +130,6 @@ public class DeviceUserImportService {
                         "inactiveFrozen", inactiveFrozen, "inferredEndDates", inferredEndDates,
                         "deviceUsers", merged.size()));
         return result;
-    }
-
-    /** Pushes the member to devices that do not hold it and requests its face from one that does. */
-    private void fanOut(Member member, MergedDeviceUser user, List<Device> devices) {
-        provisioning.provisionMember(member, user.deviceIds());
-        if (faceRepository.findByMemberId(member.getId()).isPresent()) {
-            return;
-        }
-        devices.stream()
-                .filter(d -> user.deviceIds().contains(d.getId()) && d.getGatewayId() != null)
-                .findFirst()
-                .ifPresent(d -> provisioning.requestDeviceReport(member, d, user.deviceUserId()));
     }
 
     private Map<String, MergedDeviceUser> mergeByDeviceUserId(List<DeviceUserSnapshotRow> rows) {

@@ -69,7 +69,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void reconcileAutoImportsDeviceUsersAndFansOutToOtherDevices() throws Exception {
+    void reconcileAutoImportsDeviceUsersWithoutWritingBack() throws Exception {
         gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
                 """
                 {"ok":true,"deviceUsers":[
@@ -88,22 +88,17 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
                 """));
 
         Long entrance = deviceRepository.findByPublicId(entranceId).orElseThrow().getId();
-        Long exit = deviceRepository.findByPublicId(exitId).orElseThrow().getId();
         assertThat(memberRepository.count()).isEqualTo(3);
         assertThat(reconciliationConflictRepository.findAll())
                 .noneMatch(c -> c.getConflictType().name().equals("EXTRA_DEVICE_USER")
                         && c.getStatus().name().equals("OPEN"));
 
         var commands = deviceSyncCommandRepository.findAll();
-        // The device that already holds the users is never sent CREATE_USER for them.
-        assertThat(commands).noneMatch(c -> c.getDeviceId().equals(entrance)
-                && c.getType() == SyncCommandType.CREATE_USER);
-        // Users only on the entrance are pushed to the exit device.
-        assertThat(commands.stream().filter(c -> c.getDeviceId().equals(exit)
-                && c.getType() == SyncCommandType.CREATE_USER)).hasSizeGreaterThanOrEqualTo(2);
-        // Faces are requested from the device that has them.
-        assertThat(commands.stream().filter(c -> c.getDeviceId().equals(entrance)
-                && c.getType() == SyncCommandType.REPORT_DEVICE_USER)).hasSize(3);
+        // Import adopts what the readers already hold. It does not create, disable, or copy users.
+        assertThat(commands).noneMatch(c -> c.getType() == SyncCommandType.CREATE_USER
+                || c.getType() == SyncCommandType.DISABLE_USER
+                || c.getType() == SyncCommandType.UPDATE_VALIDITY
+                || c.getType() == SyncCommandType.REPORT_DEVICE_USER);
 
         // The manual import is now a no-op fallback.
         postJson("/api/v1/devices/" + entranceId + "/import-users", null)

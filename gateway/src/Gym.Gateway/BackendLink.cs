@@ -86,6 +86,8 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
     }
 
+    private readonly SemaphoreSlim _sendGate = new(1, 1);
+
     public async Task SendAsync(GatewayEnvelope envelope, CancellationToken cancellationToken)
     {
         _outbox.Persist(envelope);
@@ -109,6 +111,19 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     }
 
     private async Task DeliverAsync(GatewayEnvelope envelope, CancellationToken cancellationToken)
+    {
+        await _sendGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await DeliverExclusiveAsync(envelope, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _sendGate.Release();
+        }
+    }
+
+    private async Task DeliverExclusiveAsync(GatewayEnvelope envelope, CancellationToken cancellationToken)
     {
         var json = JsonSerializer.Serialize(envelope, JsonOptions.Outbound);
         if (_websocketLive && _socket is { State: WebSocketState.Open })

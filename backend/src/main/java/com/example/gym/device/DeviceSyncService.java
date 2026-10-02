@@ -4,11 +4,15 @@ import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
+import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceSyncCommand;
+import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.SyncCommandState;
 import com.example.gym.device.domain.SyncCommandType;
+import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.DeviceSyncCommandRepository;
+import com.example.gym.device.repo.GatewayRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.live.StaffLiveBroadcast;
 import com.example.gym.member.Member;
@@ -45,6 +49,9 @@ public class DeviceSyncService {
     private static final Logger log = LoggerFactory.getLogger(DeviceSyncService.class);
 
     private final DeviceSyncCommandRepository commandRepository;
+    private final DeviceRepository deviceRepository;
+    private final GatewayRepository gatewayRepository;
+    private final GatewaySessionRegistry sessionRegistry;
     private final MemberDeviceMappingRepository mappingRepository;
     private final MembershipRepository membershipRepository;
     private final GatewayCommandTransport transport;
@@ -55,6 +62,9 @@ public class DeviceSyncService {
     private final ApplicationEventPublisher events;
 
     public DeviceSyncService(DeviceSyncCommandRepository commandRepository,
+                             DeviceRepository deviceRepository,
+                             GatewayRepository gatewayRepository,
+                             GatewaySessionRegistry sessionRegistry,
                              MemberDeviceMappingRepository mappingRepository,
                              MembershipRepository membershipRepository,
                              GatewayCommandTransport transport,
@@ -64,6 +74,9 @@ public class DeviceSyncService {
                              MemberRepository memberRepository,
                              ApplicationEventPublisher events) {
         this.commandRepository = commandRepository;
+        this.deviceRepository = deviceRepository;
+        this.gatewayRepository = gatewayRepository;
+        this.sessionRegistry = sessionRegistry;
         this.mappingRepository = mappingRepository;
         this.membershipRepository = membershipRepository;
         this.transport = transport;
@@ -97,6 +110,12 @@ public class DeviceSyncService {
     @Transactional
     public DeviceSyncCommand enqueue(Long tenantId, Long deviceId, Long memberId, Long membershipId,
                                      SyncCommandType type, Map<String, Object> payload) {
+        if (memberId != null) {
+            List<SyncCommandType> replaced = supersededBy(type);
+            if (!replaced.isEmpty()) {
+                supersede(deviceId, memberId, replaced);
+            }
+        }
         String correlationId = UUID.randomUUID().toString();
         payload = withChangeTimes(memberId, type, payload);
         String payloadJson = payload == null ? null : jsonMapper.writeValueAsString(payload);
@@ -113,8 +132,10 @@ public class DeviceSyncService {
     }
 
     /**
-     * Reclaims DISPATCHED / ACKNOWLEDGED commands that never received SYNC_RESULT so they become
-     * retryable again (gateway crash after WSS write, lost poll body, reconcile without SYNC_RESULT).
+     * Reclaims DISPATCHED / ACKNOWLEDGED commands whose gateway is no longer connected. A connected
+     * gateway works through its own per-device queue and answers with SYNC_RESULT when the reader
+     * finishes, which can be long after {@code dispatch-timeout}. Reclaiming those in-flight
+     * commands resends them and is what piled the same user up several times.
      */
     @Transactional
     public int reclaimStaleDispatched() {
@@ -124,15 +145,49 @@ public class DeviceSyncService {
                 List.of(SyncCommandState.DISPATCHED, SyncCommandState.ACKNOWLEDGED),
                 cutoff,
                 PageRequest.of(0, properties.getOutbox().getBatchSize()));
+        int reclaimed = 0;
         for (DeviceSyncCommand command : stale) {
+            if (gatewayConnected(command)) {
+                continue;
+            }
             command.setState(SyncCommandState.RETRYING);
             command.setNextAttemptAt(Instant.now());
-            command.setLastError(truncate("Reclaimed: no SYNC_RESULT within " + timeout, 500));
+            command.setLastError(truncate("Reclaimed: gateway disconnected before SYNC_RESULT", 500));
             commandRepository.save(command);
             log.info("Reclaimed stale command {} (was {})", command.getCorrelationId(),
                     command.getDispatchedAt());
+            reclaimed++;
         }
-        return stale.size();
+        return reclaimed;
+    }
+
+    /** Access commands replace each other. A removal replaces every earlier write for that person. */
+    private static List<SyncCommandType> supersededBy(SyncCommandType type) {
+        if (ACCESS_TYPES.contains(type)) {
+            return ACCESS_TYPES;
+        }
+        if (type == SyncCommandType.REMOVE_USER) {
+            return MEMBER_WRITES;
+        }
+        if (type == SyncCommandType.CREATE_USER || type == SyncCommandType.UPDATE_USER
+                || type == SyncCommandType.REPORT_DEVICE_USER
+                || type == SyncCommandType.UPSERT_FACE || type == SyncCommandType.DELETE_FACE
+                || type == SyncCommandType.ENROLL_FACE) {
+            return List.of(type);
+        }
+        return List.of();
+    }
+
+    private boolean gatewayConnected(DeviceSyncCommand command) {
+        if (command.getDeviceId() == null) {
+            return false;
+        }
+        Device device = deviceRepository.findById(command.getDeviceId()).orElse(null);
+        if (device == null || device.getGatewayId() == null) {
+            return false;
+        }
+        Gateway gateway = gatewayRepository.findById(device.getGatewayId()).orElse(null);
+        return gateway != null && sessionRegistry.isOnline(gateway.getPublicId());
     }
 
     /** Claims due commands and attempts delivery to their gateways. Returns the number dispatched. */
@@ -307,8 +362,19 @@ public class DeviceSyncService {
             SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_USER, SyncCommandType.DISABLE_USER,
             SyncCommandType.ENABLE_USER, SyncCommandType.UPDATE_VALIDITY, SyncCommandType.UPDATE_ACCESS_POLICY);
 
+    private static final List<SyncCommandType> ACCESS_TYPES = List.of(
+            SyncCommandType.DISABLE_USER, SyncCommandType.ENABLE_USER,
+            SyncCommandType.UPDATE_VALIDITY, SyncCommandType.UPDATE_ACCESS_POLICY);
+
     private static final List<SyncCommandType> FACE_TYPES =
-            List.of(SyncCommandType.UPSERT_FACE, SyncCommandType.DELETE_FACE);
+            List.of(SyncCommandType.UPSERT_FACE, SyncCommandType.DELETE_FACE, SyncCommandType.ENROLL_FACE);
+
+    /** Everything a newer removal makes pointless to deliver. */
+    private static final List<SyncCommandType> MEMBER_WRITES = List.of(
+            SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_USER, SyncCommandType.DISABLE_USER,
+            SyncCommandType.ENABLE_USER, SyncCommandType.UPDATE_VALIDITY, SyncCommandType.UPDATE_ACCESS_POLICY,
+            SyncCommandType.REMOVE_USER, SyncCommandType.UPSERT_FACE, SyncCommandType.DELETE_FACE,
+            SyncCommandType.ENROLL_FACE, SyncCommandType.REPORT_DEVICE_USER);
 
     private boolean othersOpen(DeviceSyncCommand command, List<SyncCommandType> types) {
         if (command.getMemberId() == null) {

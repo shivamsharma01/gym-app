@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Gym.Gateway.Adapters;
 using Microsoft.Extensions.Hosting;
@@ -16,7 +17,10 @@ public sealed class GatewayWorker : BackgroundService
         new UnboundedChannelOptions { SingleReader = true });
     private readonly DeviceLocks _locks = new();
     private readonly RosterStateStore _roster = new(RosterStateStore.DefaultDirectory());
+    private readonly ConcurrentDictionary<string, Channel<GatewayEnvelope>> _inbox = new(StringComparer.Ordinal);
     private DeviceChangeWatcher? _watcher;
+    private CommandDispatcher? _dispatcher;
+    private CancellationToken _stop;
 
     public GatewayWorker(
         GatewayOptions options,
@@ -71,15 +75,16 @@ public sealed class GatewayWorker : BackgroundService
             _logFactory.CreateLogger<DeviceChangeWatcher>(),
             TimeSpan.FromMinutes(Math.Max(1, _options.FaceSweepMinutes)),
             store: new LocalMemberStore(LocalMemberStore.DefaultDirectory()));
-        var dispatcher = new CommandDispatcher(
+        _stop = stoppingToken;
+        _dispatcher = new CommandDispatcher(
             _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _link, _roster, _locks,
             (deviceId, userId) => _watcher!.ReportUserAsync(deviceId, userId, stoppingToken),
             _watcher);
 
         var sendLoop = SendLoopAsync(_link, stoppingToken);
-        var wsLoop = _link.RunWebSocketAsync(cmd => HandleCommandAsync(_link, dispatcher, cmd), stoppingToken);
+        var wsLoop = _link.RunWebSocketAsync(AcceptCommand, stoppingToken);
         var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
-        var poll = PollLoopAsync(_link, dispatcher, stoppingToken);
+        var poll = PollLoopAsync(_link, stoppingToken);
         var watch = _watcher.RunAsync(TimeSpan.FromSeconds(Math.Max(15, _options.RosterPollSeconds)), stoppingToken);
         var clock = TimeSyncLoopAsync(stoppingToken);
 
@@ -246,7 +251,57 @@ public sealed class GatewayWorker : BackgroundService
         }
     }
 
-    private async Task PollLoopAsync(BackendLink link, CommandDispatcher dispatcher, CancellationToken stoppingToken)
+    /// <summary>
+    /// Queues a command and returns immediately. Each reader has its own worker, so the two doors
+    /// run at the same time and a slow SDK call does not stop the socket.
+    /// </summary>
+    private Task AcceptCommand(GatewayEnvelope command)
+    {
+        var key = string.IsNullOrWhiteSpace(command.DeviceId) ? "" : command.DeviceId;
+        var channel = _inbox.GetOrAdd(key, _ =>
+        {
+            var created = Channel.CreateUnbounded<GatewayEnvelope>(new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = false
+            });
+            _ = DrainAsync(created.Reader);
+            return created;
+        });
+        if (!channel.Writer.TryWrite(command))
+        {
+            _log.LogWarning("Dropped command {Type} for {DeviceId}", command.Type, command.DeviceId);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task DrainAsync(ChannelReader<GatewayEnvelope> reader)
+    {
+        await foreach (var command in reader.ReadAllAsync(_stop).ConfigureAwait(false))
+        {
+            var dispatcher = _dispatcher;
+            if (dispatcher == null)
+            {
+                continue;
+            }
+
+            try
+            {
+                await HandleCommandAsync(_link, dispatcher, command).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Command {Type} failed for {DeviceId}", command.Type, command.DeviceId);
+            }
+        }
+    }
+
+    private async Task PollLoopAsync(BackendLink link, CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -260,7 +315,7 @@ public sealed class GatewayWorker : BackgroundService
 
                 foreach (var command in await link.PollCommandsAsync(stoppingToken).ConfigureAwait(false))
                 {
-                    await HandleCommandAsync(link, dispatcher, command).ConfigureAwait(false);
+                    await AcceptCommand(command).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

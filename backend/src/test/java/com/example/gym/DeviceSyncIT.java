@@ -193,6 +193,29 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void aNewerAccessCommandReplacesTheOpenOne() {
+        var mapping = memberDeviceMappingRepository.findAll().getFirst();
+        var first = deviceSyncService.enqueue(mapping.getTenantId(), mapping.getDeviceId(), mapping.getMemberId(),
+                null, SyncCommandType.DISABLE_USER, java.util.Map.of("deviceUserId", mapping.getDeviceUserId()));
+        var second = deviceSyncService.enqueue(mapping.getTenantId(), mapping.getDeviceId(), mapping.getMemberId(),
+                null, SyncCommandType.UPDATE_VALIDITY, java.util.Map.of(
+                        "deviceUserId", mapping.getDeviceUserId(), "enabled", true));
+
+        assertThat(deviceSyncCommandRepository.findById(first.getId()).orElseThrow().getState())
+                .isEqualTo(SyncCommandState.CANCELLED);
+        assertThat(deviceSyncCommandRepository.findById(second.getId()).orElseThrow().getState())
+                .isEqualTo(SyncCommandState.PENDING);
+        assertThat(deviceSyncCommandRepository.findAll().stream()
+                .filter(c -> mapping.getMemberId().equals(c.getMemberId())
+                        && c.getState() == SyncCommandState.PENDING
+                        && (c.getType() == SyncCommandType.DISABLE_USER
+                        || c.getType() == SyncCommandType.UPDATE_VALIDITY
+                        || c.getType() == SyncCommandType.ENABLE_USER))
+                .map(c -> c.getId()))
+                .containsExactly(second.getId());
+    }
+
+    @Test
     void listingSyncCommandsWithoutAMemberDoesNotFail() throws Exception {
         deviceSyncCommandRepository.deleteAllInBatch();
         var device = deviceRepository.findAll().getFirst();

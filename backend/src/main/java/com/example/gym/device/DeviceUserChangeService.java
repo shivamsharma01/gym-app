@@ -112,7 +112,8 @@ public class DeviceUserChangeService {
                           LocalDate validFrom, LocalDate validTo, boolean isNew, boolean nameChanged,
                           boolean frozenChanged, boolean validityChanged, boolean faceChanged,
                           boolean faceRemoved, GatewayFaceUpload upload, Instant faceChangedAt,
-                          com.example.gym.member.DeviceAuthority authority, boolean authorityChanged) {
+                          com.example.gym.member.DeviceAuthority authority, boolean authorityChanged,
+                          boolean initialSample) {
     }
 
     @Transactional
@@ -238,9 +239,11 @@ public class DeviceUserChangeService {
             } else if (isAfter(changedAt, serverFaceAt)) {
                 MemberFace face = faceService.applyFromDevice(member, r.upload(), device.getId(), r.faceChangedAt());
                 provisioning.markHeldBySource(member, device, deviceUserId, face.getFaceVersion());
-                // Re-encoded by the server: send it back to the source too so every device holds the same image.
-                provisioning.pushFace(member, face,
-                        r.faceChangedAt().equals(changedAt) ? Set.of(device.getId()) : Set.of());
+                // A first photo read is stored only. A later face edit is copied to the other readers.
+                if (!r.initialSample()) {
+                    provisioning.pushFace(member, face,
+                            r.faceChangedAt().equals(changedAt) ? Set.of(device.getId()) : Set.of());
+                }
                 faceApplied = true;
                 updated = true;
             } else {
@@ -265,7 +268,8 @@ public class DeviceUserChangeService {
 
     /**
      * Reconcile found a user on the device that the server does not map. Links it to the member with
-     * the same code, or imports it as a new member, then asks the device for its face.
+     * the same code, or imports it as a new member. The reader is left unchanged; its photo is
+     * uploaded later by the gateway's own face pass.
      * Returns false when the user was left alone (e.g. a removal is still in flight, or the member
      * was deleted/deactivated on the server, which needs a staff decision).
      */
@@ -289,10 +293,6 @@ public class DeviceUserChangeService {
             importer.ensureUnknownMembership(member, validFrom, validTo);
         }
         provisioning.markHeldBySource(member, device, deviceUserId, null);
-        provisioning.provisionMember(member, Set.of(device.getId()));
-        if (faceService.find(member.getId()).isEmpty()) {
-            provisioning.requestDeviceReport(member, device, deviceUserId);
-        }
         closeExtraConflict(device, deviceUserId);
         finish(device, member, deviceUserId, existing.isPresent() ? "LINKED" : "CREATED", false,
                 List.of(), List.of());
@@ -573,7 +573,8 @@ public class DeviceUserChangeService {
                 upload,
                 faceChangedAt,
                 auth,
-                authorityChanged);
+                authorityChanged,
+                bool(payload, "initialSample"));
     }
 
     /** Deleted on a device: inactive and on no device (an admin deactivation keeps the mappings). */

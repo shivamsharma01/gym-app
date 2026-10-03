@@ -30,6 +30,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     public string DeviceId => _config?.DeviceId ?? "";
 
+    private const string AdminLevel = "ADMIN";
+
     public DeviceConnectionStatus Connect(DeviceConnectionConfig config)
     {
         _config = config;
@@ -694,7 +696,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         if (!string.IsNullOrWhiteSpace(mutation.Authority))
         {
             var desiredAuthority =
-                string.Equals(mutation.Authority, "ADMIN", StringComparison.OrdinalIgnoreCase)
+                string.Equals(mutation.Authority, AdminLevel, StringComparison.OrdinalIgnoreCase)
                     ? EM_ATTENDANCE_AUTHORITY.Administrators
                     : EM_ATTENDANCE_AUTHORITY.Customer;
 
@@ -742,7 +744,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
         if (!string.IsNullOrWhiteSpace(mutation.Authority))
         {
-            user.emAuthority = string.Equals(mutation.Authority, "ADMIN", StringComparison.OrdinalIgnoreCase)
+            user.emAuthority = string.Equals(mutation.Authority, AdminLevel, StringComparison.OrdinalIgnoreCase)
                 ? EM_ATTENDANCE_AUTHORITY.Administrators
                 : EM_ATTENDANCE_AUTHORITY.Customer;
         }
@@ -766,7 +768,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     private static string MapAuthority(EM_ATTENDANCE_AUTHORITY authority) =>
         authority switch
         {
-            EM_ATTENDANCE_AUTHORITY.Administrators => "ADMIN",
+            EM_ATTENDANCE_AUTHORITY.Administrators => AdminLevel,
             _ => "USER"
         };
 
@@ -787,7 +789,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             szUserID = mutation.DeviceUserId,
             szName = Truncate(mutation.Name ?? mutation.DeviceUserId, 31),
             emUserType = EM_USER_TYPE.NORMAL,
-            emAuthority = string.Equals(mutation.Authority, "ADMIN", StringComparison.OrdinalIgnoreCase)
+            emAuthority = string.Equals(mutation.Authority, AdminLevel, StringComparison.OrdinalIgnoreCase)
                 ? EM_ATTENDANCE_AUTHORITY.Administrators
                 : EM_ATTENDANCE_AUTHORITY.Customer,
             nUserStatus = freeze ? 1u : 0u,

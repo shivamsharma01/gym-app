@@ -259,7 +259,7 @@ services:
       - full
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
     container_name: grafana
     restart: unless-stopped
     environment:
@@ -276,6 +276,8 @@ services:
       GF_SMTP_STARTTLS_POLICY: ${GRAFANA_SMTP_STARTTLS_POLICY:-MandatoryStartTLS}
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "127.0.0.1:3000:3000"
     networks:
@@ -284,8 +286,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${GRAFANA_MEMORY_LIMIT:-256m}
-          cpus: "0.5"
+          memory: ${GRAFANA_MEMORY_LIMIT:-512m}
+          cpus: "1.0"
     profiles:
       - full
 

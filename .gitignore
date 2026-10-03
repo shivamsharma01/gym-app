@@ -46,3 +46,6 @@ simulator/data/
 
 # Server-side database backups (created on the VPS, not readable by the deploy user)
 /backups/
+
+# temp files
+deploy/docker-compose.yml.*

@@ -30,6 +30,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     public string DeviceId => _config?.DeviceId ?? "";
 
+    private const string AdminLevel = "ADMIN";
+
     public DeviceConnectionStatus Connect(DeviceConnectionConfig config)
     {
         _config = config;
@@ -691,6 +693,19 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     private static bool UserMatchesDesired(NET_ACCESS_USER_INFO existing, DeviceUserMutation mutation)
     {
+        if (!string.IsNullOrWhiteSpace(mutation.Authority))
+        {
+            var desiredAuthority =
+                string.Equals(mutation.Authority, AdminLevel, StringComparison.OrdinalIgnoreCase)
+                    ? EM_ATTENDANCE_AUTHORITY.Administrators
+                    : EM_ATTENDANCE_AUTHORITY.Customer;
+
+            if (existing.emAuthority != desiredAuthority)
+            {
+                return false;
+            }
+        }
+
         if (mutation.Enabled.HasValue && (existing.nUserStatus != 0) != (mutation.Enabled == false))
         {
             return false;
@@ -729,7 +744,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
         if (!string.IsNullOrWhiteSpace(mutation.Authority))
         {
-            user.emAuthority = string.Equals(mutation.Authority, "ADMIN", StringComparison.OrdinalIgnoreCase)
+            user.emAuthority = string.Equals(mutation.Authority, AdminLevel, StringComparison.OrdinalIgnoreCase)
                 ? EM_ATTENDANCE_AUTHORITY.Administrators
                 : EM_ATTENDANCE_AUTHORITY.Customer;
         }
@@ -750,6 +765,14 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     /// <summary>The device compares against a time of day: the end date must stay valid until 23:59:59.</summary>
     private static DateTime EndOfDay(DateTimeOffset date) => date.UtcDateTime.Date.AddDays(1).AddSeconds(-1);
 
+    private static string MapAuthority(EM_ATTENDANCE_AUTHORITY authority) =>
+        authority switch
+        {
+            EM_ATTENDANCE_AUTHORITY.Administrators => AdminLevel,
+            _ => "USER"
+        };
+
+
     private static DeviceUserSnapshot ToSnapshot(NET_ACCESS_USER_INFO user) =>
         new(
             user.szUserID.Trim(),
@@ -757,7 +780,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             Frozen: user.nUserStatus != 0,
             ValidFrom: NetTimeOrNull(user.stuValidBeginTime),
             ValidTo: NetTimeOrNull(user.stuValidEndTime),
-            Authority: user.emAuthority == EM_ATTENDANCE_AUTHORITY.Administrators ? "ADMIN" : "USER");
+            Authority: MapAuthority(user.emAuthority));
 
     private static NET_ACCESS_USER_INFO BuildUser(DeviceUserMutation mutation, bool freeze)
     {
@@ -766,7 +789,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             szUserID = mutation.DeviceUserId,
             szName = Truncate(mutation.Name ?? mutation.DeviceUserId, 31),
             emUserType = EM_USER_TYPE.NORMAL,
-            emAuthority = string.Equals(mutation.Authority, "ADMIN", StringComparison.OrdinalIgnoreCase)
+            emAuthority = string.Equals(mutation.Authority, AdminLevel, StringComparison.OrdinalIgnoreCase)
                 ? EM_ATTENDANCE_AUTHORITY.Administrators
                 : EM_ATTENDANCE_AUTHORITY.Customer,
             nUserStatus = freeze ? 1u : 0u,

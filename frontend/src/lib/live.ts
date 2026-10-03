@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/lib/auth'
-import { staffLiveWsUrl } from '@/lib/backendUrls'
+import { staffLiveWsProtocols, staffLiveWsUrl } from '@/lib/backendUrls'
 import { getAccessToken } from '@/lib/tokens'
 
 export type LiveState = 'off' | 'live' | 'reconnecting' | 'offline'
@@ -45,7 +45,7 @@ export function useStaffLive() {
       }
 
       intentionalClose.current = false
-      ws = new WebSocket(staffLiveWsUrl(token))
+      ws = new WebSocket(staffLiveWsUrl(), staffLiveWsProtocols(token))
 
       ws.onopen = () => {
         failCount.current = 0

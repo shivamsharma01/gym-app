@@ -25,17 +25,24 @@ export function apiUrl(path: string): string {
   return `${apiBase()}${p}`
 }
 
-/** Pure helper for tests and WebSocket construction. */
-export function buildLiveWsUrl(
-  location: Pick<Location, 'protocol' | 'host'>,
-  accessToken: string,
-): string {
+/**
+ * Subprotocol echoed by the server. The JWT is a second protocol value because
+ * the browser WebSocket API cannot set `Authorization`.
+ */
+export const STAFF_LIVE_PROTOCOL = 'bearer'
+
+/** Pure helper for tests and WebSocket construction. Token stays out of the URL. */
+export function buildLiveWsUrl(location: Pick<Location, 'protocol' | 'host'>): string {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const token = encodeURIComponent(accessToken)
-  return `${protocol}//${location.host}/live?access_token=${token}`
+  return `${protocol}//${location.host}/live`
+}
+
+/** `new WebSocket(url, protocols)` — server echoes only {@link STAFF_LIVE_PROTOCOL}. */
+export function staffLiveWsProtocols(accessToken: string): [string, string] {
+  return [STAFF_LIVE_PROTOCOL, accessToken]
 }
 
 /** Staff attendance live WebSocket — always derived from window.location. */
-export function staffLiveWsUrl(accessToken: string): string {
-  return buildLiveWsUrl(window.location, accessToken)
+export function staffLiveWsUrl(): string {
+  return buildLiveWsUrl(window.location)
 }

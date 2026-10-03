@@ -31,6 +31,13 @@ class ObservabilitySecurityIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void prometheusScrapeIsPublicForInClusterScraping() throws Exception {
+        mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", Matchers.containsString("text/plain")));
+    }
+
+    @Test
     void metricsRequiresAuthentication() throws Exception {
         mockMvc.perform(get("/actuator/metrics"))
                 .andExpect(status().isUnauthorized());

@@ -1,6 +1,6 @@
 # Observability, monitoring, and rate limiting
 
-Practical production setup for a **single Spring Boot service + MySQL + one VPS**. No Prometheus/Grafana/Loki/Redis stack.
+Practical production setup for a **single Spring Boot service + MySQL + one VPS**. Prometheus scrape is available at `/actuator/prometheus` on the Docker network (not on the public nginx edge).
 
 ## Architecture
 
@@ -12,7 +12,7 @@ Internet → Cloudflare → nginx API edge (:80)
   │  proxies /api, /live, /gateway, /actuator/
   ▼
 Spring Boot (:8080)
-  ├── Actuator (health public; metrics/info/threaddump = SUPER_ADMIN)
+  ├── Actuator (health public; prometheus scrape on Docker network; metrics/info/threaddump = SUPER_ADMIN)
   ├── Micrometer JVM + HTTP + Hikari metrics
   ├── Structured Logback (MDC: requestId, tenantId, userId)
   ├── Correlation / X-Request-Id
@@ -26,6 +26,7 @@ We keep Actuator on the **application port** (not a separate management port).
 | Endpoint | Access | Why |
 |----------|--------|-----|
 | `/actuator/health` (+ `/liveness`, `/readiness`) | Public | Compose healthcheck + external uptime monitors |
+| `/actuator/prometheus` | Public **in-process**; nginx **404** on the edge | Prometheus scrape (`http://backend:8080/actuator/prometheus`) |
 | `/actuator/info` | `ROLE_SUPER_ADMIN` | Build/app metadata — platform SPA **Operations console** |
 | `/actuator/metrics` (+ metric names) | `ROLE_SUPER_ADMIN` | JVM, HTTP, Hikari — platform SPA |
 | `/actuator/threaddump` | `ROLE_SUPER_ADMIN` | Thread diagnosis — platform SPA |
@@ -43,7 +44,9 @@ Available under `/actuator/metrics` (SUPER_ADMIN), including:
 - JVM: memory, threads, GC, classes, CPU
 - HikariCP: connections active/idle/pending, max, acquire time
 
-No custom business meters unless a clear need appears later.
+Prometheus text format: `GET /actuator/prometheus` (Micrometer names use underscores, e.g. `http_server_requests_seconds`, `hikaricp_connections_active`, `jvm_memory_used_bytes`). HTTP latency histograms/SLOs are enabled so Grafana can show p95/p99, not only averages.
+
+No custom business meters (gateway online, sync failures, …) unless added later. Host CPU/disk still need Node Exporter; MySQL server metrics still need mysqld-exporter.
 
 ## Logging
 

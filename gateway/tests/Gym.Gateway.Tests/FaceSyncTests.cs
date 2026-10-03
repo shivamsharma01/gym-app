@@ -69,6 +69,151 @@ public class FaceSyncTests
     }
 
     [Fact]
+    public async Task Face_pass_does_not_download_photos_it_already_knows()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("5001", "Known", PhotoA, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), new List<JsonElement>());
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+
+        Assert.Equal(1, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None));
+        Assert.NotNull(roster.LastFaceSweepUtc("dev-1"));
+        Assert.Equal(0, roster.FaceCursor("dev-1"));
+
+        // Without a reader event the next pass leaves a known photo alone.
+        adapter.SimulateLocalUserChange("5001", "Known", PhotoB, emitEvent: false);
+        Assert.Equal(0, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None));
+        Assert.Equal(FaceHash.Sha256Hex(PhotoA), roster.Find("dev-1", "5001")!.FaceSha256);
+    }
+
+    [Fact]
+    public async Task Sync_now_reads_every_photo_again_and_reports_only_changes()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("5101", "Same", PhotoA, emitEvent: false);
+        adapter.SimulateLocalUserChange("5102", "Edited", PhotoA, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var published = new List<JsonElement>();
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), published);
+        var dispatcher = new CommandDispatcher(adapters, NullLogger<CommandDispatcher>.Instance, null, roster);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        Assert.Equal(2, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None));
+
+        adapter.SimulateLocalUserChange("5102", "Edited", PhotoB, emitEvent: false);
+        Assert.True((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { refreshFaces = true }))).Ok);
+        Assert.True(roster.FaceRefreshRequested("dev-1"));
+
+        Assert.Equal(1, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None));
+        Assert.Equal("5102", published[^1].GetProperty("deviceUserId").GetString());
+        Assert.False(published[^1].GetProperty("initialSample").GetBoolean());
+        Assert.False(roster.FaceRefreshRequested("dev-1"));
+    }
+
+    [Fact]
+    public async Task Reconnect_reconcile_does_not_start_a_photo_refresh()
+    {
+        var (_, adapters) = Device();
+        var roster = new RosterStateStore(null);
+        var dispatcher = new CommandDispatcher(adapters, NullLogger<CommandDispatcher>.Instance, null, roster);
+        Assert.True((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { }))).Ok);
+        Assert.False(roster.FaceRefreshRequested("dev-1"));
+    }
+
+    [Fact]
+    public async Task Read_from_device_reports_an_unchanged_photo_with_its_original_time()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("5201", "Known", PhotoA, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var published = new List<JsonElement>();
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), published);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None);
+        var firstReportAt = published[^1].GetProperty("deviceChangedAt").GetString();
+
+        await Task.Delay(20);
+        var (ok, _) = await watcher.ReportUserAsync("dev-1", "5201", CancellationToken.None);
+        Assert.True(ok);
+        var report = published[^1];
+        Assert.Equal(FaceHash.Sha256Hex(PhotoA), report.GetProperty("faceSha256").GetString());
+        Assert.True(report.GetProperty("initialSample").GetBoolean());
+        Assert.Equal(firstReportAt, report.GetProperty("deviceChangedAt").GetString());
+    }
+
+    [Fact]
+    public async Task Photos_uploaded_together_are_still_reported_in_queue_order()
+    {
+        var (adapter, adapters) = Device();
+        var faces = new FakeFaceTransfer();
+        var published = new List<JsonElement>();
+        var watcher = Watcher(adapters, new RosterStateStore(null), faces, published);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+
+        string[] ids = ["7001", "7002", "7003", "7004", "7005", "7006"];
+        foreach (var id in ids)
+        {
+            adapter.SimulateLocalUserChange(id, "User " + id, [.. PhotoA, (byte)id[^1]], emitEvent: false);
+        }
+
+        Assert.Equal(ids.Length, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None));
+        Assert.Equal(ids, published.Select(p => p.GetProperty("deviceUserId").GetString()).ToArray());
+        Assert.All(published, p => Assert.NotNull(p.GetProperty("faceUploadId").GetString()));
+    }
+
+    [Fact]
+    public void Deferred_roster_saves_are_written_once_when_the_scope_ends()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gym-roster-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RosterStateStore(dir);
+            using (store.DeferSaves("dev-1"))
+            {
+                store.RecordFace("dev-1", "6001", "abc");
+                using (store.DeferSaves("dev-1"))
+                {
+                    store.RecordFace("dev-1", "6002", "def");
+                }
+
+                Assert.Null(new RosterStateStore(dir).Find("dev-1", "6001"));
+            }
+
+            var reopened = new RosterStateStore(dir);
+            Assert.Equal("abc", reopened.Find("dev-1", "6001")!.FaceSha256);
+            Assert.Equal("def", reopened.Find("dev-1", "6002")!.FaceSha256);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Face_pass_progress_survives_a_restart()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gym-roster-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var at = new DateTimeOffset(2026, 10, 1, 8, 0, 0, TimeSpan.Zero);
+            var first = new RosterStateStore(dir);
+            first.MarkBaseline("dev-1");
+            first.SetFaceCursor("dev-1", 40);
+            first.CompleteFaceSweep("dev-2", at);
+
+            var reopened = new RosterStateStore(dir);
+            Assert.Equal(40, reopened.FaceCursor("dev-1"));
+            Assert.Null(reopened.LastFaceSweepUtc("dev-1"));
+            Assert.Equal(at, reopened.LastFaceSweepUtc("dev-2"));
+            Assert.Equal(0, reopened.FaceCursor("dev-2"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Writes_made_by_the_gateway_are_not_reported_back()
     {
         var (adapter, adapters) = Device();

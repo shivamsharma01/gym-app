@@ -209,6 +209,14 @@ public sealed class CommandDispatcher
                     _log.LogInformation(
                         "Reconcile read device={DeviceId}: {Users} user(s), {Events} attendance record(s) for {From}..{To}",
                         command.DeviceId, recon.Users.Count, recon.Events.Count, fromUtc, toUtc);
+                    if (Bool(payload, "refreshFaces") == true)
+                    {
+                        _roster.RequestFaceRefresh(command.DeviceId!);
+                        _log.LogInformation(
+                            "Sync Now on {DeviceId}: every photo on this reader is read again in the background; only changed photos are sent",
+                            command.DeviceId);
+                    }
+
                     return DispatchOutcome.Reconciliation(recon);
                 }
 

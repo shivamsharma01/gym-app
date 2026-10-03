@@ -160,6 +160,51 @@ public partial class MainWindow : Window
         }
     }
 
+    private void TestFaceMd5_Click(object sender, RoutedEventArgs e)
+    {
+        if (_devices.Count == 0)
+        {
+            StatusText.Text = "Load the devices first (Refresh devices).";
+            return;
+        }
+
+        if (DevicesGrid.SelectedItem is not DeviceRow row)
+        {
+            StatusText.Text = "Select a device row first.";
+            return;
+        }
+
+        StatusText.Text = RunFaceMd5Probe(row, ProbeUserIdBox.Text.Trim());
+    }
+
+    private static string RunFaceMd5Probe(DeviceRow row, string userId)
+    {
+        try
+        {
+            using var adapter = DeviceAdapterFactory.Create("TrueFace");
+            var status = adapter.Connect(new DeviceConnectionConfig(
+                row.DeviceId, row.Ip, row.Port, row.Username, row.Password, null));
+            if (!status.Ok || adapter is not TrueFaceDeviceAdapter trueFace)
+            {
+                return $"Connect failed for {row.DeviceId}: {status.Error}";
+            }
+
+            var lines = new List<string>();
+            if (userId.Length > 0)
+            {
+                lines.AddRange(trueFace.ProbeFaceMd5(userId, maxUsers: 1));
+            }
+
+            lines.AddRange(trueFace.ProbeFaceMd5(null, maxUsers: 5));
+            adapter.Disconnect();
+            return "Photo MD5 test for " + row.DeviceId + Environment.NewLine + string.Join(Environment.NewLine, lines);
+        }
+        catch (Exception ex)
+        {
+            return "Photo MD5 test error: " + ex.Message;
+        }
+    }
+
     private void SaveAndStart_Click(object sender, RoutedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(_operationalCredential))

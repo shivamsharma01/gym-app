@@ -43,6 +43,9 @@ See [TrueFaceWindowsPOC/docs/GYM-VISIT-2026-09-13.md](../TrueFaceWindowsPOC/docs
 - If many users disappear from a device in one scan (more than 5 and more than 20 % of its roster, e.g. a factory reset), or the device returns an empty list, the gateway treats it as a read problem, not as deletions, and logs a warning. As a result, deleting the only user on a device is not detected.
 - Echoes are suppressed: the gateway records the version of each part it wrote to each device, and the server ignores a face identical to the stored one.
 - Users that existed on a device before the gateway first saw it are imported by reconcile, and their face is requested with `REPORT_DEVICE_USER`.
+- Photos are downloaded from a reader once and remembered by the gateway. After that a photo is read again only when the reader reports an edit for that user, or when staff ask for it:
+  - **Read from device** (member page, per device) reads that member's name, access and photo fresh. A device copy newer than the server's is applied; an older one is replaced by the server's.
+  - **Sync Now** (device page) also re-reads every photo on that reader in the background, in small batches. Only changed photos are sent. Automatic reconciles on reconnect do not do this.
 - There is no "unmap" action: a member is either on every device or deleted/deactivated.
 
 ### Manual two-device check (before go-live)

@@ -11,6 +11,10 @@ namespace Gym.Gateway.Adapters;
 public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 {
     private const int WaitMs = 5000;
+    private const int SafeUserPage = 50;
+    private const int MaxUserPage = 200;
+    private const int SafeAttendancePage = 20;
+    private const int AttendancePage = 100;
     private const int MaxFacePhotoBytes = 120 * 1024;
     private static readonly object SdkGate = new();
     private static bool s_sdkInitialized;
@@ -579,6 +583,119 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
     }
 
+    /// <summary>
+    /// Test tool: asks the reader for photo MD5s through StartFindFaceInfo (no JPEG transfer) and compares
+    /// each with the MD5 of the bytes GetFace returns. Answers whether the reader supports the query, whether
+    /// an empty user ID lists every photo, and whether the MD5 can stand in for downloading the photo.
+    /// </summary>
+    public IReadOnlyList<string> ProbeFaceMd5(string? deviceUserId, int maxUsers = 5)
+    {
+        var lines = new List<string>();
+        if (!EnsureLogin(out var err))
+        {
+            lines.Add(err);
+            return lines;
+        }
+
+        var label = string.IsNullOrWhiteSpace(deviceUserId) ? "(empty user ID: all photos?)" : $"user {deviceUserId}";
+        var find = IntPtr.Zero;
+        var buffer = IntPtr.Zero;
+        try
+        {
+            var startIn = new NET_IN_FACEINFO_START_FIND
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_IN_FACEINFO_START_FIND>(),
+                szUserID = deviceUserId?.Trim() ?? ""
+            };
+            var startOut = new NET_OUT_FACEINFO_START_FIND
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_OUT_FACEINFO_START_FIND>()
+            };
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            find = NETClient.StartFindFaceInfo(_loginId, startIn, ref startOut, WaitMs);
+            if (find == IntPtr.Zero)
+            {
+                lines.Add($"StartFindFaceInfo {label}: not supported or failed ({SdkError("no handle")}).");
+                return lines;
+            }
+
+            lines.Add($"StartFindFaceInfo {label}: {startOut.nTotalCount} photo(s) match, {watch.ElapsedMilliseconds} ms.");
+            var count = Math.Clamp(maxUsers, 1, 50);
+            var size = Marshal.SizeOf<NET_FACEINFO>();
+            buffer = Marshal.AllocHGlobal(size * count);
+            var findIn = new NET_IN_FACEINFO_DO_FIND
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_IN_FACEINFO_DO_FIND>(),
+                nStartNo = 0,
+                nCount = count
+            };
+            var findOut = new NET_OUT_FACEINFO_DO_FIND
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_OUT_FACEINFO_DO_FIND>(),
+                pstuInfo = buffer,
+                nMaxNum = count,
+                byReserved = new byte[4]
+            };
+            watch.Restart();
+            if (!NETClient.DoFindFaceInfo(find, findIn, ref findOut, WaitMs))
+            {
+                lines.Add($"DoFindFaceInfo failed ({SdkError("no result")}).");
+                return lines;
+            }
+
+            lines.Add($"DoFindFaceInfo returned {findOut.nRetNum} entr(y/ies) in {watch.ElapsedMilliseconds} ms.");
+            for (var i = 0; i < findOut.nRetNum && i < count; i++)
+            {
+                var info = Marshal.PtrToStructure<NET_FACEINFO>(IntPtr.Add(buffer, size * i));
+                var deviceMd5s = (info.szMD5 ?? [])
+                    .Take(Math.Clamp(info.nMD5, 0, 5))
+                    .Select(m => (m.szDM5 ?? "").Trim())
+                    .Where(m => m.Length > 0)
+                    .ToArray();
+                var photo = GetFace(info.szUserID);
+                var photoMd5 = photo.Photo == null ? null : ReaderChecksum(photo.Photo);
+                var match = photoMd5 != null
+                            && deviceMd5s.Any(m => string.Equals(m, photoMd5, StringComparison.OrdinalIgnoreCase));
+                lines.Add($"  user {info.szUserID}: reader MD5 [{string.Join(", ", deviceMd5s)}], "
+                          + $"GetFace {(photo.Photo?.Length ?? 0) / 1024} KB MD5 {photoMd5 ?? "(no photo)"}, match={match}");
+            }
+
+            Touch();
+            return lines;
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"Face MD5 probe threw {ex.GetType().Name}: {ex.Message}");
+            return lines;
+        }
+        finally
+        {
+            if (find != IntPtr.Zero)
+            {
+                try
+                {
+                    NETClient.StopFindFaceInfo(find);
+                }
+                catch
+                {
+                    // The probe result is already collected.
+                }
+            }
+
+            if (buffer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+    }
+
+    /// <summary>
+    /// MD5 because that is the checksum the reader reports in NET_FACEINFO. It only detects a changed photo;
+    /// nothing security-related depends on it.
+    /// </summary>
+    private static string ReaderChecksum(byte[] photo) =>
+        Convert.ToHexString(System.Security.Cryptography.MD5.HashData(photo)); // NOSONAR S4790: must match the reader's MD5
+
     public IReadOnlyList<DeviceAttendanceRecord> FetchAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc)
     {
         if (_loginId == IntPtr.Zero)
@@ -897,7 +1014,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 return [];
             }
 
-            const int page = 20;
+            var page = AttendancePage;
+            var firstPage = true;
             var records = new List<DeviceAttendanceRecord>();
             while (true)
             {
@@ -915,8 +1033,18 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 NETClient.FindNextRecord(findId, page, ref retNum, ref ls, typeof(NET_RECORDSET_ACCESS_CTL_CARDREC), 10000);
                 if (retNum <= 0)
                 {
+                    // An empty first answer may be a reader that refuses large pages: ask once more with the old size.
+                    if (firstPage)
+                    {
+                        page = SafeAttendancePage;
+                        firstPage = false;
+                        continue;
+                    }
+
                     break;
                 }
+
+                firstPage = false;
 
                 for (var i = 0; i < retNum && i < ls.Count; i++)
                 {
@@ -941,6 +1069,47 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
     }
 
+    /// <summary>Reads one page of users into <paramref name="users"/>. Returns how many the reader sent, or 0 on failure.</summary>
+    private static int ReadUserPage(IntPtr find, int startNo, int page, List<DeviceUserSnapshot> users)
+    {
+        var findIn = new NET_IN_USERINFO_DO_FIND
+        {
+            dwSize = (uint)Marshal.SizeOf<NET_IN_USERINFO_DO_FIND>(),
+            nStartNo = startNo,
+            nCount = page
+        };
+        var findOut = new NET_OUT_USERINFO_DO_FIND
+        {
+            dwSize = (uint)Marshal.SizeOf<NET_OUT_USERINFO_DO_FIND>(),
+            nMaxNum = page
+        };
+        var size = Marshal.SizeOf<NET_ACCESS_USER_INFO>();
+        var buffer = Marshal.AllocHGlobal(size * page);
+        try
+        {
+            findOut.pstuInfo = buffer;
+            if (!NETClient.DoFindUserInfo(find, ref findIn, ref findOut, WaitMs) || findOut.nRetNum <= 0)
+            {
+                return 0;
+            }
+
+            for (var i = 0; i < findOut.nRetNum; i++)
+            {
+                var user = Marshal.PtrToStructure<NET_ACCESS_USER_INFO>(IntPtr.Add(buffer, size * i));
+                if (!string.IsNullOrWhiteSpace(user.szUserID))
+                {
+                    users.Add(ToSnapshot(user));
+                }
+            }
+
+            return findOut.nRetNum;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
     private IReadOnlyList<DeviceUserSnapshot> QueryUsers()
     {
         var startIn = new NET_IN_USERINFO_START_FIND
@@ -961,51 +1130,24 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         var users = new List<DeviceUserSnapshot>();
         try
         {
-            const int page = 50;
+            // The reader reports how many users one call may return; 50 is the size every firmware accepted so far.
+            var page = Math.Clamp(startOut.nCapNum > 0 ? startOut.nCapNum : SafeUserPage, SafeUserPage, MaxUserPage);
             var startNo = 0;
             while (true)
             {
-                var findIn = new NET_IN_USERINFO_DO_FIND
+                var read = ReadUserPage(find, startNo, page, users);
+                if (read <= 0 && startNo == 0 && page > SafeUserPage)
                 {
-                    dwSize = (uint)Marshal.SizeOf<NET_IN_USERINFO_DO_FIND>(),
-                    nStartNo = startNo,
-                    nCount = page
-                };
-                var findOut = new NET_OUT_USERINFO_DO_FIND
-                {
-                    dwSize = (uint)Marshal.SizeOf<NET_OUT_USERINFO_DO_FIND>(),
-                    nMaxNum = page
-                };
-                var buffer = Marshal.AllocHGlobal(Marshal.SizeOf<NET_ACCESS_USER_INFO>() * page);
-                try
-                {
-                    findOut.pstuInfo = buffer;
-                    if (!NETClient.DoFindUserInfo(find, ref findIn, ref findOut, WaitMs) || findOut.nRetNum <= 0)
-                    {
-                        break;
-                    }
-
-                    for (var i = 0; i < findOut.nRetNum; i++)
-                    {
-                        var ptr = IntPtr.Add(buffer, Marshal.SizeOf<NET_ACCESS_USER_INFO>() * i);
-                        var user = Marshal.PtrToStructure<NET_ACCESS_USER_INFO>(ptr);
-                        if (!string.IsNullOrWhiteSpace(user.szUserID))
-                        {
-                            users.Add(ToSnapshot(user));
-                        }
-                    }
-
-                    if (findOut.nRetNum < page)
-                    {
-                        break;
-                    }
-
-                    startNo += findOut.nRetNum;
+                    page = SafeUserPage;
+                    continue;
                 }
-                finally
+
+                if (read < page)
                 {
-                    Marshal.FreeHGlobal(buffer);
+                    break;
                 }
+
+                startNo += read;
             }
         }
         finally

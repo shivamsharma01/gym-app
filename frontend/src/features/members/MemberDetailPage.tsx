@@ -272,7 +272,7 @@ const COMMAND_LABELS: Record<string, string> = {
   REMOVE_USER: 'Remove user',
   UPSERT_FACE: 'Send photo',
   DELETE_FACE: 'Remove photo',
-  REPORT_DEVICE_USER: 'Read photo from device',
+  REPORT_DEVICE_USER: 'Read from device',
 }
 
 function faceStateLabel(row: MemberDeviceSync['devices'][number], face: MemberDeviceSync['face']) {
@@ -293,6 +293,11 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
   const retry = useMutation({
     mutationFn: (deviceId: string) =>
       api(`/api/v1/members/${memberId}/device-sync/${deviceId}/retry`, { method: 'POST' }),
+    onSuccess: () => void sync.refetch(),
+  })
+  const read = useMutation({
+    mutationFn: (deviceId: string) =>
+      api(`/api/v1/members/${memberId}/device-sync/${deviceId}/read`, { method: 'POST' }),
     onSuccess: () => void sync.refetch(),
   })
   if (sync.error) return <QueryError error={sync.error} />
@@ -354,14 +359,26 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
                     {row.faceLastError ? <div className="text-xs text-danger">{row.faceLastError}</div> : null}
                   </div>
                   {has('DEVICE_SYNC') ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={retry.isPending}
-                      onClick={() => retry.mutate(row.deviceId)}
-                    >
-                      Send again
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={retry.isPending}
+                        title="Overwrite the device with what the server has"
+                        onClick={() => retry.mutate(row.deviceId)}
+                      >
+                        Send again
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={read.isPending}
+                        title="Read name, access and photo fresh from the device. The newer copy wins."
+                        onClick={() => read.mutate(row.deviceId)}
+                      >
+                        Read from device
+                      </Button>
+                    </div>
                   ) : null}
                 </div>
               )
@@ -369,6 +386,7 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
           </div>
         )}
         {retry.error instanceof ApiError ? <p className="text-sm text-danger">{retry.error.message}</p> : null}
+        {read.error instanceof ApiError ? <p className="text-sm text-danger">{read.error.message}</p> : null}
       </Card>
     </section>
   )

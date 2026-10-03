@@ -50,13 +50,21 @@ public class MemberController {
             @RequestParam(required = false) String q,
             @RequestParam(required = false) MemberStatus status,
             @RequestParam(required = false) MemberCreationSource creationSource,
+            @RequestParam(required = false) DeviceAuthority deviceAuthority,
             @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "asc") String direction,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize, listSort(sort, direction));
-        var members = memberService.search(SecurityUtils.currentTenantId(), q, status, creationSource, pageable);
+        var members = memberService.search(
+                SecurityUtils.currentTenantId(),
+                q,
+                status,
+                creationSource,
+                deviceAuthority,
+                pageable
+        );
         Map<Long, String> coverage = memberCoverage.ofAll(members.getContent());
         return PageResponse.from(members, member -> MemberResponse.from(member, coverage.get(member.getId())));
     }

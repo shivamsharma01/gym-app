@@ -35,6 +35,7 @@ export function MembersPage() {
   const [debounced, setDebounced] = useState('')
   const [status, setStatus] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL')
   const [page, setPage] = useState(0)
+  const [deviceAuthority, setDeviceAuthority] = useState<'ALL' | 'ADMIN' | 'USER'>('ALL')
   const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection } | null>(null)
   const toggleSort = (key: SortKey) => {
     // asc → desc → back to the default order (newest first)
@@ -53,12 +54,14 @@ export function MembersPage() {
   }, [q])
 
   const members = useQuery({
-    queryKey: ['members', debounced, status, page, sort],
-    placeholderData: keepPreviousData,
+    queryKey: ['members', debounced, status, deviceAuthority, page, sort],    placeholderData: keepPreviousData,
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), size: '25' })
       if (debounced.trim()) params.set('q', debounced)
       if (status !== 'ALL') params.set('status', status)
+      if (deviceAuthority !== 'ALL') {
+        params.set('deviceAuthority', deviceAuthority)
+      }
       if (sort) {
         params.set('sort', sort.key)
         params.set('direction', sort.direction)
@@ -88,6 +91,19 @@ export function MembersPage() {
           className="max-w-md"
           aria-label="Search members"
         />
+        <Select
+            aria-label="Terminal user"
+            value={deviceAuthority}
+            onChange={(e) => {
+              setDeviceAuthority(e.target.value as 'ALL' | 'ADMIN' | 'USER')
+              setPage(0)
+            }}
+            className="w-48"
+        >
+          <option value="ALL">All terminal users</option>
+          <option value="ADMIN">Admin</option>
+          <option value="USER">User</option>
+        </Select>
         <Select
           aria-label="Account status"
           value={status}

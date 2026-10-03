@@ -128,7 +128,7 @@ public class PlatformTenantService {
         Tenant tenant = tenantRepository.findByPublicId(tenantPublicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Tenant"));
         LocalDate today = LocalDate.now();
-        List<Member> members = memberRepository.search(tenant.getId(), null, null, null, null, Pageable.unpaged())
+        List<Member> members = memberRepository.search(tenant.getId(), null, null, null, null,null, Pageable.unpaged())
                 .getContent();
 
         StringBuilder csv = new StringBuilder();

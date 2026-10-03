@@ -38,6 +38,7 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
             where m.tenantId = :tenantId
               and (:status is null or m.status = :status)
               and (:creationSource is null or m.creationSource = :creationSource)
+              and (:deviceAuthority is null or m.deviceAuthority = :deviceAuthority)
               and (:q is null
                    or lower(concat(m.firstName, ' ', coalesce(m.lastName, ''), ' ')) like lower(concat('%', :name, '%'))
                    or lower(m.memberCode) like lower(concat('%', :q, '%'))
@@ -49,6 +50,7 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
                         @Param("name") String name,
                         @Param("status") MemberStatus status,
                         @Param("creationSource") MemberCreationSource creationSource,
+                        @Param("deviceAuthority") DeviceAuthority deviceAuthority,
                         Pageable pageable);
 
     long countByTenantId(Long tenantId);

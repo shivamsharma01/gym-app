@@ -78,9 +78,9 @@ OPERATIONS = {"info", "users", "face", "attendance", "events", "door", "time"}
 DEFAULT_CONFIG = {
     "adminPort": 9000,
     "devices": [
-        {"id": "dev-entry-01", "name": "Main Entrance Gate", "role": "ENTRY", "port": 9001,
+        {"id": "dev-test-device-entry-01", "name": "Main Entrance Gate", "role": "ENTRY", "port": 9001,
          "serial": "TW30000005250265"},
-        {"id": "dev-exit-02", "name": "Main Exit Gate", "role": "EXIT", "port": 9002,
+        {"id": "dev-test-device-exit-01", "name": "Main Exit Gate", "role": "EXIT", "port": 9002,
          "serial": "TW30000005250266"},
     ],
 }

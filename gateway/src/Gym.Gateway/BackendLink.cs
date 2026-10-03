@@ -365,7 +365,14 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
 
             _log.LogDebug("Received {Type} device={DeviceId} corr={Corr} from server",
                 envelope.Type, envelope.DeviceId, envelope.CorrelationId);
-            await onMessage(envelope).ConfigureAwait(false);
+            try
+            {
+                await onMessage(envelope).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Command {Type} failed inside the gateway; the WebSocket stays open", envelope.Type);
+            }
         }
     }
 

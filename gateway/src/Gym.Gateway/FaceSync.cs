@@ -106,6 +106,7 @@ public sealed class RosterStateStore
     private readonly string? _directory;
     private readonly ConcurrentDictionary<string, DeviceRoster> _devices = new(StringComparer.Ordinal);
     private readonly object _io = new();
+    private readonly Dictionary<string, DeferredSaves> _deferred = new(StringComparer.Ordinal);
 
     /// <param name="directory">Folder for JSON files; null keeps state in memory only (tests).</param>
     public RosterStateStore(string? directory)
@@ -157,7 +158,86 @@ public sealed class RosterStateStore
     {
         var roster = Load(deviceId);
         roster.Baseline = true;
+        roster.FaceCursor = 0;
         Save(deviceId, roster);
+    }
+
+    /// <summary>Position in the reader's user list where an unfinished photo pass resumes. 0 means none is running.</summary>
+    public int FaceCursor(string deviceId) => Load(deviceId).FaceCursor;
+
+    public DateTimeOffset? LastFaceSweepUtc(string deviceId) => Load(deviceId).LastFaceSweepUtc;
+
+    /// <summary>True while a staff-requested pass that re-reads every photo, known or not, is pending.</summary>
+    public bool FaceRefreshRequested(string deviceId) => Load(deviceId).FaceRefreshAll;
+
+    public void RequestFaceRefresh(string deviceId)
+    {
+        var roster = Load(deviceId);
+        roster.FaceRefreshAll = true;
+        roster.FaceCursor = 0;
+        Save(deviceId, roster);
+    }
+
+    public void SetFaceCursor(string deviceId, int cursor)
+    {
+        var roster = Load(deviceId);
+        if (roster.FaceCursor == cursor)
+        {
+            return;
+        }
+
+        roster.FaceCursor = cursor;
+        Save(deviceId, roster);
+    }
+
+    public void CompleteFaceSweep(string deviceId, DateTimeOffset at)
+    {
+        var roster = Load(deviceId);
+        roster.FaceCursor = 0;
+        roster.FaceRefreshAll = false;
+        roster.LastFaceSweepUtc = at;
+        Save(deviceId, roster);
+    }
+
+    /// <summary>
+    /// Keeps changes for this reader in memory until the returned scope is disposed, then writes the file once.
+    /// A scan that touches hundreds of users otherwise rewrites the whole file for each of them.
+    /// </summary>
+    public IDisposable DeferSaves(string deviceId)
+    {
+        lock (_io)
+        {
+            if (!_deferred.TryGetValue(deviceId, out var state))
+            {
+                state = new DeferredSaves();
+                _deferred[deviceId] = state;
+            }
+
+            state.Depth++;
+        }
+
+        return new SaveScope(this, deviceId);
+    }
+
+    private void EndDeferredSaves(string deviceId)
+    {
+        bool dirty;
+        lock (_io)
+        {
+            var state = _deferred[deviceId];
+            if (--state.Depth > 0)
+            {
+                return;
+            }
+
+            _deferred.Remove(deviceId);
+            dirty = state.Dirty;
+        }
+
+        if (dirty)
+        {
+            Save(deviceId, Load(deviceId));
+        }
     }
 
     private DeviceRoster Load(string deviceId) =>
@@ -194,10 +274,43 @@ public sealed class RosterStateStore
 
         lock (_io)
         {
+            if (_deferred.TryGetValue(deviceId, out var deferred))
+            {
+                deferred.Dirty = true;
+                return;
+            }
+
             var tmp = path + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(roster));
-            File.Move(tmp, path, overwrite: true);
+            try
+            {
+                ReplaceRosterFile(tmp, path);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                var dest = new FileInfo(path);
+                if (dest.Exists && dest.IsReadOnly)
+                {
+                    dest.IsReadOnly = false;
+                }
+
+                try
+                {
+                    ReplaceRosterFile(tmp, path);
+                }
+                catch (Exception retry) when (retry is UnauthorizedAccessException or IOException)
+                {
+                    throw new IOException(
+                        $"Could not save roster file '{path}'. Grant the Gym Gateway service permission to modify that folder.",
+                        retry);
+                }
+            }
         }
+    }
+
+    private static void ReplaceRosterFile(string tmp, string path)
+    {
+        File.Move(tmp, path, overwrite: true);
     }
 
     private string? PathFor(string deviceId)
@@ -211,9 +324,34 @@ public sealed class RosterStateStore
         return Path.Combine(_directory, safe + ".json");
     }
 
+    private sealed class DeferredSaves
+    {
+        public int Depth;
+        public bool Dirty;
+    }
+
+    private sealed class SaveScope(RosterStateStore owner, string deviceId) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                owner.EndDeferredSaves(deviceId);
+            }
+        }
+    }
+
     private sealed class DeviceRoster
     {
         public bool Baseline { get; set; }
+
+        public int FaceCursor { get; set; }
+
+        public DateTimeOffset? LastFaceSweepUtc { get; set; }
+
+        public bool FaceRefreshAll { get; set; }
 
         public Dictionary<string, KnownUser> Users { get; set; } = new(StringComparer.Ordinal);
     }

@@ -180,14 +180,17 @@ public class DeviceService {
     @Transactional
     public DeviceSyncCommand reconcile(String devicePublicId, Long tenantId) {
         Device device = getByPublicId(devicePublicId, tenantId);
-        return enqueueReconcile(device, tenantId, true);
+        return enqueueReconcile(device, tenantId, true, false);
     }
 
-    /** Full Sync Now: attendance + user reconciliation via RECONCILE_DEVICE. */
+    /**
+     * Full Sync Now: attendance + user reconciliation via RECONCILE_DEVICE, and the gateway re-reads
+     * every photo on the reader in the background (only changed photos come back).
+     */
     @Transactional
     public DeviceSyncCommand syncNow(String devicePublicId, Long tenantId) {
         Device device = getByPublicId(devicePublicId, tenantId);
-        DeviceSyncCommand command = enqueueReconcile(device, tenantId, true);
+        DeviceSyncCommand command = enqueueReconcile(device, tenantId, true, true);
         auditService.record(AuditActions.DEVICE_SYNC_NOW_REQUESTED, AuditActions.RESULT_SUCCESS,
                 "Device", device.getPublicId(), null);
         return command;
@@ -199,11 +202,14 @@ public class DeviceService {
         if (deviceSyncService.hasActiveReconcile(device.getId())) {
             return;
         }
-        enqueueReconcile(device, device.getTenantId(), false);
+        enqueueReconcile(device, device.getTenantId(), false, false);
     }
 
-    private DeviceSyncCommand enqueueReconcile(Device device, Long tenantId, boolean audit) {
+    private DeviceSyncCommand enqueueReconcile(Device device, Long tenantId, boolean audit, boolean refreshFaces) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        if (refreshFaces) {
+            payload.put("refreshFaces", true);
+        }
         AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(device.getId()).orElse(null);
         if (cursor != null) {
             if (cursor.getLastRecNo() != null) {

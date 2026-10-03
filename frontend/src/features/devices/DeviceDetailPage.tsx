@@ -201,6 +201,10 @@ function Overview({ device }: { device: Device }) {
           <Button variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
             Request attendance reconcile
           </Button>
+          <span className="basis-full text-xs text-muted">
+            Sync Now re-reads users, attendance and every photo on this reader. Photos are read in the background
+            and only changed ones are sent.
+          </span>
         </div>
       ) : null}
       {has('DEVICE_MANAGE') ? (

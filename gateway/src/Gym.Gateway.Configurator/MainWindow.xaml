@@ -46,6 +46,11 @@
           <DockPanel>
             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
               <Button Content="Test TrueFace connect" Click="TestConnect_Click"/>
+              <Label Content="User ID" Margin="16,0,0,0"/>
+              <TextBox x:Name="ProbeUserIdBox" Width="100" VerticalContentAlignment="Center"
+                       ToolTip="A device user that has a photo. Leave empty to only test listing all photos."/>
+              <Button Content="Test photo MD5" Click="TestFaceMd5_Click" Margin="4,0,0,0"
+                      ToolTip="Checks whether the reader can report photo checksums without sending the photo."/>
             </StackPanel>
             <DataGrid x:Name="DevicesGrid"
                       AutoGenerateColumns="False"

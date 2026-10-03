@@ -107,6 +107,21 @@ public class MemberDeviceSyncService {
         }
     }
 
+    /**
+     * Asks the gateway to read this member's name, access and photo fresh from one device. A device copy
+     * newer than the server's is applied; an older one is replaced by the server's.
+     */
+    @Transactional
+    public void readFromDevice(String memberPublicId, String devicePublicId, Long tenantId) {
+        Member member = memberService.getByPublicId(memberPublicId, tenantId);
+        Device device = deviceRepository.findByPublicId(devicePublicId)
+                .orElseThrow(() -> CommonExceptions.notFound("Device"));
+        TenantGuard.check(device.getTenantId(), tenantId, "Device");
+        MemberDeviceMapping mapping = mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .orElseThrow(() -> CommonExceptions.notFound("Member on this device"));
+        provisioning.requestDeviceReport(member, device, mapping.getDeviceUserId());
+    }
+
     public record SyncStatus(FaceInfo face, List<DeviceRow> devices) {
     }
 

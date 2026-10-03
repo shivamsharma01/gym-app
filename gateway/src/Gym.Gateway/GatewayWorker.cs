@@ -41,7 +41,8 @@ public sealed class GatewayWorker : BackgroundService
         _stop = stoppingToken;
         foreach (var device in _options.Devices.Where(d => !string.IsNullOrWhiteSpace(d.DeviceId)))
         {
-            var adapter = DeviceAdapterFactory.Create(_options.Adapter);
+            var adapter = new TimedDeviceAdapter(
+                DeviceAdapterFactory.Create(_options.Adapter), _logFactory.CreateLogger<TimedDeviceAdapter>());
             var status = adapter.Connect(new DeviceConnectionConfig(
                 device.DeviceId, device.Ip, device.Port, device.Username, device.Password,
                 _options.NativeDirectory));
@@ -311,8 +312,10 @@ public sealed class GatewayWorker : BackgroundService
         }
         else
         {
-            _log.LogDebug("Queued {Type} device={DeviceId} corr={Corr}; {Depth} waiting for this reader",
-                command.Type, command.DeviceId, command.CorrelationId, channel.Reader.Count);
+            // SingleReader channels do not implement Count; reading it throws NotSupportedException
+            // and that exception was closing the WebSocket.
+            _log.LogDebug("Queued {Type} device={DeviceId} corr={Corr}",
+                command.Type, command.DeviceId, command.CorrelationId);
         }
 
         return Task.CompletedTask;

@@ -7,15 +7,20 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
-import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
 @Component
 public class StaffLiveHandshakeInterceptor implements HandshakeInterceptor {
+
+    /** Echoed subprotocol. The JWT is a sibling value; browsers cannot set Authorization. */
+    static final String BEARER_PROTOCOL = "bearer";
+
+    private static final String SEC_WEBSOCKET_PROTOCOL = "Sec-WebSocket-Protocol";
 
     private static final Logger log = LoggerFactory.getLogger(StaffLiveHandshakeInterceptor.class);
 
@@ -58,18 +63,49 @@ public class StaffLiveHandshakeInterceptor implements HandshakeInterceptor {
         // no-op
     }
 
-    private String presentedToken(ServerHttpRequest request) {
-        String auth = request.getHeaders().getFirst("Authorization");
-        if (auth != null && auth.regionMatches(true, 0, "Bearer ", 0, 7)) {
-            return auth.substring(7).trim();
+    /**
+     * Prefer {@code Authorization: Bearer}. Browsers cannot set that header on a WebSocket,
+     * so the SPA sends the same JWT as a {@code Sec-WebSocket-Protocol} value next to
+     * {@code bearer}. Query parameters are ignored so the token never lands in the URL.
+     */
+    static String presentedToken(ServerHttpRequest request) {
+        String header = bearerToken(request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION));
+        if (header != null) {
+            return header;
         }
-        if (request instanceof ServletServerHttpRequest servlet) {
-            String query = servlet.getServletRequest().getParameter("access_token");
-            if (query != null && !query.isBlank()) {
-                return query;
+        return protocolToken(request.getHeaders().get(SEC_WEBSOCKET_PROTOCOL));
+    }
+
+    static String bearerToken(String authorization) {
+        if (authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            String token = authorization.substring(7).trim();
+            if (!token.isEmpty()) {
+                return token;
             }
-            return servlet.getServletRequest().getParameter("token");
         }
         return null;
+    }
+
+    static String protocolToken(List<String> protocols) {
+        if (protocols == null) {
+            return null;
+        }
+        String token = null;
+        for (String raw : protocols) {
+            if (raw == null) {
+                continue;
+            }
+            for (String part : raw.split(",")) {
+                String value = part.trim();
+                if (value.isEmpty() || value.equalsIgnoreCase(BEARER_PROTOCOL)) {
+                    continue;
+                }
+                if (token != null) {
+                    return null;
+                }
+                token = value;
+            }
+        }
+        return token;
     }
 }

@@ -84,7 +84,8 @@ Account lockout (failed passwords) remains separate (`app.security.lockout`).
 
 | Concern | Where |
 |---------|--------|
-| VPS CPU/RAM/disk/network/availability | Provider panel / host metrics |
+| VPS CPU/RAM/disk/network/availability | node-exporter + cAdvisor in `deploy/docker-compose.yml` (profile `full`) |
+| Container logs | Alloy → Loki. Backend file is `/var/log/gym/gym-backend.log` on volume `gym-backend-logs`. Other containers are Docker json-file logs. |
 | App up/down, DB, JVM, HTTP rates, pool | Spring Actuator + logs |
 | External “site down” | UptimeRobot / Better Stack / similar → `GET https://your.domain/actuator/health` |
 

@@ -128,6 +128,7 @@ openssl rand -base64 48
 | `SPRING_PROFILES_ACTIVE` | `prod` |
 | `APP_BOOTSTRAP_SUPERADMIN_PASSWORD` | First login only |
 | `APP_CORS_ORIGINS` | SPA origin, e.g. `https://gym.kainazi.com` |
+| `GRAFANA_ADMIN_PASSWORD` | Grafana admin password (profile `full` will not start without it) |
 
 Copy `.env` off the server before continuing.
 
@@ -148,6 +149,8 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile ful
 ```
 
 Nginx config is [`nginx.conf`](nginx.conf). It proxies `/api/`, `/live`, `/gateway`, and `/actuator/` to the backend. Origin TLS: [`nginx.api.https.conf.example`](nginx.api.https.conf.example). Prefer Cloudflare Full (strict).
+
+Monitoring is the same Compose project (`--profile full`), not a second file. Configs live next to this compose file: `deploy/loki/loki-config.yaml`, `deploy/alloy/config.alloy`, `deploy/monitoring/prometheus/prometheus.yml`. On the VPS that is `/opt/gym/deploy/...`. Stop any stack previously started from `/opt` so container names (`loki`, `alloy`, `grafana`, `prometheus`) do not collide. Grafana stays on `gym-net` for the `grafana.kainazi.com` nginx vhost; Prometheus and Grafana host ports are loopback only (`127.0.0.1:9090`, `127.0.0.1:3000`).
 
 ---
 

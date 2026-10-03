@@ -29,7 +29,7 @@ loki.source.docker "containers" {
   host       = "unix:///var/run/docker.sock"
   targets    = discovery.relabel.docker.output
   labels     = {
-    environment = "production"
+    environment = "production",
   }
   forward_to = [loki.write.local.receiver]
 }

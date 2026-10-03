@@ -241,7 +241,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                     _store.PutFace(sha, face.Photo!);
                 }
 
-                var at = PlausibleDeviceTime(face.UpdatedAtUtc, now) ?? known!.FaceAt ?? known!.FirstSeenAt;
+                var at = PlausibleDeviceTime(face.UpdatedAtUtc, now) ?? known!.FaceAt ?? known.FirstSeenAt;
                 QueueReport(deviceId, user, at, deleted: false, isNew: false, ProfileDiff.None,
                     faceChanged: sha != null, sha, initialSample: true);
             }

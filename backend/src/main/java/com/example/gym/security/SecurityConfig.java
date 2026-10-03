@@ -29,7 +29,9 @@ import tools.jackson.databind.json.JsonMapper;
  * There is no server session.
  * All authorization is enforced server-side via method security ({@code @PreAuthorize}).
  *
- * <p>Actuator: {@code /actuator/health/**} is public (minimal details). {@code info},
+ * <p>Actuator: {@code /actuator/health/**} is public (minimal details).
+ * {@code /actuator/prometheus} is permitAll so Prometheus can scrape on the Docker
+ * network; nginx returns 404 for that path on the public edge. {@code info},
  * {@code metrics}, and {@code threaddump} require {@code ROLE_SUPER_ADMIN} (proxied via nginx
  * for the platform SPA). Sensitive endpoints ({@code heapdump}, {@code env}, …) are denyAll.
  * Same application port; no separate management port.
@@ -48,6 +50,7 @@ public class SecurityConfig {
             "/swagger-ui.html",
             "/actuator/health",
             "/actuator/health/**",
+            "/actuator/prometheus",
             "/error",
             // Device-gateway WSS + REST fallback authenticate with a per-gateway token
             // (or optional deployment shared token), not the user JWT filter.

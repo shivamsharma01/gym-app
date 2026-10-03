@@ -45,9 +45,10 @@ management:
   endpoints:
     web:
       exposure:
-        # health: public (minimal). info/metrics/threaddump: SUPER_ADMIN only.
+        # health: public (minimal). prometheus: scrape on Docker network only (nginx denies it).
+        # info/metrics/threaddump: SUPER_ADMIN only.
         # Do NOT expose env, configprops, heapdump, loggers remotely.
-        include: health,info,metrics,threaddump
+        include: health,info,prometheus,metrics,threaddump
   endpoint:
     health:
       probes:
@@ -68,6 +69,17 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+    distribution:
+      # Without histograms Prometheus only has count+sum (average), not p95/p99.
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        http.server.requests: 100ms, 250ms, 500ms, 1s
+  prometheus:
+    enabled: true
+    metrics:
+      export:
+        enabled: true
 
 info:
   app:

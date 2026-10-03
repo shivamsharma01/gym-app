@@ -78,6 +78,8 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     }
 
     private static boolean isQuietPath(String path) {
-        return path != null && (path.startsWith("/actuator/health") || path.equals("/error"));
+        return path != null && (path.startsWith("/actuator/health")
+                || path.equals("/actuator/prometheus")
+                || path.equals("/error"));
     }
 }

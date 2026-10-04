@@ -230,6 +230,20 @@ public class FaceSyncTests
     }
 
     [Fact]
+    public async Task Reader_lock_reports_what_the_reader_is_busy_with()
+    {
+        var locks = new DeviceLocks();
+        Assert.Null(locks.BusyWith("dev-1"));
+
+        using (await locks.AcquireAsync("dev-1", "scheduled user check"))
+        {
+            Assert.StartsWith("scheduled user check", locks.BusyWith("dev-1"));
+        }
+
+        Assert.Null(locks.BusyWith("dev-1"));
+    }
+
+    [Fact]
     public void Face_pass_progress_survives_a_restart()
     {
         var dir = Path.Combine(Path.GetTempPath(), "gym-roster-" + Guid.NewGuid().ToString("N"));

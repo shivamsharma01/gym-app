@@ -17,7 +17,7 @@ public sealed class GatewayWorker : BackgroundService
     private readonly Dictionary<string, IDeviceAdapter> _adapters = new(StringComparer.Ordinal);
     private readonly Channel<OutboundMessage> _outbound = Channel.CreateUnbounded<OutboundMessage>(
         new UnboundedChannelOptions { SingleReader = true });
-    private readonly DeviceLocks _locks = new();
+    private readonly DeviceLocks _locks;
     private readonly RosterStateStore _roster = new(RosterStateStore.DefaultDirectory());
     private readonly ConcurrentDictionary<string, Channel<GatewayEnvelope>> _inbox = new(StringComparer.Ordinal);
     private DeviceChangeWatcher? _watcher;
@@ -34,6 +34,7 @@ public sealed class GatewayWorker : BackgroundService
         _link = link;
         _log = log;
         _logFactory = logFactory;
+        _locks = new DeviceLocks(logFactory.CreateLogger<DeviceLocks>());
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -90,6 +91,7 @@ public sealed class GatewayWorker : BackgroundService
         var poll = PollLoopAsync(_link, stoppingToken);
         var watch = _watcher.RunAsync(TimeSpan.FromSeconds(Math.Max(15, _options.RosterPollSeconds)), stoppingToken);
         var clock = TimeSyncLoopAsync(stoppingToken);
+        var statusLog = StatusLoopAsync(stoppingToken);
 
         await _outbound.Writer.WriteAsync(new OutboundMessage(
             ProtocolTypes.RegisterGateway,
@@ -97,7 +99,29 @@ public sealed class GatewayWorker : BackgroundService
             new { agentVersion = "gym-gateway-0.5" },
             null), stoppingToken).ConfigureAwait(false);
 
-        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, watch, clock).ConfigureAwait(false);
+        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, watch, clock, statusLog).ConfigureAwait(false);
+    }
+
+    /// <summary>Every minute: what the gateway and each reader are doing, so a quiet log still shows progress.</summary>
+    private async Task StatusLoopAsync(CancellationToken stoppingToken)
+    {
+        var interval = TimeSpan.FromSeconds(Math.Max(15, _options.StatusLogSeconds));
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, stoppingToken).ConfigureAwait(false);
+                _watcher?.LogStatus(_link.WebSocketLive ? "connected (live)" : "not on live connection (polling over REST)");
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Status log failed");
+            }
+        }
     }
 
     /// <summary>
@@ -110,12 +134,16 @@ public sealed class GatewayWorker : BackgroundService
         {
             foreach (var (deviceId, adapter) in _adapters)
             {
-                var gate = _locks.For(deviceId);
-                await gate.WaitAsync(stoppingToken).ConfigureAwait(false);
+                using var lease = await _locks.AcquireAsync(deviceId, "setting the reader clock", stoppingToken)
+                    .ConfigureAwait(false);
                 try
                 {
                     var result = adapter.SynchronizeTime(DateTimeOffset.UtcNow);
-                    if (!result.Ok)
+                    if (result.Ok)
+                    {
+                        _log.LogInformation("Reader {DeviceId}: clock set to gateway time", deviceId);
+                    }
+                    else
                     {
                         _log.LogWarning("Time sync failed for {DeviceId}: {Error}", deviceId, result.Error);
                     }
@@ -123,10 +151,6 @@ public sealed class GatewayWorker : BackgroundService
                 catch (Exception ex)
                 {
                     _log.LogWarning(ex, "Time sync failed for {DeviceId}", deviceId);
-                }
-                finally
-                {
-                    gate.Release();
                 }
             }
 

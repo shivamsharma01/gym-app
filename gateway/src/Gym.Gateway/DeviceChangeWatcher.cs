@@ -827,6 +827,10 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         var failedPosition = -1;
         var done = 0;
 
+        // The SDK read is batched, but completion semantics remain ordered. If user N fails,
+        // users after N must not be marked FaceCheckedAt until N succeeds or is explicitly
+        // skipped after three failed attempts. This preserves the old cursor/retry contract
+        // while still reducing native SDK calls from one per user to one per batch.
         foreach (var position in batch)
         {
             var user = known[position];
@@ -839,18 +843,25 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             }
 
             var face = batchRead.Result;
-            var accepted = face.Ok
-                           || face.Error == PhotoKeptMessage
-                           || SkipAfterRepeatedFailures(deviceId, user.DeviceUserId, face);
-
-            if (!accepted)
+            if (face.Ok || face.Error == PhotoKeptMessage)
             {
-                failedPosition = failedPosition < 0 ? position : Math.Min(failedPosition, position);
+                _faceFailures.TryRemove((deviceId, user.DeviceUserId), out _);
+                Observe(deviceId, SnapshotOf(user), user, face, now, fanOut);
+                done++;
                 continue;
             }
 
+            // A failed read blocks later users in this SDK batch. Only after the third failure
+            // do we deliberately skip this user and allow the cursor to advance.
+            if (!SkipAfterRepeatedFailures(deviceId, user.DeviceUserId, face))
+            {
+                failedPosition = position;
+                PauseFaceImport(deviceId, user.DeviceUserId,
+                    face.Error ?? "photo read failed", done, pending.Count - done);
+                break;
+            }
+
             _faceFailures.TryRemove((deviceId, user.DeviceUserId), out _);
-            Observe(deviceId, SnapshotOf(user), user, face, now, fanOut);
             done++;
         }
 

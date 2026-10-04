@@ -57,7 +57,7 @@ public sealed class DeviceLocks
     public async Task<IDisposable> AcquireAsync(string deviceId, string task, CancellationToken cancellationToken = default)
     {
         var gate = For(deviceId);
-        if (!gate.Wait(0))
+        if (!await gate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
             var holder = BusyWith(deviceId) ?? "another task";
             var waited = Stopwatch.StartNew();

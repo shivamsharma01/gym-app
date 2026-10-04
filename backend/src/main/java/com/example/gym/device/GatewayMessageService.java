@@ -48,6 +48,7 @@ public class GatewayMessageService {
     private final JsonMapper jsonMapper;
     private final ApplicationEventPublisher events;
     private final DeviceUserChangeService deviceUserChangeService;
+    private final LogThrottle assignmentWarnings = new LogThrottle(java.time.Duration.ofMinutes(10));
 
     public GatewayMessageService(GatewayService gatewayService,
                                  GatewayRepository gatewayRepository,
@@ -329,6 +330,14 @@ public class GatewayMessageService {
             log.warn("Ignoring message for device {} not owned by gateway {}",
                     message.deviceId(), message.gatewayId());
             return Optional.empty();
+        }
+        if (!gateway.getId().equals(device.getGatewayId()) && assignmentWarnings.allow(device.getPublicId())) {
+            String assigned = device.getGatewayId() == null ? "no gateway"
+                    : gatewayRepository.findById(device.getGatewayId()).map(Gateway::getPublicId)
+                            .orElse("missing gateway row " + device.getGatewayId());
+            log.warn("Device {} reports through gateway {} but is assigned to {}. Its reports are accepted, "
+                            + "but commands for it go to the assigned gateway and will not reach this one.",
+                    device.getPublicId(), gateway.getPublicId(), assigned);
         }
         return Optional.of(device);
     }

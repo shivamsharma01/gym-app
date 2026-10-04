@@ -22,6 +22,8 @@ public sealed class GatewayWorker : BackgroundService
     private readonly ConcurrentDictionary<string, Channel<GatewayEnvelope>> _inbox = new(StringComparer.Ordinal);
     private DeviceChangeWatcher? _watcher;
     private CommandDispatcher? _dispatcher;
+    private long _commandsReceived;
+    private DateTimeOffset _lastCommandAt;
     private CancellationToken _stop;
 
     public GatewayWorker(
@@ -152,7 +154,7 @@ public sealed class GatewayWorker : BackgroundService
             try
             {
                 await Task.Delay(interval, stoppingToken).ConfigureAwait(false);
-                _watcher?.LogStatus(_link.WebSocketLive ? "connected (live)" : "not on live connection (polling over REST)");
+                _watcher?.LogStatus(ServerLinkStatus());
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -390,8 +392,22 @@ public sealed class GatewayWorker : BackgroundService
     /// Queues a command and returns immediately. Each reader has its own worker, so the two doors
     /// run at the same time and a slow SDK call does not stop the socket.
     /// </summary>
+    private string ServerLinkStatus()
+    {
+        var link = _link.WebSocketLive ? "connected (live)" : "not on live connection (polling over REST)";
+        var received = Interlocked.Read(ref _commandsReceived);
+        var last = _lastCommandAt;
+        return received == 0
+            ? link + ", no commands received from the server since start"
+            : $"{link}, {received} command(s) received from the server since start, last {(long)(DateTimeOffset.UtcNow - last).TotalSeconds} s ago";
+    }
+
     private Task AcceptCommand(GatewayEnvelope command)
     {
+        Interlocked.Increment(ref _commandsReceived);
+        _lastCommandAt = DateTimeOffset.UtcNow;
+        _log.LogInformation("Server command received: {Type} device={DeviceId} user={User} corr={Corr}",
+            command.Type, command.DeviceId, CommandDispatcher.Text(command.Payload, "deviceUserId"), command.CorrelationId);
         var key = string.IsNullOrWhiteSpace(command.DeviceId) ? "" : command.DeviceId;
         var channel = _inbox.GetOrAdd(key, deviceId =>
         {
@@ -425,6 +441,8 @@ public sealed class GatewayWorker : BackgroundService
             var dispatcher = _dispatcher;
             if (dispatcher == null)
             {
+                _log.LogWarning("Command {Type} device={DeviceId} corr={Corr} dropped: it arrived before the gateway finished starting. Use Send again in the app to resend it.",
+                    command.Type, command.DeviceId, command.CorrelationId);
                 continue;
             }
 

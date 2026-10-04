@@ -17,9 +17,6 @@ public interface DeviceSyncCommandRepository extends JpaRepository<DeviceSyncCom
     Optional<DeviceSyncCommand> findByCorrelationId(String correlationId);
 
     /** Claims commands that are due for (re)dispatch, oldest first. */
-    List<DeviceSyncCommand> findByStateInAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
-            Collection<SyncCommandState> states, Instant now, Pageable pageable);
-
     Page<DeviceSyncCommand> findByTenantIdOrderByCreatedAtDesc(Long tenantId, Pageable pageable);
 
     Page<DeviceSyncCommand> findByTenantIdAndDeviceIdOrderByCreatedAtDesc(

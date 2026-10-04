@@ -36,7 +36,7 @@ internal sealed class ProbeOptions
 
         Readers and credentials (pick one):
           --reader <ip>[:port][,username,password]   repeat for each reader
-              e.g. --reader 192.168.1.201 --reader 192.168.1.202 --password Secret123
+              e.g. --reader 192.168.1.201 --reader 192.168.1.202 --password <password>
               Readers without their own username/password use --username (default admin)
               and --password (or env TRUEFACE_PASSWORD; asked for if missing).
           (nothing)  uses C:\ProgramData\GymGateway\config.json if the gateway is installed,
@@ -66,7 +66,7 @@ internal sealed class ProbeOptions
           --allow-gateway-running  run the read-only part while the Gym Gateway service runs
 
         Example (everything, two readers):
-          Gym.Gateway.SdkProbe.exe --reader 192.168.1.201 --reader 192.168.1.202 --password Secret123 --write --fields --interactive --photo C:\face.jpg
+          Gym.Gateway.SdkProbe.exe --reader 192.168.1.201 --reader 192.168.1.202 --password <password> --write --fields --interactive --photo C:\face.jpg
 
         Send back the whole output folder.
         """;

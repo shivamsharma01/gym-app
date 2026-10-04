@@ -12,6 +12,7 @@ namespace Gym.Gateway;
 /// </summary>
 public sealed class TimedDeviceAdapter : IDeviceAdapter
 {
+    public const string OnlineState = "ONLINE";
     public const string DegradedState = "DEGRADED";
 
     private static readonly TimeSpan SlowCall = TimeSpan.FromSeconds(3);
@@ -136,7 +137,7 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
     public DeviceHealth GetHealth()
     {
         var health = _inner.GetHealth();
-        return Degraded && health.ConnectionState == "ONLINE"
+        return Degraded && health.ConnectionState == OnlineState
             ? health with { ConnectionState = DegradedState, Detail = HealthDetail }
             : health;
     }

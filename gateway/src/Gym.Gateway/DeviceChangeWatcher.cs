@@ -209,7 +209,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         using (await _locks.AcquireAsync(deviceId, task, cancellationToken).ConfigureAwait(false))
         {
             var state = adapter.GetHealth().ConnectionState;
-            if (state == "ONLINE")
+            if (state == TimedDeviceAdapter.OnlineState)
             {
                 ScanOnlineLocked(deviceId, adapter, faceFocus, faceSweep, listUsers, task, fanOut);
             }
@@ -309,7 +309,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             }
 
             var health = adapter.GetHealth();
-            var state = health.ConnectionState == "ONLINE" || string.IsNullOrEmpty(health.Detail)
+            var state = health.ConnectionState == TimedDeviceAdapter.OnlineState || string.IsNullOrEmpty(health.Detail)
                 ? health.ConnectionState
                 : $"{health.ConnectionState} ({health.Detail})";
             _log.LogInformation(
@@ -547,49 +547,13 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         FanOut fanOut)
     {
         var baseline = _roster.HasBaseline(deviceId);
-        IReadOnlyList<DeviceUserSnapshot> users;
-        try
+        var users = ReadTrustedList(deviceId, adapter, ref baseline);
+        if (users == null)
         {
-            users = adapter.ListUsers();
-        }
-        catch (DeviceReadException ex)
-        {
-            _log.LogWarning(
-                "Device {DeviceId}: user list could not be read ({Reason}). Nothing changed: nobody is deleted or added and photo import waits; the next scan retries.",
-                deviceId, ex.Message);
             return false;
         }
 
         var now = DateTimeOffset.UtcNow;
-        if (baseline && users.Count > MaxNewUsersOnEmptyRoster && _roster.All(deviceId).Count == 0)
-        {
-            // An empty starting list followed by a full reader means the first list was a failed read, not mass enrolment.
-            _log.LogWarning(
-                "Device {DeviceId}: the recorded user list was empty but the reader now lists {Count} users. Recording them as the starting list instead of reporting them as new.",
-                deviceId, users.Count);
-            baseline = false;
-        }
-        if (users.Count == 0 && (baseline || OtherReadersOrMembersKnown(deviceId)))
-        {
-            _log.LogWarning(
-                "Device {DeviceId}: reader returned no users. Treated as a failed read: nobody is deleted and photo import waits; the next scan retries.",
-                deviceId);
-            return false;
-        }
-
-        if (baseline)
-        {
-            var knownCount = _roster.All(deviceId).Count;
-            var missing = knownCount - users.Count;
-            if (missing > Math.Max(MaxUnguardedDeletes, knownCount / 5))
-            {
-                _log.LogWarning(
-                    "Device {DeviceId}: reader listed {Listed} of {Known} users. This scan is incomplete, so face import waits and nobody is deleted. Leave the gateway running; the next scan retries.",
-                    deviceId, users.Count, knownCount);
-                return false;
-            }
-        }
-
         if (!baseline)
         {
             // The first pass records names and dates only. Photos follow in short batches.
@@ -611,6 +575,70 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             return true;
         }
 
+        ObserveUsers(deviceId, adapter, users, faceFocus, now, fanOut);
+        if (changes.FirstSeen > 0)
+        {
+            _log.LogInformation(
+                "Reader {DeviceId}: {Count} user(s) seen on this reader for the first time but already known to the gateway. Recorded and checked against the server copy; not reported as reader edits.",
+                deviceId, changes.FirstSeen);
+        }
+
+        DetectDeletions(deviceId, users, now, fanOut);
+        CatchUpLocked(deviceId, adapter);
+        return true;
+    }
+
+    /// <summary>
+    /// Lists the reader's users. Null when the list cannot be trusted (failed, empty, or far too short);
+    /// clears <paramref name="baseline"/> when an empty starting list turns out to have been a failed read.
+    /// </summary>
+    private IReadOnlyList<DeviceUserSnapshot>? ReadTrustedList(string deviceId, IDeviceAdapter adapter, ref bool baseline)
+    {
+        IReadOnlyList<DeviceUserSnapshot> users;
+        try
+        {
+            users = adapter.ListUsers();
+        }
+        catch (DeviceReadException ex)
+        {
+            _log.LogWarning(ex,
+                "Device {DeviceId}: user list could not be read ({Reason}). Nothing changed: nobody is deleted or added and photo import waits; the next scan retries.",
+                deviceId, ex.Message);
+            return null;
+        }
+
+        var knownCount = _roster.All(deviceId).Count;
+        if (baseline && users.Count > MaxNewUsersOnEmptyRoster && knownCount == 0)
+        {
+            // An empty starting list followed by a full reader means the first list was a failed read, not mass enrolment.
+            _log.LogWarning(
+                "Device {DeviceId}: the recorded user list was empty but the reader now lists {Count} users. Recording them as the starting list instead of reporting them as new.",
+                deviceId, users.Count);
+            baseline = false;
+        }
+
+        if (users.Count == 0 && (baseline || OtherReadersOrMembersKnown(deviceId)))
+        {
+            _log.LogWarning(
+                "Device {DeviceId}: reader returned no users. Treated as a failed read: nobody is deleted and photo import waits; the next scan retries.",
+                deviceId);
+            return null;
+        }
+
+        if (baseline && knownCount - users.Count > Math.Max(MaxUnguardedDeletes, knownCount / 5))
+        {
+            _log.LogWarning(
+                "Device {DeviceId}: reader listed {Listed} of {Known} users. This scan is incomplete, so face import waits and nobody is deleted. Leave the gateway running; the next scan retries.",
+                deviceId, users.Count, knownCount);
+            return null;
+        }
+
+        return users;
+    }
+
+    private void ObserveUsers(string deviceId, IDeviceAdapter adapter, IReadOnlyList<DeviceUserSnapshot> users,
+        IReadOnlyCollection<string>? faceFocus, DateTimeOffset now, FanOut fanOut)
+    {
         foreach (var user in users)
         {
             var known = _roster.Find(deviceId, user.DeviceUserId);
@@ -626,17 +654,6 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             var face = focused || awaitingFace || known == null ? ReadFace(deviceId, adapter, user.DeviceUserId, known) : null;
             Observe(deviceId, user, known, face, now, fanOut);
         }
-
-        if (changes.FirstSeen > 0)
-        {
-            _log.LogInformation(
-                "Reader {DeviceId}: {Count} user(s) seen on this reader for the first time but already known to the gateway. Recorded and checked against the server copy; not reported as reader edits.",
-                deviceId, changes.FirstSeen);
-        }
-
-        DetectDeletions(deviceId, users, now, fanOut);
-        CatchUpLocked(deviceId, adapter);
-        return true;
     }
 
     private readonly record struct ScanChanges(int Edited, int New, int FirstSeen);
@@ -803,8 +820,8 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         var pause = FaceImportPauses[Math.Min(failures - 1, FaceImportPauses.Length - 1)];
         _facePause[deviceId] = (failures, DateTimeOffset.UtcNow + pause);
         _log.LogWarning(
-            "Photo import {DeviceId} paused: reading user {User} failed ({Error}). {Read} photo(s) read in this batch, {Left} still to read. Retrying from user {User} in {Seconds} s.",
-            deviceId, userId, error ?? "no detail", readThisBatch, left, userId, (long)pause.TotalSeconds);
+            "Photo import {DeviceId} paused: reading user {User} failed ({Error}). {Read} photo(s) read in this batch, {Left} still to read. Retrying from that user in {Seconds} s.",
+            deviceId, userId, error ?? "no detail", readThisBatch, left, (long)pause.TotalSeconds);
     }
 
     private bool FaceImportPaused(string deviceId) =>
@@ -967,7 +984,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         }
     }
 
-    private static bool ReaderUnusable(IDeviceAdapter adapter) => adapter.GetHealth().ConnectionState != "ONLINE";
+    private static bool ReaderUnusable(IDeviceAdapter adapter) => adapter.GetHealth().ConnectionState != TimedDeviceAdapter.OnlineState;
 
     private void RememberCatchUp(string deviceId, IEnumerable<string> userIds)
     {
@@ -1249,7 +1266,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                        $"copying {fanOut.Users.Count} user change(s) from {sourceDeviceId}", cancellationToken)
                        .ConfigureAwait(false))
             {
-                if (adapter.GetHealth().ConnectionState != "ONLINE" || !_roster.HasBaseline(deviceId))
+                if (adapter.GetHealth().ConnectionState != TimedDeviceAdapter.OnlineState || !_roster.HasBaseline(deviceId))
                 {
                     _log.LogInformation(
                         "Reader {DeviceId}: {Count} change(s) from {Source} kept for later; reader is offline or not scanned yet",

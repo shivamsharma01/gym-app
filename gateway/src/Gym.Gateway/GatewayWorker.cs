@@ -175,18 +175,7 @@ public sealed class GatewayWorker : BackgroundService
         var nextFullSync = DateTimeOffset.UtcNow.AddHours(24);
         while (!stoppingToken.IsCancellationRequested)
         {
-            foreach (var deviceId in pending.ToList())
-            {
-                if (await SyncClockAsync(deviceId, _adapters[deviceId], stoppingToken).ConfigureAwait(false))
-                {
-                    pending.Remove(deviceId);
-                }
-            }
-
-            if (pending.Count > 0)
-            {
-                _log.LogInformation("Reader clock: {Count} reader(s) not set yet; retrying in 10 min", pending.Count);
-            }
+            await SyncPendingClocksAsync(pending, stoppingToken).ConfigureAwait(false);
 
             try
             {
@@ -205,9 +194,25 @@ public sealed class GatewayWorker : BackgroundService
         }
     }
 
+    private async Task SyncPendingClocksAsync(HashSet<string> pending, CancellationToken stoppingToken)
+    {
+        foreach (var deviceId in pending.ToList())
+        {
+            if (await SyncClockAsync(deviceId, _adapters[deviceId], stoppingToken).ConfigureAwait(false))
+            {
+                pending.Remove(deviceId);
+            }
+        }
+
+        if (pending.Count > 0)
+        {
+            _log.LogInformation("Reader clock: {Count} reader(s) not set yet; retrying in 10 min", pending.Count);
+        }
+    }
+
     private async Task<bool> SyncClockAsync(string deviceId, IDeviceAdapter adapter, CancellationToken stoppingToken)
     {
-        if (adapter.GetHealth().ConnectionState != "ONLINE")
+        if (adapter.GetHealth().ConnectionState != TimedDeviceAdapter.OnlineState)
         {
             return false;
         }

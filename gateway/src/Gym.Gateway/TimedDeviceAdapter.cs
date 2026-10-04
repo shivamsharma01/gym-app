@@ -199,6 +199,16 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
         return read;
     }
 
+    public IReadOnlyList<DeviceFaceBatchRead> GetFaces(IReadOnlyList<string> deviceUserIds)
+    {
+        var sw = Stopwatch.StartNew();
+        var reads = _inner.GetFaces(deviceUserIds);
+        var found = reads.Count(r => r.Result.Photo != null);
+        Report(nameof(GetFaces), $"{deviceUserIds.Count} user(s), {found} photo(s)", sw.Elapsed);
+        Observe(reads.All(r => r.Result.Ok), reads.FirstOrDefault(r => !r.Result.Ok)?.Result.Error);
+        return reads;
+    }
+
     public DeviceCommandResult DeleteFace(string deviceUserId) =>
         Command(nameof(DeleteFace), deviceUserId, () => _inner.DeleteFace(deviceUserId));
 

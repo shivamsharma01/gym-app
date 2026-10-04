@@ -442,39 +442,100 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             var sent = 0;
             var reports = _store.Reports();
             var paused = false;
-            for (var windowStart = 0; windowStart < reports.Count && !paused; windowStart += ParallelFaceUploads)
+
+            // Keep batches small enough for the backend's 10 MB multipart limit. TrueFace photos are
+            // capped at 120 KB, so 20 photos is comfortably below that limit.
+            const int batchSize = 20;
+
+            for (var windowStart = 0; windowStart < reports.Count && !paused; windowStart += batchSize)
             {
-                // Photos in one window upload together; reports are still published strictly in queue order.
-                var window = reports.Skip(windowStart).Take(ParallelFaceUploads).ToArray();
-                var uploads = await Task.WhenAll(window.Select(r => UploadReportFaceAsync(r, cancellationToken)))
-                    .ConfigureAwait(false);
+                var window = reports.Skip(windowStart).Take(batchSize).ToArray();
+                var uploadItems = new List<(int Index, FaceUploadItem Item)>();
+
                 for (var i = 0; i < window.Length; i++)
                 {
                     var report = window[i];
-                    var (upload, missing) = uploads[i];
-                    var payload = (JsonObject)report.Payload.DeepClone();
-                    if (upload != null)
+                    if (report.FaceSha256 == null)
                     {
-                        if (upload.Rejected)
+                        continue;
+                    }
+
+                    var bytes = _store.GetFace(report.FaceSha256);
+                    if (bytes == null)
+                    {
+                        continue;
+                    }
+
+                    uploadItems.Add((i, new FaceUploadItem(
+                        report.DeviceUserId,
+                        report.FaceSha256,
+                        bytes)));
+                }
+
+                IReadOnlyList<FaceUpload> uploads = [];
+                if (uploadItems.Count > 0)
+                {
+                    var timer = Stopwatch.StartNew();
+                    uploads = await _faces.UploadFacesAsync(
+                        uploadItems.Select(x => x.Item).ToArray(),
+                        cancellationToken).ConfigureAwait(false);
+
+                    _log.LogDebug(
+                        "Face batch prepared: reports={Reports}, faces={Faces}, elapsedMs={ElapsedMs}",
+                        window.Length, uploadItems.Count, (long)timer.Elapsed.TotalMilliseconds);
+                }
+
+                var uploadByReportIndex = new Dictionary<int, FaceUpload>();
+                for (var i = 0; i < uploadItems.Count; i++)
+                {
+                    uploadByReportIndex[uploadItems[i].Index] =
+                        i < uploads.Count ? uploads[i] : FaceUpload.Transient;
+                }
+
+                for (var i = 0; i < window.Length; i++)
+                {
+                    var report = window[i];
+                    var payload = (JsonObject)report.Payload.DeepClone();
+
+                    if (report.FaceSha256 != null)
+                    {
+                        if (!_store.HasFace(report.FaceSha256))
                         {
-                            _log.LogWarning("Device {DeviceId} user {User}: face image {Reason}; syncing the other changes "
-                                + "without it", report.DeviceId, report.DeviceUserId,
-                                missing ? "missing from the local cache" : "rejected by the server");
+                            _log.LogWarning(
+                                "Device {DeviceId} user {User}: cached face {Sha} is missing; syncing profile without the photo",
+                                report.DeviceId, report.DeviceUserId, report.FaceSha256);
                             payload["faceChanged"] = false;
                             payload["faceRemoved"] = false;
                             payload["faceSha256"] = null;
                         }
-                        else if (upload.UploadId == null)
+                        else if (uploadByReportIndex.TryGetValue(i, out var upload))
                         {
-                            // Server unreachable: keep this and later reports (order matters), retry next scan.
-                            _log.LogInformation("Paused sending device changes: server unreachable; {Count} report(s) kept for the next scan",
-                                reports.Count - sent);
-                            paused = true;
-                            break;
+                            if (upload.Rejected)
+                            {
+                                _log.LogWarning(
+                                    "Device {DeviceId} user {User}: backend rejected the face; syncing profile without it",
+                                    report.DeviceId, report.DeviceUserId);
+                                payload["faceChanged"] = false;
+                                payload["faceRemoved"] = false;
+                                payload["faceSha256"] = null;
+                            }
+                            else if (upload.UploadId == null)
+                            {
+                                _log.LogInformation(
+                                    "Paused server sync: face upload deferred for device={DeviceId} user={User}; {Count} report(s) remain queued",
+                                    report.DeviceId, report.DeviceUserId, reports.Count - sent);
+                                paused = true;
+                                break;
+                            }
+                            else
+                            {
+                                payload["faceUploadId"] = upload.UploadId;
+                            }
                         }
                         else
                         {
-                            payload["faceUploadId"] = upload.UploadId;
+                            paused = true;
+                            break;
                         }
                     }
 
@@ -487,8 +548,8 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             {
                 var left = _store.Reports().Count;
                 _log.LogInformation(left == 0
-                    ? "Server sync: sent {Sent} change(s). Nothing left in the queue."
-                    : "Server sync: sent {Sent} change(s). {Left} change(s) still queued for the server.",
+                    ? "Server sync: sent {Sent} change(s); queue is empty."
+                    : "Server sync: sent {Sent} change(s); {Left} change(s) remain queued.",
                     sent, left);
             }
 
@@ -498,28 +559,6 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         {
             _flushGate.Release();
         }
-    }
-
-    private async Task<(FaceUpload? Upload, bool Missing)> UploadReportFaceAsync(
-        PendingReport report, CancellationToken cancellationToken)
-    {
-        if (report.FaceSha256 == null)
-        {
-            return (null, false);
-        }
-
-        var bytes = _store.GetFace(report.FaceSha256);
-        if (bytes == null)
-        {
-            return (new FaceUpload(null, Rejected: true), true);
-        }
-
-        var timer = Stopwatch.StartNew();
-        var upload = await _faces.UploadFaceAsync(bytes, cancellationToken).ConfigureAwait(false);
-        _log.LogDebug("Face upload for {DeviceId} user {User}: {Kb} KB in {ElapsedMs} ms (ok={Ok})",
-            report.DeviceId, report.DeviceUserId, bytes.Length / 1024, (long)timer.Elapsed.TotalMilliseconds,
-            upload.UploadId != null);
-        return (upload, false);
     }
 
     private async Task PublishReportAsync(PendingReport report, JsonObject payload)
@@ -756,30 +795,95 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             start = 0;
         }
 
-        // A stored hash or an earlier read means the photo is already known. Later edits arrive as reader events.
+        // Do not call GetFace once per user. TrueFaceDeviceAdapter uses the SDK's multi-user
+        // face GET API (20 users per native call), which turns ~1196 SDK calls into ~60.
         var pending = Enumerable.Range(start, known.Count - start)
             .Where(i => refreshAll || known[i] is { FaceSha256: null, FaceCheckedAt: null })
             .ToList();
         var batch = pending.Take(FaceReadsPerScan).ToList();
+        var batchUsers = batch.Select(position => known[position].DeviceUserId).ToArray();
+
+        if (batchUsers.Length == 0)
+        {
+            if (start == 0)
+            {
+                return;
+            }
+
+            _roster.CompleteFaceSweep(deviceId, now);
+            LogFaceProgress(deviceId, refreshAll, 0, 0, false, known.Count);
+            return;
+        }
+
+        var readsTimer = Stopwatch.StartNew();
+        IReadOnlyList<DeviceFaceBatchRead> reads;
+        try
+        {
+            reads = adapter.GetFaces(batchUsers);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Face batch read failed device={DeviceId} users={Count}", deviceId, batchUsers.Length);
+            PauseFaceImport(deviceId, batchUsers[0], ex.Message, 0, pending.Count);
+            return;
+        }
+
+        var byUser = reads.ToDictionary(r => r.DeviceUserId, StringComparer.Ordinal);
+        var failedPosition = -1;
         var done = 0;
+
+        // The SDK read is batched, but completion semantics remain ordered. If user N fails,
+        // users after N must not be marked FaceCheckedAt until N succeeds or is explicitly
+        // skipped after three failed attempts. This preserves the old cursor/retry contract
+        // while still reducing native SDK calls from one per user to one per batch.
         foreach (var position in batch)
         {
             var user = known[position];
-            var face = ReadBatchFace(deviceId, adapter, user, now, fanOut);
-            if (face.Ok || face.Error == PhotoKeptMessage || SkipAfterRepeatedFailures(deviceId, user.DeviceUserId, face))
+            if (!byUser.TryGetValue(user.DeviceUserId, out var batchRead))
+            {
+                failedPosition = position;
+                PauseFaceImport(deviceId, user.DeviceUserId,
+                    "batch response did not contain the requested user", done, pending.Count - done);
+                break;
+            }
+
+            var face = batchRead.Result;
+            if (face.Ok || face.Error == PhotoKeptMessage)
             {
                 _faceFailures.TryRemove((deviceId, user.DeviceUserId), out _);
+                Observe(deviceId, SnapshotOf(user), user, face, now, fanOut);
                 done++;
                 continue;
             }
 
-            // Progress stays on this user, so a failed read is retried instead of counted as imported.
-            _roster.SetFaceCursor(deviceId, position);
-            PauseFaceImport(deviceId, user.DeviceUserId, face.Error, done, pending.Count - done);
-            return;
+            // A failed read blocks later users in this SDK batch. Only after the third failure
+            // do we deliberately skip this user and allow the cursor to advance.
+            if (!SkipAfterRepeatedFailures(deviceId, user.DeviceUserId, face))
+            {
+                failedPosition = position;
+                PauseFaceImport(deviceId, user.DeviceUserId,
+                    face.Error ?? "photo read failed", done, pending.Count - done);
+                break;
+            }
+
+            _faceFailures.TryRemove((deviceId, user.DeviceUserId), out _);
+            done++;
         }
 
         _facePause.TryRemove(deviceId, out _);
+
+        if (failedPosition >= 0)
+        {
+            var failedUser = known[failedPosition];
+            PauseFaceImport(deviceId, failedUser.DeviceUserId,
+                "one or more users in the SDK batch could not be read",
+                done, pending.Count - done);
+            // Keep the cursor on the first failed user. Successful users in this batch already
+            // have FaceSha256/FaceCheckedAt, so they are skipped on the next batch.
+            _roster.SetFaceCursor(deviceId, failedPosition);
+            return;
+        }
+
         var moreFaces = pending.Count > batch.Count;
         if (moreFaces)
         {
@@ -790,17 +894,14 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             _roster.CompleteFaceSweep(deviceId, now);
         }
 
-        if (batch.Count == 0 && start == 0)
-        {
-            return;
-        }
-
-        if (batch.Count > 0)
-        {
-            _log.LogInformation(
-                "Face batch timing {DeviceId}: {Read} photo read(s) in {ElapsedMs} ms (about {AvgMs} ms each)",
-                deviceId, batch.Count, (long)timer.Elapsed.TotalMilliseconds, (long)(timer.Elapsed.TotalMilliseconds / batch.Count));
-        }
+        _log.LogInformation(
+            "Face batch timing {DeviceId}: {Read} photo(s) via {SdkCalls} SDK batch call(s) in {ElapsedMs} ms (SDK {SdkMs} ms, avg {AvgMs} ms/user)",
+            deviceId,
+            batch.Count,
+            Math.Max(1, (batch.Count + 19) / 20),
+            (long)timer.Elapsed.TotalMilliseconds,
+            (long)readsTimer.Elapsed.TotalMilliseconds,
+            batch.Count == 0 ? 0 : (long)(readsTimer.Elapsed.TotalMilliseconds / batch.Count));
 
         LogFaceProgress(deviceId, refreshAll, batch.Count, pending.Count - batch.Count, moreFaces, known.Count);
     }

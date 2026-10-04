@@ -15,6 +15,23 @@ public interface IFaceTransfer
 
     /// <summary>Uploads an image read from a device. Never throws for network failures.</summary>
     Task<FaceUpload> UploadFaceAsync(byte[] jpegBytes, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Uploads several device photos in one HTTP request. Implementations may fall back to
+    /// UploadFaceAsync; the backend implementation uses multipart/form-data.
+    /// </summary>
+    async Task<IReadOnlyList<FaceUpload>> UploadFacesAsync(
+        IReadOnlyList<FaceUploadItem> items,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<FaceUpload>(items.Count);
+        foreach (var item in items)
+        {
+            results.Add(await UploadFaceAsync(item.Bytes, cancellationToken).ConfigureAwait(false));
+        }
+
+        return results;
+    }
 }
 
 public sealed record FaceDownload(bool Ok, byte[]? Bytes, string? Error);
@@ -27,6 +44,11 @@ public sealed record FaceUpload(string? UploadId, bool Rejected = false)
 {
     public static readonly FaceUpload Transient = new(UploadId: null);
 }
+
+public sealed record FaceUploadItem(
+    string DeviceUserId,
+    string Sha256,
+    byte[] Bytes);
 
 public static class FaceHash
 {

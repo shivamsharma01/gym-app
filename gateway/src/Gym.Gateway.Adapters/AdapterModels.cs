@@ -57,6 +57,11 @@ public sealed record DeviceFaceRead(bool Ok, byte[]? Photo, DateTimeOffset? Upda
     public static DeviceFaceRead Fail(string error) => new(false, null, null, error);
 }
 
+/// <summary>One result from a batched face read. A failed item never means the whole batch was invalid.</summary>
+public sealed record DeviceFaceBatchRead(
+    string DeviceUserId,
+    DeviceFaceRead Result);
+
 public sealed record DeviceAttendanceRecord(
     string? DeviceUserId,
     DateTimeOffset OccurredAt,

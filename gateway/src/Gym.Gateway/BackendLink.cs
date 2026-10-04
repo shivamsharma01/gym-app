@@ -19,6 +19,9 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     private ClientWebSocket? _socket;
     private int _reconnectAttempt;
     private bool _websocketLive;
+    private readonly object _restStateGate = new();
+    private DateTimeOffset _restBackoffUntil;
+    private int _restFailureCount;
 
     public BackendLink(
         GatewayOptions options,
@@ -135,41 +138,112 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             return;
         }
 
-        using var content = new StringContent(json, Encoding.UTF8, "application/json");
-        var response = await _http.PostAsync(new Uri(HttpBase, "internal/gateway/messages"), content, cancellationToken)
-            .ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
+        if (RestBackoffActive())
         {
-            _log.LogWarning("REST ingest {Type} failed HTTP {Status}: {Body}", envelope.Type,
-                (int)response.StatusCode, body);
             return;
         }
 
-        // REST reply is the ACK — clear durable entry
-        _outbox.Acknowledge(envelope.MessageId);
-        TryAcknowledgeFromReply(body);
+        try
+        {
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await _http.PostAsync(
+                new Uri(HttpBase, "internal/gateway/messages"),
+                content,
+                cancellationToken).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                RegisterRestFailure($"HTTP {(int)response.StatusCode}");
+                _log.LogWarning(
+                    "REST ingest deferred type={Type} status={Status}; retry backoff is active",
+                    envelope.Type, (int)response.StatusCode);
+                return;
+            }
+
+            RegisterRestSuccess();
+            // REST reply is the ACK — clear durable entry.
+            _outbox.Acknowledge(envelope.MessageId);
+            TryAcknowledgeFromReply(body);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                    && !cancellationToken.IsCancellationRequested)
+        {
+            RegisterRestFailure(ex.Message);
+            _log.LogInformation(
+                "REST ingest deferred type={Type}: {Message}",
+                envelope.Type, ex.Message);
+        }
     }
 
     public async Task<IReadOnlyList<GatewayEnvelope>> PollCommandsAsync(CancellationToken cancellationToken)
     {
-        if (_websocketLive)
+        if (_websocketLive || RestBackoffActive())
         {
             return [];
         }
 
-        var response = await _http.GetAsync(new Uri(HttpBase, "internal/gateway/commands"), cancellationToken)
-            .ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            _log.LogWarning("REST poll failed HTTP {Status}: {Body}", (int)response.StatusCode, body);
+            using var response = await _http.GetAsync(
+                new Uri(HttpBase, "internal/gateway/commands"),
+                cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                RegisterRestFailure($"HTTP {(int)response.StatusCode}");
+                _log.LogWarning("REST command poll deferred HTTP {Status}", (int)response.StatusCode);
+                return [];
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            RegisterRestSuccess();
+            var commands = JsonSerializer.Deserialize<List<GatewayEnvelope>>(json, JsonOptions.Inbound);
+            return commands ?? [];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                    && !cancellationToken.IsCancellationRequested)
+        {
+            RegisterRestFailure(ex.Message);
+            _log.LogInformation("REST command poll deferred: {Message}", ex.Message);
             return [];
         }
+    }
 
-        var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var commands = JsonSerializer.Deserialize<List<GatewayEnvelope>>(json, JsonOptions.Inbound);
-        return commands ?? [];
+    /// <summary>
+    /// REST-only fallback for messages that were durably persisted while WSS was unavailable.
+    /// Sends a small number at a time and stops immediately when the backend becomes unhealthy.
+    /// </summary>
+    public async Task<int> FlushPendingAsync(CancellationToken cancellationToken)
+    {
+        if (_websocketLive || RestBackoffActive())
+        {
+            return 0;
+        }
+
+        var sent = 0;
+        foreach (var envelope in _outbox.LoadPending().Take(10))
+        {
+            if (RestBackoffActive())
+            {
+                break;
+            }
+
+            try
+            {
+                await DeliverAsync(envelope, cancellationToken).ConfigureAwait(false);
+                sent++;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "Pending REST delivery deferred message={MessageId}", envelope.MessageId);
+                break;
+            }
+        }
+
+        return sent;
     }
 
     public async Task<FaceDownload> DownloadFaceAsync(string memberId, int version, CancellationToken cancellationToken)
@@ -222,6 +296,112 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         {
             _log.LogInformation("Face upload deferred, server unreachable: {Message}", ex.Message);
             return FaceUpload.Transient;
+        }
+    }
+
+    public async Task<IReadOnlyList<FaceUpload>> UploadFacesAsync(
+        IReadOnlyList<FaceUploadItem> items,
+        CancellationToken cancellationToken)
+    {
+        if (items.Count == 0)
+        {
+            return [];
+        }
+
+        if (RestBackoffActive())
+        {
+            return Enumerable.Repeat(FaceUpload.Transient, items.Count).ToArray();
+        }
+
+        try
+        {
+            using var form = new MultipartFormDataContent();
+            var metadata = JsonSerializer.Serialize(
+                items.Select(x => new { deviceUserId = x.DeviceUserId, sha256 = x.Sha256 }).ToArray(),
+                JsonOptions.Outbound);
+
+            form.Add(new StringContent(metadata, Encoding.UTF8, "application/json"), "metadata");
+
+            for (var i = 0; i < items.Count; i++)
+            {
+                var content = new ByteArrayContent(items[i].Bytes);
+                content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+                form.Add(content, "faces", $"{i}.jpg");
+            }
+
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            using var response = await _http.PostAsync(
+                new Uri(HttpBase, "internal/gateway/faces/batch"),
+                form,
+                cancellationToken).ConfigureAwait(false);
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var status = (int)response.StatusCode;
+                RegisterRestFailure($"Face batch HTTP {(int)response.StatusCode}");
+                _log.LogWarning(
+                    "Face batch upload failed HTTP {Status}: count={Count}; {Body}",
+                    status, items.Count, body.Length > 500 ? body[..500] : body);
+
+                // The batch endpoint may reject the request because of one bad image. Fall back
+                // to individual uploads for client errors so good photos are not lost.
+                if (status is 400 or 413 or 415 or 422)
+                {
+                    var fallback = new List<FaceUpload>(items.Count);
+                    foreach (var item in items)
+                    {
+                        fallback.Add(await UploadFaceAsync(item.Bytes, cancellationToken).ConfigureAwait(false));
+                    }
+
+                    return fallback;
+                }
+
+                return Enumerable.Repeat(FaceUpload.Transient, items.Count).ToArray();
+            }
+
+            RegisterRestSuccess();
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("items", out var resultItems)
+                || resultItems.ValueKind != JsonValueKind.Array)
+            {
+                _log.LogWarning("Face batch upload returned an invalid response for {Count} image(s)", items.Count);
+                return Enumerable.Repeat(FaceUpload.Transient, items.Count).ToArray();
+            }
+
+            var results = Enumerable.Repeat(FaceUpload.Transient, items.Count).ToArray();
+            foreach (var result in resultItems.EnumerateArray())
+            {
+                if (!result.TryGetProperty("index", out var indexNode)
+                    || !indexNode.TryGetInt32(out var index)
+                    || index < 0 || index >= results.Length)
+                {
+                    continue;
+                }
+
+                var uploadId = result.TryGetProperty("uploadId", out var idNode)
+                    ? idNode.GetString()
+                    : null;
+                results[index] = string.IsNullOrWhiteSpace(uploadId)
+                    ? FaceUpload.Transient
+                    : new FaceUpload(uploadId);
+            }
+
+            _log.LogInformation(
+                "Face batch uploaded: count={Count}, acknowledged={Acknowledged}, elapsedMs={ElapsedMs}",
+                items.Count, results.Count(x => x.UploadId != null),
+                (long)timer.Elapsed.TotalMilliseconds);
+
+            return results;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                    && !cancellationToken.IsCancellationRequested)
+        {
+            RegisterRestFailure(ex.Message);
+            _log.LogInformation(
+                "Face batch upload deferred: server unreachable, count={Count}, reason={Message}",
+                items.Count, ex.Message);
+            return Enumerable.Repeat(FaceUpload.Transient, items.Count).ToArray();
         }
     }
 
@@ -427,6 +607,42 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         catch
         {
             // ignore
+        }
+    }
+
+    private bool RestBackoffActive()
+    {
+        lock (_restStateGate)
+        {
+            return DateTimeOffset.UtcNow < _restBackoffUntil;
+        }
+    }
+
+    private void RegisterRestFailure(string reason)
+    {
+        TimeSpan delay;
+        int failures;
+        lock (_restStateGate)
+        {
+            _restFailureCount++;
+            failures = _restFailureCount;
+            var seconds = Math.Min(60, 2 * Math.Pow(2, Math.Min(failures - 1, 5)));
+            var jitterMs = Random.Shared.Next(0, 500);
+            delay = TimeSpan.FromSeconds(seconds) + TimeSpan.FromMilliseconds(jitterMs);
+            _restBackoffUntil = DateTimeOffset.UtcNow + delay;
+        }
+
+        _log.LogWarning(
+            "Backend REST unhealthy: failure={Failures}, retryInMs={RetryMs}, reason={Reason}",
+            failures, (long)delay.TotalMilliseconds, reason);
+    }
+
+    private void RegisterRestSuccess()
+    {
+        lock (_restStateGate)
+        {
+            _restFailureCount = 0;
+            _restBackoffUntil = DateTimeOffset.MinValue;
         }
     }
 

@@ -32,7 +32,7 @@ public sealed class GatewayOptions
     public List<DeviceEndpointOptions> Devices { get; set; } = [];
 
     /// <summary>How often each device's user list is compared for local changes. Face import does not use this wait.</summary>
-    public int RosterPollSeconds { get; set; } = 15;
+    public int RosterPollSeconds { get; set; } = 300;
 
     /// <summary>How often every user's face is re-read to catch changes the device did not announce.</summary>
     public int FaceSweepMinutes { get; set; } = 30;

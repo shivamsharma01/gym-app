@@ -257,16 +257,10 @@ public sealed class GatewayWorker : BackgroundService
     /// </summary>
     private async Task PublishDeviceChangeAsync(string deviceId, object payload)
     {
-        var envelope = GatewayEnvelope.Create(_options.Id, ProtocolTypes.DeviceUserChanged, payload, deviceId);
-        try
-        {
-            await _link.SendAsync(envelope, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
-                                       or System.Net.WebSockets.WebSocketException)
-        {
-            _log.LogInformation("Device change for {DeviceId} queued; server unreachable ({Message})", deviceId, ex.Message);
-        }
+        // Device work must never wait for DNS/WSS/REST. The send loop persists and delivers it.
+        await _outbound.Writer.WriteAsync(
+            new OutboundMessage(ProtocolTypes.DeviceUserChanged, deviceId, payload, null),
+            _stop).ConfigureAwait(false);
     }
 
     private async Task HandleCommandAsync(BackendLink link, CommandDispatcher dispatcher, GatewayEnvelope command)
@@ -314,21 +308,26 @@ public sealed class GatewayWorker : BackgroundService
 
     private async Task PublishOutcome(BackendLink link, GatewayEnvelope command, DispatchOutcome outcome)
     {
-        await link.SendAsync(
-            GatewayEnvelope.Create(_options.Id, outcome.ResultType, outcome.Payload, command.DeviceId, command.CorrelationId),
-            CancellationToken.None).ConfigureAwait(false);
+        // Persist/deliver asynchronously through the single sender. Command execution success is
+        // independent from backend delivery success.
+        await _outbound.Writer.WriteAsync(
+            new OutboundMessage(
+                outcome.ResultType,
+                command.DeviceId,
+                outcome.Payload,
+                command.CorrelationId),
+            _stop).ConfigureAwait(false);
 
         if (outcome.ResultType == ProtocolTypes.ReconciliationResult)
         {
             // Complete the outbox command — RECONCILIATION_RESULT alone left commands DISPATCHED forever.
-            await link.SendAsync(
-                GatewayEnvelope.Create(
-                    _options.Id,
+            await _outbound.Writer.WriteAsync(
+                new OutboundMessage(
                     ProtocolTypes.SyncResult,
-                    new { ok = true },
                     command.DeviceId,
+                    new { ok = true },
                     command.CorrelationId),
-                CancellationToken.None).ConfigureAwait(false);
+                _stop).ConfigureAwait(false);
         }
     }
 
@@ -472,6 +471,8 @@ public sealed class GatewayWorker : BackgroundService
                 {
                     continue;
                 }
+
+                await link.FlushPendingAsync(stoppingToken).ConfigureAwait(false);
 
                 foreach (var command in await link.PollCommandsAsync(stoppingToken).ConfigureAwait(false))
                 {

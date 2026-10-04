@@ -12,6 +12,8 @@ import com.example.gym.member.MemberService;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -159,6 +161,28 @@ public class MemberFaceService {
      */
     @Transactional
     public GatewayFaceUpload acceptGatewayUpload(Gateway gateway, byte[] raw) {
+        return acceptGatewayUploadInCurrentTransaction(gateway, raw);
+    }
+
+    /**
+     * Accepts several device photos in one database transaction. The gateway sends multipart
+     * batches so 1196 photos do not create 1196 HTTP/TLS/transaction round trips.
+     *
+     * The returned list has exactly the same order as the input bytes. Each upload still gets its
+     * own uploadId because DEVICE_USER_CHANGED references one image at a time.
+     */
+    @Transactional
+    public List<GatewayFaceUpload> acceptGatewayUploads(Gateway gateway, List<byte[]> rawImages) {
+        List<GatewayFaceUpload> uploads = new ArrayList<>(rawImages.size());
+        for (byte[] raw : rawImages) {
+            uploads.add(acceptGatewayUploadInCurrentTransaction(gateway, raw));
+        }
+        FlowLog.info("face", "gateway batch accepted gateway={} images={}",
+                gateway.getPublicId(), uploads.size());
+        return uploads;
+    }
+
+    private GatewayFaceUpload acceptGatewayUploadInCurrentTransaction(Gateway gateway, byte[] raw) {
         byte[] jpeg = FaceImageProcessor.normaliseFromDevice(raw);
         String sha = FaceStorageService.sha256(jpeg);
         String key = FaceStorageService.uploadKey(gateway.getTenantId());

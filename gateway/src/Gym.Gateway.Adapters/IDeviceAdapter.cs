@@ -42,6 +42,20 @@ public interface IDeviceAdapter : IDisposable
     /// <summary>Reads the user's face photo as stored on the device.</summary>
     DeviceFaceRead GetFace(string deviceUserId);
 
+    /// <summary>
+    /// Reads multiple user photos in one SDK operation when the adapter supports it.
+    /// The default implementation preserves compatibility by falling back to one read per user.
+    /// </summary>
+    IReadOnlyList<DeviceFaceBatchRead> GetFaces(IReadOnlyList<string> deviceUserIds)
+    {
+        var results = new List<DeviceFaceBatchRead>(deviceUserIds.Count);
+        foreach (var userId in deviceUserIds)
+        {
+            results.Add(new DeviceFaceBatchRead(userId, GetFace(userId)));
+        }
+        return results;
+    }
+
     DeviceCommandResult DeleteFace(string deviceUserId);
 
     /// <summary>

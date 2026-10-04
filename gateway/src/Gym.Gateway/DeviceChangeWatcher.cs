@@ -656,12 +656,21 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             baseline = false;
         }
 
-        if (users.Count == 0 && (baseline || OtherReadersOrMembersKnown(deviceId)))
+        // Failed reads throw, so an empty list is the reader saying it holds nobody. Only a reader with users
+        // on record is doubted, since trusting it would delete them all.
+        if (users.Count == 0 && baseline && knownCount > 0)
         {
             _log.LogWarning(
-                "Device {DeviceId}: reader returned no users. Treated as a failed read: nobody is deleted and photo import waits; the next scan retries.",
-                deviceId);
+                "Device {DeviceId}: reader returned no users but {Known} are on record. Treated as a failed read: nobody is deleted and photo import waits; the next scan retries.",
+                deviceId, knownCount);
             return null;
+        }
+
+        if (users.Count == 0 && !baseline)
+        {
+            _log.LogInformation(
+                "Device {DeviceId}: reader holds no users. Recorded as an empty reader; users are written to it as the server sends them.",
+                deviceId);
         }
 
         if (baseline && knownCount - users.Count > Math.Max(MaxUnguardedDeletes, knownCount / 5))
@@ -769,10 +778,6 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             deviceId, changes.Edited, changes.New, ChangeBurstLimit(_roster.All(deviceId).Count), correct.Count,
             CatchUpPerScan);
     }
-
-    private bool OtherReadersOrMembersKnown(string deviceId) =>
-        _store.All().Count > 0
-        || _adapters.Keys.Any(id => !string.Equals(id, deviceId, StringComparison.Ordinal) && _roster.All(id).Count > 0);
 
     /// <summary>
     /// Reads the next batch of photos the gateway has never seen (or every photo during a Sync Now refresh).

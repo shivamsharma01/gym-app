@@ -543,7 +543,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 continue;
             }
 
-            _log.LogDebug("Received {Type} device={DeviceId} corr={Corr} from server",
+            _log.LogDebug("Received {Type} device={DeviceId} corr={Corr} over the WebSocket",
                 envelope.Type, envelope.DeviceId, envelope.CorrelationId);
             try
             {

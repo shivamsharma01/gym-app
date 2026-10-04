@@ -90,14 +90,14 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
             deviceSyncService.dispatchDue();
         }
         List<DeviceSyncCommand> commands = deviceSyncCommandRepository.findAll();
+        // The dispatcher leaves commands for an offline gateway untouched.
         assertThat(commands).isNotEmpty().allSatisfy(c -> {
-            assertThat(c.getState()).isEqualTo(SyncCommandState.RETRYING);
+            assertThat(c.getState()).isEqualTo(SyncCommandState.PENDING);
             assertThat(c.getAttemptCount()).isZero();
-            assertThat(c.getLastError()).contains("Waiting for the gateway");
-            assertThat(c.getNextAttemptAt()).isAfter(Instant.now());
+            assertThat(c.getDispatchedAt()).isNull();
         });
 
-        assertThat(deviceSyncService.wakeGateway(List.of(device))).isEqualTo(commands.size());
+        // Still due, so the first dispatch after the gateway connects sends them.
         assertThat(deviceSyncCommandRepository.findAll())
                 .allMatch(c -> !c.getNextAttemptAt().isAfter(Instant.now()));
     }

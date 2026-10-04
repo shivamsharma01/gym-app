@@ -2,6 +2,8 @@ package com.example.gym.device;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,12 +32,28 @@ public class GatewaySessionRegistry {
     private final Map<String, WebSocketSession> decorated = new ConcurrentHashMap<>();
 
     public void register(String gatewayPublicId, WebSocketSession session) {
-        sessions.put(gatewayPublicId, safe(session));
+        WebSocketSession previous = sessions.put(gatewayPublicId, safe(session));
+        log.info("Gateway {} registered for commands on session {}{}", gatewayPublicId, session.getId(),
+                previous == null || previous.getId().equals(session.getId())
+                        ? "" : " (replaces session " + previous.getId() + ")");
     }
 
     public void removeBySession(WebSocketSession session) {
-        sessions.values().removeIf(s -> s.getId().equals(session.getId()));
+        if (sessions.values().removeIf(s -> s.getId().equals(session.getId()))) {
+            log.info("Gateway session {} removed; commands for its devices wait until it reconnects", session.getId());
+        }
         decorated.remove(session.getId());
+    }
+
+    /** Gateway public ids with an open session, for diagnostics. */
+    public Set<String> connectedGateways() {
+        Set<String> open = new TreeSet<>();
+        sessions.forEach((id, s) -> {
+            if (s.isOpen()) {
+                open.add(id);
+            }
+        });
+        return open;
     }
 
     public boolean isOnline(String gatewayPublicId) {

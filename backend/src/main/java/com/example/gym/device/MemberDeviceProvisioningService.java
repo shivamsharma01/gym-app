@@ -16,6 +16,7 @@ import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.membership.DeviceSyncState;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,14 +72,23 @@ public class MemberDeviceProvisioningService {
     @Transactional
     public int provisionMember(Member member, Set<Long> skipDeviceIds) {
         int added = 0;
+        List<String> noGateway = new ArrayList<>();
+        List<String> alreadyMapped = new ArrayList<>();
         for (Device device : deviceRepository.findByTenantId(member.getTenantId())) {
-            if (device.getGatewayId() == null || skipDeviceIds.contains(device.getId())) {
+            if (skipDeviceIds.contains(device.getId())) {
                 continue;
             }
-            if (ensureMapping(member, device)) {
+            if (device.getGatewayId() == null) {
+                noGateway.add(device.getPublicId());
+            } else if (ensureMapping(member, device)) {
                 added++;
+            } else {
+                alreadyMapped.add(device.getPublicId());
             }
         }
+        FlowLog.info("device", "provision member={} user={}: sent to {} new device(s); already mapped (no CREATE_USER sent): {}; "
+                        + "skipped, no gateway assigned: {}",
+                member.getPublicId(), member.getDeviceUserId(), added, alreadyMapped, noGateway);
         return added;
     }
 
@@ -241,13 +251,18 @@ public class MemberDeviceProvisioningService {
     /** Pushes name changes to devices (UPDATE_USER), skipping devices that already have them. */
     @Transactional
     public void pushProfile(Member member, Set<Long> skipDeviceIds) {
-        for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(member.getId())) {
+        List<MemberDeviceMapping> mappings = mappingRepository.findByMemberId(member.getId());
+        int sent = 0;
+        for (MemberDeviceMapping mapping : mappings) {
             if (skipDeviceIds.contains(mapping.getDeviceId())) {
                 continue;
             }
             deviceSyncService.enqueue(member.getTenantId(), mapping.getDeviceId(), member.getId(), null,
                     SyncCommandType.UPDATE_USER, userPayload(member, mapping.getDeviceUserId()));
+            sent++;
         }
+        FlowLog.info("device", "profile push member={} user={}: UPDATE_USER queued for {} device(s); {} mapping(s), {} skipped as the source",
+                member.getPublicId(), member.getDeviceUserId(), sent, mappings.size(), mappings.size() - sent);
     }
 
     /**
@@ -259,6 +274,7 @@ public class MemberDeviceProvisioningService {
         MemberDeviceMapping mapping = mappingRepository.findByDeviceIdAndMemberId(deviceId, member.getId())
                 .orElse(null);
         if (mapping == null) {
+            FlowLog.info("device", "repush member={} device={}: no mapping, nothing sent", member.getPublicId(), deviceId);
             return;
         }
         deviceSyncService.enqueue(member.getTenantId(), deviceId, member.getId(), null,

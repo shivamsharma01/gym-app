@@ -342,6 +342,25 @@ public class FaceSyncTests
     }
 
     [Fact]
+    public async Task Empty_reader_next_to_a_full_one_is_recorded_as_empty()
+    {
+        var first = new MockDeviceAdapter();
+        first.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
+        var second = new MockDeviceAdapter();
+        second.Connect(new DeviceConnectionConfig("dev-2", "127.0.0.2", 37777, "admin", "x"));
+        var adapters = new Dictionary<string, IDeviceAdapter> { ["dev-1"] = first, ["dev-2"] = second };
+        first.SimulateLocalUserChange("8701", "One", PhotoA, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), []);
+
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        await watcher.ScanDeviceAsync("dev-2", null, faceSweep: false, CancellationToken.None);
+
+        Assert.True(roster.HasBaseline("dev-2"));
+        Assert.Empty(roster.All("dev-2"));
+    }
+
+    [Fact]
     public async Task Abnormal_burst_of_reader_changes_is_held_and_not_reported()
     {
         var (adapter, adapters) = Device();

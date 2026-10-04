@@ -245,6 +245,19 @@ public sealed class LocalMemberStore
         }
     }
 
+    public bool HasFace(string sha256)
+    {
+        lock (_sync)
+        {
+            if (_directory == null)
+            {
+                return _memoryFaces.ContainsKey(sha256);
+            }
+
+            return File.Exists(FacePath(sha256));
+        }
+    }
+
     public byte[]? GetFace(string sha256)
     {
         lock (_sync)

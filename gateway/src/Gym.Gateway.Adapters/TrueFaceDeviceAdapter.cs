@@ -222,6 +222,190 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     public DeviceFaceRead GetFace(string deviceUserId) => GetFace(deviceUserId, FaceWaitMs);
 
+    public IReadOnlyList<DeviceFaceBatchRead> GetFaces(IReadOnlyList<string> deviceUserIds)
+    {
+        if (deviceUserIds == null || deviceUserIds.Count == 0)
+        {
+            return [];
+        }
+
+        if (!EnsureLogin(out var err))
+        {
+            return deviceUserIds
+                .Select(id => new DeviceFaceBatchRead(id, DeviceFaceRead.Fail(err)))
+                .ToArray();
+        }
+
+        // The SDK declares up to 100 IDs per request. Keep the native photo buffers bounded:
+        // 20 x 256 KB is ~5 MB, which is safer on a Windows service while still reducing
+        // 1196 individual SDK calls to about 60 calls.
+        const int maxUsersPerCall = 20;
+        var results = new List<DeviceFaceBatchRead>(deviceUserIds.Count);
+        for (var offset = 0; offset < deviceUserIds.Count; offset += maxUsersPerCall)
+        {
+            var count = Math.Min(maxUsersPerCall, deviceUserIds.Count - offset);
+            var batch = deviceUserIds.Skip(offset).Take(count).ToArray();
+            results.AddRange(GetFacesBatch(batch));
+        }
+
+        return results;
+    }
+
+    private IReadOnlyList<DeviceFaceBatchRead> GetFacesBatch(IReadOnlyList<string> deviceUserIds)
+    {
+        const int bufferLen = 256 * 1024;
+        var structSize = Marshal.SizeOf<NET_ACCESS_FACE_INFO>();
+        var failSize = Marshal.SizeOf<NET_EM_FAILCODE>();
+
+        var inPtr = IntPtr.Zero;
+        var outPtr = IntPtr.Zero;
+        var faceInfoPtr = IntPtr.Zero;
+        var failPtr = IntPtr.Zero;
+        var photoBuffers = new IntPtr[deviceUserIds.Count];
+
+        try
+        {
+            var input = new NET_IN_ACCESS_FACE_SERVICE_GET
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_GET>(),
+                nUserNum = deviceUserIds.Count,
+                szUserID = new NET_IN_ACCESS_FACE_SERVICE_UserID[100],
+                szUserIDEx = "",
+                bUserIDEx = false
+            };
+
+            for (var i = 0; i < deviceUserIds.Count; i++)
+            {
+                input.szUserID[i].userID = deviceUserIds[i];
+            }
+
+            inPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_IN_ACCESS_FACE_SERVICE_GET>());
+            Marshal.StructureToPtr(input, inPtr, false);
+
+            faceInfoPtr = Marshal.AllocHGlobal(structSize * deviceUserIds.Count);
+            failPtr = Marshal.AllocHGlobal(failSize * deviceUserIds.Count);
+
+            for (var i = 0; i < deviceUserIds.Count; i++)
+            {
+                photoBuffers[i] = Marshal.AllocHGlobal(bufferLen);
+                var info = new NET_ACCESS_FACE_INFO
+                {
+                    szUserID = deviceUserIds[i],
+                    nFacePhoto = 0,
+                    nInFacePhotoLen = new int[5],
+                    nOutFacePhotoLen = new int[5],
+                    pFacePhoto = new IntPtr[5]
+                };
+                info.nInFacePhotoLen[0] = bufferLen;
+                info.pFacePhoto[0] = photoBuffers[i];
+
+                Marshal.StructureToPtr(
+                    info,
+                    IntPtr.Add(faceInfoPtr, structSize * i),
+                    false);
+
+                Marshal.StructureToPtr(
+                    new NET_EM_FAILCODE(),
+                    IntPtr.Add(failPtr, failSize * i),
+                    false);
+            }
+
+            var output = new NET_OUT_ACCESS_FACE_SERVICE_GET
+            {
+                dwSize = (uint)Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_GET>(),
+                nMaxRetNum = deviceUserIds.Count,
+                pFaceInfo = faceInfoPtr,
+                pFailCode = failPtr
+            };
+
+            outPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NET_OUT_ACCESS_FACE_SERVICE_GET>());
+            Marshal.StructureToPtr(output, outPtr, false);
+
+            var ok = NETClient.OperateAccessFaceService(
+                _loginId,
+                EM_NET_ACCESS_CTL_FACE_SERVICE.GET,
+                inPtr,
+                outPtr,
+                FaceWaitMs);
+
+            if (!ok)
+            {
+                var error = SdkError("Face GET batch failed");
+                return deviceUserIds
+                    .Select(id => new DeviceFaceBatchRead(id, DeviceFaceRead.Fail(error)))
+                    .ToArray();
+            }
+
+            var byUser = new Dictionary<string, DeviceFaceBatchRead>(StringComparer.Ordinal);
+            for (var i = 0; i < deviceUserIds.Count; i++)
+            {
+                var info = Marshal.PtrToStructure<NET_ACCESS_FACE_INFO>(
+                    IntPtr.Add(faceInfoPtr, structSize * i));
+                var fail = Marshal.PtrToStructure<NET_EM_FAILCODE>(
+                    IntPtr.Add(failPtr, failSize * i)).emCode;
+
+                var userId = string.IsNullOrWhiteSpace(info.szUserID)
+                    ? deviceUserIds[i]
+                    : info.szUserID.Trim();
+
+                var length = info.nOutFacePhotoLen is { Length: > 0 }
+                    ? info.nOutFacePhotoLen[0]
+                    : 0;
+
+                DeviceFaceRead read;
+                if (fail is EM_FAILCODE.NO_RECORD or EM_FAILCODE.INVALID_FACE or EM_FAILCODE.INVALID_USER)
+                {
+                    read = DeviceFaceRead.None("failCode=" + fail);
+                }
+                else if (length > 0 && info.nFacePhoto > 0)
+                {
+                    var bytes = new byte[Math.Min(length, bufferLen)];
+                    Marshal.Copy(photoBuffers[i], bytes, 0, bytes.Length);
+                    read = DeviceFaceRead.Found(bytes, NetTimeOrNull(info.stuUpdateTime));
+                }
+                else if (fail != EM_FAILCODE.NOERROR)
+                {
+                    read = DeviceFaceRead.Fail(
+                        SdkError("Face GET failed") + " failCode=" + fail);
+                }
+                else
+                {
+                    read = DeviceFaceRead.None("call succeeded with no photo");
+                }
+
+                byUser[userId] = new DeviceFaceBatchRead(userId, read);
+            }
+
+            Touch();
+
+            // Some firmware versions can return fewer records than requested. Never silently
+            // turn an omitted record into "no photo".
+            return deviceUserIds.Select(id =>
+                byUser.TryGetValue(id, out var result)
+                    ? result
+                    : new DeviceFaceBatchRead(id, DeviceFaceRead.Fail("Face GET batch did not return this user"))
+            ).ToArray();
+        }
+        catch (Exception ex)
+        {
+            var error = $"Face GET batch threw {ex.GetType().Name}: {ex.Message}";
+            return deviceUserIds
+                .Select(id => new DeviceFaceBatchRead(id, DeviceFaceRead.Fail(error)))
+                .ToArray();
+        }
+        finally
+        {
+            FreeAll(inPtr, outPtr, faceInfoPtr, failPtr);
+            foreach (var ptr in photoBuffers)
+            {
+                if (ptr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(ptr);
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// Test tool: reads one photo with different SDK wait limits. If each read takes the whole limit and
     /// still returns the photo, the SDK is idling after the data arrived; if short limits fail, the reader is slow.

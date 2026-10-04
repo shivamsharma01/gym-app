@@ -137,8 +137,50 @@ public class FaceSyncTests
         Assert.True(JsonSerializer.SerializeToElement(full.Payload).GetProperty("usersComplete").GetBoolean());
 
         roster.Upsert("dev-1", roster.Find("dev-1", "5301")! with { DeviceUserId = "5399" });
-        var partial = await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { }));
-        Assert.False(JsonSerializer.SerializeToElement(partial.Payload).GetProperty("usersComplete").GetBoolean());
+        var partial = JsonSerializer.SerializeToElement((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { }))).Payload);
+        Assert.False(partial.GetProperty("usersComplete").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, partial.GetProperty("rosterDigest").ValueKind);
+    }
+
+    [Fact]
+    public async Task Reconcile_leaves_out_an_unchanged_user_list_and_sends_it_after_any_reader_change()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("5401", "One", PhotoA, emitEvent: false);
+        adapter.SimulateLocalUserChange("5402", "Two", PhotoA, emitEvent: false);
+        var dispatcher = new CommandDispatcher(adapters, NullLogger<CommandDispatcher>.Instance);
+
+        var first = JsonSerializer.SerializeToElement((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { }))).Payload);
+        var digest = first.GetProperty("rosterDigest").GetString()!;
+        Assert.StartsWith("v1:", digest);
+        Assert.False(first.GetProperty("usersUnchanged").GetBoolean());
+        Assert.Equal(2, first.GetProperty("deviceUsers").GetArrayLength());
+
+        var same = JsonSerializer.SerializeToElement((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { knownDigest = digest }))).Payload);
+        Assert.True(same.GetProperty("usersUnchanged").GetBoolean());
+        Assert.Equal(0, same.GetProperty("deviceUsers").GetArrayLength());
+
+        adapter.SimulateLocalUserChange("5402", "Two Renamed", emitEvent: false);
+        var edited = JsonSerializer.SerializeToElement((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { knownDigest = digest }))).Payload);
+        Assert.False(edited.GetProperty("usersUnchanged").GetBoolean());
+        Assert.Equal(2, edited.GetProperty("deviceUsers").GetArrayLength());
+        Assert.NotEqual(digest, edited.GetProperty("rosterDigest").GetString());
+    }
+
+    [Fact]
+    public void Roster_checksum_ignores_list_order_and_sees_every_field()
+    {
+        var a = new DeviceUserSnapshot("1", "Asha", false, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 12, 31, 23, 59, 59, TimeSpan.Zero), Authority: "USER");
+        var b = new DeviceUserSnapshot("2", "Ravi", true);
+        var digest = RosterDigest.Compute([a, b]);
+
+        Assert.Equal(digest, RosterDigest.Compute([b, a]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a with { Name = "Asha K" }, b]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a with { Frozen = true }, b]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a with { ValidTo = a.ValidTo!.Value.AddDays(1) }, b]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a with { Authority = "ADMIN" }, b]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a]));
     }
 
     [Fact]

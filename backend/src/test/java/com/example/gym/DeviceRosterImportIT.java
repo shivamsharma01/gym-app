@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.device.DeviceMemberImporter;
+import com.example.gym.device.DeviceService;
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.domain.EnrollmentStatus;
 import com.example.gym.device.domain.SyncCommandType;
@@ -26,6 +27,9 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
 
     @Autowired
     private GatewayMessageService gatewayMessageService;
+
+    @Autowired
+    private DeviceService deviceService;
 
     private String token;
     private String gatewayId;
@@ -206,6 +210,49 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
                 """));
         assertThat(reconciliationConflictRepository.findAll())
                 .anyMatch(c -> c.getConflictType().name().equals("MISSING_ON_DEVICE"));
+    }
+
+    @Test
+    void anUnchangedReaderSkipsTheComparisonUntilTheServerQueuesAUserChange() throws Exception {
+        Long entrance = deviceRepository.findByPublicId(entranceId).orElseThrow().getId();
+        Long tenantId = deviceRepository.findById(entrance).orElseThrow().getTenantId();
+
+        gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
+                """
+                {"ok":true,"rosterDigest":"v1:empty","deviceUsers":[]}
+                """));
+        assertThat(deviceRepository.findRosterState(entrance).orElseThrow().getRosterDigest()).isEqualTo("v1:empty");
+        assertThat(readJson(deviceService.reconcile(entranceId, tenantId).getPayload()).get("knownDigest").asString())
+                .isEqualTo("v1:empty");
+        assertThat(readJson(deviceService.syncNow(entranceId, tenantId).getPayload()).has("knownDigest")).isFalse();
+
+        postJson("/api/v1/members", "{\"firstName\":\"Om\",\"lastName\":\"Das\",\"memberCode\":\"4001\",\"serialNumber\":\"4001\"}")
+                .andExpect(status().isCreated());
+        assertThat(deviceRepository.findRosterState(entrance).orElseThrow().getRosterDigest()).isNull();
+        assertThat(readJson(deviceService.reconcile(entranceId, tenantId).getPayload()).has("knownDigest")).isFalse();
+
+        gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
+                """
+                {"ok":true,"usersUnchanged":true,"rosterDigest":"v1:empty","deviceUsers":[]}
+                """));
+        assertThat(reconciliationConflictRepository.findAll())
+                .noneMatch(c -> c.getConflictType().name().equals("MISSING_ON_DEVICE"));
+
+        // The member's CREATE_USER is still open, so this list may be about to change.
+        gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
+                """
+                {"ok":true,"rosterDigest":"v1:before-create","deviceUsers":[]}
+                """));
+        assertThat(deviceRepository.findRosterState(entrance).orElseThrow().getRosterDigest()).isNull();
+    }
+
+    @Test
+    void aStaleComparisonIsNotTrusted() throws Exception {
+        Long entrance = deviceRepository.findByPublicId(entranceId).orElseThrow().getId();
+        Long tenantId = deviceRepository.findById(entrance).orElseThrow().getTenantId();
+        deviceRepository.saveRosterDigest(entrance, "v1:old", Instant.now().minus(java.time.Duration.ofHours(25)));
+
+        assertThat(readJson(deviceService.reconcile(entranceId, tenantId).getPayload()).has("knownDigest")).isFalse();
     }
 
     private ResultActions postJson(String path, String body) throws Exception {

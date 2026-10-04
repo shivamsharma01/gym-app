@@ -21,6 +21,7 @@ import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
 import com.example.gym.tenant.TenantGuard;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
@@ -33,6 +34,9 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class DeviceService {
+
+    /** How long a matching checksum may stand in for the full comparison before the list is compared again. */
+    static final Duration FULL_ROSTER_CHECK_EVERY = Duration.ofHours(24);
 
     private final DeviceRepository deviceRepository;
     private final GatewayService gatewayService;
@@ -225,6 +229,14 @@ public class DeviceService {
             payload.put("fromUtc", Instant.now().minus(1, ChronoUnit.DAYS).toString());
         }
         payload.put("toUtc", Instant.now().plus(1, ChronoUnit.HOURS).toString());
+        // With the checksum the reader had at the last full comparison, an unchanged reader skips sending its list.
+        // Sync Now and the daily check always compare the full list.
+        if (!refreshFaces) {
+            deviceRepository.findRosterState(device.getId())
+                    .filter(s -> s.getRosterDigest() != null && s.getRosterComparedAt() != null
+                            && s.getRosterComparedAt().isAfter(Instant.now().minus(FULL_ROSTER_CHECK_EVERY)))
+                    .ifPresent(s -> payload.put("knownDigest", s.getRosterDigest()));
+        }
 
         DeviceSyncCommand command = deviceSyncService.enqueue(tenantId, device.getId(), null, null,
                 SyncCommandType.RECONCILE_DEVICE, payload);

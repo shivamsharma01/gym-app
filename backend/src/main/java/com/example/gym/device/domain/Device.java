@@ -50,6 +50,13 @@ public class Device extends TenantAwareEntity {
     @Column(name = "last_seen_at")
     private Instant lastSeenAt;
 
+    // Written only by DeviceRepository queries, so saving a Device loaded earlier never restores an old value.
+    @Column(name = "roster_digest", length = 80, insertable = false, updatable = false)
+    private String rosterDigest;
+
+    @Column(name = "roster_compared_at", insertable = false, updatable = false)
+    private Instant rosterComparedAt;
+
     protected Device() {
     }
 
@@ -138,5 +145,13 @@ public class Device extends TenantAwareEntity {
 
     public void setLastSeenAt(Instant lastSeenAt) {
         this.lastSeenAt = lastSeenAt;
+    }
+
+    public String getRosterDigest() {
+        return rosterDigest;
+    }
+
+    public Instant getRosterComparedAt() {
+        return rosterComparedAt;
     }
 }

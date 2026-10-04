@@ -309,7 +309,15 @@ public sealed class CommandDispatcher
                             command.DeviceId, recon.Users.Count, known);
                     }
 
-                    return DispatchOutcome.Reconciliation(recon, complete);
+                    var digest = complete ? RosterDigest.Compute(recon.Users) : null;
+                    var unchanged = digest != null && string.Equals(digest, Text(payload, "knownDigest"), StringComparison.Ordinal);
+                    if (unchanged)
+                    {
+                        _log.LogInformation("Reconcile device={DeviceId}: user list unchanged since the server's last full comparison; not sent",
+                            command.DeviceId);
+                    }
+
+                    return DispatchOutcome.Reconciliation(recon, complete, digest, unchanged);
                 }
 
                 _log.LogWarning("Reconcile read failed device={DeviceId}: {Error}", command.DeviceId, recon.Error);
@@ -449,15 +457,21 @@ public sealed record DispatchOutcome(
     public static DispatchOutcome SyncFail(string error) =>
         new(ProtocolTypes.SyncResult, new { ok = false, error });
 
-    public static DispatchOutcome Reconciliation(DeviceReconciliationResult result, bool usersComplete = true) =>
-        new(
+    /// <param name="usersUnchanged">The list matches the server's stored checksum, so it is left out.</param>
+    public static DispatchOutcome Reconciliation(DeviceReconciliationResult result, bool usersComplete = true,
+        string? rosterDigest = null, bool usersUnchanged = false)
+    {
+        var users = usersUnchanged ? [] : result.Users;
+        return new(
             ProtocolTypes.ReconciliationResult,
             new
             {
                 ok = true,
                 usersComplete,
-                deviceUserIds = result.Users.Select(u => u.DeviceUserId).ToArray(),
-                deviceUsers = result.Users.Select(u => new
+                usersUnchanged,
+                rosterDigest,
+                deviceUserIds = users.Select(u => u.DeviceUserId).ToArray(),
+                deviceUsers = users.Select(u => new
                 {
                     deviceUserId = u.DeviceUserId,
                     name = u.Name,
@@ -478,6 +492,7 @@ public sealed record DispatchOutcome(
             },
             result.Events,
             true);
+    }
 
     private static string? MapDenyReason(int? errorCode, bool granted)
     {

@@ -9,6 +9,7 @@ import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.ReconciliationConflict;
 import com.example.gym.device.domain.ReconciliationConflictStatus;
 import com.example.gym.device.domain.ReconciliationConflictType;
+import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.DeviceUserSnapshotRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.ReconciliationConflictRepository;
@@ -43,6 +44,8 @@ public class DeviceReconciliationService {
     private final MemberRepository memberRepository;
     private final AuditService auditService;
     private final DeviceUserChangeService deviceUserChangeService;
+    private final DeviceRepository deviceRepository;
+    private final DeviceSyncService deviceSyncService;
 
     public DeviceReconciliationService(MemberDeviceMappingRepository mappingRepository,
                                        ReconciliationConflictRepository conflictRepository,
@@ -50,8 +53,12 @@ public class DeviceReconciliationService {
                                        DeviceAuthorizationService authorizationService,
                                        MemberRepository memberRepository,
                                        AuditService auditService,
-                                       DeviceUserChangeService deviceUserChangeService) {
+                                       DeviceUserChangeService deviceUserChangeService,
+                                       DeviceRepository deviceRepository,
+                                       DeviceSyncService deviceSyncService) {
         this.deviceUserChangeService = deviceUserChangeService;
+        this.deviceRepository = deviceRepository;
+        this.deviceSyncService = deviceSyncService;
         this.mappingRepository = mappingRepository;
         this.conflictRepository = conflictRepository;
         this.snapshotRepository = snapshotRepository;
@@ -62,6 +69,11 @@ public class DeviceReconciliationService {
 
     @Transactional
     public void applyDeviceUserSnapshot(Device device, JsonNode payload) {
+        if (payload != null && payload.path("usersUnchanged").asBoolean(false)) {
+            FlowLog.info("reconcile", "device={} user list unchanged since the last full comparison (checksum matched)",
+                    device.getPublicId());
+            return;
+        }
         Set<String> deviceUserIds = new HashSet<>();
         Map<String, Boolean> frozenByUser = new LinkedHashMap<>();
         Map<String, ParsedUser> parsedUsers = new LinkedHashMap<>();
@@ -174,6 +186,20 @@ public class DeviceReconciliationService {
         FlowLog.info("reconcile", "device={} readerUsers={} mappings={} missingOnReader={} accessMismatch={} "
                         + "importedOrLinked={} deferred={}", device.getPublicId(), deviceUserIds.size(),
                 mappings.size(), missing, mismatched, imported, deferred);
+        rememberDigest(device, payload, usersComplete);
+    }
+
+    /**
+     * Keeps the checksum of a complete list that was just compared, so the next reconcile of an unchanged reader
+     * can skip sending it. Not kept while a write to this reader is still open: the list may predate it.
+     */
+    private void rememberDigest(Device device, JsonNode payload, boolean usersComplete) {
+        String digest = payload == null ? null : text(payload, "rosterDigest");
+        if (digest == null || !usersComplete || deviceSyncService.hasOpenRosterCommands(device.getId())) {
+            deviceRepository.clearRosterDigest(device.getId());
+            return;
+        }
+        deviceRepository.saveRosterDigest(device.getId(), digest, Instant.now());
     }
 
     private void replaceSnapshotCache(Device device, Map<String, ParsedUser> users) {

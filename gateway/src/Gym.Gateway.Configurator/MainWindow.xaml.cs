@@ -192,6 +192,7 @@ public partial class MainWindow : Window
             var lines = new List<string>();
             if (userId.Length > 0)
             {
+                lines.AddRange(trueFace.ProbeFaceTiming(userId));
                 lines.AddRange(trueFace.ProbeFaceMd5(userId, maxUsers: 1));
             }
 

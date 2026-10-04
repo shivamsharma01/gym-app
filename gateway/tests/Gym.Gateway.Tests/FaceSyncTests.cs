@@ -230,6 +230,156 @@ public class FaceSyncTests
     }
 
     [Fact]
+    public async Task Reader_saying_no_photo_never_removes_a_known_photo()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("9001", "Photo Kept", PhotoA, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var published = new List<JsonElement>();
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), published);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None, listUsers: false);
+        Assert.Equal(FaceHash.Sha256Hex(PhotoA), roster.Find("dev-1", "9001")!.FaceSha256);
+        published.Clear();
+
+        adapter.DeleteFace("9001");
+        Assert.Equal(0, await watcher.ScanDeviceAsync("dev-1", ["9001"], faceSweep: false, CancellationToken.None));
+
+        Assert.Empty(published);
+        Assert.Equal(FaceHash.Sha256Hex(PhotoA), roster.Find("dev-1", "9001")!.FaceSha256);
+    }
+
+    [Fact]
+    public async Task Empty_starting_list_followed_by_a_full_reader_is_not_reported_as_new_users()
+    {
+        var (adapter, adapters) = Device();
+        var roster = new RosterStateStore(null);
+        var published = new List<JsonElement>();
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), published);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        for (var i = 0; i < 25; i++)
+        {
+            adapter.SimulateLocalUserChange("95" + i.ToString("00"), "Existing " + i, PhotoA, emitEvent: false);
+        }
+
+        Assert.Equal(0, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None));
+        Assert.Empty(published);
+        Assert.Equal(25, roster.All("dev-1").Count);
+    }
+
+    [Fact]
+    public async Task Failed_photo_read_keeps_the_import_on_that_user()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("8201", "One", PhotoA, emitEvent: false);
+        adapter.SimulateLocalUserChange("8202", "Two", PhotoB, emitEvent: false);
+        adapter.SimulateLocalUserChange("8203", "Three", PhotoA, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), []);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        adapter.FaceReadFault = id => id == "8202" ? "Wait time out" : null;
+
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None, listUsers: false);
+
+        Assert.NotNull(roster.Find("dev-1", "8201")!.FaceSha256);
+        Assert.Null(roster.Find("dev-1", "8202")!.FaceCheckedAt);
+        Assert.Null(roster.Find("dev-1", "8203")!.FaceCheckedAt);
+        Assert.Equal(1, roster.FaceCursor("dev-1"));
+
+        adapter.FaceReadFault = null;
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None, listUsers: false);
+
+        Assert.NotNull(roster.Find("dev-1", "8202")!.FaceSha256);
+        Assert.NotNull(roster.Find("dev-1", "8203")!.FaceSha256);
+    }
+
+    [Fact]
+    public async Task User_whose_photo_keeps_failing_is_skipped_after_three_tries()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("8301", "Broken", PhotoA, emitEvent: false);
+        adapter.SimulateLocalUserChange("8302", "Fine", PhotoB, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), []);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        adapter.FaceReadFault = id => id == "8301" ? "Wait time out" : null;
+
+        for (var i = 0; i < 2; i++)
+        {
+            await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None, listUsers: false);
+            Assert.Null(roster.Find("dev-1", "8302")!.FaceSha256);
+        }
+
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None, listUsers: false);
+
+        Assert.Null(roster.Find("dev-1", "8301")!.FaceSha256);
+        Assert.NotNull(roster.Find("dev-1", "8302")!.FaceSha256);
+    }
+
+    [Fact]
+    public async Task User_already_known_from_another_reader_is_not_reported_when_first_seen()
+    {
+        var first = new MockDeviceAdapter();
+        first.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
+        var second = new MockDeviceAdapter();
+        second.Connect(new DeviceConnectionConfig("dev-2", "127.0.0.2", 37777, "admin", "x"));
+        var adapters = new Dictionary<string, IDeviceAdapter> { ["dev-1"] = first, ["dev-2"] = second };
+        first.SimulateLocalUserChange("8401", "Shared", PhotoA, emitEvent: false);
+        first.SimulateLocalUserChange("8402", "Other", PhotoB, emitEvent: false);
+        second.SimulateLocalUserChange("8402", "Other", PhotoB, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var published = new List<JsonElement>();
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), published);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        await watcher.ScanDeviceAsync("dev-2", null, faceSweep: false, CancellationToken.None);
+        published.Clear();
+        second.SimulateLocalUserChange("8401", "Shared old name", PhotoA, emitEvent: false);
+
+        Assert.Equal(0, await watcher.ScanDeviceAsync("dev-2", null, faceSweep: false, CancellationToken.None));
+        Assert.Empty(published);
+        Assert.NotNull(roster.Find("dev-2", "8401"));
+        Assert.Equal("Shared", roster.Find("dev-1", "8401")!.Name);
+    }
+
+    [Fact]
+    public async Task Abnormal_burst_of_reader_changes_is_held_and_not_reported()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("8500", "Existing", PhotoA, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var published = new List<JsonElement>();
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), published);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        for (var i = 1; i <= 25; i++)
+        {
+            adapter.SimulateLocalUserChange("85" + i.ToString("00"), "Burst " + i, PhotoA, emitEvent: false);
+        }
+
+        Assert.Equal(0, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None));
+        Assert.Empty(published);
+    }
+
+    [Fact]
+    public void Repeated_connection_errors_mark_the_reader_degraded()
+    {
+        var (mock, _) = Device();
+        mock.SimulateLocalUserChange("8601", "One", PhotoA, emitEvent: false);
+        var reader = new TimedDeviceAdapter(mock, NullLogger.Instance);
+        mock.FaceReadFault = _ => "Wait time out";
+
+        for (var i = 0; i < 3; i++)
+        {
+            reader.GetFace("8601");
+        }
+
+        Assert.Equal("ONLINE", reader.GetHealth().ConnectionState);
+        reader.GetFace("8601");
+        Assert.Equal(TimedDeviceAdapter.DegradedState, reader.GetHealth().ConnectionState);
+        Assert.True(TimedDeviceAdapter.IsConnectionError("encrypt data fail"));
+        Assert.False(TimedDeviceAdapter.IsConnectionError("INVALID_USER: user does not exist on device"));
+    }
+
+    [Fact]
     public async Task Reader_lock_reports_what_the_reader_is_busy_with()
     {
         var locks = new DeviceLocks();

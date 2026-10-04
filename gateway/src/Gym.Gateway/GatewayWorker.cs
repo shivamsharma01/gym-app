@@ -92,6 +92,7 @@ public sealed class GatewayWorker : BackgroundService
         var watch = _watcher.RunAsync(TimeSpan.FromSeconds(Math.Max(15, _options.RosterPollSeconds)), stoppingToken);
         var clock = TimeSyncLoopAsync(stoppingToken);
         var statusLog = StatusLoopAsync(stoppingToken);
+        var readerHealth = ReaderHealthLoopAsync(stoppingToken);
 
         await _outbound.Writer.WriteAsync(new OutboundMessage(
             ProtocolTypes.RegisterGateway,
@@ -99,8 +100,48 @@ public sealed class GatewayWorker : BackgroundService
             new { agentVersion = "gym-gateway-0.5" },
             null), stoppingToken).ConfigureAwait(false);
 
-        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, watch, clock, statusLog).ConfigureAwait(false);
+        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, watch, clock, statusLog, readerHealth).ConfigureAwait(false);
     }
+
+    /// <summary>Logs in again to readers whose session broke, each when its pause has passed.</summary>
+    private async Task ReaderHealthLoopAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
+                foreach (var (deviceId, adapter) in _adapters)
+                {
+                    if (adapter is not TimedDeviceAdapter { ReconnectDue: true } reader)
+                    {
+                        continue;
+                    }
+
+                    _log.LogInformation("Reader {DeviceId}: reconnecting ({Detail})", deviceId, reader.HealthDetail);
+                    DeviceConnectionStatus status;
+                    using (await _locks.AcquireAsync(deviceId, "reconnecting the reader", stoppingToken).ConfigureAwait(false))
+                    {
+                        status = reader.Reconnect();
+                    }
+
+                    await EnqueueStatus(deviceId, status).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Reader reconnect check failed");
+            }
+        }
+    }
+
+    /// <summary>The server knows ONLINE / OFFLINE / UNKNOWN; a reader with a broken session cannot take work.</summary>
+    private static string ServerState(string state) =>
+        state == TimedDeviceAdapter.DegradedState ? "OFFLINE" : state;
 
     /// <summary>Every minute: what the gateway and each reader are doing, so a quiet log still shows progress.</summary>
     private async Task StatusLoopAsync(CancellationToken stoppingToken)
@@ -130,39 +171,71 @@ public sealed class GatewayWorker : BackgroundService
     /// </summary>
     private async Task TimeSyncLoopAsync(CancellationToken stoppingToken)
     {
+        var pending = _adapters.Keys.ToHashSet(StringComparer.Ordinal);
+        var nextFullSync = DateTimeOffset.UtcNow.AddHours(24);
         while (!stoppingToken.IsCancellationRequested)
         {
-            foreach (var (deviceId, adapter) in _adapters)
-            {
-                using var lease = await _locks.AcquireAsync(deviceId, "setting the reader clock", stoppingToken)
-                    .ConfigureAwait(false);
-                try
-                {
-                    var result = adapter.SynchronizeTime(DateTimeOffset.UtcNow);
-                    if (result.Ok)
-                    {
-                        _log.LogInformation("Reader {DeviceId}: clock set to gateway time", deviceId);
-                    }
-                    else
-                    {
-                        _log.LogWarning("Time sync failed for {DeviceId}: {Error}", deviceId, result.Error);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Time sync failed for {DeviceId}", deviceId);
-                }
-            }
+            await SyncPendingClocksAsync(pending, stoppingToken).ConfigureAwait(false);
 
             try
             {
-                await Task.Delay(TimeSpan.FromHours(24), stoppingToken).ConfigureAwait(false);
+                var wait = pending.Count > 0 ? TimeSpan.FromMinutes(10) : nextFullSync - DateTimeOffset.UtcNow;
+                await Task.Delay(wait > TimeSpan.Zero ? wait : TimeSpan.Zero, stoppingToken).ConfigureAwait(false);
+                if (DateTimeOffset.UtcNow >= nextFullSync)
+                {
+                    pending.UnionWith(_adapters.Keys);
+                    nextFullSync = DateTimeOffset.UtcNow.AddHours(24);
+                }
             }
             catch (OperationCanceledException)
             {
                 break;
             }
         }
+    }
+
+    private async Task SyncPendingClocksAsync(HashSet<string> pending, CancellationToken stoppingToken)
+    {
+        foreach (var deviceId in pending.ToList())
+        {
+            if (await SyncClockAsync(deviceId, _adapters[deviceId], stoppingToken).ConfigureAwait(false))
+            {
+                pending.Remove(deviceId);
+            }
+        }
+
+        if (pending.Count > 0)
+        {
+            _log.LogInformation("Reader clock: {Count} reader(s) not set yet; retrying in 10 min", pending.Count);
+        }
+    }
+
+    private async Task<bool> SyncClockAsync(string deviceId, IDeviceAdapter adapter, CancellationToken stoppingToken)
+    {
+        if (adapter.GetHealth().ConnectionState != TimedDeviceAdapter.OnlineState)
+        {
+            return false;
+        }
+
+        using var lease = await _locks.AcquireAsync(deviceId, "setting the reader clock", stoppingToken)
+            .ConfigureAwait(false);
+        try
+        {
+            var result = adapter.SynchronizeTime(DateTimeOffset.UtcNow);
+            if (result.Ok)
+            {
+                _log.LogInformation("Reader {DeviceId}: clock set to gateway time", deviceId);
+                return true;
+            }
+
+            _log.LogWarning("Time sync failed for {DeviceId}: {Error}", deviceId, result.Error);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Time sync failed for {DeviceId}", deviceId);
+        }
+
+        return false;
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
@@ -295,7 +368,7 @@ public sealed class GatewayWorker : BackgroundService
                             ProtocolTypes.DeviceStatus,
                             new
                             {
-                                connectionState = health.ConnectionState,
+                                connectionState = ServerState(health.ConnectionState),
                                 lastSeen = health.LastSeenUtc?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
                             },
                             deviceId),

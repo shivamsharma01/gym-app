@@ -50,6 +50,13 @@ public sealed class CommandDispatcher
             return DispatchOutcome.SyncFail("Unknown or unconfigured deviceId");
         }
 
+        var health = adapter.GetHealth();
+        if (health.ConnectionState == TimedDeviceAdapter.DegradedState)
+        {
+            // Each call would wait out its timeout and keep the broken session busy; the server retries later.
+            return DispatchOutcome.SyncFail($"Reader connection is broken and reconnecting ({health.Detail}); retry later");
+        }
+
         try
         {
             if (command.Type == "REPORT_DEVICE_USER")

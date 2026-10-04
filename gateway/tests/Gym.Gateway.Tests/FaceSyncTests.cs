@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Gym.Gateway.Adapters;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -187,6 +188,45 @@ public class FaceSyncTests
         {
             Directory.Delete(dir, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task Photo_batch_does_not_list_the_reader_again()
+    {
+        var (mock, _) = Device();
+        mock.SimulateLocalUserChange("8001", "One", PhotoA, emitEvent: false);
+        mock.SimulateLocalUserChange("8002", "Two", PhotoB, emitEvent: false);
+        var calls = new CallLog();
+        var adapters = new Dictionary<string, IDeviceAdapter> { ["dev-1"] = new TimedDeviceAdapter(mock, calls) };
+        var roster = new RosterStateStore(null);
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), []);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        calls.Lines.Clear();
+
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None, listUsers: false);
+
+        Assert.DoesNotContain(calls.Lines, l => l.Contains("ListUsers"));
+        Assert.Equal(FaceHash.Sha256Hex(PhotoA), roster.Find("dev-1", "8001")!.FaceSha256);
+        Assert.Equal(FaceHash.Sha256Hex(PhotoB), roster.Find("dev-1", "8002")!.FaceSha256);
+    }
+
+    [Fact]
+    public async Task Empty_user_list_deletes_nobody()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("8101", "One", PhotoA, emitEvent: false);
+        adapter.SimulateLocalUserChange("8102", "Two", PhotoB, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var published = new List<JsonElement>();
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), published);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        adapter.DeleteUser("8101");
+        adapter.DeleteUser("8102");
+
+        Assert.Equal(0, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: true, CancellationToken.None));
+        Assert.Empty(published);
+        Assert.NotNull(roster.Find("dev-1", "8101"));
+        Assert.NotNull(roster.Find("dev-1", "8102"));
     }
 
     [Fact]
@@ -395,6 +435,18 @@ public class FaceSyncTests
             CorrelationId = Guid.NewGuid().ToString(),
             Payload = JsonSerializer.SerializeToElement(payload)
         };
+
+    private sealed class CallLog : ILogger
+    {
+        public List<string> Lines { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Lines.Add(formatter(state, exception));
+    }
 
     private sealed class FakeFaceTransfer : IFaceTransfer
     {

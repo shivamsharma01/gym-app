@@ -11,10 +11,11 @@ namespace Gym.Gateway.Adapters;
 public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 {
     private const int WaitMs = 5000;
-    private const int SafeUserPage = 50;
-    private const int MaxUserPage = 200;
-    private const int SafeAttendancePage = 20;
-    private const int AttendancePage = 100;
+    /// <summary>Larger pages were slower per call and timed out on a 1,200-user reader.</summary>
+    private const int UserPage = 50;
+    private const int AttendancePage = 20;
+    private const int ListWaitMs = 10000;
+    private const int PageAttempts = 3;
     private const int MaxFacePhotoBytes = 120 * 1024;
     private static readonly object SdkGate = new();
     private static bool s_sdkInitialized;
@@ -1014,8 +1015,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 return [];
             }
 
-            var page = AttendancePage;
-            var firstPage = true;
+            const int page = AttendancePage;
             var records = new List<DeviceAttendanceRecord>();
             while (true)
             {
@@ -1033,18 +1033,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 NETClient.FindNextRecord(findId, page, ref retNum, ref ls, typeof(NET_RECORDSET_ACCESS_CTL_CARDREC), 10000);
                 if (retNum <= 0)
                 {
-                    // An empty first answer may be a reader that refuses large pages: ask once more with the old size.
-                    if (firstPage)
-                    {
-                        page = SafeAttendancePage;
-                        firstPage = false;
-                        continue;
-                    }
-
                     break;
                 }
-
-                firstPage = false;
 
                 for (var i = 0; i < retNum && i < ls.Count; i++)
                 {
@@ -1088,7 +1078,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         try
         {
             findOut.pstuInfo = buffer;
-            if (!NETClient.DoFindUserInfo(find, ref findIn, ref findOut, WaitMs) || findOut.nRetNum <= 0)
+            if (!NETClient.DoFindUserInfo(find, ref findIn, ref findOut, ListWaitMs) || findOut.nRetNum <= 0)
             {
                 return 0;
             }
@@ -1119,9 +1109,9 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         var startOut = new NET_OUT_USERINFO_START_FIND
         {
             dwSize = (uint)Marshal.SizeOf<NET_OUT_USERINFO_START_FIND>(),
-            nCapNum = 50
+            nCapNum = UserPage
         };
-        var find = NETClient.StartFindUserInfo(_loginId, ref startIn, ref startOut, WaitMs);
+        var find = NETClient.StartFindUserInfo(_loginId, ref startIn, ref startOut, ListWaitMs);
         if (find == IntPtr.Zero)
         {
             return [];
@@ -1130,24 +1120,32 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         var users = new List<DeviceUserSnapshot>();
         try
         {
-            // The reader reports how many users one call may return; 50 is the size every firmware accepted so far.
-            var page = Math.Clamp(startOut.nCapNum > 0 ? startOut.nCapNum : SafeUserPage, SafeUserPage, MaxUserPage);
+            var total = startOut.nTotalCount;
             var startNo = 0;
-            while (true)
+            while (total <= 0 || startNo < total)
             {
-                var read = ReadUserPage(find, startNo, page, users);
-                if (read <= 0 && startNo == 0 && page > SafeUserPage)
+                var read = 0;
+                for (var attempt = 0; attempt < PageAttempts && read <= 0; attempt++)
                 {
-                    page = SafeUserPage;
-                    continue;
+                    read = ReadUserPage(find, startNo, UserPage, users);
                 }
 
-                if (read < page)
+                if (read <= 0)
                 {
                     break;
                 }
 
                 startNo += read;
+                if (read < UserPage)
+                {
+                    break;
+                }
+            }
+
+            // Fewer users than the reader announced is a failed read; callers must never treat the gap as deletions.
+            if (total > 0 && startNo < total)
+            {
+                return [];
             }
         }
         finally

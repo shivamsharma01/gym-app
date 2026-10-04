@@ -90,9 +90,7 @@ public sealed class CommandDispatcher
 
             _log.LogDebug("{Type} corr={Corr} goes straight to the reader adapter", command.Type, command.CorrelationId);
 
-            var gate = _locks.For(command.DeviceId);
-            await gate.WaitAsync().ConfigureAwait(false);
-            try
+            using (await _locks.AcquireAsync(command.DeviceId, $"server command {command.Type}").ConfigureAwait(false))
             {
                 return await Task.Run(() =>
                 {
@@ -104,10 +102,6 @@ public sealed class CommandDispatcher
 
                     return outcome;
                 }).ConfigureAwait(false);
-            }
-            finally
-            {
-                gate.Release();
             }
         }
         catch (Exception ex)

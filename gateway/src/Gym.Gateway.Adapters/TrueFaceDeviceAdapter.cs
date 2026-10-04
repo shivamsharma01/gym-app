@@ -11,6 +11,8 @@ namespace Gym.Gateway.Adapters;
 public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 {
     private const int WaitMs = 5000;
+    // Good photo reads take about 4 s on a slow link, too close to the general 5 s wait.
+    private const int FaceWaitMs = 8000;
     /// <summary>Larger pages were slower per call and timed out on a 1,200-user reader.</summary>
     private const int UserPage = 50;
     private const int AttendancePage = 20;
@@ -168,7 +170,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     {
         if (_loginId == IntPtr.Zero)
         {
-            return [];
+            throw new DeviceReadException("Device is not logged in");
         }
 
         return QueryUsers();
@@ -218,7 +220,26 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return DeviceCommandResult.Fail($"Face UPDATE failed ({update.Error}); INSERT failed ({insert.Error})");
     }
 
-    public DeviceFaceRead GetFace(string deviceUserId)
+    public DeviceFaceRead GetFace(string deviceUserId) => GetFace(deviceUserId, FaceWaitMs);
+
+    /// <summary>
+    /// Test tool: reads one photo with different SDK wait limits. If each read takes the whole limit and
+    /// still returns the photo, the SDK is idling after the data arrived; if short limits fail, the reader is slow.
+    /// </summary>
+    public IReadOnlyList<string> ProbeFaceTiming(string deviceUserId)
+    {
+        var lines = new List<string> { $"GetFace timing for user {deviceUserId}:" };
+        foreach (var waitMs in new[] { 1000, 2000, 5000, 10000 })
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var read = GetFace(deviceUserId, waitMs);
+            lines.Add($"  wait limit {waitMs} ms: took {watch.ElapsedMilliseconds} ms, {DescribeFace(read)}");
+        }
+
+        return lines;
+    }
+
+    private DeviceFaceRead GetFace(string deviceUserId, int waitMs)
     {
         if (!EnsureLogin(out var err))
         {
@@ -271,14 +292,14 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             Marshal.StructureToPtr(output, outPtr, false);
 
             var ok = NETClient.OperateAccessFaceService(
-                _loginId, EM_NET_ACCESS_CTL_FACE_SERVICE.GET, inPtr, outPtr, WaitMs);
+                _loginId, EM_NET_ACCESS_CTL_FACE_SERVICE.GET, inPtr, outPtr, waitMs);
             var fail = Marshal.PtrToStructure<NET_EM_FAILCODE>(failPtr).emCode;
             if (!ok)
             {
                 if (fail is EM_FAILCODE.NO_RECORD or EM_FAILCODE.INVALID_FACE or EM_FAILCODE.INVALID_USER)
                 {
                     Touch();
-                    return DeviceFaceRead.None();
+                    return DeviceFaceRead.None("failCode=" + fail);
                 }
 
                 return DeviceFaceRead.Fail(SdkError("Face GET failed") + " failCode=" + fail);
@@ -289,7 +310,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             var len = read.nOutFacePhotoLen is { Length: > 0 } ? read.nOutFacePhotoLen[0] : 0;
             if (read.nFacePhoto <= 0 || len <= 0)
             {
-                return DeviceFaceRead.None();
+                return DeviceFaceRead.None($"call succeeded with {read.nFacePhoto} photo(s), length {len}");
             }
 
             var bytes = new byte[Math.Min(len, bufferLen)];
@@ -601,8 +622,14 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         var label = string.IsNullOrWhiteSpace(deviceUserId) ? "(empty user ID: all photos?)" : $"user {deviceUserId}";
         var find = IntPtr.Zero;
         var buffer = IntPtr.Zero;
+        var empty = new List<string>();
         try
         {
+            if (!string.IsNullOrWhiteSpace(deviceUserId))
+            {
+                lines.Add($"  before the search: GetFace {DescribeFace(GetFace(deviceUserId.Trim()))}");
+            }
+
             var startIn = new NET_IN_FACEINFO_START_FIND
             {
                 dwSize = (uint)Marshal.SizeOf<NET_IN_FACEINFO_START_FIND>(),
@@ -648,17 +675,14 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             for (var i = 0; i < findOut.nRetNum && i < count; i++)
             {
                 var info = Marshal.PtrToStructure<NET_FACEINFO>(IntPtr.Add(buffer, size * i));
-                var deviceMd5s = (info.szMD5 ?? [])
-                    .Take(Math.Clamp(info.nMD5, 0, 5))
-                    .Select(m => (m.szDM5 ?? "").Trim())
-                    .Where(m => m.Length > 0)
-                    .ToArray();
-                var photo = GetFace(info.szUserID);
-                var photoMd5 = photo.Photo == null ? null : ReaderChecksum(photo.Photo);
-                var match = photoMd5 != null
-                            && deviceMd5s.Any(m => string.Equals(m, photoMd5, StringComparison.OrdinalIgnoreCase));
-                lines.Add($"  user {info.szUserID}: reader MD5 [{string.Join(", ", deviceMd5s)}], "
-                          + $"GetFace {(photo.Photo?.Length ?? 0) / 1024} KB MD5 {photoMd5 ?? "(no photo)"}, match={match}");
+                lines.Add(CompareFaceMd5(info, empty));
+            }
+
+            NETClient.StopFindFaceInfo(find);
+            find = IntPtr.Zero;
+            foreach (var id in empty)
+            {
+                lines.Add($"  user {id} after closing the search: GetFace {DescribeFace(GetFace(id))}");
             }
 
             Touch();
@@ -688,6 +712,37 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 Marshal.FreeHGlobal(buffer);
             }
         }
+    }
+
+    private string CompareFaceMd5(NET_FACEINFO info, List<string> empty)
+    {
+        var deviceMd5s = (info.szMD5 ?? [])
+            .Take(Math.Clamp(info.nMD5, 0, 5))
+            .Select(m => (m.szDM5 ?? "").Trim())
+            .Where(m => m.Length > 0)
+            .ToArray();
+        var photo = GetFace(info.szUserID);
+        var photoMd5 = photo.Photo == null ? null : ReaderChecksum(photo.Photo);
+        var match = photoMd5 != null
+                    && deviceMd5s.Any(m => string.Equals(m, photoMd5, StringComparison.OrdinalIgnoreCase));
+        if (photo.Photo == null)
+        {
+            empty.Add(info.szUserID);
+        }
+
+        return $"  user {info.szUserID}: reader MD5 [{string.Join(", ", deviceMd5s)}], GetFace {DescribeFace(photo)}, match={match}";
+    }
+
+    private static string DescribeFace(DeviceFaceRead read)
+    {
+        if (!read.Ok)
+        {
+            return $"FAILED ({read.Error})";
+        }
+
+        return read.Photo == null
+            ? $"no photo ({read.Error ?? "no detail"})"
+            : $"{read.Photo.Length / 1024} KB MD5 {ReaderChecksum(read.Photo)}";
     }
 
     /// <summary>
@@ -735,8 +790,14 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         var from = fromUtc ?? DateTimeOffset.UtcNow.AddDays(-1);
         var to = toUtc ?? DateTimeOffset.UtcNow.AddHours(1);
         var events = QueryAttendance(from, to);
-        var users = QueryUsers();
-        return new DeviceReconciliationResult(true, null, events, users);
+        try
+        {
+            return new DeviceReconciliationResult(true, null, events, QueryUsers());
+        }
+        catch (DeviceReadException ex)
+        {
+            return new DeviceReconciliationResult(false, "User list could not be read: " + ex.Message, events, []);
+        }
     }
 
     public void Dispose()
@@ -1114,7 +1175,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         var find = NETClient.StartFindUserInfo(_loginId, ref startIn, ref startOut, ListWaitMs);
         if (find == IntPtr.Zero)
         {
-            return [];
+            throw new DeviceReadException("StartFindUserInfo failed: " + SdkError("no handle"));
         }
 
         var users = new List<DeviceUserSnapshot>();
@@ -1145,7 +1206,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             // Fewer users than the reader announced is a failed read; callers must never treat the gap as deletions.
             if (total > 0 && startNo < total)
             {
-                return [];
+                throw new DeviceReadException(
+                    $"read {startNo} of {total} users; the page at {startNo} failed {PageAttempts} times ({SdkError("no result")})");
             }
         }
         finally

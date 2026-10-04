@@ -20,6 +20,9 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
 
     public string DeviceId => _config?.DeviceId ?? "";
 
+    /// <summary>Tests: returns an error for photo reads of the given user, or null to read normally.</summary>
+    internal Func<string, string?>? FaceReadFault { get; set; }
+
     public DeviceConnectionStatus Connect(DeviceConnectionConfig config)
     {
         _config = config;
@@ -139,6 +142,11 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
         if (!EnsureConnected(out var err))
         {
             return DeviceFaceRead.Fail(err);
+        }
+
+        if (FaceReadFault?.Invoke(deviceUserId) is { } fault)
+        {
+            return DeviceFaceRead.Fail(fault);
         }
 
         return _faces.TryGetValue(deviceUserId, out var face)

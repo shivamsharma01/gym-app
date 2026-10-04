@@ -1,5 +1,8 @@
 namespace Gym.Gateway.Adapters;
 
+/// <summary>The reader could not return a complete answer. Never to be read as "the reader holds nothing".</summary>
+public sealed class DeviceReadException(string message) : Exception(message);
+
 public sealed record DeviceConnectionConfig(
     string DeviceId,
     string Ip,
@@ -48,7 +51,8 @@ public sealed record DeviceFaceRead(bool Ok, byte[]? Photo, DateTimeOffset? Upda
 {
     public static DeviceFaceRead Found(byte[] photo, DateTimeOffset? updatedAtUtc) => new(true, photo, updatedAtUtc, null);
 
-    public static DeviceFaceRead None() => new(true, null, null, null);
+    /// <summary>The reader answered and holds no photo. <paramref name="detail"/> says how it answered (for diagnostics only).</summary>
+    public static DeviceFaceRead None(string? detail = null) => new(true, null, null, detail);
 
     public static DeviceFaceRead Fail(string error) => new(false, null, null, error);
 }

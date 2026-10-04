@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -127,6 +128,9 @@ public class DeviceSyncService {
         DeviceSyncCommand command = new DeviceSyncCommand(tenantId, deviceId, memberId, membershipId,
                 type, payloadJson, correlationId, properties.getOutbox().getMaxAttempts(), Instant.now());
         DeviceSyncCommand saved = commandRepository.save(command);
+        if (deviceId != null && ROSTER_TYPES.contains(type)) {
+            deviceRepository.clearRosterDigest(deviceId);
+        }
 
         markState(saved, DeviceSyncState.PENDING);
         FlowLog.debug("sync", "enqueued {} corr={} device={} member={} user={}",
@@ -216,7 +220,7 @@ public class DeviceSyncService {
             return 0;
         }
         List<DeviceSyncCommand> due = commandRepository
-                .findByDeviceIdInAndStateInAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
+                .claimDue(
                         liveDevices,
                         List.of(SyncCommandState.PENDING, SyncCommandState.RETRYING),
                         Instant.now(),
@@ -411,6 +415,12 @@ public class DeviceSyncService {
                 deviceId, SyncCommandType.RECONCILE_DEVICE, OPEN_STATES);
     }
 
+    /** True while a command that changes the reader's user list has not finished. */
+    @Transactional(readOnly = true)
+    public boolean hasOpenRosterCommands(Long deviceId) {
+        return commandRepository.existsByDeviceIdAndTypeInAndStateIn(deviceId, ROSTER_TYPES, OPEN_STATES);
+    }
+
     /** Cancels every open command for a member (e.g. the member was deleted on a device). */
     @Transactional
     public int cancelOpenForMember(Long memberId) {
@@ -442,6 +452,10 @@ public class DeviceSyncService {
     private static final List<SyncCommandType> USER_TYPES = List.of(
             SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_USER, SyncCommandType.DISABLE_USER,
             SyncCommandType.ENABLE_USER, SyncCommandType.UPDATE_VALIDITY, SyncCommandType.UPDATE_ACCESS_POLICY);
+
+    /** Commands that change what a reader's user list holds (the roster checksum covers these). */
+    static final List<SyncCommandType> ROSTER_TYPES = Stream.concat(USER_TYPES.stream(), Stream.of(SyncCommandType.REMOVE_USER))
+            .toList();
 
     private static final List<SyncCommandType> ACCESS_TYPES = List.of(
             SyncCommandType.DISABLE_USER, SyncCommandType.ENABLE_USER,

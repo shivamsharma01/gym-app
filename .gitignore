@@ -49,3 +49,6 @@ simulator/data/
 
 # temp files
 deploy/docker-compose.yml.*
+
+# SDK probe results (member names, reader credentials in console logs)
+sdk-probe-*/

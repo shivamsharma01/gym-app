@@ -12,6 +12,12 @@ public interface ILocalMemberSync
 {
     /// <summary>Returns null when the command carries no change time (handled the legacy way).</summary>
     Task<DispatchOutcome?> TryApplyAsync(GatewayEnvelope command, byte[]? face, CancellationToken cancellationToken);
+
+    /// <summary>A photo already held locally with this sha256, or null.</summary>
+    byte[]? CachedFace(string sha256) => null;
+
+    /// <summary>False when the last scan of this reader got a user list too short to trust.</summary>
+    bool LastUserListTrusted(string deviceId) => true;
 }
 
 /// <summary>
@@ -58,6 +64,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
     /// <summary>Catch-up writes per scan, so a long backlog does not hold the reader while commands wait.</summary>
     private const int CatchUpPerScan = 25;
+    private const int NewUsersPerScan = 25;
 
     /// <summary>Failed reads of one user's photo before the import skips that user until the next full pass.</summary>
     private const int FaceAttemptsPerUser = 3;
@@ -84,6 +91,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
     /// <summary>Users a reader missed while it was offline or a write failed. Applied on its next scan.</summary>
     private readonly ConcurrentDictionary<string, HashSet<string>> _catchUp = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, bool> _listUntrusted = new(StringComparer.Ordinal);
 
     private DateTimeOffset _nextPoll = DateTimeOffset.UtcNow;
 
@@ -359,10 +367,11 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
             var now = DateTimeOffset.UtcNow;
             var sha = Sha(face.Photo);
-            var changed = known == null || known.Diff(user).Any || sha != known.FaceSha256;
+            var reportsBefore = _store.Reports().Count;
             Observe(deviceId, user, known, face, now, fanOut);
-            if (!changed)
+            if (_store.Reports().Count == reportsBefore)
             {
+                known = _roster.Find(deviceId, deviceUserId) ?? known;
                 if (sha != null)
                 {
                     _store.PutFace(sha, face.Photo!);
@@ -377,6 +386,16 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         await FanOutAsync(deviceId, fanOut, cancellationToken).ConfigureAwait(false);
         await FlushReportsAsync(cancellationToken).ConfigureAwait(false);
         return (true, null);
+    }
+
+    public bool LastUserListTrusted(string deviceId) => !_listUntrusted.GetValueOrDefault(deviceId);
+
+    public byte[]? CachedFace(string sha256)
+    {
+        var bytes = _store.GetFace(sha256.ToLowerInvariant()) ?? _store.GetFace(sha256);
+        return bytes != null && string.Equals(FaceHash.Sha256Hex(bytes), sha256, StringComparison.OrdinalIgnoreCase)
+            ? bytes
+            : null;
     }
 
     public async Task<DispatchOutcome?> TryApplyAsync(
@@ -548,6 +567,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
     {
         var baseline = _roster.HasBaseline(deviceId);
         var users = ReadTrustedList(deviceId, adapter, ref baseline);
+        _listUntrusted[deviceId] = users == null;
         if (users == null)
         {
             return false;
@@ -564,11 +584,15 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
             _roster.MarkBaseline(deviceId);
             _log.LogInformation("Recorded roster baseline for {DeviceId}: {Count} user(s)", deviceId, users.Count);
+            AlignReaders(deviceId);
+            CatchUpLocked(deviceId, adapter);
             return true;
         }
 
+        // Only edits can be a bad read or a restored reader overwriting newer data. New users (a bulk import
+        // on the reader) are real and are taken a batch per scan instead.
         var changes = CountChanges(deviceId, users);
-        if (changes.Edited + changes.New > ChangeBurstLimit(_roster.All(deviceId).Count))
+        if (changes.Edited > ChangeBurstLimit(_roster.All(deviceId).Count))
         {
             HoldBurst(deviceId, users, changes);
             CatchUpLocked(deviceId, adapter);
@@ -576,6 +600,13 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         }
 
         ObserveUsers(deviceId, adapter, users, faceFocus, now, fanOut);
+        if (changes.New > NewUsersPerScan)
+        {
+            _log.LogInformation(
+                "Reader {DeviceId}: {Count} new user(s) found; {Batch} handled in this scan, the rest in the next scans.",
+                deviceId, changes.New, NewUsersPerScan);
+        }
+
         if (changes.FirstSeen > 0)
         {
             _log.LogInformation(
@@ -648,12 +679,19 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
     private void ObserveUsers(string deviceId, IDeviceAdapter adapter, IReadOnlyList<DeviceUserSnapshot> users,
         IReadOnlyCollection<string>? faceFocus, DateTimeOffset now, FanOut fanOut)
     {
+        var newUsers = 0;
         foreach (var user in users)
         {
             var known = _roster.Find(deviceId, user.DeviceUserId);
             if (known == null && KnownElsewhere(deviceId, user.DeviceUserId))
             {
                 RecordFirstSeen(deviceId, user);
+                continue;
+            }
+
+            // Left off the roster, so the next scan still sees them as new.
+            if (known == null && ++newUsers > NewUsersPerScan)
+            {
                 continue;
             }
 
@@ -697,6 +735,15 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
     /// <summary>Staff edit or enrol a handful of users at a time; far more in one scan means a bad read or a restored reader.</summary>
     private static int ChangeBurstLimit(int knownUsers) => Math.Max(MaxChangeBurst, knownUsers / 10);
 
+    /// <summary>The user as another reader holds it, preferring one that has a name.</summary>
+    private KnownUser? HeldElsewhere(string deviceId, string userId) =>
+        _adapters.Keys
+            .Where(id => !string.Equals(id, deviceId, StringComparison.Ordinal))
+            .Select(id => _roster.Find(id, userId))
+            .OfType<KnownUser>()
+            .OrderBy(u => string.IsNullOrWhiteSpace(u.Name) ? 1 : 0)
+            .FirstOrDefault();
+
     private bool KnownElsewhere(string deviceId, string userId) =>
         _store.Find(userId) != null
         || _adapters.Keys.Any(id => !string.Equals(id, deviceId, StringComparison.Ordinal) && _roster.Find(id, userId) != null);
@@ -726,6 +773,12 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                 continue;
             }
 
+            // Unknown users stay off the roster: a later scan reports them as new instead of losing them.
+            if (known == null && !KnownElsewhere(deviceId, user.DeviceUserId))
+            {
+                continue;
+            }
+
             _roster.Upsert(deviceId, KnownUser.From(user, known));
             if (_store.Find(user.DeviceUserId) != null)
             {
@@ -735,8 +788,8 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
         RememberCatchUp(deviceId, correct);
         _log.LogWarning(
-            "Reader {DeviceId}: {Edited} edited and {New} unknown user(s) in one scan (limit {Limit}). That is not normal staff activity, so nothing is reported to the server or copied to other readers. Recorded what the reader holds; {Correct} user(s) will be brought back to the server copy, {PerScan} per scan.",
-            deviceId, changes.Edited, changes.New, ChangeBurstLimit(_roster.All(deviceId).Count), correct.Count,
+            "Reader {DeviceId}: {Edited} edited user(s) in one scan (limit {Limit}; {New} new user(s) wait for the next scan). That is not normal staff activity, so nothing is reported to the server or copied to other readers. Recorded what the reader holds; {Correct} user(s) will be brought back to the server copy, {PerScan} per scan.",
+            deviceId, changes.Edited, ChangeBurstLimit(_roster.All(deviceId).Count), changes.New, correct.Count,
             CatchUpPerScan);
     }
 
@@ -1033,18 +1086,48 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         if (known == null || diff.Any || faceChanged)
         {
             var firstFaceSample = known is { FaceCheckedAt: null, FaceSha256: null } && faceChanged && !diff.Any;
+            var stored = firstFaceSample ? _store.Find(user.DeviceUserId) : null;
+            if (stored is { Deleted: false, FaceSha256: not null, FaceAt: not null })
+            {
+                // A first read never replaces the local photo. Matching: just record it. Different: the
+                // reader gets the local photo back on catch-up.
+                var same = string.Equals(stored.FaceSha256, faceSha, StringComparison.OrdinalIgnoreCase);
+                _roster.Upsert(deviceId, known! with
+                {
+                    FaceSha256 = faceSha,
+                    FaceCheckedAt = now,
+                    FaceAt = same ? stored.FaceAt : known!.FaceAt
+                });
+                if (!same)
+                {
+                    RememberCatchUp(deviceId, [user.DeviceUserId]);
+                }
+
+                return;
+            }
+
             var result = HandleDetected(deviceId, user, known, face, faceSha, diff, faceChanged, deleted: false, now,
                 firstFaceSample);
             // The first time a photo is read off a user who was already on the reader is a sample,
-            // not an edit, so it is not copied onto the other reader.
+            // not an edit: it only goes to readers that have no photo for this user.
             if (result.Any && !firstFaceSample)
             {
                 fanOut.Add(user.DeviceUserId, result.Face);
+            }
+            else if (result.Face)
+            {
+                OfferPhotoToReadersWithout(deviceId, user.DeviceUserId);
             }
         }
         else if (face is { Ok: true })
         {
             _roster.Upsert(deviceId, known with { FaceCheckedAt = now });
+            // First check found no photo on this reader, but another reader's photo is already held locally.
+            if (known.FaceCheckedAt == null && faceSha == null
+                && _store.Find(user.DeviceUserId) is { Deleted: false, FaceSha256: not null } m && m.FaceAt != known.FaceAt)
+            {
+                RememberCatchUp(deviceId, [user.DeviceUserId]);
+            }
         }
     }
 
@@ -1068,6 +1151,8 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             Delete = deleted,
             SetName = diff.Name,
             Name = user.Name,
+            SetAuthority = diff.Authority,
+            Authority = user.Authority ?? "USER",
             SetFrozen = diff.Frozen,
             Frozen = user.Frozen,
             SetValidity = diff.Validity,
@@ -1096,7 +1181,9 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             });
         }
 
-        QueueReport(deviceId, user, at, deleted, isNew, diff, faceChanged, faceSha, initialSample);
+        // Callers copy every accepted change except a first photo sample to the other readers.
+        QueueReport(deviceId, user, at, deleted, isNew, diff, faceChanged, faceSha, initialSample,
+            siblingsUpdated: result.Any && !initialSample);
         _log.LogInformation(
             "Device {DeviceId} user {User} changed locally (new={New} deleted={Deleted} name={Name} "
             + "frozen={Frozen} validity={Validity} face={Face}; applied locally: {Applied})",
@@ -1143,18 +1230,22 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
                 // Unknown access is created disabled: never grant entry the server has not decided.
                 var accessKnown = m.AccessAt != null;
+                // Without a known name or authority, use what another reader holds rather than the bare ID.
+                var elsewhere = HeldElsewhere(deviceId, id);
+                var name = m.Name ?? elsewhere?.Name ?? id;
                 var created = adapter.CreateUser(new DeviceUserMutation(
                     id,
-                    m.Name ?? id,
+                    name,
                     accessKnown && !m.Frozen,
                     accessKnown ? KnownUser.ParseDate(m.ValidFrom) : null,
-                    accessKnown ? KnownUser.ParseDate(m.ValidTo) : null));
+                    accessKnown ? KnownUser.ParseDate(m.ValidTo) : null,
+                    m.Authority ?? elsewhere?.Authority));
                 if (!created.Ok)
                 {
                     return created.Error ?? "create failed";
                 }
 
-                var snapshot = adapter.GetUser(id) ?? new DeviceUserSnapshot(id, m.Name ?? id, !(accessKnown && !m.Frozen));
+                var snapshot = adapter.GetUser(id) ?? new DeviceUserSnapshot(id, name, !(accessKnown && !m.Frozen));
                 k = KnownUser.From(snapshot, null) with { NameAt = m.NameAt, AccessAt = m.AccessAt, FaceCheckedAt = now };
                 _roster.Upsert(deviceId, k);
                 _log.LogInformation("Created {User} on {DeviceId} from local state", id, deviceId);
@@ -1165,19 +1256,23 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                 var needAccess = m.AccessAt != null && k.AccessAt != m.AccessAt;
                 if (needName || needAccess)
                 {
-                    var nameDiffers = needName && !string.Equals(k.Name ?? "", m.Name ?? "", StringComparison.Ordinal);
+                    var nameDiffers = needName && m.Name != null
+                                      && !string.Equals(k.Name ?? "", m.Name, StringComparison.Ordinal);
+                    var authorityDiffers = needName && m.Authority != null
+                                           && !string.Equals(k.Authority ?? "USER", m.Authority, StringComparison.OrdinalIgnoreCase);
                     var accessDiffers = needAccess
                                         && (k.Frozen != m.Frozen
                                             || (m.ValidFrom != null && k.ValidFrom != m.ValidFrom)
                                             || (m.ValidTo != null && k.ValidTo != m.ValidTo));
-                    if (nameDiffers || accessDiffers)
+                    if (nameDiffers || authorityDiffers || accessDiffers)
                     {
                         var updated = adapter.UpdateUser(new DeviceUserMutation(
                             id,
                             nameDiffers ? m.Name : null,
                             accessDiffers ? !m.Frozen : null,
                             accessDiffers ? KnownUser.ParseDate(m.ValidFrom) : null,
-                            accessDiffers ? KnownUser.ParseDate(m.ValidTo) : null));
+                            accessDiffers ? KnownUser.ParseDate(m.ValidTo) : null,
+                            authorityDiffers ? m.Authority : null));
                         if (!updated.Ok)
                         {
                             return updated.Error ?? "update failed";
@@ -1185,8 +1280,9 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
                         var snapshot = adapter.GetUser(id);
                         k = snapshot == null ? k : KnownUser.From(snapshot, k);
-                        _log.LogInformation("Updated {User} on {DeviceId} from local state (name={Name} access={Access})",
-                            id, deviceId, nameDiffers, accessDiffers);
+                        _log.LogInformation(
+                            "Updated {User} on {DeviceId} from local state (name={Name} authority={Authority} access={Access})",
+                            id, deviceId, nameDiffers, authorityDiffers, accessDiffers);
                     }
 
                     k = k with
@@ -1251,6 +1347,96 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         }
     }
 
+    /// <summary>Change time of copies made when a reader is first listed: any server change or reader edit is newer.</summary>
+    internal static readonly DateTimeOffset SetupTime = DateTimeOffset.UnixEpoch;
+
+    /// <summary>
+    /// Runs when a reader gets its starting list while another reader already has one. Users held by only
+    /// one reader, or held differently, are copied from one reader to the others so all readers match. Only
+    /// users the gateway has no record of are touched, and nothing is sent to the server: its reconcile
+    /// imports them and its own changes win over these copies.
+    /// </summary>
+    private void AlignReaders(string deviceId)
+    {
+        var readers = _adapters.Keys.Where(d => d == deviceId || _roster.HasBaseline(d))
+            .OrderBy(d => d, StringComparer.Ordinal).ToList();
+        if (readers.Count < 2)
+        {
+            return;
+        }
+
+        var ids = readers.SelectMany(d => _roster.All(d).Select(u => u.DeviceUserId)).Distinct(StringComparer.Ordinal).ToList();
+        var copies = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var id in ids)
+        {
+            if (_store.Find(id) != null)
+            {
+                continue;
+            }
+
+            var held = readers.Select(d => (DeviceId: d, User: _roster.Find(d, id)))
+                .Where(x => x.User != null).Select(x => (x.DeviceId, User: x.User!)).ToList();
+            if (held.Count == readers.Count && held.All(x => SameProfile(x.User, held[0].User)))
+            {
+                continue;
+            }
+
+            // Prefer a reader that holds a real name over one showing the bare ID.
+            var source = held.OrderBy(x => string.IsNullOrWhiteSpace(x.User.Name) || x.User.Name.Trim() == id ? 1 : 0).First();
+            var k = source.User;
+            _store.Merge(new MemberChange(id, SetupTime, FromServer: false, Source: $"reader {source.DeviceId} at setup")
+            {
+                SetName = k.Name != null,
+                Name = k.Name,
+                SetAuthority = true,
+                Authority = k.Authority ?? "USER",
+                SetFrozen = true,
+                Frozen = k.Frozen,
+                SetValidity = k.ValidFrom != null && k.ValidTo != null,
+                ValidFrom = k.ValidFrom,
+                ValidTo = k.ValidTo
+            });
+
+            foreach (var d in readers)
+            {
+                var other = _roster.Find(d, id);
+                if (other != null && SameProfile(other, k))
+                {
+                    _roster.Upsert(d, other with { NameAt = SetupTime, AccessAt = SetupTime });
+                }
+                else
+                {
+                    RememberCatchUp(d, [id]);
+                    copies[d] = copies.GetValueOrDefault(d) + 1;
+                }
+            }
+        }
+
+        foreach (var (d, count) in copies)
+        {
+            _log.LogInformation(
+                "Reader {DeviceId}: {Count} user(s) missing or different compared with the other reader(s); copying them, {PerScan} per scan",
+                d, count, CatchUpPerScan);
+        }
+    }
+
+    private static bool SameProfile(KnownUser a, KnownUser b) =>
+        string.Equals(a.Name, b.Name, StringComparison.Ordinal)
+        && string.Equals(a.Authority ?? "USER", b.Authority ?? "USER", StringComparison.OrdinalIgnoreCase)
+        && a.Frozen == b.Frozen && a.ValidFrom == b.ValidFrom && a.ValidTo == b.ValidTo;
+
+    /// <summary>A photo just entered local state: readers known to have no photo for this user get it.</summary>
+    private void OfferPhotoToReadersWithout(string sourceDeviceId, string userId)
+    {
+        foreach (var d in _adapters.Keys.Where(d => d != sourceDeviceId))
+        {
+            if (_roster.Find(d, userId) is { FaceSha256: null, FaceCheckedAt: not null })
+            {
+                RememberCatchUp(d, [userId]);
+            }
+        }
+    }
+
     /// <summary>Brings the other devices up to date for users whose local state just changed.</summary>
     private async Task FanOutAsync(string sourceDeviceId, FanOut fanOut, CancellationToken cancellationToken)
     {
@@ -1310,6 +1496,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             {
                 foreach (var other in _adapters.Keys.Where(d => d != deviceId))
                 {
+                    RememberCatchUp(other, [userId]);
                     Trigger(other, userId);
                 }
             }
@@ -1339,7 +1526,9 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
                     : new MemberChange(userId, at.Value, true, "server")
                     {
                         SetName = CommandDispatcher.Text(p, "name") != null,
-                        Name = CommandDispatcher.Text(p, "name")
+                        Name = CommandDispatcher.Text(p, "name"),
+                        SetAuthority = !string.IsNullOrWhiteSpace(CommandDispatcher.Text(p, "authority")),
+                        Authority = CommandDispatcher.Text(p, "authority")
                     };
             }
             case "UPDATE_VALIDITY":
@@ -1398,8 +1587,11 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
     }
 
     private void QueueReport(string deviceId, DeviceUserSnapshot user, DateTimeOffset at, bool deleted, bool isNew,
-        ProfileDiff diff, bool faceChanged, string? faceSha, bool initialSample = false)
+        ProfileDiff diff, bool faceChanged, string? faceSha, bool initialSample = false, bool siblingsUpdated = false)
     {
+        var siblings = siblingsUpdated
+            ? _adapters.Keys.Where(d => d != deviceId).OrderBy(d => d, StringComparer.Ordinal).ToList()
+            : [];
         var payload = new JsonObject
         {
             ["deviceUserId"] = user.DeviceUserId,
@@ -1419,7 +1611,9 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
             ["faceChanged"] = faceChanged,
             ["faceRemoved"] = faceChanged && faceSha == null,
             ["faceSha256"] = faceChanged ? faceSha : null,
-            ["initialSample"] = initialSample
+            ["initialSample"] = initialSample,
+            ["siblingsUpdated"] = siblings.Count > 0,
+            ["siblingDeviceIds"] = new JsonArray(siblings.Select(d => (JsonNode?)JsonValue.Create(d)).ToArray())
         };
         _store.AddReport(new PendingReport(Guid.NewGuid().ToString("N"), deviceId, user.DeviceUserId, payload,
             faceChanged ? faceSha : null));

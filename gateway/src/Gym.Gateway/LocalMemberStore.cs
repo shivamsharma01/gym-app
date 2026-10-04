@@ -16,6 +16,9 @@ public sealed record LocalMember
 {
     public required string DeviceUserId { get; init; }
     public string? Name { get; init; }
+    /// <summary>"ADMIN" or "USER"; null when not known yet (never written to devices).</summary>
+    public string? Authority { get; init; }
+    /// <summary>Change time of the profile group: name and authority (the server stamps both together).</summary>
     public DateTimeOffset? NameAt { get; init; }
     public bool Frozen { get; init; }
     /// <summary>yyyy-MM-dd</summary>
@@ -38,6 +41,8 @@ public sealed record MemberChange(string DeviceUserId, DateTimeOffset At, bool F
     public bool Delete { get; init; }
     public bool SetName { get; init; }
     public string? Name { get; init; }
+    public bool SetAuthority { get; init; }
+    public string? Authority { get; init; }
     public bool SetFrozen { get; init; }
     public bool Frozen { get; init; }
     public bool SetValidity { get; init; }
@@ -151,17 +156,34 @@ public sealed class LocalMemberStore
                 var face = false;
                 // A losing change whose value the gateway already holds is not "ignored": the devices
                 // end up with exactly that value, so the command counts as applied.
+                // Name and authority share one change time; each is judged against the time before this change.
+                var profileAt = m.NameAt;
                 if (change.SetName)
                 {
                     var differs = !string.Equals(m.Name, change.Name, StringComparison.Ordinal);
-                    if (Wins(m.NameAt, at, change.FromServer, differs))
+                    if (Wins(profileAt, at, change.FromServer, differs))
                     {
                         m = m with { Name = change.Name, NameAt = at };
                         name = true;
                     }
                     else if (differs)
                     {
-                        ignored.Add($"name '{change.Name}' from {change.Source} at {Fmt(at)} ignored: newer name '{m.Name}' from {Fmt(m.NameAt)}");
+                        ignored.Add($"name '{change.Name}' from {change.Source} at {Fmt(at)} ignored: kept name '{m.Name}' from {Fmt(m.NameAt)}{(m.NameAt == at ? " (same time)" : "")}");
+                    }
+                }
+
+                if (change.SetAuthority && change.Authority != null)
+                {
+                    var authority = NormalizeAuthority(change.Authority);
+                    var differs = !string.Equals(m.Authority, authority, StringComparison.Ordinal);
+                    if (Wins(profileAt, at, change.FromServer, differs))
+                    {
+                        m = m with { Authority = authority, NameAt = at };
+                        name = true;
+                    }
+                    else if (differs)
+                    {
+                        ignored.Add($"authority {authority} from {change.Source} at {Fmt(at)} ignored: kept {m.Authority ?? "unknown"} from {Fmt(profileAt)}{(profileAt == at ? " (same time)" : "")}");
                     }
                 }
 
@@ -182,7 +204,9 @@ public sealed class LocalMemberStore
                     }
                     else if (differs)
                     {
-                        ignored.Add($"access (frozen={change.Frozen}, {change.ValidFrom}..{change.ValidTo}) from {change.Source} at {Fmt(at)} ignored: newer access change from {Fmt(m.AccessAt)}");
+                        var incoming = (change.SetFrozen ? $"frozen={change.Frozen} " : "")
+                                       + (change.SetValidity ? $"{change.ValidFrom}..{change.ValidTo}" : "");
+                        ignored.Add($"access ({incoming.Trim()}) from {change.Source} at {Fmt(at)} ignored: kept frozen={m.Frozen} {m.ValidFrom}..{m.ValidTo} from {Fmt(m.AccessAt)}{(m.AccessAt == at ? " (same time)" : "")}");
                     }
                 }
 
@@ -196,7 +220,7 @@ public sealed class LocalMemberStore
                     }
                     else if (differs)
                     {
-                        ignored.Add($"face {(change.FaceSha256 == null ? "removal" : "change")} from {change.Source} at {Fmt(at)} ignored: newer face change from {Fmt(m.FaceAt)}");
+                        ignored.Add($"face {(change.FaceSha256 == null ? "removal" : "change")} from {change.Source} at {Fmt(at)} ignored: kept face {Short(m.FaceSha256)} from {Fmt(m.FaceAt)}{(m.FaceAt == at ? " (same time)" : "")}");
                     }
                 }
 
@@ -303,7 +327,12 @@ public sealed class LocalMemberStore
     private static bool Wins(DateTimeOffset? stored, DateTimeOffset incoming, bool fromServer, bool differs) =>
         stored == null || incoming > stored || (incoming == stored && fromServer && differs);
 
+    public static string NormalizeAuthority(string authority) =>
+        string.Equals(authority.Trim(), "ADMIN", StringComparison.OrdinalIgnoreCase) ? "ADMIN" : "USER";
+
     private static string Fmt(DateTimeOffset? t) => t?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss'Z'") ?? "unknown";
+
+    private static string Short(string? sha) => sha == null ? "none" : sha[..Math.Min(8, sha.Length)];
 
     private void ReleaseFaceIfUnused(string sha)
     {

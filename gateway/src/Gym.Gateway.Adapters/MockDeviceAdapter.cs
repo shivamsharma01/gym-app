@@ -100,7 +100,8 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
                 u.Name,
                 Frozen: u.Enabled == false,
                 ValidFrom: u.ValidFrom,
-                ValidTo: u.ValidTo))
+                ValidTo: u.ValidTo,
+                Authority: u.Authority ?? "USER"))
             .OrderBy(u => u.DeviceUserId, StringComparer.Ordinal)
             .ToArray();
     }
@@ -112,7 +113,7 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
             return null;
         }
 
-        return new DeviceUserSnapshot(u.DeviceUserId, u.Name, u.Enabled == false, u.ValidFrom, u.ValidTo);
+        return new DeviceUserSnapshot(u.DeviceUserId, u.Name, u.Enabled == false, u.ValidFrom, u.ValidTo, u.Authority ?? "USER");
     }
 
     public DeviceCommandResult UpsertFace(string deviceUserId, byte[] jpegBytes)
@@ -184,6 +185,13 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
                 "USER_CHANGED", deviceUserId, DateTimeOffset.UtcNow, "UNKNOWN", true, null, null, "mock"));
         }
     }
+
+    /// <summary>Test helper: someone changed the admin level on the terminal ("ADMIN" or "USER").</summary>
+    public void SimulateLocalAuthorityChange(string deviceUserId, string authority) =>
+        _users.AddOrUpdate(
+            deviceUserId,
+            new DeviceUserMutation(deviceUserId, Enabled: true, Authority: authority),
+            (_, existing) => existing with { Authority = authority });
 
     public FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes)
     {
@@ -290,6 +298,7 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
             Name = incoming.Name ?? existing.Name,
             Enabled = incoming.Enabled ?? existing.Enabled,
             ValidFrom = incoming.ValidFrom ?? existing.ValidFrom,
-            ValidTo = incoming.ValidTo ?? existing.ValidTo
+            ValidTo = incoming.ValidTo ?? existing.ValidTo,
+            Authority = incoming.Authority ?? existing.Authority
         };
 }

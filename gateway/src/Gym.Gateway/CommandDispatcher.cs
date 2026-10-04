@@ -24,6 +24,10 @@ public sealed class CommandDispatcher
     private readonly DeviceLocks _locks;
     private readonly Func<string, string, Task<(bool Ok, string? Error)>>? _reportUser;
     private readonly ILocalMemberSync? _memberSync;
+    private static readonly TimeSpan FinishedKept = TimeSpan.FromMinutes(30);
+    private readonly object _seenGate = new();
+    private readonly Dictionary<string, Task<DispatchOutcome>> _running = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (DispatchOutcome Outcome, DateTimeOffset At)> _finished = new(StringComparer.Ordinal);
 
     public CommandDispatcher(
         IReadOnlyDictionary<string, IDeviceAdapter> adapters,
@@ -43,7 +47,78 @@ public sealed class CommandDispatcher
         _memberSync = memberSync;
     }
 
-    public async Task<DispatchOutcome> DispatchAsync(GatewayEnvelope command)
+    /// <summary>
+    /// The server can deliver one command twice (it re-sends when a result was lost, and two of its
+    /// dispatchers once sent the same batch). A copy that arrives while the first still runs waits for
+    /// that run; a copy of a command that already succeeded gets the same result without touching the
+    /// readers again. Failures are not remembered: the server's retry must run again.
+    /// </summary>
+    public Task<DispatchOutcome> DispatchAsync(GatewayEnvelope command)
+    {
+        var corr = command.CorrelationId;
+        if (string.IsNullOrWhiteSpace(corr))
+        {
+            return DispatchOnceAsync(command);
+        }
+
+        lock (_seenGate)
+        {
+            PruneFinished();
+            if (_finished.TryGetValue(corr, out var done))
+            {
+                _log.LogInformation("Command {Type} corr={Corr} was already applied at {At:HH:mm:ss}; sending the same result again",
+                    command.Type, corr, done.At.ToLocalTime());
+                return Task.FromResult(done.Outcome);
+            }
+
+            if (_running.TryGetValue(corr, out var running))
+            {
+                _log.LogInformation("Command {Type} corr={Corr} received again while it is still running; waiting for that run",
+                    command.Type, corr);
+                return running;
+            }
+
+            var task = RunAndRememberAsync(command, corr);
+            _running[corr] = task;
+            return task;
+        }
+    }
+
+    private async Task<DispatchOutcome> RunAndRememberAsync(GatewayEnvelope command, string corr)
+    {
+        await Task.Yield();
+        try
+        {
+            var outcome = await DispatchOnceAsync(command).ConfigureAwait(false);
+            if (outcome.Ok && outcome.ResultType == ProtocolTypes.SyncResult)
+            {
+                lock (_seenGate)
+                {
+                    _finished[corr] = (outcome, DateTimeOffset.UtcNow);
+                }
+            }
+
+            return outcome;
+        }
+        finally
+        {
+            lock (_seenGate)
+            {
+                _running.Remove(corr);
+            }
+        }
+    }
+
+    private void PruneFinished()
+    {
+        var cutoff = DateTimeOffset.UtcNow - FinishedKept;
+        foreach (var key in _finished.Where(e => e.Value.At < cutoff).Select(e => e.Key).ToList())
+        {
+            _finished.Remove(key);
+        }
+    }
+
+    private async Task<DispatchOutcome> DispatchOnceAsync(GatewayEnvelope command)
     {
         if (string.IsNullOrWhiteSpace(command.DeviceId) || !_adapters.TryGetValue(command.DeviceId, out var adapter))
         {
@@ -127,6 +202,13 @@ public sealed class CommandDispatcher
             || version is null)
         {
             return (null, "UPSERT_FACE requires deviceUserId, memberId and faceVersion");
+        }
+
+        var cached = string.IsNullOrWhiteSpace(expectedSha) ? null : _memberSync?.CachedFace(expectedSha);
+        if (cached != null)
+        {
+            _log.LogDebug("Face member={Member} version={Version} already held locally; not downloaded", memberId, version);
+            return (cached, null);
         }
 
         if (_faces == null)
@@ -218,7 +300,24 @@ public sealed class CommandDispatcher
                             command.DeviceId);
                     }
 
-                    return DispatchOutcome.Reconciliation(recon);
+                    var known = _roster.All(command.DeviceId!).Count;
+                    var complete = recon.Users.Count >= known && (_memberSync?.LastUserListTrusted(command.DeviceId!) ?? true);
+                    if (!complete)
+                    {
+                        _log.LogWarning(
+                            "Reconcile device={DeviceId}: listed {Users} of {Known} known user(s) or the last scan was incomplete; the server will not flag missing users from this list",
+                            command.DeviceId, recon.Users.Count, known);
+                    }
+
+                    var digest = complete ? RosterDigest.Compute(recon.Users) : null;
+                    var unchanged = digest != null && string.Equals(digest, Text(payload, "knownDigest"), StringComparison.Ordinal);
+                    if (unchanged)
+                    {
+                        _log.LogInformation("Reconcile device={DeviceId}: user list unchanged since the server's last full comparison; not sent",
+                            command.DeviceId);
+                    }
+
+                    return DispatchOutcome.Reconciliation(recon, complete, digest, unchanged);
                 }
 
                 _log.LogWarning("Reconcile read failed device={DeviceId}: {Error}", command.DeviceId, recon.Error);
@@ -358,14 +457,21 @@ public sealed record DispatchOutcome(
     public static DispatchOutcome SyncFail(string error) =>
         new(ProtocolTypes.SyncResult, new { ok = false, error });
 
-    public static DispatchOutcome Reconciliation(DeviceReconciliationResult result) =>
-        new(
+    /// <param name="usersUnchanged">The list matches the server's stored checksum, so it is left out.</param>
+    public static DispatchOutcome Reconciliation(DeviceReconciliationResult result, bool usersComplete = true,
+        string? rosterDigest = null, bool usersUnchanged = false)
+    {
+        var users = usersUnchanged ? [] : result.Users;
+        return new(
             ProtocolTypes.ReconciliationResult,
             new
             {
                 ok = true,
-                deviceUserIds = result.Users.Select(u => u.DeviceUserId).ToArray(),
-                deviceUsers = result.Users.Select(u => new
+                usersComplete,
+                usersUnchanged,
+                rosterDigest,
+                deviceUserIds = users.Select(u => u.DeviceUserId).ToArray(),
+                deviceUsers = users.Select(u => new
                 {
                     deviceUserId = u.DeviceUserId,
                     name = u.Name,
@@ -386,6 +492,7 @@ public sealed record DispatchOutcome(
             },
             result.Events,
             true);
+    }
 
     private static string? MapDenyReason(int? errorCode, bool granted)
     {

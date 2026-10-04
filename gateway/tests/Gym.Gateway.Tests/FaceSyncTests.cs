@@ -122,6 +122,68 @@ public class FaceSyncTests
     }
 
     [Fact]
+    public async Task Reconcile_says_when_the_reader_listed_fewer_users_than_are_known()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("5301", "One", PhotoA, emitEvent: false);
+        adapter.SimulateLocalUserChange("5302", "Two", PhotoA, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), []);
+        var dispatcher = new CommandDispatcher(adapters, NullLogger<CommandDispatcher>.Instance, null, roster,
+            memberSync: watcher);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+
+        var full = await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { }));
+        Assert.True(JsonSerializer.SerializeToElement(full.Payload).GetProperty("usersComplete").GetBoolean());
+
+        roster.Upsert("dev-1", roster.Find("dev-1", "5301")! with { DeviceUserId = "5399" });
+        var partial = JsonSerializer.SerializeToElement((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { }))).Payload);
+        Assert.False(partial.GetProperty("usersComplete").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, partial.GetProperty("rosterDigest").ValueKind);
+    }
+
+    [Fact]
+    public async Task Reconcile_leaves_out_an_unchanged_user_list_and_sends_it_after_any_reader_change()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("5401", "One", PhotoA, emitEvent: false);
+        adapter.SimulateLocalUserChange("5402", "Two", PhotoA, emitEvent: false);
+        var dispatcher = new CommandDispatcher(adapters, NullLogger<CommandDispatcher>.Instance);
+
+        var first = JsonSerializer.SerializeToElement((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { }))).Payload);
+        var digest = first.GetProperty("rosterDigest").GetString()!;
+        Assert.StartsWith("v1:", digest);
+        Assert.False(first.GetProperty("usersUnchanged").GetBoolean());
+        Assert.Equal(2, first.GetProperty("deviceUsers").GetArrayLength());
+
+        var same = JsonSerializer.SerializeToElement((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { knownDigest = digest }))).Payload);
+        Assert.True(same.GetProperty("usersUnchanged").GetBoolean());
+        Assert.Equal(0, same.GetProperty("deviceUsers").GetArrayLength());
+
+        adapter.SimulateLocalUserChange("5402", "Two Renamed", emitEvent: false);
+        var edited = JsonSerializer.SerializeToElement((await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", new { knownDigest = digest }))).Payload);
+        Assert.False(edited.GetProperty("usersUnchanged").GetBoolean());
+        Assert.Equal(2, edited.GetProperty("deviceUsers").GetArrayLength());
+        Assert.NotEqual(digest, edited.GetProperty("rosterDigest").GetString());
+    }
+
+    [Fact]
+    public void Roster_checksum_ignores_list_order_and_sees_every_field()
+    {
+        var a = new DeviceUserSnapshot("1", "Asha", false, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 12, 31, 23, 59, 59, TimeSpan.Zero), Authority: "USER");
+        var b = new DeviceUserSnapshot("2", "Ravi", true);
+        var digest = RosterDigest.Compute([a, b]);
+
+        Assert.Equal(digest, RosterDigest.Compute([b, a]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a with { Name = "Asha K" }, b]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a with { Frozen = true }, b]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a with { ValidTo = a.ValidTo!.Value.AddDays(1) }, b]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a with { Authority = "ADMIN" }, b]));
+        Assert.NotEqual(digest, RosterDigest.Compute([a]));
+    }
+
+    [Fact]
     public async Task Read_from_device_reports_an_unchanged_photo_with_its_original_time()
     {
         var (adapter, adapters) = Device();
@@ -139,6 +201,7 @@ public class FaceSyncTests
         var report = published[^1];
         Assert.Equal(FaceHash.Sha256Hex(PhotoA), report.GetProperty("faceSha256").GetString());
         Assert.True(report.GetProperty("initialSample").GetBoolean());
+        Assert.False(report.GetProperty("siblingsUpdated").GetBoolean());
         Assert.Equal(firstReportAt, report.GetProperty("deviceChangedAt").GetString());
     }
 
@@ -333,6 +396,7 @@ public class FaceSyncTests
         await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
         await watcher.ScanDeviceAsync("dev-2", null, faceSweep: false, CancellationToken.None);
         published.Clear();
+        roster.Remove("dev-2", "8401");
         second.SimulateLocalUserChange("8401", "Shared old name", PhotoA, emitEvent: false);
 
         Assert.Equal(0, await watcher.ScanDeviceAsync("dev-2", null, faceSweep: false, CancellationToken.None));
@@ -342,7 +406,7 @@ public class FaceSyncTests
     }
 
     [Fact]
-    public async Task Empty_reader_next_to_a_full_one_is_recorded_as_empty()
+    public async Task Empty_reader_next_to_a_full_one_gets_its_users()
     {
         var first = new MockDeviceAdapter();
         first.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
@@ -357,25 +421,57 @@ public class FaceSyncTests
         await watcher.ScanDeviceAsync("dev-2", null, faceSweep: false, CancellationToken.None);
 
         Assert.True(roster.HasBaseline("dev-2"));
-        Assert.Empty(roster.All("dev-2"));
+        Assert.Equal("One", second.GetUser("8701")!.Name);
     }
 
     [Fact]
-    public async Task Abnormal_burst_of_reader_changes_is_held_and_not_reported()
+    public async Task Abnormal_burst_of_reader_edits_is_held_and_not_reported()
     {
         var (adapter, adapters) = Device();
-        adapter.SimulateLocalUserChange("8500", "Existing", PhotoA, emitEvent: false);
+        for (var i = 1; i <= 30; i++)
+        {
+            adapter.SimulateLocalUserChange("85" + i.ToString("00"), "Member " + i, PhotoA, emitEvent: false);
+        }
+
         var roster = new RosterStateStore(null);
         var published = new List<JsonElement>();
         var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), published);
         await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
-        for (var i = 1; i <= 25; i++)
+        for (var i = 1; i <= 30; i++)
         {
-            adapter.SimulateLocalUserChange("85" + i.ToString("00"), "Burst " + i, PhotoA, emitEvent: false);
+            adapter.SimulateLocalUserChange("85" + i.ToString("00"), "Renamed " + i, emitEvent: false);
         }
 
         Assert.Equal(0, await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None));
         Assert.Empty(published);
+    }
+
+    [Fact]
+    public async Task Users_imported_in_bulk_on_a_reader_are_all_reported_a_batch_per_scan()
+    {
+        var (adapter, adapters) = Device();
+        adapter.SimulateLocalUserChange("8800", "Existing", PhotoA, emitEvent: false);
+        var roster = new RosterStateStore(null);
+        var published = new List<JsonElement>();
+        var watcher = Watcher(adapters, roster, new FakeFaceTransfer(), published);
+        await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+        for (var i = 1; i <= 60; i++)
+        {
+            adapter.SimulateLocalUserChange("88" + i.ToString("00"), "Imported " + i, PhotoA, emitEvent: false);
+        }
+
+        var perScan = new List<int>();
+        for (var scan = 0; scan < 4; scan++)
+        {
+            var before = published.Count;
+            await watcher.ScanDeviceAsync("dev-1", null, faceSweep: false, CancellationToken.None);
+            perScan.Add(published.Count - before);
+        }
+
+        Assert.Equal([25, 25, 10, 0], perScan);
+        Assert.Equal(60, published.Select(p => p.GetProperty("deviceUserId").GetString()).Distinct().Count());
+        Assert.All(published, p => Assert.True(p.GetProperty("isNew").GetBoolean()));
+        Assert.Equal(61, roster.All("dev-1").Count);
     }
 
     [Fact]

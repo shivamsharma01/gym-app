@@ -27,7 +27,13 @@ import com.example.gym.tenant.Tenant;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -174,11 +180,92 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
         assertThat(attendanceEventRepository.count()).isEqualTo(1);
     }
 
+    @Test
+    void aReaderChangeTheGatewayAlreadyCopiedIsNotSentToItsOtherReaderAgain() throws Exception {
+        String exitId = readJson(postJson("/api/v1/devices",
+                "{\"name\":\"Exit\",\"role\":\"EXIT\",\"host\":\"10.0.0.41\",\"port\":37777,"
+                        + "\"gatewayId\":\"" + gatewayId + "\"}")
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString())
+                .get("id").asString();
+        Long exit = deviceRepository.findByPublicId(exitId).orElseThrow().getId();
+        deviceSyncCommandRepository.deleteAll();
+
+        gatewayMessageService.process(envelope("DEVICE_USER_CHANGED", UUID.randomUUID().toString(), """
+                {"deviceUserId":"9300","name":"Asha Pal","frozen":false,"deviceChangedAt":"%s","isNew":true,
+                 "profileChanged":true,"nameChanged":true,"frozenChanged":false,"validityChanged":false,
+                 "faceChanged":false,"faceRemoved":false,"siblingsUpdated":true,"siblingDeviceIds":["%s"]}
+                """.formatted(Instant.now(), exitId)));
+        gatewayMessageService.process(envelope("DEVICE_USER_CHANGED", UUID.randomUUID().toString(), """
+                {"deviceUserId":"9300","name":"Asha Pal Singh","frozen":false,"deviceChangedAt":"%s","isNew":false,
+                 "profileChanged":true,"nameChanged":true,"frozenChanged":false,"validityChanged":false,
+                 "faceChanged":false,"faceRemoved":false,"siblingsUpdated":true,"siblingDeviceIds":["%s"]}
+                """.formatted(Instant.now(), exitId)));
+
+        assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "9300")).isPresent();
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(exit, "9300")).isPresent();
+        assertThat(userCommands(exit)).isEmpty();
+
+        // An older gateway without the flag: the other reader still gets the new user.
+        gatewayMessageService.process(envelope("DEVICE_USER_CHANGED", UUID.randomUUID().toString(), """
+                {"deviceUserId":"9301","name":"Ravi Jain","frozen":false,"deviceChangedAt":"%s","isNew":true,
+                 "profileChanged":true,"nameChanged":true,"frozenChanged":false,"validityChanged":false,
+                 "faceChanged":false,"faceRemoved":false}
+                """.formatted(Instant.now())));
+        assertThat(userCommands(exit)).extracting(DeviceSyncCommand::getType).contains(SyncCommandType.CREATE_USER);
+        assertThat(userCommands(device)).isEmpty();
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
+
+    private List<DeviceSyncCommand> userCommands(Long deviceId) {
+        return deviceSyncCommandRepository.findAll().stream()
+                .filter(c -> c.getDeviceId().equals(deviceId))
+                .filter(c -> c.getType() == SyncCommandType.CREATE_USER || c.getType() == SyncCommandType.UPDATE_USER)
+                .toList();
+    }
 
     private AttendanceEvent event(Instant at) {
         return new AttendanceEvent(tenant.getId(), device, null, "9200", at, AccessDirection.IN, "FACE",
                 AccessResult.GRANTED, 77L, "rec:77");
+    }
+
+    @Test
+    void commandsClaimedByOneDispatcherAreSkippedByAConcurrentOne() throws Exception {
+        postJson("/api/v1/members", "{\"firstName\":\"Ira\",\"lastName\":\"Sen\",\"memberCode\":\"9002\",\"serialNumber\":\"9002\"}")
+                .andExpect(status().isCreated());
+        makeAllDue();
+        CountDownLatch claimed = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<Integer> first = pool.submit(() -> transactions.execute(s -> {
+                int n = claimDue().size();
+                claimed.countDown();
+                try {
+                    release.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return n;
+            }));
+            assertThat(claimed.await(10, TimeUnit.SECONDS)).isTrue();
+
+            Integer second = transactions.execute(s -> claimDue().size());
+            release.countDown();
+
+            assertThat(first.get(10, TimeUnit.SECONDS)).isPositive();
+            assertThat(second).isZero();
+            Integer afterRelease = transactions.execute(s -> claimDue().size());
+            assertThat(afterRelease).isPositive();
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    private List<DeviceSyncCommand> claimDue() {
+        return deviceSyncCommandRepository.claimDue(List.of(device),
+                List.of(SyncCommandState.PENDING, SyncCommandState.RETRYING), Instant.now(), PageRequest.of(0, 50));
     }
 
     private void makeAllDue() {

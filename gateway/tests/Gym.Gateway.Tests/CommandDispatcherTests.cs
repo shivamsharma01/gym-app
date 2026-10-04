@@ -42,6 +42,44 @@ public class CommandDispatcherTests
     }
 
     [Fact]
+    public async Task A_command_delivered_twice_is_applied_once_and_answered_twice()
+    {
+        var adapter = new MockDeviceAdapter();
+        adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
+        var dispatcher = new CommandDispatcher(
+            new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
+            NullLogger<CommandDispatcher>.Instance);
+        var create = Command("CREATE_USER", "dev-1", new { deviceUserId = "1001", name = "Ada" });
+
+        var both = await Task.WhenAll(dispatcher.DispatchAsync(create), dispatcher.DispatchAsync(create));
+        adapter.SimulateLocalUserChange("1001", "Edited On Reader", emitEvent: false);
+        var late = await dispatcher.DispatchAsync(create);
+
+        Assert.All(both.Append(late), r => Assert.True(r.Ok));
+        Assert.Equal("Edited On Reader", adapter.GetUser("1001")!.Name);
+    }
+
+    [Fact]
+    public async Task A_failed_command_runs_again_when_the_server_retries_it()
+    {
+        var adapter = new MockDeviceAdapter();
+        adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
+        var dispatcher = new CommandDispatcher(
+            new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
+            NullLogger<CommandDispatcher>.Instance);
+        var create = Command("CREATE_USER", "dev-1", new { deviceUserId = "1001", name = "Ada" });
+        adapter.Disconnect();
+
+        var failed = await dispatcher.DispatchAsync(create);
+        adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
+        var retried = await dispatcher.DispatchAsync(create);
+
+        Assert.False(failed.Ok);
+        Assert.True(retried.Ok);
+        Assert.Contains("1001", adapter.KnownUserIds);
+    }
+
+    [Fact]
     public async Task Retired_enroll_face_fails_without_touching_device()
     {
         var adapter = new MockDeviceAdapter();

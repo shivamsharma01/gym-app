@@ -188,6 +188,26 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
         assertThat(csv).doesNotContain("template");
     }
 
+    @Test
+    void anIncompleteReaderListDoesNotFlagMappedUsersAsMissing() throws Exception {
+        postJson("/api/v1/members", "{\"firstName\":\"Om\",\"lastName\":\"Das\",\"memberCode\":\"4001\",\"serialNumber\":\"4001\"}")
+                .andExpect(status().isCreated());
+
+        gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
+                """
+                {"ok":true,"usersComplete":false,"deviceUsers":[]}
+                """));
+        assertThat(reconciliationConflictRepository.findAll())
+                .noneMatch(c -> c.getConflictType().name().equals("MISSING_ON_DEVICE"));
+
+        gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
+                """
+                {"ok":true,"deviceUsers":[]}
+                """));
+        assertThat(reconciliationConflictRepository.findAll())
+                .anyMatch(c -> c.getConflictType().name().equals("MISSING_ON_DEVICE"));
+    }
+
     private ResultActions postJson(String path, String body) throws Exception {
         var req = post(path).header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON);

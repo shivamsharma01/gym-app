@@ -216,7 +216,7 @@ public class DeviceSyncService {
             return 0;
         }
         List<DeviceSyncCommand> due = commandRepository
-                .findByDeviceIdInAndStateInAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
+                .claimDue(
                         liveDevices,
                         List.of(SyncCommandState.PENDING, SyncCommandState.RETRYING),
                         Instant.now(),

@@ -53,7 +53,7 @@ public class GatewayCommandPollService {
         }
         List<Long> deviceIds = devices.stream().map(Device::getId).toList();
         List<DeviceSyncCommand> due = commandRepository
-                .findByDeviceIdInAndStateInAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
+                .claimDue(
                         deviceIds,
                         List.of(SyncCommandState.PENDING, SyncCommandState.RETRYING),
                         Instant.now(),

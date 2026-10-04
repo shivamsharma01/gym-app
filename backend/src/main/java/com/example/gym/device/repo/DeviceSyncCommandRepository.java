@@ -2,6 +2,8 @@ package com.example.gym.device.repo;
 
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.SyncCommandState;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
@@ -9,6 +11,10 @@ import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
+import org.springframework.data.repository.query.Param;
 
 public interface DeviceSyncCommandRepository extends JpaRepository<DeviceSyncCommand, Long> {
 
@@ -33,9 +39,18 @@ public interface DeviceSyncCommandRepository extends JpaRepository<DeviceSyncCom
     Optional<DeviceSyncCommand> findTopByDeviceIdAndStateOrderByCompletedAtDesc(
             Long deviceId, SyncCommandState state);
 
-    List<DeviceSyncCommand> findByDeviceIdInAndStateInAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
-            Collection<Long> deviceIds, Collection<SyncCommandState> states, Instant now,
-            Pageable pageable);
+    /**
+     * Due commands, row-locked for the calling transaction. Rows another dispatcher has already locked are
+     * skipped, so two concurrent dispatches (connect and the outbox timer) never send the same command.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+    @Query("select c from DeviceSyncCommand c where c.deviceId in :deviceIds and c.state in :states "
+            + "and c.nextAttemptAt <= :now order by c.nextAttemptAt asc")
+    List<DeviceSyncCommand> claimDue(@Param("deviceIds") Collection<Long> deviceIds,
+                                     @Param("states") Collection<SyncCommandState> states,
+                                     @Param("now") Instant now,
+                                     Pageable pageable);
 
     /** Stale DISPATCHED / ACKNOWLEDGED rows that never received SYNC_RESULT. */
     List<DeviceSyncCommand> findByStateInAndDispatchedAtLessThanEqual(

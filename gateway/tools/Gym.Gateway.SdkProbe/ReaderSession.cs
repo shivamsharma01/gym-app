@@ -190,6 +190,18 @@ internal sealed class ReaderSession : IDisposable
         return ok && users is { Length: > 0 } && !string.IsNullOrWhiteSpace(users[0].szUserID) ? users[0] : null;
     }
 
+    /// <summary>The raw answer to a single-user read: call result, fail code, SDK error and what came back.</summary>
+    public string DescribeGet(string userId)
+    {
+        var watch = Stopwatch.StartNew();
+        var ok = NETClient.GetOperateAccessUserService(Login, [userId], out var users, out var fails, WaitMs);
+        var ms = watch.ElapsedMilliseconds;
+        var code = $"0x{NETClient.GetLastErrorCode():X8}";
+        var fail = fails is { Length: > 0 } ? fails[0].emCode.ToString() : "(none)";
+        var returned = users is { Length: > 0 } ? $"\"{users[0].szUserID?.Trim()}\"" : "(no record)";
+        return $"ok={ok} failCode={fail} sdkError={code} {NETClient.GetLastError()} returnedId={returned} in {ms} ms";
+    }
+
     public FaceList ListFaces(string? userId, int page)
     {
         var watch = Stopwatch.StartNew();

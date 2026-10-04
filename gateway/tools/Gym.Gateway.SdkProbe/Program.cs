@@ -274,6 +274,13 @@ namespace Gym.Gateway.SdkProbe
                     r.Line("     fields in use: " + string.Join(" | ", UserFields.NonEmpty(UserFields.Dump(got.Value))));
                 }
             }
+
+            r.Sub("Reading a user ID that does not exist (how the reader says \"not found\")");
+            var known = list.Users.Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+            var absent = Enumerable.Range(0, 1000).Select(i => (999900 + i).ToString()).First(id => !known.Contains(id));
+            var probe = s.DescribeGet(absent);
+            r.Line($"  user {absent}: {probe}");
+            _answers.Add($"[{s.Name}] Reading a missing user ({absent}): {probe}.");
         }
 
         private void FacesPart(DeviceFindings f)

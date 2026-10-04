@@ -192,6 +192,206 @@ public class LocalSyncTests
         }
     }
 
+    [Fact]
+    public async Task Admin_level_set_in_the_app_reaches_both_readers()
+    {
+        var gw = await Gateway.StartAsync(("1101", "Rajat"));
+
+        var result = await gw.Dispatcher.DispatchAsync(Command("UPDATE_USER", "entrance", new
+        {
+            deviceUserId = "1101", name = "Rajat", authority = "ADMIN", nameChangedAt = Iso(DateTimeOffset.UtcNow.AddMinutes(1))
+        }));
+
+        Assert.True(result.Ok);
+        Assert.DoesNotContain("skipped", JsonSerializer.Serialize(result.Payload));
+        Assert.Equal("ADMIN", gw.Entrance.GetUser("1101")!.Authority);
+        Assert.Equal("ADMIN", gw.Exit.GetUser("1101")!.Authority);
+        Assert.Equal("Rajat", gw.Exit.GetUser("1101")!.Name);
+
+        await gw.Scan("entrance");
+        await gw.Scan("exit");
+        Assert.Empty(gw.Published);
+    }
+
+    [Fact]
+    public async Task Admin_level_changed_on_one_reader_is_copied_to_the_other_and_reported()
+    {
+        var gw = await Gateway.StartAsync(("1102", "Kuldeep"));
+
+        gw.Entrance.SimulateLocalAuthorityChange("1102", "ADMIN");
+        await gw.Scan("entrance");
+
+        Assert.Equal("ADMIN", gw.Exit.GetUser("1102")!.Authority);
+        Assert.Equal("Kuldeep", gw.Exit.GetUser("1102")!.Name);
+        var report = Assert.Single(gw.Published);
+        Assert.True(report.Payload.GetProperty("authorityChanged").GetBoolean());
+        Assert.Equal("ADMIN", report.Payload.GetProperty("authority").GetString());
+        Assert.True(report.Payload.GetProperty("siblingsUpdated").GetBoolean());
+        Assert.Equal("exit", Assert.Single(report.Payload.GetProperty("siblingDeviceIds").EnumerateArray()).GetString());
+    }
+
+    [Fact]
+    public async Task An_older_admin_level_from_the_server_loses_to_a_newer_reader_change()
+    {
+        var gw = await Gateway.StartAsync(("1103", "Om"));
+        gw.Entrance.SimulateLocalAuthorityChange("1103", "ADMIN");
+        await gw.Scan("entrance");
+
+        var stale = await gw.Dispatcher.DispatchAsync(Command("UPDATE_USER", "exit", new
+        {
+            deviceUserId = "1103", name = "Om", authority = "USER", nameChangedAt = Iso(DateTimeOffset.UtcNow.AddHours(-1))
+        }));
+
+        Assert.True(stale.Ok);
+        Assert.Contains("\"skipped\":true", JsonSerializer.Serialize(stale.Payload));
+        Assert.Equal("ADMIN", gw.Entrance.GetUser("1103")!.Authority);
+        Assert.Equal("ADMIN", gw.Exit.GetUser("1103")!.Authority);
+    }
+
+    [Fact]
+    public async Task A_command_without_an_admin_level_never_changes_it_on_the_reader()
+    {
+        var gw = await Gateway.StartAsync(null, (entrance, exit) =>
+        {
+            foreach (var reader in new[] { entrance, exit })
+            {
+                reader.SimulateLocalUserChange("1104", "Annu", emitEvent: false);
+                reader.SimulateLocalAuthorityChange("1104", "ADMIN");
+            }
+        });
+
+        await gw.Dispatcher.DispatchAsync(Command("UPDATE_USER", "entrance", new
+        {
+            deviceUserId = "1104", name = "Annu Rana", nameChangedAt = Iso(DateTimeOffset.UtcNow.AddMinutes(1))
+        }));
+        await gw.Dispatcher.DispatchAsync(Command("UPDATE_VALIDITY", "entrance", new
+        {
+            deviceUserId = "1104", enabled = true, validFrom = "2026-01-01", validTo = "2026-12-31",
+            accessChangedAt = Iso(DateTimeOffset.UtcNow.AddMinutes(1))
+        }));
+
+        foreach (var reader in new[] { gw.Entrance, gw.Exit })
+        {
+            var user = reader.GetUser("1104")!;
+            Assert.Equal("Annu Rana", user.Name);
+            Assert.Equal("ADMIN", user.Authority);
+        }
+    }
+
+    [Fact]
+    public async Task A_user_created_on_the_other_reader_takes_name_and_admin_level_from_the_reader_that_has_it()
+    {
+        var gw = await Gateway.StartAsync(null, (entrance, _) =>
+        {
+            entrance.SimulateLocalUserChange("1105", "Tushar Dahiya", emitEvent: false);
+            entrance.SimulateLocalAuthorityChange("1105", "ADMIN");
+        });
+
+        var result = await gw.Dispatcher.DispatchAsync(Command("UPDATE_VALIDITY", "entrance", new
+        {
+            deviceUserId = "1105", enabled = true, validFrom = "2026-01-01", validTo = "2026-12-31",
+            accessChangedAt = Iso(DateTimeOffset.UtcNow.AddMinutes(1))
+        }));
+
+        Assert.True(result.Ok);
+        var created = gw.Exit.GetUser("1105")!;
+        Assert.Equal("Tushar Dahiya", created.Name);
+        Assert.Equal("ADMIN", created.Authority);
+        Assert.False(created.Frozen);
+        Assert.Equal(new DateTimeOffset(2026, 12, 31, 0, 0, 0, TimeSpan.Zero), created.ValidTo);
+    }
+
+    [Fact]
+    public async Task A_photo_already_held_locally_is_not_downloaded_again()
+    {
+        var store = new LocalMemberStore(null);
+        store.PutFace(FaceHash.Sha256Hex(PhotoB), PhotoB);
+        var gw = await Gateway.StartAsync(store, ("1201", "Neha"));
+
+        var result = await gw.Dispatcher.DispatchAsync(Command("UPSERT_FACE", "entrance", new
+        {
+            deviceUserId = "1201", memberId = "m-1201", faceVersion = 2, sha256 = FaceHash.Sha256Hex(PhotoB),
+            faceChangedAt = Iso(DateTimeOffset.UtcNow.AddMinutes(1))
+        }));
+
+        Assert.True(result.Ok, JsonSerializer.Serialize(result.Payload));
+        Assert.Equal(PhotoB, gw.Entrance.GetFace("1201").Photo);
+        Assert.Equal(PhotoB, gw.Exit.GetFace("1201").Photo);
+    }
+
+    [Fact]
+    public async Task A_first_photo_read_never_replaces_the_local_photo()
+    {
+        var store = new LocalMemberStore(null);
+        store.PutFace(FaceHash.Sha256Hex(PhotoA), PhotoA);
+        store.Merge(new MemberChange("1202", DateTimeOffset.UtcNow.AddMinutes(-5), FromServer: true, "server")
+        {
+            SetFace = true, FaceSha256 = FaceHash.Sha256Hex(PhotoA)
+        });
+        var gw = await Gateway.StartAsync(store, (entrance, exit) =>
+        {
+            entrance.SimulateLocalUserChange("1202", "Pooja", PhotoA, emitEvent: false);
+            exit.SimulateLocalUserChange("1202", "Pooja", PhotoB, emitEvent: false);
+        });
+
+        await gw.Scan("entrance");
+        await gw.Scan("exit");
+        await gw.Scan("exit");
+
+        Assert.Empty(gw.Published);
+        Assert.Equal(PhotoA, gw.Entrance.GetFace("1202").Photo);
+        Assert.Equal(PhotoA, gw.Exit.GetFace("1202").Photo);
+        Assert.Equal(FaceHash.Sha256Hex(PhotoA), store.Find("1202")!.FaceSha256);
+    }
+
+    [Fact]
+    public async Task When_the_gateway_is_added_both_readers_end_up_with_the_same_users()
+    {
+        var gw = await Gateway.StartAsync(null, (entrance, exit) =>
+        {
+            entrance.SimulateLocalUserChange("1301", "Only Entrance", PhotoA, emitEvent: false);
+            entrance.SimulateLocalAuthorityChange("1301", "ADMIN");
+            exit.SimulateLocalUserChange("1302", "Only Exit", emitEvent: false);
+            entrance.SimulateLocalUserChange("1303", "Same", emitEvent: false);
+            exit.SimulateLocalUserChange("1303", "Same", emitEvent: false);
+            entrance.SimulateLocalUserChange("1304", "Ravi Kumar", emitEvent: false);
+            exit.SimulateLocalUserChange("1304", "1304", emitEvent: false);
+        });
+
+        await gw.Scan("entrance");
+        await gw.Scan("exit");
+        await gw.Scan("entrance");
+
+        foreach (var id in new[] { "1301", "1302", "1303", "1304" })
+        {
+            var a = gw.Entrance.GetUser(id)!;
+            var b = gw.Exit.GetUser(id)!;
+            Assert.Equal(a.Name, b.Name);
+            Assert.Equal(a.Authority, b.Authority);
+            Assert.Equal(a.Frozen, b.Frozen);
+        }
+
+        Assert.Equal("ADMIN", gw.Exit.GetUser("1301")!.Authority);
+        Assert.Equal("Ravi Kumar", gw.Exit.GetUser("1304")!.Name);
+        Assert.Equal(PhotoA, gw.Exit.GetFace("1301").Photo);
+        Assert.DoesNotContain(gw.Published, r => r.Payload.GetProperty("isNew").GetBoolean());
+    }
+
+    [Fact]
+    public async Task A_server_change_wins_over_a_copy_made_when_the_gateway_was_added()
+    {
+        var gw = await Gateway.StartAsync(null, (entrance, _) =>
+            entrance.SimulateLocalUserChange("1305", "Old Name", emitEvent: false));
+
+        await gw.Dispatcher.DispatchAsync(Command("UPDATE_USER", "entrance", new
+        {
+            deviceUserId = "1305", name = "Server Name", nameChangedAt = Iso(DateTimeOffset.UtcNow.AddDays(-30))
+        }));
+
+        Assert.Equal("Server Name", gw.Entrance.GetUser("1305")!.Name);
+        Assert.Equal("Server Name", gw.Exit.GetUser("1305")!.Name);
+    }
+
     // --- harness ---------------------------------------------------------------------------------
 
     private static DeviceConnectionConfig Config(string id) => new(id, "127.0.0.1", 37777, "admin", "x");
@@ -217,6 +417,7 @@ public class LocalSyncTests
         public required CommandDispatcher Dispatcher { get; init; }
         public required FakeFaceTransfer Faces { get; init; }
         public required List<Report> Published { get; init; }
+        public required RosterStateStore Roster { get; init; }
 
         public Task<int> Scan(string deviceId) =>
             Watcher.ScanDeviceAsync(deviceId, null, faceSweep: true, CancellationToken.None);
@@ -224,17 +425,24 @@ public class LocalSyncTests
         public static Task<Gateway> StartAsync(params (string Id, string Name)[] existing) =>
             StartAsync(null, existing);
 
-        public static async Task<Gateway> StartAsync(LocalMemberStore? store, params (string Id, string Name)[] existing)
+        public static Task<Gateway> StartAsync(LocalMemberStore? store, params (string Id, string Name)[] existing) =>
+            StartAsync(store, (entrance, exit) =>
+            {
+                foreach (var (id, name) in existing)
+                {
+                    entrance.SimulateLocalUserChange(id, name, emitEvent: false);
+                    exit.SimulateLocalUserChange(id, name, emitEvent: false);
+                }
+            });
+
+        /// <param name="setup">Fills both readers before the gateway records its first baseline.</param>
+        public static async Task<Gateway> StartAsync(LocalMemberStore? store, Action<MockDeviceAdapter, MockDeviceAdapter> setup)
         {
             var entrance = new MockDeviceAdapter();
             var exit = new MockDeviceAdapter();
             entrance.Connect(Config("entrance"));
             exit.Connect(Config("exit"));
-            foreach (var (id, name) in existing)
-            {
-                entrance.SimulateLocalUserChange(id, name, emitEvent: false);
-                exit.SimulateLocalUserChange(id, name, emitEvent: false);
-            }
+            setup(entrance, exit);
 
             var adapters = new Dictionary<string, IDeviceAdapter> { ["entrance"] = entrance, ["exit"] = exit };
             var roster = new RosterStateStore(null);
@@ -253,7 +461,7 @@ public class LocalSyncTests
             var gateway = new Gateway
             {
                 Entrance = entrance, Exit = exit, Watcher = watcher, Dispatcher = dispatcher, Faces = faces,
-                Published = published
+                Published = published, Roster = roster
             };
             await gateway.Scan("entrance"); // baselines
             await gateway.Scan("exit");

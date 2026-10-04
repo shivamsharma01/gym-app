@@ -96,6 +96,8 @@ public class DeviceReconciliationService {
         }
 
         replaceSnapshotCache(device, parsedUsers);
+        // Older gateways do not send the flag; their lists are taken as complete, as before.
+        boolean usersComplete = payload == null || !payload.has("usersComplete") || payload.get("usersComplete").asBoolean();
 
         List<MemberDeviceMapping> mappings = mappingRepository.findByDeviceId(device.getId());
         Set<String> mappedIds = new HashSet<>();
@@ -106,6 +108,9 @@ public class DeviceReconciliationService {
             boolean onDevice = deviceUserIds.contains(mapping.getDeviceUserId());
             Boolean frozen = frozenByUser.get(mapping.getDeviceUserId());
 
+            if (!onDevice && !usersComplete) {
+                continue;
+            }
             if (!onDevice) {
                 openConflict(device, mapping.getDeviceUserId(),
                         ReconciliationConflictType.MISSING_ON_DEVICE,

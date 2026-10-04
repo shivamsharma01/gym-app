@@ -10,6 +10,7 @@ import com.example.gym.device.domain.ReconciliationConflict;
 import com.example.gym.device.domain.ReconciliationConflictStatus;
 import com.example.gym.device.domain.ReconciliationConflictType;
 import com.example.gym.device.domain.SyncCommandType;
+import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.ReconciliationConflictRepository;
@@ -29,6 +30,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +76,7 @@ public class DeviceUserChangeService {
     private final MemberDeviceMappingRepository mappingRepository;
     private final ReconciliationConflictRepository conflictRepository;
     private final DeviceSyncCommandRepository commandRepository;
+    private final DeviceRepository deviceRepository;
     private final MembershipService membershipService;
     private final DeviceAuthorizationService authorizationService;
     private final DeviceMemberImporter importer;
@@ -87,6 +90,7 @@ public class DeviceUserChangeService {
                                    MemberDeviceMappingRepository mappingRepository,
                                    ReconciliationConflictRepository conflictRepository,
                                    DeviceSyncCommandRepository commandRepository,
+                                   DeviceRepository deviceRepository,
                                    MembershipService membershipService,
                                    DeviceAuthorizationService authorizationService,
                                    DeviceMemberImporter importer,
@@ -99,6 +103,7 @@ public class DeviceUserChangeService {
         this.mappingRepository = mappingRepository;
         this.conflictRepository = conflictRepository;
         this.commandRepository = commandRepository;
+        this.deviceRepository = deviceRepository;
         this.membershipService = membershipService;
         this.authorizationService = authorizationService;
         this.importer = importer;
@@ -114,7 +119,7 @@ public class DeviceUserChangeService {
                           boolean frozenChanged, boolean validityChanged, boolean faceChanged,
                           boolean faceRemoved, GatewayFaceUpload upload, Instant faceChangedAt,
                           com.example.gym.member.DeviceAuthority authority, boolean authorityChanged,
-                          boolean initialSample) {
+                          boolean initialSample, List<Device> siblings, Set<Long> heldBy) {
     }
 
     @Transactional
@@ -169,6 +174,7 @@ public class DeviceUserChangeService {
             provisioning.markHeldBySource(member, device, deviceUserId, null);
             closeExtraConflict(device, deviceUserId);
         }
+        markSiblingsHeld(member, r, null);
 
         boolean updated = revived;
         boolean serverKept = false;
@@ -181,7 +187,7 @@ public class DeviceUserChangeService {
                 member.setLastName(parts.lastName());
                 member.setProfileChangedAt(changedAt);
                 memberRepository.save(member);
-                provisioning.pushProfile(member, Set.of(device.getId()));
+                provisioning.pushProfile(member, r.heldBy());
                 updated = true;
             } else {
                 serverKept = true;
@@ -195,7 +201,7 @@ public class DeviceUserChangeService {
                 member.setDeviceAuthority(r.authority());
                 member.setProfileChangedAt(changedAt);
                 memberRepository.save(member);
-                provisioning.pushProfile(member, Set.of(device.getId()));
+                provisioning.pushProfile(member, r.heldBy());
                 if (r.authority() == com.example.gym.member.DeviceAuthority.ADMIN) {
                     importer.ensureUnknownMembership(member, r.validFrom(), r.validTo());
                 }
@@ -237,13 +243,17 @@ public class DeviceUserChangeService {
                 }
             } else if (current.isPresent() && current.get().getSha256().equals(r.upload().getSha256())) {
                 provisioning.markHeldBySource(member, device, deviceUserId, current.get().getFaceVersion());
+                markSiblingsHeld(member, r, current.get().getFaceVersion());
             } else if (isAfter(changedAt, serverFaceAt)) {
                 MemberFace face = faceService.applyFromDevice(member, r.upload(), device.getId(), r.faceChangedAt());
                 provisioning.markHeldBySource(member, device, deviceUserId, face.getFaceVersion());
                 // A first photo read is stored only. A later face edit is copied to the other readers.
                 if (!r.initialSample()) {
+                    if (r.faceChangedAt().equals(changedAt)) {
+                        markSiblingsHeld(member, r, face.getFaceVersion());
+                    }
                     provisioning.pushFace(member, face,
-                            r.faceChangedAt().equals(changedAt) ? Set.of(device.getId()) : Set.of());
+                            r.faceChangedAt().equals(changedAt) ? r.heldBy() : Set.of());
                 }
                 faceApplied = true;
                 updated = true;
@@ -256,7 +266,7 @@ public class DeviceUserChangeService {
         }
 
         if (revived) {
-            provisioning.provisionMember(member, Set.of(device.getId()));
+            provisioning.provisionMember(member, r.heldBy());
         }
         if (serverKept) {
             // Server-side change is newer for at least one field: put the server's view back.
@@ -315,7 +325,8 @@ public class DeviceUserChangeService {
                     .getFaceVersion();
         }
         provisioning.markHeldBySource(member, device, r.deviceUserId(), faceVersion);
-        provisioning.provisionMember(member, Set.of(device.getId()));
+        markSiblingsHeld(member, r, faceVersion);
+        provisioning.provisionMember(member, r.heldBy());
         closeExtraConflict(device, r.deviceUserId());
         finish(device, member, r.deviceUserId(), "CREATED", faceVersion != null, List.of(), List.of());
     }
@@ -461,7 +472,7 @@ public class DeviceUserChangeService {
         if (r.frozenChanged() && !r.frozen() && member.getStatus() != MemberStatus.ACTIVE) {
             member.setStatus(MemberStatus.ACTIVE);
             memberRepository.save(member);
-            provisioning.provisionMember(member, Set.of(device.getId()));
+            provisioning.provisionMember(member, r.heldBy());
             changed = true;
         }
         if (r.frozenChanged() && !r.frozen()) {
@@ -562,6 +573,10 @@ public class DeviceUserChangeService {
         String authorityText = text(payload, "authority");
         com.example.gym.member.DeviceAuthority auth = com.example.gym.member.DeviceAuthority.fromString(authorityText);
         boolean authorityChanged = payload.has("authorityChanged") ? bool(payload, "authorityChanged") : profileChanged;
+        List<Device> siblings = updatedSiblings(device, payload);
+        Set<Long> heldBy = new HashSet<>();
+        heldBy.add(device.getId());
+        siblings.forEach(s -> heldBy.add(s.getId()));
         return new Report(
                 deviceUserId,
                 changedAt,
@@ -579,7 +594,43 @@ public class DeviceUserChangeService {
                 faceChangedAt,
                 auth,
                 authorityChanged,
-                bool(payload, "initialSample"));
+                bool(payload, "initialSample"),
+                siblings,
+                Set.copyOf(heldBy));
+    }
+
+    /**
+     * Readers on the reporting gateway that it says it has already given this change (siblingsUpdated),
+     * so the server does not send it to them again. Older gateways do not send the flag.
+     */
+    private List<Device> updatedSiblings(Device device, JsonNode payload) {
+        if (!bool(payload, "siblingsUpdated") || device.getGatewayId() == null) {
+            return List.of();
+        }
+        Set<String> listed = new HashSet<>();
+        JsonNode ids = payload.get("siblingDeviceIds");
+        if (ids != null && ids.isArray()) {
+            ids.forEach(id -> listed.add(id.asString()));
+        }
+        return deviceRepository.findByGatewayId(device.getGatewayId()).stream()
+                .filter(d -> !d.getId().equals(device.getId()))
+                .filter(d -> d.getTenantId().equals(device.getTenantId()))
+                .filter(d -> listed.isEmpty() || listed.contains(d.getPublicId()))
+                .toList();
+    }
+
+    /** Records that the reporting gateway's other readers already hold the member (and face version). */
+    private void markSiblingsHeld(Member member, Report r, Integer faceVersion) {
+        for (Device sibling : r.siblings()) {
+            Optional<MemberDeviceMapping> taken = mappingRepository.findByDeviceIdAndDeviceUserId(
+                    sibling.getId(), r.deviceUserId());
+            if (taken.isPresent() && !taken.get().getMemberId().equals(member.getId())) {
+                log.warn("Device {} maps user id {} to another member; not marking member {} as held there",
+                        sibling.getPublicId(), r.deviceUserId(), member.getPublicId());
+                continue;
+            }
+            provisioning.markHeldBySource(member, sibling, r.deviceUserId(), faceVersion);
+        }
     }
 
     /** Deleted on a device: inactive and on no device (an admin deactivation keeps the mappings). */

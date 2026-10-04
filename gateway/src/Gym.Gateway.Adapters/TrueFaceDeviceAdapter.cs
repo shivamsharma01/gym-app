@@ -19,6 +19,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     private const int ListWaitMs = 10000;
     private const int PageAttempts = 3;
     private const int MaxFacePhotoBytes = 120 * 1024;
+    private const int ShortNameMax = 31;
+    private const int NameMax = 127;
     private static readonly object SdkGate = new();
     private static bool s_sdkInitialized;
     private static fDisConnectCallBack? s_disconnect;
@@ -137,7 +139,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     public DeviceHealth GetHealth() =>
         new(_loginId == IntPtr.Zero ? "OFFLINE" : "ONLINE", _lastSeen, _listening ? "listening" : "not-listening");
 
-    public DeviceCommandResult CreateUser(DeviceUserMutation mutation) => UpsertUser(mutation);
+    public DeviceCommandResult CreateUser(DeviceUserMutation mutation) => UpsertUser(mutation, createIntended: true);
 
     public DeviceCommandResult UpdateUser(DeviceUserMutation mutation) => UpsertUser(mutation);
 
@@ -155,7 +157,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
 
         var ok = NETClient.RemoveOperateAccessUserService(_loginId, [deviceUserId], out var fail, WaitMs);
-        if (!ok && GetUser(deviceUserId) != null)
+        if (!ok && LookUpUser(deviceUserId, out _) != UserLookup.Missing)
         {
             return DeviceCommandResult.Fail(FailCodes("RemoveOperateAccessUserService", fail));
         }
@@ -176,15 +178,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return QueryUsers();
     }
 
-    public DeviceUserSnapshot? GetUser(string deviceUserId)
-    {
-        if (!TryGetExistingUser(deviceUserId, out var user))
-        {
-            return null;
-        }
-
-        return ToSnapshot(user);
-    }
+    public DeviceUserSnapshot? GetUser(string deviceUserId) =>
+        LookUpUser(deviceUserId, out var user) == UserLookup.Found ? ToSnapshot(user) : null;
 
     public DeviceCommandResult UpsertFace(string deviceUserId, byte[] jpegBytes)
     {
@@ -302,7 +297,14 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                     return DeviceFaceRead.None("failCode=" + fail);
                 }
 
-                return DeviceFaceRead.Fail(SdkError("Face GET failed") + " failCode=" + fail);
+                var error = SdkError("Face GET failed") + " failCode=" + fail;
+                if (ReaderAnswered() && HasFace(deviceUserId) == false)
+                {
+                    Touch();
+                    return DeviceFaceRead.None("photo index lists no photo; " + error);
+                }
+
+                return DeviceFaceRead.Fail(error);
             }
 
             Touch();
@@ -367,7 +369,11 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             var fail = Marshal.PtrToStructure<NET_EM_FAILCODE>(failPtr).emCode;
             if (!ok && fail != EM_FAILCODE.NO_RECORD)
             {
-                return DeviceCommandResult.Fail(SdkError("Face REMOVE failed") + " failCode=" + fail);
+                var error = SdkError("Face REMOVE failed") + " failCode=" + fail;
+                if (!ReaderAnswered() || HasFace(deviceUserId) != false)
+                {
+                    return DeviceCommandResult.Fail(error);
+                }
             }
 
             Touch();
@@ -382,6 +388,48 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             FreeAll(inPtr, outPtr, failPtr);
         }
     }
+
+    /// <summary>
+    /// Asks the reader's photo index whether the user has a photo. Readers answer a photo read or delete for
+    /// a user without one with a generic error (0x800004B5) instead of NO_RECORD. Null when the index could
+    /// not be asked, which callers must treat as unknown.
+    /// </summary>
+    private bool? HasFace(string deviceUserId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceUserId))
+        {
+            return null;
+        }
+
+        var startIn = new NET_IN_FACEINFO_START_FIND
+        {
+            dwSize = (uint)Marshal.SizeOf<NET_IN_FACEINFO_START_FIND>(),
+            szUserID = deviceUserId
+        };
+        var startOut = new NET_OUT_FACEINFO_START_FIND
+        {
+            dwSize = (uint)Marshal.SizeOf<NET_OUT_FACEINFO_START_FIND>()
+        };
+        var find = NETClient.StartFindFaceInfo(_loginId, startIn, ref startOut, WaitMs);
+        if (find == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            return startOut.nTotalCount > 0;
+        }
+        finally
+        {
+            NETClient.StopFindFaceInfo(find);
+        }
+    }
+
+    /// <summary>False when the last SDK call failed in transport (timeout, lost login): the reader gave no answer.</summary>
+    private static bool ReaderAnswered() =>
+        unchecked((EM_ErrorCode)(uint)NETClient.GetLastErrorCode())
+            is not (EM_ErrorCode.NET_NETWORK_ERROR or EM_ErrorCode.NET_INVALID_HANDLE or EM_ErrorCode.NET_SYSTEM_ERROR);
 
     /// <summary>INSERT or UPDATE one face photo (same struct layout for both operations).</summary>
     private (bool Ok, string? Error) WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE op, string deviceUserId, byte[] jpegBytes)
@@ -810,35 +858,47 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     /// Creates the user or changes only the fields the mutation carries (name, enabled, validity),
     /// keeping everything else as stored on the device. Unchanged users are not rewritten, so a
     /// server push never shows up as a device-side edit.
+    /// A write replaces the whole stored record, so a user is only built from scratch when the reader
+    /// confirmed it does not hold one; a failed read fails the write instead (it is retried later).
     /// </summary>
-    private DeviceCommandResult UpsertUser(DeviceUserMutation mutation)
+    private DeviceCommandResult UpsertUser(DeviceUserMutation mutation, bool createIntended = false)
     {
         if (!EnsureLogin(out var err))
         {
             return DeviceCommandResult.Fail(err);
         }
 
-        NET_ACCESS_USER_INFO user;
-        if (TryGetExistingUser(mutation.DeviceUserId, out var existing))
+        var lookup = LookUpUser(mutation.DeviceUserId, out var existing);
+        if (lookup == UserLookup.Unknown)
         {
-            if (UserMatchesDesired(existing, mutation))
-            {
-                Touch();
-                return DeviceCommandResult.Success();
-            }
-
-            user = ApplyMutation(existing, mutation);
+            lookup = createIntended ? ConfirmAbsentByList(mutation.DeviceUserId) : UserLookup.Unreadable;
         }
-        else
+
+        NET_ACCESS_USER_INFO user;
+        switch (lookup)
         {
-            user = BuildUser(mutation, freeze: mutation.Enabled == false);
+            case UserLookup.Found:
+                if (UserMatchesDesired(existing, mutation))
+                {
+                    Touch();
+                    return DeviceCommandResult.Success();
+                }
+
+                user = ApplyMutation(existing, mutation);
+                break;
+            case UserLookup.Missing:
+                user = BuildUser(mutation, freeze: mutation.Enabled == false);
+                break;
+            default:
+                return DeviceCommandResult.Fail(
+                    $"could not read user {mutation.DeviceUserId} before writing; will retry ({SdkError("user GET failed")})");
         }
 
         var ok = NETClient.InsertOperateAccessUserService(_loginId, [user], out var fail, WaitMs);
         if (!ok)
         {
             // INSERT may fail when the user already exists — re-GET and treat match as success.
-            if (TryGetExistingUser(mutation.DeviceUserId, out var afterFail)
+            if (LookUpUser(mutation.DeviceUserId, out var afterFail) == UserLookup.Found
                 && UserMatchesDesired(afterFail, mutation))
             {
                 Touch();
@@ -852,25 +912,81 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return DeviceCommandResult.Success();
     }
 
-    private bool TryGetExistingUser(string deviceUserId, out NET_ACCESS_USER_INFO user)
+    internal enum UserLookup
+    {
+        Found,
+        Missing,
+        Unreadable,
+        /// <summary>The reader answered with an error that does not say whether the user exists.</summary>
+        Unknown
+    }
+
+    private UserLookup LookUpUser(string deviceUserId, out NET_ACCESS_USER_INFO user)
     {
         user = default;
         if (string.IsNullOrWhiteSpace(deviceUserId) || _loginId == IntPtr.Zero)
         {
-            return false;
+            return UserLookup.Unreadable;
         }
 
-        var ok = NETClient.GetOperateAccessUserService(_loginId, [deviceUserId], out var users, out _, WaitMs);
-        if (!ok || users == null || users.Length == 0 || string.IsNullOrWhiteSpace(users[0].szUserID))
+        var ok = NETClient.GetOperateAccessUserService(_loginId, [deviceUserId], out var users, out var fails, WaitMs);
+        var fail = fails is { Length: > 0 } ? fails[0].emCode : EM_FAILCODE.NOERROR;
+        var lookup = ClassifyUserRead(ok, users, fail, ok || ReaderAnswered());
+        if (lookup == UserLookup.Found)
         {
-            return false;
+            user = users[0];
         }
 
-        user = users[0];
-        return true;
+        return lookup;
     }
 
-    private static bool UserMatchesDesired(NET_ACCESS_USER_INFO existing, DeviceUserMutation mutation)
+    internal static UserLookup ClassifyUserRead(bool ok, NET_ACCESS_USER_INFO[]? users, EM_FAILCODE fail, bool readerAnswered)
+    {
+        if (ok)
+        {
+            return users is { Length: > 0 } && !string.IsNullOrWhiteSpace(users[0].szUserID)
+                ? UserLookup.Found
+                : UserLookup.Missing;
+        }
+
+        if (fail is EM_FAILCODE.NO_RECORD or EM_FAILCODE.INVALID_USER)
+        {
+            return UserLookup.Missing;
+        }
+
+        return readerAnswered ? UserLookup.Unknown : UserLookup.Unreadable;
+    }
+
+    /// <summary>
+    /// Only for creates: a full user list that does not contain the user counts as absent. An empty or
+    /// failed list (a reader busy importing returns one) does not.
+    /// </summary>
+    private UserLookup ConfirmAbsentByList(string deviceUserId)
+    {
+        try
+        {
+            var users = QueryUsers();
+            return ConfirmAbsent(users, deviceUserId);
+        }
+        catch (DeviceReadException)
+        {
+            return UserLookup.Unreadable;
+        }
+    }
+
+    internal static UserLookup ConfirmAbsent(IReadOnlyList<DeviceUserSnapshot> users, string deviceUserId)
+    {
+        if (users.Count == 0)
+        {
+            return UserLookup.Unreadable;
+        }
+
+        return users.Any(u => string.Equals(u.DeviceUserId, deviceUserId.Trim(), StringComparison.Ordinal))
+            ? UserLookup.Unreadable
+            : UserLookup.Missing;
+    }
+
+    internal static bool UserMatchesDesired(NET_ACCESS_USER_INFO existing, DeviceUserMutation mutation)
     {
         if (!string.IsNullOrWhiteSpace(mutation.Authority))
         {
@@ -891,7 +1007,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
 
         if (!string.IsNullOrWhiteSpace(mutation.Name)
-            && !string.Equals(NullIfEmpty(existing.szName), Truncate(mutation.Name.Trim(), 31), StringComparison.Ordinal))
+            && !string.Equals(DeviceName(existing), Fit(mutation.Name, NameMax), StringComparison.Ordinal))
         {
             return false;
         }
@@ -909,11 +1025,11 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return true;
     }
 
-    private static NET_ACCESS_USER_INFO ApplyMutation(NET_ACCESS_USER_INFO user, DeviceUserMutation mutation)
+    internal static NET_ACCESS_USER_INFO ApplyMutation(NET_ACCESS_USER_INFO user, DeviceUserMutation mutation)
     {
         if (!string.IsNullOrWhiteSpace(mutation.Name))
         {
-            user.szName = Truncate(mutation.Name.Trim(), 31);
+            user = WithName(user, mutation.Name);
         }
 
         if (mutation.Enabled.HasValue)
@@ -941,6 +1057,9 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return user;
     }
 
+    /// <summary>The earliest date these readers use; a validity on this day only grants no entry today.</summary>
+    internal static readonly DateTime NoAccessDay = new(2018, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
     /// <summary>The device compares against a time of day: the end date must stay valid until 23:59:59.</summary>
     private static DateTime EndOfDay(DateTimeOffset date) => date.UtcDateTime.Date.AddDays(1).AddSeconds(-1);
 
@@ -952,21 +1071,37 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         };
 
 
-    private static DeviceUserSnapshot ToSnapshot(NET_ACCESS_USER_INFO user) =>
+    /// <summary>
+    /// The name the reader shows. Readers keep it in szNameEx when bUseNameEx is set (they set it on every
+    /// user they store) and ignore writes to szName alone; szName is only a 31-character copy.
+    /// </summary>
+    internal static string? DeviceName(NET_ACCESS_USER_INFO user) =>
+        user.bUseNameEx && !string.IsNullOrWhiteSpace(user.szNameEx) ? NullIfEmpty(user.szNameEx) : NullIfEmpty(user.szName);
+
+    internal static NET_ACCESS_USER_INFO WithName(NET_ACCESS_USER_INFO user, string name)
+    {
+        user.szName = Fit(name, ShortNameMax);
+        user.szNameEx = Fit(name, NameMax);
+        user.bUseNameEx = true;
+        return user;
+    }
+
+    private static string Fit(string name, int max) => Truncate(name.Trim(), max).TrimEnd();
+
+    internal static DeviceUserSnapshot ToSnapshot(NET_ACCESS_USER_INFO user) =>
         new(
             user.szUserID.Trim(),
-            NullIfEmpty(user.szName),
+            DeviceName(user),
             Frozen: user.nUserStatus != 0,
             ValidFrom: NetTimeOrNull(user.stuValidBeginTime),
             ValidTo: NetTimeOrNull(user.stuValidEndTime),
             Authority: MapAuthority(user.emAuthority));
 
-    private static NET_ACCESS_USER_INFO BuildUser(DeviceUserMutation mutation, bool freeze)
+    internal static NET_ACCESS_USER_INFO BuildUser(DeviceUserMutation mutation, bool freeze)
     {
         var user = new NET_ACCESS_USER_INFO
         {
             szUserID = mutation.DeviceUserId,
-            szName = Truncate(mutation.Name ?? mutation.DeviceUserId, 31),
             emUserType = EM_USER_TYPE.NORMAL,
             emAuthority = string.Equals(mutation.Authority, AdminLevel, StringComparison.OrdinalIgnoreCase)
                 ? EM_ATTENDANCE_AUTHORITY.Administrators
@@ -979,18 +1114,14 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             nSpecialDaysSchedule = new int[128],
             nFirstEnterDoors = new int[32]
         };
+        user = WithName(user, string.IsNullOrWhiteSpace(mutation.Name) ? mutation.DeviceUserId : mutation.Name);
         user.nDoors[0] = 0;
         user.nTimeSectionNo[0] = 0;
-        if (mutation.ValidFrom.HasValue)
-        {
-            user.stuValidBeginTime = NET_TIME.FromDateTime(mutation.ValidFrom.Value.UtcDateTime);
-        }
-
-        if (mutation.ValidTo.HasValue)
-        {
-            user.stuValidEndTime = NET_TIME.FromDateTime(EndOfDay(mutation.ValidTo.Value));
-        }
-
+        // A zeroed validity shows as 0000-00-00 or NaN on the reader. Without dates the user gets a window that
+        // ended long ago: no entry until a membership sends real dates.
+        var from = mutation.ValidFrom ?? new DateTimeOffset(NoAccessDay);
+        user.stuValidBeginTime = NET_TIME.FromDateTime(from.UtcDateTime);
+        user.stuValidEndTime = NET_TIME.FromDateTime(EndOfDay(mutation.ValidTo ?? from));
         return user;
     }
 

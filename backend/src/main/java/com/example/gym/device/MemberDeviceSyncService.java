@@ -1,6 +1,7 @@
 package com.example.gym.device;
 
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
@@ -98,11 +99,16 @@ public class MemberDeviceSyncService {
                 .orElseThrow(() -> CommonExceptions.notFound("Device"));
         TenantGuard.check(device.getTenantId(), tenantId, "Device");
         if (mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId()).isEmpty()) {
+            FlowLog.info("device", "send again member={} device={}: not mapped yet, provisioning onto all devices",
+                    member.getPublicId(), device.getPublicId());
             provisioning.provisionMember(member, Set.of());
             return;
         }
+        boolean face = faceRepository.findByMemberId(member.getId()).isPresent();
+        FlowLog.info("device", "send again member={} device={}: queueing name and access{}",
+                member.getPublicId(), device.getPublicId(), face ? " and photo" : " (no photo on file)");
         provisioning.repushUser(member, device.getId());
-        if (faceRepository.findByMemberId(member.getId()).isPresent()) {
+        if (face) {
             provisioning.repushFace(member, device.getId());
         }
     }

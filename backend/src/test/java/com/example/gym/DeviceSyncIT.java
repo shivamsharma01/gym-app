@@ -127,7 +127,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
         int dispatched = deviceSyncService.dispatchDue();
         assertThat(dispatched).isZero(); // no WSS session — we do not pretend the device was updated
         assertThat(deviceSyncCommandRepository.findById(create.getId()).orElseThrow().getState())
-                .isEqualTo(SyncCommandState.RETRYING);
+                .isEqualTo(SyncCommandState.PENDING);
 
         gatewayMessageService.process(envelope("SYNC_RESULT", create.getCorrelationId(),
                 "{\"ok\":true}"));

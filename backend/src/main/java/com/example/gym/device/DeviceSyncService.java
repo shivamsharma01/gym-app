@@ -23,6 +23,7 @@ import com.example.gym.membership.MembershipRepository;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,6 +61,8 @@ public class DeviceSyncService {
     private final JsonMapper jsonMapper;
     private final MemberRepository memberRepository;
     private final ApplicationEventPublisher events;
+    private final LogThrottle unansweredWarnings = new LogThrottle(Duration.ofMinutes(5));
+    private final LogThrottle noGatewayWarnings = new LogThrottle(Duration.ofMinutes(10));
 
     public DeviceSyncService(DeviceSyncCommandRepository commandRepository,
                              DeviceRepository deviceRepository,
@@ -128,6 +131,7 @@ public class DeviceSyncService {
         markState(saved, DeviceSyncState.PENDING);
         FlowLog.debug("sync", "enqueued {} corr={} device={} member={} user={}",
                 type, correlationId, deviceId, memberId, payload == null ? null : payload.get("deviceUserId"));
+        warnIfNoGateway(deviceId);
         auditService.record(AuditActions.DEVICE_SYNC_ENQUEUED, AuditActions.RESULT_SUCCESS,
                 "DeviceSyncCommand", saved.getPublicId(), Map.of("type", type.name()));
         return saved;
@@ -148,8 +152,10 @@ public class DeviceSyncService {
                 cutoff,
                 PageRequest.of(0, properties.getOutbox().getBatchSize()));
         int reclaimed = 0;
+        int unanswered = 0;
         for (DeviceSyncCommand command : stale) {
             if (gatewayConnected(command)) {
+                unanswered++;
                 continue;
             }
             command.setState(SyncCommandState.RETRYING);
@@ -159,6 +165,13 @@ public class DeviceSyncService {
             log.info("Reclaimed stale command {} (was {})", command.getCorrelationId(),
                     command.getDispatchedAt());
             reclaimed++;
+        }
+        if (unanswered > 0 && unansweredWarnings.allow("unanswered")) {
+            DeviceSyncCommand oldest = stale.stream().filter(this::gatewayConnected).findFirst().orElse(stale.get(0));
+            FlowLog.warn("sync", "{} command(s) were sent more than {} ago to a connected gateway and have no result yet "
+                            + "(for example {} corr={} device={} sent at {}). Check the gateway log for that correlation id.",
+                    unanswered, timeout, oldest.getType(), oldest.getCorrelationId(), oldest.getDeviceId(),
+                    oldest.getDispatchedAt());
         }
         return reclaimed;
     }
@@ -196,11 +209,42 @@ public class DeviceSyncService {
     @Transactional
     public int dispatchDue() {
         reclaimStaleDispatched();
+        // Only devices behind a connected gateway. Commands for an offline gateway wait untouched: they are made due
+        // when it connects (wakeGateway), and a gateway on the REST fallback claims its own.
+        List<Long> liveDevices = connectedDeviceIds();
+        if (liveDevices.isEmpty()) {
+            return 0;
+        }
         List<DeviceSyncCommand> due = commandRepository
-                .findByStateInAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
+                .findByDeviceIdInAndStateInAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
+                        liveDevices,
                         List.of(SyncCommandState.PENDING, SyncCommandState.RETRYING),
                         Instant.now(),
                         PageRequest.of(0, properties.getOutbox().getBatchSize()));
+        return deliver(due);
+    }
+
+    /** Commands for a device without a gateway are never dispatched; they wait until one is assigned. */
+    private void warnIfNoGateway(Long deviceId) {
+        if (deviceId == null || !noGatewayWarnings.allow(deviceId.toString())) {
+            return;
+        }
+        deviceRepository.findById(deviceId)
+                .filter(d -> d.getGatewayId() == null)
+                .ifPresent(d -> FlowLog.warn("sync", "device {} has no gateway assigned: its commands wait until one is assigned",
+                        d.getPublicId()));
+    }
+
+    private List<Long> connectedDeviceIds() {
+        List<Long> ids = new ArrayList<>();
+        for (String publicId : sessionRegistry.connectedGateways()) {
+            gatewayRepository.findByPublicId(publicId).ifPresent(gateway ->
+                    deviceRepository.findByGatewayId(gateway.getId()).forEach(d -> ids.add(d.getId())));
+        }
+        return ids;
+    }
+
+    private int deliver(List<DeviceSyncCommand> due) {
         int dispatched = 0;
         int waiting = 0;
         int failed = 0;

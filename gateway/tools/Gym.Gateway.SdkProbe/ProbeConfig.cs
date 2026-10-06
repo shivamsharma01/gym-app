@@ -28,8 +28,13 @@ internal sealed class ProbeOptions
     public bool AllowGatewayRunning { get; set; }
     public bool PauseAtEnd { get; set; }
     public bool Help { get; set; }
+    public bool Gates { get; set; }
+    public string? Photo2Path { get; set; }
+    public bool NoWalks { get; set; }
+    public bool SpareReader { get; set; }
+    public int LogCap { get; set; } = 50000;
 
-    public bool WritesToReader => Write || Fields;
+    public bool WritesToReader => Write || Fields || Gates;
 
     public const string Usage = """
         Gym.Gateway.SdkProbe: measures what the TrueFace readers can tell us cheaply.
@@ -55,6 +60,18 @@ internal sealed class ProbeOptions
           --test-user <id>                  test user ID (default 990001; must be unused)
           --photo <file.jpg>                photo for the test user (max 120 KB)
           --skip-read                       skip the read-only part
+
+        Sync gates (third POC: checks P1-P12 of the sync architecture; read GATES.md first):
+          --gates          run every gate check on one reader with throwaway SYNCPOC users,
+                           ask for door walks and screen edits, and give each check
+                           OBSERVED / NOT OBSERVED / UNKNOWN (output in .\sync-gates-<time>)
+          --photo <file>   face of the person doing the door walks (max 120 KB); without it
+                           the probe asks you to enrol your face on the reader screen
+          --photo2 <file>  a second, different photo for the face-replace step
+          --no-walks       no door walks; every check that needs one stays UNKNOWN
+          --spare-reader   ONLY on a spare reader: also ask for a factory reset (P12) and use a
+                           full attendance log (P6). Never on a gym reader.
+          --log-cap <n>    most attendance records read for P8 (default 50000)
 
         Other options:
           --device <deviceId>      only this reader from the gateway config
@@ -99,6 +116,11 @@ internal sealed class ProbeOptions
                 case "--step-delay": o.StepDelaySeconds = Math.Clamp(int.Parse(Next()), 1, 60); break;
                 case "--allow-gateway-running": o.AllowGatewayRunning = true; break;
                 case "--pause": o.PauseAtEnd = true; break;
+                case "--gates": o.Gates = true; break;
+                case "--photo2": o.Photo2Path = Next(); break;
+                case "--no-walks": o.NoWalks = true; break;
+                case "--spare-reader": o.SpareReader = true; break;
+                case "--log-cap": o.LogCap = Math.Clamp(int.Parse(Next()), 100, 1_000_000); break;
                 case "--self-test": break;
                 case "-h" or "--help" or "/?": o.Help = true; break;
                 default: throw new ArgumentException("Unknown option " + a);

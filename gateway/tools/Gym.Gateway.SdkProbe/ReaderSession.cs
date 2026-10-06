@@ -655,7 +655,8 @@ internal sealed class ReaderSession : IDisposable
         {
             case EM_ALARM_TYPE.ALARM_ACCESS_CTL_EVENT when len >= Marshal.SizeOf<NET_ALARM_ACCESS_CTL_EVENT_INFO>():
                 var access = Marshal.PtrToStructure<NET_ALARM_ACCESS_CTL_EVENT_INFO>(buf);
-                return $", user={access.szUserID} ok={access.bStatus} method={access.emOpenMethod}";
+                return $", user={access.szUserID} ok={access.bStatus} method={access.emOpenMethod} rec={access.nPunchingRecNo} "
+                       + $"err=0x{access.nErrorCode:X} time={Raw(access.stuTime)}";
             case EM_ALARM_TYPE.FACEINFO_COLLECT when len >= Marshal.SizeOf<NET_ALARM_FACEINFO_COLLECT_INFO>():
                 var collect = Marshal.PtrToStructure<NET_ALARM_FACEINFO_COLLECT_INFO>(buf);
                 return $", user={collect.szUserID}";

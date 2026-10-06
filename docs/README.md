@@ -7,7 +7,7 @@
 | [product.md](product.md) | How membership, devices, and import behave |
 | [device-sdk.md](device-sdk.md) | TrueFace / Dahua calls that are verified |
 | [notifications.md](notifications.md) | SMS events still waiting on the gym owner |
-| [architecture/0001-architecture-technology-decisions.md](architecture/0001-architecture-technology-decisions.md) | Why the stack is shaped this way |
+| [architecture/gym-device-sync-before-poc-architecture.md](architecture/gym-device-sync-before-poc-architecture.md) | Device sync architecture, and the stack choices that still hold |
 
 Component steps: [frontend](../frontend/README.md), [gateway](../gateway/README.md).
 

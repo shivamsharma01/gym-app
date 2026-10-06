@@ -67,7 +67,23 @@ internal sealed class GateSuite
         Add("P10", "What are safe roster sizes and concurrent SDK-operation limits?");
         Add("P11", "Exact validity boundary behavior and timezone handling on device.");
         Add("P12", "Reader replacement/factory reset signals or reliable empty-state detection.");
+        Add("P13", "Does a live door event (ALARM_ACCESS_CTL_EVENT) arrive for each walk, carrying the stored record number?");
+        Add("P14", "Does a photo read back exactly as written, and what do face INSERT over a photo and UPDATE without one return?");
+        Add("P15", "What does the reader answer for a missing user or photo (GET, REMOVE), and is the answer consistent?");
+        Add("P16", "Does a full user list return exactly the announced total, the same set on two reads?");
+        Add("P17", "How are szName (31 chars) and szNameEx (127 chars) stored and read back?");
+        Add("P18", "Are stored punch times in the reader's own clock?");
+        Add("P19", "Does emAuthority=Administrators (and only that) open the reader's admin menu?");
+        Add("P20", "After a reader power cycle, does the SDK reconnect the same login by itself and keep delivering door events?");
+        Add("P21", "What photo sizes does the reader accept, and what does it answer above its limit?");
     }
+
+    private readonly List<(bool? Back, bool? Events)> _p20 = [];
+
+    private sealed record WalkRecord(string Label, string UserId, DateTime Before, DateTime After, List<Punch> Mine, List<AlarmSeen> Alarms);
+
+    private readonly List<WalkRecord> _walks = [];
+    private readonly HashSet<int> _attributed = [];
 
     public void Run()
     {
@@ -100,12 +116,20 @@ internal sealed class GateSuite
                 Step("P11", P11);
                 Step("P3", P3);
                 Step("P4/P5", Mutations);
+                Step("P14", P14);
+                Step("P21", P21);
+                Step("P15", P15);
+                Step("P17", P17);
+                Step("P19", P19);
                 Step("P2", P2);
                 Step("P9", P9);
                 Step("P10", P10);
+                Step("P16", P16);
                 Step("P7", P7);
                 Step("P8", P8);
                 Step("P6", P6);
+                Step("P13/P18", DoorEvidence);
+                Step("P20", P20);
             }
         }
         finally
@@ -621,10 +645,486 @@ internal sealed class GateSuite
             edits.Add(nameBefore != nameAfter ? Codes(alarms) : null);
         }
 
+        var faces = new List<string?>();
+        for (var t = 1; t <= Trials; t++)
+        {
+            var faceBefore = _s.GetFace(_a).Photo is { } b ? Probe.Md5(b) : "(none)";
+            _s.DrainAlarms();
+            var done = Ask($"  [P5 screen face {t}] On the reader screen open user {_a} and enrol the face again (same person). d = done, k = skip: ", "dk");
+            if (done != 'd')
+            {
+                Note("P5", $"screen face {t}: skipped");
+                faces.Add(null);
+                continue;
+            }
+
+            Thread.Sleep(_o.StepDelaySeconds * 1000);
+            var alarms = _s.DrainAlarms();
+            var faceAfter = _s.GetFace(_a).Photo is { } a ? Probe.Md5(a) : "(none)";
+            LogAlarms("P5", $"screen face {t}", alarms);
+            Note("P5", $"screen face {t}: photo MD5 {faceBefore} -> {faceAfter}{(faceBefore == faceAfter ? " (no change seen, trial not counted)" : "")}");
+            faces.Add(faceBefore != faceAfter ? Codes(alarms) : null);
+        }
+
+        if (_s.GetFace(_a).Photo is { } enrolled)
+        {
+            _faceOnA = true;
+            _photo ??= enrolled;
+        }
+
         RestoreA();
         _p5.Add(("screen create", AlarmVerdict("screen create", GateVerdicts.Repeated(screenCreate))));
         _p5.Add(("screen edit", AlarmVerdict("screen edit", GateVerdicts.Repeated(edits))));
+        _p5.Add(("screen face", AlarmVerdict("screen face", GateVerdicts.Repeated(faces))));
         SetP5();
+    }
+
+    private void P14()
+    {
+        var g = _gates["P14"];
+        _r.Sub("P14 photo read-back, and face INSERT / UPDATE answers");
+        if (_photo == null)
+        {
+            g.Set(Verdict.Unknown, "no photo available (no --photo and no face enrolled on A)");
+            return;
+        }
+
+        var sent = Probe.Md5(_photo);
+        var fidelity = new List<string?>();
+        var insertOver = new List<string?>();
+        var updateEmpty = new List<string?>();
+        for (var t = 1; t <= Trials; t++)
+        {
+            _s.RemoveFace(_a);
+            var write = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, _a, _photo);
+            var first = _s.GetFace(_a);
+            var second = _s.GetFace(_a);
+            string? read = null;
+            if (write == "ok" && first.Photo != null && second.Photo != null)
+            {
+                var a = Probe.Md5(first.Photo);
+                read = a != Probe.Md5(second.Photo) ? "different between two reads"
+                    : a == sent ? "identical to what was sent"
+                    : "changed by the reader, the same on both reads";
+            }
+
+            Note("P14", $"trial {t}: INSERT {write}; sent MD5 {sent}; read 1 {Describe(first)}; read 2 {Describe(second)} -> {read ?? "no result"}");
+            fidelity.Add(read);
+
+            var over = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, _a, _photo);
+            Note("P14", $"trial {t}: INSERT while a photo exists: {over}");
+            insertOver.Add(Answer(over));
+
+            _s.RemoveFace(_a);
+            var update = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.UPDATE, _a, _photo);
+            var after = _s.GetFace(_a);
+            Note("P14", $"trial {t}: UPDATE without a photo: {update}; photo afterwards {Describe(after)}");
+            updateEmpty.Add(after.Ok && Answer(update) is { } u ? $"{u}, photo afterwards: {(after.Photo != null ? "yes" : "no")}" : null);
+        }
+
+        _r.Line($"  face put back on A: {PutFace(_a, _photo)}");
+        Outcomes(g, [
+            ("read-back", GateVerdicts.Repeated(fidelity)),
+            ("INSERT over a photo", GateVerdicts.Repeated(insertOver)),
+            ("UPDATE without a photo", GateVerdicts.Repeated(updateEmpty))
+        ]);
+    }
+
+    private void P15()
+    {
+        var g = _gates["P15"];
+        _r.Sub("P15 answers for a missing user or photo");
+        if (!_cleanup.Contains(_c))
+        {
+            _cleanup.Add(_c);
+        }
+
+        var getFace = new List<string?>();
+        var removeFace = new List<string?>();
+        var removeAgain = new List<string?>();
+        var getMissing = new List<string?>();
+        for (var t = 1; t <= Trials; t++)
+        {
+            var created = _s.InsertUser(Baseline(_c, "C"));
+            if (created != "ok" || _s.GetUser(_c) == null)
+            {
+                Note("P15", $"trial {t}: test user C could not be created ({created}) -> no result");
+                getFace.Add(null);
+                removeFace.Add(null);
+                removeAgain.Add(null);
+                getMissing.Add(null);
+                continue;
+            }
+
+            var face = _s.GetFace(_c);
+            var faceAnswer = face.Error?.Contains(':') == true && face.FailCode == null ? null
+                : $"ok={face.Ok} failCode={face.FailCode ?? "(none)"} photo={(face.Photo != null ? "yes" : "no")} error={face.Error ?? "(none)"}";
+            var noFace = _s.RemoveFace(_c);
+            var removed = _s.RemoveUser(_c);
+            var again = removed == "ok" ? _s.RemoveUser(_c) : null;
+            var missing = _s.GetUser(_c) == null ? WithoutTiming(_s.DescribeGet(_c)) : null;
+            Note("P15", $"trial {t}: GET photo of a user without one: {faceAnswer ?? "(read threw)"}");
+            Note("P15", $"trial {t}: REMOVE photo that does not exist: {noFace}");
+            Note("P15", $"trial {t}: REMOVE user: {removed}; REMOVE the same user again: {again ?? "(not tried)"}");
+            Note("P15", $"trial {t}: GET the removed user: {missing ?? "(still returned)"}");
+            getFace.Add(faceAnswer);
+            removeFace.Add(Answer(noFace));
+            removeAgain.Add(again == null ? null : Answer(again));
+            getMissing.Add(missing);
+        }
+
+        Outcomes(g, [
+            ("GET photo of a user without one", GateVerdicts.Repeated(getFace)),
+            ("REMOVE missing photo", GateVerdicts.Repeated(removeFace)),
+            ("REMOVE missing user", GateVerdicts.Repeated(removeAgain)),
+            ("GET missing user", GateVerdicts.Repeated(getMissing))
+        ]);
+    }
+
+    private void P16()
+    {
+        var g = _gates["P16"];
+        _r.Sub("P16 user list completeness (no writes between the reads)");
+        var lists = Enumerable.Range(1, Trials).Select(_ => _s.ListUsers(Page)).ToList();
+        var complete = new List<bool?>();
+        for (var t = 0; t < lists.Count; t++)
+        {
+            var l = lists[t];
+            Note("P16", $"read {t + 1}: {l.Users.Count} users read, {l.Total} announced, page capacity {l.CapNum}, {l.Calls} calls{(l.Error != null ? ", error " + l.Error : "")}");
+            complete.Add(l.Error != null ? null : l.Users.Count == l.Total);
+        }
+
+        Verdict same;
+        if (lists.Any(l => l.Error != null))
+        {
+            same = Verdict.Unknown;
+        }
+        else
+        {
+            var a = lists[0].Users.Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+            var b = lists[1].Users.Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+            var dupes = lists.Sum(l => l.Users.Count - l.Users.Select(u => u.Id).Distinct().Count());
+            Note("P16", $"ids only in read 1: {a.Except(b).Count()}, only in read 2: {b.Except(a).Count()}, duplicate ids within a read: {dupes}");
+            same = a.SetEquals(b) && dupes == 0 ? Verdict.Observed : Verdict.NotObserved;
+        }
+
+        var all = GateVerdicts.AllOf([GateVerdicts.FromTrials(complete), same]);
+        g.Set(all, all switch
+        {
+            Verdict.Observed => "both reads returned the announced total and the same ids (staff did not edit users meanwhile)",
+            Verdict.NotObserved => "a read returned a different count than announced, or the two reads differ; see evidence",
+            _ => "a read failed"
+        });
+    }
+
+    private void P17()
+    {
+        var g = _gates["P17"];
+        _r.Sub("P17 name fields");
+        var longName = (Prefix + " " + new string('L', 140))[..127];
+        var shortName = (Prefix + " " + new string('S', 40))[..31];
+        var extended = new List<string?>();
+        var plain = new List<string?>();
+        for (var t = 1; t <= Trials; t++)
+        {
+            RestoreA();
+            var write = Rewrite(_a, u =>
+            {
+                u.szName = shortName;
+                u.szNameEx = longName;
+                u.bUseNameEx = true;
+                return u;
+            });
+            var back = _s.GetUser(_a);
+            string? ext = write != "ok" || back == null ? null
+                : $"szNameEx {Stored(back.Value.szNameEx, longName)}, szName {Stored(back.Value.szName, shortName)}, bUseNameEx={back.Value.bUseNameEx}";
+            Note("P17", $"trial {t}: write 127-char szNameEx + 31-char szName ({write}) -> {ext ?? "no result"}");
+            extended.Add(ext);
+
+            var newShort = $"{Prefix} PLAIN {t}";
+            var write2 = Rewrite(_a, u =>
+            {
+                u.szName = newShort;
+                u.bUseNameEx = false;
+                return u;
+            });
+            var back2 = _s.GetUser(_a);
+            string? pl = write2 != "ok" || back2 == null ? null
+                : $"szName {Stored(back2.Value.szName, newShort)}, szNameEx kept {(back2.Value.szNameEx?.Trim() == longName ? "yes" : "no")}, bUseNameEx={back2.Value.bUseNameEx}";
+            Note("P17", $"trial {t}: write szName only with bUseNameEx=false ({write2}) -> {pl ?? "no result"}");
+            plain.Add(pl);
+        }
+
+        var screen = Ask($"  [P17 screen] Open user {_a} on the reader screen. Which name is shown? p = \"{Prefix} PLAIN {Trials}\", l = the long LLL name, k = cannot tell: ", "plk");
+        Note("P17", $"operator saw on screen after the plain write: {screen switch { 'p' => "the szName value", 'l' => "the old szNameEx value", _ => "not checked" }}");
+        RestoreA();
+        Outcomes(g, [
+            ("szNameEx + szName", GateVerdicts.Repeated(extended)),
+            ("szName only", GateVerdicts.Repeated(plain))
+        ]);
+    }
+
+    private void P19()
+    {
+        var g = _gates["P19"];
+        _r.Sub("P19 ADMIN authority on the reader");
+        if (!_faceOnA || _o.NoWalks)
+        {
+            g.Set(Verdict.Unknown, "needs a face on A and an operator at the reader");
+            return;
+        }
+
+        Note("P19", $"set Administrators: {Rewrite(_a, u => { u.emAuthority = EM_ATTENDANCE_AUTHORITY.Administrators; return u; })}; "
+                    + $"read back {_s.GetUser(_a)?.emAuthority.ToString() ?? "(unreadable)"}");
+        var admin = new List<Door?> { MenuTry("P19 admin 1", "Administrators"), MenuTry("P19 admin 2", "Administrators") };
+        Note("P19", $"set Customer: {Rewrite(_a, u => { u.emAuthority = EM_ATTENDANCE_AUTHORITY.Customer; return u; })}; "
+                    + $"read back {_s.GetUser(_a)?.emAuthority.ToString() ?? "(unreadable)"}");
+        var user = new List<Door?> { MenuTry("P19 user 1", "Customer"), MenuTry("P19 user 2", "Customer") };
+        RestoreA();
+
+        var a = GateVerdicts.Repeated(admin);
+        var u = GateVerdicts.Repeated(user);
+        if (a == Door.Opened && u == Door.Shut)
+        {
+            g.Set(Verdict.Observed, "the admin menu opened for Administrators on both tries and was refused for Customer on both tries");
+        }
+        else if (a == Door.Shut && u == Door.Shut)
+        {
+            g.Set(Verdict.NotObserved, "the admin menu was refused for Administrators on both tries");
+        }
+        else
+        {
+            g.Set(Verdict.Unknown, "tries were skipped, unclear or disagreed, or Customer also opened the menu");
+        }
+    }
+
+    private Door? MenuTry(string label, string authority)
+    {
+        var key = Ask($"  [{label}] As test user {_a} ({authority}), try to open the reader's admin menu with your face. o = menu opened, s = refused, u = not sure, k = skip: ", "osuk");
+        var answer = key switch { 'o' => WalkAnswer.Opened, 's' => WalkAnswer.Shut, 'u' => WalkAnswer.Unclear, _ => WalkAnswer.Skipped };
+        var result = GateVerdicts.Walk(answer, null);
+        Note("P19", $"{label}: operator {answer} -> {Show(result)}");
+        return result;
+    }
+
+    private void DoorEvidence()
+    {
+        _r.Sub("P13 / P18 live door events and punch times (from every walk in this run)");
+        var arrived = new List<bool?>();
+        var recMatch = new List<bool?>();
+        var inClock = new List<bool?>();
+        foreach (var w in _walks.Where(w => w.Mine.Count > 0))
+        {
+            var events = DoorEvents(w);
+            var recs = events.Select(e => EventRec(e.Detail)).Where(r => r != null).ToList();
+            var stored = w.Mine.Select(p => p.RecNo).ToHashSet();
+            if (!w.Label.StartsWith("P6 after reboot", StringComparison.Ordinal))
+            {
+                arrived.Add(events.Count > 0);
+                recMatch.Add(recs.Count == 0 ? null : recs.All(r => stored.Contains(r!.Value)));
+            }
+
+            Note("P13", $"{w.Label}: stored records [{string.Join(",", stored)}]; live events {events.Count}{(recs.Count > 0 ? $" with rec [{string.Join(",", recs)}]" : "")}");
+
+            var times = w.Mine.Where(p => p.Time != null).ToList();
+            bool? inside = times.Count == 0 ? null : times.All(p => p.Time >= w.Before.AddMinutes(-1) && p.Time <= w.After.AddMinutes(1));
+            Note("P18", $"{w.Label}: reader clock {w.Before:HH:mm:ss}..{w.After:HH:mm:ss}; punch times {string.Join(",", times.Select(p => p.TimeRaw))} -> {Show(inside)}");
+            inClock.Add(inside);
+        }
+
+        if (arrived.Count == 0)
+        {
+            Note("P13", "no walk left a stored punch for a test user");
+        }
+
+        var p13 = GateVerdicts.AllOf([GateVerdicts.FromTrials(arrived), GateVerdicts.FromTrials(recMatch)]);
+        _gates["P13"].Set(p13, p13 switch
+        {
+            Verdict.Observed => $"a live event with the stored record number arrived for every one of {arrived.Count} walks",
+            Verdict.NotObserved => "live events were missing on every walk, or carried a different record number",
+            _ => "fewer than two walks with a punch, or walks disagreed (events arrived on some walks only)"
+        });
+        var p18 = GateVerdicts.FromTrials(inClock);
+        _gates["P18"].Set(p18, p18 switch
+        {
+            Verdict.Observed => "every walk's punch time fell within a minute of the reader clock at the walk",
+            Verdict.NotObserved => "punch times were offset from the reader clock on every walk; see evidence for the offset",
+            _ => "fewer than two walks with a punch, or walks disagreed"
+        });
+    }
+
+    private static List<AlarmSeen> DoorEvents(WalkRecord w) =>
+        w.Alarms.Where(a => a.Type == "ALARM_ACCESS_CTL_EVENT" && a.Detail.Contains($"user={w.UserId} ", StringComparison.Ordinal)).ToList();
+
+    /// <summary>
+    /// Waits on the existing login for the SDK's own disconnect/reconnect callbacks.
+    /// true = the old login answers again; false = it never did; null = no sign the reader restarted at all.
+    /// </summary>
+    private bool? AwaitSdkReconnect(int t)
+    {
+        _r.Line("  waiting for the SDK to reconnect the existing login by itself (up to 6 minutes)...");
+        var seen = new List<AlarmSeen>();
+        var deadline = DateTime.UtcNow.AddMinutes(6);
+        var answers = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(5000);
+            seen.AddRange(_s.DrainAlarms());
+            var down = seen.FirstOrDefault(a => a.Type == "SDK_DISCONNECTED");
+            var up = seen.Any(a => a.Type == "SDK_RECONNECTED");
+            if ((up || (down != null && DateTime.UtcNow - down.AtUtc > TimeSpan.FromSeconds(30))) && _s.GetUser(_a) != null)
+            {
+                answers = true;
+                break;
+            }
+        }
+
+        var wentDown = seen.Any(a => a.Type == "SDK_DISCONNECTED");
+        var cameUp = seen.Any(a => a.Type == "SDK_RECONNECTED");
+        Note("P20", $"reboot {t}: disconnect callback {(wentDown ? "seen" : "not seen")}, reconnect callback {(cameUp ? "seen" : "not seen")}, "
+                    + $"old login answers a user read: {(answers ? "yes" : "no")}");
+        if (answers)
+        {
+            return true;
+        }
+
+        if (!wentDown && !cameUp && _s.GetUser(_a) != null)
+        {
+            return null;
+        }
+
+        return false;
+    }
+
+    private void P20()
+    {
+        var g = _gates["P20"];
+        _r.Sub("P20 SDK auto-reconnect after a reader power cycle (from the P6 reboots)");
+        var back = GateVerdicts.FromTrials(_p20.Select(p => p.Back).ToList());
+        var anyEventBefore = _walks.Any(w => !w.Label.StartsWith("P6 after reboot", StringComparison.Ordinal) && DoorEvents(w).Count > 0);
+        var events = anyEventBefore ? GateVerdicts.FromTrials(_p20.Select(p => p.Events).ToList()) : Verdict.Unknown;
+        if (!anyEventBefore)
+        {
+            Note("P20", "no live door event arrived on any walk before the reboots, so a missing event after them says nothing about reconnecting");
+        }
+
+        var all = back == Verdict.NotObserved ? Verdict.NotObserved : GateVerdicts.AllOf([back, events]);
+        g.Set(all, all switch
+        {
+            Verdict.Observed => "on both reboots the old login answered again and the walk's door event arrived on it",
+            Verdict.NotObserved => back == Verdict.NotObserved ? "on both reboots the old login never answered again; a new login was needed" : "the old login answered, but door events stopped arriving on it",
+            _ => "reboots were skipped, the reboot could not be confirmed, or the door-event part could not be judged"
+        });
+    }
+
+    private void P21()
+    {
+        var g = _gates["P21"];
+        _r.Sub("P21 photo size limit (the walker's photo padded with JPEG comment blocks)");
+        if (_photo == null)
+        {
+            g.Set(Verdict.Unknown, "no photo available (no --photo and no face enrolled on A)");
+            return;
+        }
+
+        var parts = new List<(string Name, string? Value)>();
+        foreach (var kb in new[] { 100, 130, 200 })
+        {
+            var padded = PadJpeg(_photo, kb * 1024);
+            if (padded == null)
+            {
+                Note("P21", $"{kb} KB: the photo is not a JPEG or is already larger; size not tried");
+                parts.Add(($"{kb} KB", null));
+                continue;
+            }
+
+            var answers = new List<string?>();
+            for (var t = 1; t <= Trials; t++)
+            {
+                _s.RemoveFace(_a);
+                var write = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, _a, padded);
+                var back = _s.GetFace(_a);
+                var stored = back.Photo == null ? "no"
+                    : Probe.Md5(back.Photo) == Probe.Md5(padded) ? "yes, byte for byte"
+                    : $"yes, as {back.Photo.Length / 1024} KB";
+                var answer = back.Ok && Answer(write) is { } a ? $"{a}, photo stored: {stored}" : null;
+                Note("P21", $"{kb} KB trial {t}: INSERT {write}; read back {Describe(back)} -> {answer ?? "no result"}");
+                answers.Add(answer);
+            }
+
+            parts.Add(($"{kb} KB", GateVerdicts.Repeated(answers)));
+        }
+
+        _r.Line($"  face put back on A: {PutFace(_a, _photo)}");
+        Outcomes(g, parts);
+    }
+
+    /// <summary>Grows a JPEG to exactly <paramref name="size"/> bytes with COM segments after SOI; the image itself is unchanged.</summary>
+    internal static byte[]? PadJpeg(byte[] jpeg, int size)
+    {
+        if (jpeg.Length < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 || size < jpeg.Length + 4)
+        {
+            return null;
+        }
+
+        using var ms = new MemoryStream(size);
+        ms.Write(jpeg, 0, 2);
+        var left = size - jpeg.Length;
+        while (left > 0)
+        {
+            var seg = Math.Min(left, 65537);
+            if (left - seg is > 0 and < 4)
+            {
+                seg -= 4;
+            }
+
+            var len = seg - 2;
+            ms.Write([0xFF, 0xFE, (byte)(len >> 8), (byte)(len & 0xFF)]);
+            ms.Write(new byte[seg - 4]);
+            left -= seg;
+        }
+
+        ms.Write(jpeg, 2, jpeg.Length - 2);
+        return ms.ToArray();
+    }
+
+    private static int? EventRec(string detail)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(detail, @"rec=(-?\d+)");
+        return m.Success && int.TryParse(m.Groups[1].Value, out var n) ? n : null;
+    }
+
+    private void Outcomes(GateResult g, List<(string Name, string? Value)> parts)
+    {
+        foreach (var (name, value) in parts)
+        {
+            g.Evidence.Add($"{name}: {value ?? "UNKNOWN (trials differed, failed or were unclear)"}");
+        }
+
+        var missing = parts.Where(p => p.Value == null).Select(p => p.Name).ToList();
+        g.Set(missing.Count == 0 ? Verdict.Observed : Verdict.Unknown, missing.Count == 0
+            ? string.Join("; ", parts.Select(p => $"{p.Name}: {p.Value}"))
+            : $"no consistent answer for: {string.Join(", ", missing)}");
+    }
+
+    private static string? Answer(string result)
+    {
+        if (result == "ok")
+        {
+            return "ok";
+        }
+
+        var m = System.Text.RegularExpressions.Regex.Match(result, @"(?:failCode=|codes=\[)([A-Za-z0-9_,]+)");
+        return m.Success && m.Groups[1].Value is not ("NOERROR" or "") ? $"refused ({m.Groups[1].Value})" : null;
+    }
+
+    private static string WithoutTiming(string describe) =>
+        System.Text.RegularExpressions.Regex.Replace(describe, @"\s+in \d+ ms$", "");
+
+    private static string Stored(string? value, string sent)
+    {
+        var v = value?.Trim() ?? "";
+        return v == sent ? $"saved in full ({v.Length} chars)" : $"stored as {v.Length} chars{(sent.StartsWith(v, StringComparison.Ordinal) ? " (cut)" : " (different)")}";
     }
 
     private void P9()
@@ -843,19 +1343,36 @@ internal sealed class GateSuite
             {
                 Note("P6", $"reboot {t}: skipped");
                 trials.Add(null);
+                _p20.Add((null, null));
                 continue;
             }
 
             var before = _seenPunches.Keys.ToList();
             int? highest = before.Count == 0 ? null : before.Max();
-            if (!Reconnect())
+            var same = AwaitSdkReconnect(t);
+            if (same != true && !Reconnect())
             {
                 trials.Add(null);
+                _p20.Add((null, null));
                 break;
             }
 
             var mine = new List<Punch>();
-            Walk($"P6 after reboot {t}", _a, "enabled", mine);
+            var label = $"P6 after reboot {t}";
+            Walk(label, _a, "enabled", mine);
+            if (same == true)
+            {
+                var w = _walks.LastOrDefault(x => x.Label == label);
+                bool? events = w == null || w.Mine.Count == 0 ? null : DoorEvents(w).Count > 0;
+                Note("P20", $"reboot {t}: walk on the same login: live door event {(events == null ? "unknown (no stored punch)" : events.Value ? "arrived" : "did not arrive")}");
+                _p20.Add((true, events));
+            }
+            else
+            {
+                Note("P20", $"reboot {t}: {(same == false ? "the old login did not come back; logged in again" : "could not tell whether the reader actually restarted; logged in again")}");
+                _p20.Add((same, null));
+            }
+
             bool? continues = mine.Count == 0 || highest == null ? null : mine.Max(p => p.RecNo) > highest;
             Note("P6", $"reboot {t}: highest record number seen before {highest?.ToString() ?? "(none)"}; test user's punch after the reboot "
                        + $"{(mine.Count == 0 ? "(none)" : string.Join(",", mine.Select(p => p.RecNo)))} -> {Show(continues)}");
@@ -1034,14 +1551,32 @@ internal sealed class GateSuite
         }
 
         var before = Clock();
+        _s.DrainAlarms();
         var key = Ask($"  [{label}] Walk to the reader as test user {userId} ({state}). o = door opened, s = stayed shut, u = walked but not sure, k = did not walk: ", "osuk");
         var answer = key switch { 'o' => WalkAnswer.Opened, 's' => WalkAnswer.Shut, 'u' => WalkAnswer.Unclear, _ => WalkAnswer.Skipped };
         Thread.Sleep(2000);
         var after = Clock();
-        var q = _s.QueryPunches(before.AddMinutes(-1), after.AddMinutes(1));
+        var alarms = _s.DrainAlarms();
+        // A wide window so a punch stored in another time zone is still found (P18).
+        var q = _s.QueryPunches(before.AddHours(-14), after.AddHours(14));
+        if (q.Capped)
+        {
+            _r.Line($"  walk {label}: the ±14 h punch read hit its cap; reading ±1 min instead (a time-zone offset would be missed)");
+            q = _s.QueryPunches(before.AddMinutes(-1), after.AddMinutes(1));
+        }
+
         Remember(q);
-        var punches = q.Rows.Where(p => p.UserId == userId).ToList();
+        var punches = q.Rows.Where(p => p.UserId == userId && !_attributed.Contains(p.RecNo)).ToList();
+        foreach (var p in punches)
+        {
+            _attributed.Add(p.RecNo);
+        }
+
         mine?.AddRange(punches);
+        if (answer != WalkAnswer.Skipped)
+        {
+            _walks.Add(new WalkRecord(label, userId, before, after, punches, alarms));
+        }
         bool? granted = punches.Count == 0 ? null
             : punches.All(p => p.Granted) ? true
             : punches.All(p => !p.Granted) ? false

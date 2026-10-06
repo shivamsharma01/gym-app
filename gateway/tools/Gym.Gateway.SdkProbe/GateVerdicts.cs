@@ -148,6 +148,15 @@ internal static class GateVerdicts
         Expect("trials agree", Repeated(new bool?[] { false, false }), false);
         Expect("text trials agree", Repeated(new string?[] { "a", "a" }), "a");
         Expect("text single trial", Repeated(new string?[] { "a" }), null);
+        byte[] jpeg = [0xFF, 0xD8, 1, 2, 3, 0xFF, 0xD9];
+        foreach (var size in new[] { 11, 1000, 65537 + 7, 65537 + 9, 200 * 1024 })
+        {
+            var padded = GateSuite.PadJpeg(jpeg, size);
+            Expect($"padded photo size {size}", padded?.Length, (int?)size);
+            Expect($"padded photo {size} keeps the image", padded == null ? null : Convert.ToHexString(padded[^5..]), Convert.ToHexString(jpeg[2..]));
+        }
+
+        Expect("photo already too large to pad", GateSuite.PadJpeg(jpeg, 8), null);
         Expect("two true trials", FromTrials([true, true]), Verdict.Observed);
         Expect("one true trial", FromTrials([true]), Verdict.Unknown);
         Expect("observed and unknown parts", AllOf([Verdict.Observed, Verdict.Unknown]), Verdict.Unknown);

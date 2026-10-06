@@ -33,25 +33,7 @@ Use **Reissue enrollment** in the staff UI (`POST /api/v1/gateways/{id}/enrollme
 
 ## Local simulator (no TrueFace hardware)
 
-`Remote` talks HTTP to [simulator/device_server.py](../simulator/device_server.py). It does not speak the Dahua protocol. Use `TrueFace` only against a real device.
-
-```bash
-python3 simulator/device_server.py --memory
-```
-
-Dashboard: http://127.0.0.1:9000. Virtual devices: ports 9001 (entry) and 9002 (exit). State file without `--memory`: `simulator/data/devices.db`.
-
-Point the gateway at those ports with `GYM_ADAPTER=Remote`, `GYM_DEVICE_IP=127.0.0.1`, and `GYM_DEVICE_PORT=9001`. One process env covers one device id; a second device goes in config (`Devices` in the gateway config, same shape as production).
-
-### Devices on another network (ngrok)
-
-One gateway uses a single adapter for every device. The gateway that already runs the simulator must stay on **Remote**. It can then reach two more devices on a different machine:
-
-```bash
-./simulator/start-public-devices.sh
-```
-
-That starts device 3 on port 9003 and device 4 on port 9004, and opens an ngrok tunnel for each. Paste each printed `https://….ngrok-free.app` URL into that device's IP field (this gateway build treats a URL in the IP field as the device address). `./simulator/start-public-devices.sh tcp` prints a host and port instead, for a gateway build that only accepts host plus port. ngrok must already be logged in (`ngrok config add-authtoken`). URLs change each start unless they are reserved.
+The old Python device simulator was removed. A new one will be built for the [device sync architecture](../docs/architecture/gym-device-sync-before-poc-architecture.md). Until then the `Remote` adapter has no device server to talk to; use `TrueFace` against a real reader.
 
 ## Develop on Linux (this machine)
 

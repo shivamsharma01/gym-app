@@ -1,8 +1,10 @@
 # Migration assessment: current device sync → server-authoritative design
 
-Status: assessment only, no implementation proposed.
+Status: assessment updated after the 7 October 2026 device POC. No implementation is proposed here.
 Target: [gym-device-sync-before-poc-architecture.md](gym-device-sync-before-poc-architecture.md) (cited as "§n").
+Evidence: [device-poc-results.md](device-poc-results.md), run `sync-gates-20261007-130047`.
 Branch assessed: `feat/gateway-redesign`.
+Gateway: Windows only. There is no Linux gateway, and a Linux SDK login is not a deploy gate.
 
 Path shorthands used below:
 
@@ -15,31 +17,48 @@ Path shorthands used below:
 
 ## 0. Hardware evidence baseline
 
-Rule applied throughout: a hardware behavior counts as known only if a device run observed it repeatedly. Everything else is **UNKNOWN**, including behavior the current code silently relies on.
+Rule applied throughout: a hardware behavior counts as known only if a device run observed it repeatedly. One gym reader, serial `TW30000005250265` (`192.168.31.91`), on 7 October 2026. The harness verdicts and the readings that matter for the design are in [device-poc-results.md](device-poc-results.md). Section 18 of the architecture doc still says UNKNOWN; that table is stale.
 
-| Behavior | Evidence | Status |
-| --- | --- | --- |
-| SDK login (Windows), user enumeration, event subscription | `docs/device-sdk.md` session log | Observed |
-| SDK create / rename / delete of a user | `GYM-VISIT-2026-09-13.md` | Observed (one visit) |
-| Remote face insert lets the person in | 09-13: SDK returned true, operators saw entry; one trial | UNKNOWN (single trial) |
-| Live door event arrives after a walk | 09-13: no `ALARM_ACCESS_CTL_EVENT` within 90 s | UNKNOWN (one failed observation) |
-| Freeze blocks entry (`nUserStatus=1`) | Not reached on 09-13 | UNKNOWN → P1 |
-| Linux SDK login | Not run | UNKNOWN (not a sync gate; deployment question) |
-| P1–P12 (§18) | Not yet run; harness ready (`--gates`) | UNKNOWN |
+Member sync on this firmware can proceed. Attendance can be designed from the constraints below. A spare reader is still required before claiming that record numbers survive a full log or a power loss. That does not block member sync.
 
-Unknowns the current code depends on that §18 did not list were added to the probe as **P13–P19** (see `gateway/tools/Gym.Gateway.SdkProbe/GATES.md`, `GateSuite.cs`):
-
-| New gate | Code that relies on the behavior today |
+| Behavior | Result on this reader |
 | --- | --- |
-| P13 live door event per walk, `nPunchingRecNo` = stored `nRecNo` | `GA/TrueFaceDeviceAdapter.cs` alarm callback (0x3181 → ACCESS) feeding `DEVICE_EVENT`; `B/device/AttendanceIngestionService.ingest` fingerprint `rec:` |
-| P14 face read-back fidelity; INSERT over a photo; UPDATE with none | `GA/TrueFaceDeviceAdapter.GetFace`, face hash comparisons in `G/DeviceChangeWatcher.HandleDetected`, `G/CommandDispatcher.RecordEcho` |
-| P15 answers for missing user/photo | `TrueFaceDeviceAdapter` no-photo fallback (0x800004B5 → `HasFace`), `DeviceChangeWatcher.DetectDeletions` |
-| P16 user list completeness / repeatability | `DeviceChangeWatcher.ReadTrustedList`, `DetectDeletions` (a short list is read as deletions) |
-| P17 `szName` 31 / `szNameEx` 127 storage | `GA/TrueFaceDeviceAdapter` name limits, `GT/TrueFaceNameTests` |
-| P18 stored punch times in reader clock | `TrueFaceDeviceAdapter.SynchronizeTime` (sets reader to UTC, line 826), `ToUtc` (line 1503) |
-| P19 `emAuthority=Administrators` grants reader admin menu | `B/member` authority (V24), `PUT /api/v1/members/{id}/authority`, §9 admin promotion |
+| Freeze (`nUserStatus=1`) blocks the door | P1 OBSERVED. Denied punches use error `0xA4`. Unfreeze lets the same face in. |
+| Screen-chosen `szUserID` | P2 OBSERVED. Smallest free numeric id, twice (`1210`, `1211`), not highest + 1. |
+| Partial user INSERT | P3 NOT OBSERVED. A name-only insert keeps the face and zeros both validity times. Every user write must send the validity window again. |
+| `stuUpdateTime` as a change clock | P4 harness UNKNOWN. The field was zero before and after every readable mutation. Do not order edits by it. |
+| Edit alarms | P5 NOT OBSERVED for validity, freeze, authority, face replace, and delete. A scan is required. Screen motion events are not an edit feed. |
+| `nRecNo` monotonic / persistent | Rose through the afternoon (124365–124390). Reboot continuation and a full log were not shown. |
+| Query after `nRecNo` | P7 NOT OBSERVED. No such bound exists. A time window works, and record-number sort inside it worked both ways. |
+| Attendance retention | P8 UNKNOWN as a policy. The reader reports 124,389 records. Record 1, dated 2025-10-12, is still stored. The download stopped at 50,000. |
+| Same face on two user ids | P9 OBSERVED. Both copies read back identical. |
+| Roster cost | P10 UNKNOWN as a limit. About 1,200 users listed in 3–5 s. `GetUser` ~22 ms, `GetFace` ~260 ms. One overlapped pair succeeded. |
+| Validity and timezone | P11 OBSERVED. Dates store as sent, on the reader-local date (India Standard Time). End of today opens the door. Start of tomorrow stays shut, error `0x14`. |
+| Factory reset | Not possible on this unit. No reset signal to wait for. A replaced reader is an empty device and is rebuilt from the server projection. |
+| Live door event | P13 NOT OBSERVED. Eight walks stored punches. None produced `ALARM_ACCESS_CTL_EVENT`. Poll the log. |
+| Face read-back | P14 OBSERVED for the 44 KB file: byte-identical. A second INSERT fails with `PHOTO_EXIST`. An UPDATE with no photo leaves the stored photo. |
+| Missing user / missing photo | P15 OBSERVED. Both can return SDK error `0x800004B5`. The fail code differs (`NO_RECORD` vs `UNKNOWN`). REMOVE of either, when already absent, returns ok. |
+| Full user list | P16 OBSERVED while idle: announced total matched, twice, same ids. A short or failed list is still not a deletion. |
+| Names | P17 OBSERVED. `szNameEx` stores 127 characters. `szName` stores 31. The screen showed `szName`. A `szName`-only write cleared `szNameEx`. |
+| Punch timestamps | P18 NOT OBSERVED as "reader clock". Stored punch times are UTC, 5 h 30 min behind the reader clock. Validity uses the reader-local clock. |
+| Reader admin menu | Operator check, after the skipped face tries. The menu is offered to everyone and then asks for the reader credentials. `emAuthority=Administrators` does not grant or block it. |
+| SDK reconnect after power loss | P20 UNKNOWN. One cycle reconnected the old login; one did not, and that trial shared a WiFi drop. |
+| Photo size | P21 OBSERVED. 100, 130, and 200 KB padded JPEGs were accepted and stored as the same 17 KB re-encode. The original 44 KB file was not re-encoded. |
 
-P5 also gained "screen face enroll" trials (does a face enrolled on the reader screen raise an alarm). **Recommendation:** add P13–P19 to §18 when the doc is next revised; the doc itself was not edited.
+Code that still assumes the old unknowns:
+
+| Gate | Code that must change to match the result |
+| --- | --- |
+| P3 | `TrueFaceDeviceAdapter.UpsertUser`, `DeviceChangeWatcher.ConvergeUser`: stop sending a partial user record. |
+| P4 | `TrueFaceDeviceAdapter.GetFace` (`stuUpdateTime`), `DeviceChangeWatcher.PlausibleDeviceTime`, `HandleDetected`: stop ordering by a field that stays zero. |
+| P5 | `DeviceChangeWatcher` alarm-as-edit path: an alarm is not a complete change list. Keep the scan. |
+| P13 | `TrueFaceDeviceAdapter` alarm callback (0x3181 → ACCESS) and `AttendanceIngestionService` `rec:` from live events: punches are in the log, not in `ALARM_ACCESS_CTL_EVENT`. |
+| P15 | `TrueFaceDeviceAdapter` treating `0x800004B5` as "no photo": that error is also a missing user. Use the fail code. |
+| P16 | `DeviceChangeWatcher.DetectDeletions`: a list that misses the announced total is not a set of deletions. |
+| P17 | Name writes must set `szNameEx` when the long name is required. `bUseNameEx=false` did not preserve it. |
+| P18 / P11 | `SynchronizeTime` (sets the reader to UTC) and `ToUtc` / `EndOfDay`: this reader's clock is India local, and the door enforces validity on that clock. Punch `stuTime` is already UTC. Do not move this reader to UTC. |
+| P19 | `PUT /api/v1/members/{id}/authority` pushing `emAuthority`: that field is not menu permission on this reader. Server admin and the reader password stay separate. |
+| P21 | Gateway refusal above 120 KB is stricter than this reader, and a padded file is re-encoded, so a hash of the sent file will not match the read-back. |
 
 ---
 
@@ -145,7 +164,7 @@ Flyway in `backend/src/main/resources/db/migration/`.
 | `BackendLink.RunWebSocketAsync` | Replays entire outbox before receiving; backoff to 60 s | Heartbeats replayed as business messages; reconnect does not observe readers first (§10) |
 | `BackendLink.SendAsync` / `DurableOutboundStore` | Every message persisted, unbounded | §22 unbounded heartbeat durability |
 | `GatewayWorker.ExecuteAsync` | Poll 2 s while WS down | Duplicates WebSocket path |
-| `TimedDeviceAdapter` | Per-call timeout, DEGRADED after 4 errors, reconnect 10 s → 5 min | Retain; timeouts unverified (P10) |
+| `TimedDeviceAdapter` | Per-call timeout, DEGRADED after 4 errors, reconnect 10 s → 5 min | Retain. One sample: ~1,200 users in 3–5 s. A safe parallel-call ceiling is still unmeasured (P10). SDK auto-reconnect after power loss is not a rule (P20). |
 | `GatewaySessionRegistry` | 30 s ping; watchdog 90 s | Retain |
 | `GatewayConnectedListener` | Catch-up dispatch on connect | Must become pull-after-revision |
 | `TrueFaceDeviceAdapter.QueryAttendance` | Returns `[]` on failure | Failure indistinguishable from "no punches" |
@@ -157,7 +176,7 @@ Flyway in `backend/src/main/resources/db/migration/`.
 | C1 | Anonymous gateway allowed when no shared token | `GatewayAuthService.authenticate`; `ProdSecurityGuard`; deploy default `APP_GATEWAY_SHARED_TOKEN=""` | §15, §22 |
 | C2 | Gateway id is self-asserted; any device accepted | `GatewayWebSocketHandler.registerIfHandshake`, `handleTextMessage`; `GatewayMessageService.resolveDevice` | §15 |
 | C3 | Latest timestamp wins | `LocalMemberStore.Wins`; `DeviceUserChangeService.apply` (`isAfter`); `DeviceSyncService.withChangeTimes`; `member.*_changed_at` | §2, §7, §22 |
-| C4 | `stuUpdateTime` orders changes | `TrueFaceDeviceAdapter.GetFace` line 320; `DeviceChangeWatcher.PlausibleDeviceTime`, `HandleDetected` | §2 (telemetry only); P4 UNKNOWN |
+| C4 | `stuUpdateTime` orders changes | `TrueFaceDeviceAdapter.GetFace` line 320; `DeviceChangeWatcher.PlausibleDeviceTime`, `HandleDetected` | §2. P4: the field stayed zero on every readable mutation. It is not a clock. |
 | C5 | deviceUserId = serial/memberCode; tenant-wide serial fallback | `Member.getDeviceUserId`; `DeviceUserChangeService.findMember`; `ensureMapping` | §5, §22 |
 | C6 | Every member on every reader | `provisionMember`, `provisionDevice`, `reseedEverywhere`; `docs/product.md` | per-reader desired projection §5 |
 | C7 | Device-created users auto-become members | `createFromDevice`, `importFromReconcile`, `importUsers` | §8 pending enrollment |
@@ -165,14 +184,14 @@ Flyway in `backend/src/main/resources/db/migration/`.
 | C9 | Device edits change memberships | `applyMembershipChanges` | server authoritative §2 |
 | C10 | Gateway fans out business changes reader-to-reader | `FanOutAsync`, `AlignReaders` | §22 |
 | C11 | SYNCED without device confirmation | `markHeldBySource`, `markSiblingsHeld`; `handleResult` skipped | §10 verify-then-ack |
-| C12 | Partial field writes | `ConvergeUser`; `UpsertUser` read-modify-write | §10 full logical record (P3) |
+| C12 | Partial field writes | `ConvergeUser`; `UpsertUser` read-modify-write | §10. P3: a name-only insert zeros both validity times and keeps the face. Write the full validity window every time. |
 | C13 | 15 s full-roster polling of all readers in one loop | `DeviceChangeWatcher.RunAsync` | §12 |
 | C14 | Heartbeats durable and replayed | `BackendLink.SendAsync` | §11, §22 |
 | C15 | Deactivate = DELETE | `MemberController` `@DeleteMapping("/{id}")`; `MemberDetailPage` | freeze ≠ remove §6 |
-| C16 | Freeze blocks the door | `DISABLE_USER`, `docs/product.md` | P1 UNKNOWN |
-| C17 | Reader runs in UTC; end of day 23:59:59 UTC | `SynchronizeTime`, `EndOfDay`, `ToUtc` | P11, P18 UNKNOWN |
-| C18 | Live alarm per punch carries the record number | `AttendanceIngestionService` `rec:` fingerprint | P13 UNKNOWN (09-13 saw none) |
-| C19 | A shorter user list means deletions | `DetectDeletions` | P16 UNKNOWN |
+| C16 | Freeze blocks the door | `DISABLE_USER`, `docs/product.md` | Confirmed (P1). Keep freeze as the disable projection. This row is no longer a conflict. |
+| C17 | Reader runs in UTC; end of day 23:59:59 UTC | `SynchronizeTime`, `EndOfDay`, `ToUtc` | P11, P18. Reader clock is India local and the door uses that date. Punch `stuTime` is UTC, 5 h 30 min behind. Stop forcing this reader to UTC. |
+| C18 | Live alarm per punch carries the record number | `AttendanceIngestionService` `rec:` fingerprint | P13 NOT OBSERVED, repeating the 09-13 visit across eight walks. Poll the log. |
+| C19 | A shorter user list means deletions | `DetectDeletions` | P16: an idle full list matched the announced total twice. A short or failed list is still not a deletion. |
 | C20 | Attendance rows mutable | `AttendanceLinker` | §14 append-only |
 | C21 | Simulator transport in prod config | `SimulatedGatewayCommandTransport`, `APP_GATEWAY_SIMULATOR_ENABLED` | simulator removed |
 
@@ -200,10 +219,10 @@ Flyway in `backend/src/main/resources/db/migration/`.
 | `DeviceUserChangeService` | Observation ingestion → three-way compare → review items / pending enrollments |
 | `DeviceReconciliationService`, `ReconciliationConflictService`, `reconciliation_conflict` | Three-way reconciliation and review queue (§7, §21) |
 | `DeviceUserImportService`, `DeviceMemberImporter` | Bootstrap mapping/review tooling (§13, M5) |
-| `G/DeviceChangeWatcher` | Per-reader worker: coalesced scans, alarm = scan trigger, observe → pull → apply → verify → ack |
+| `G/DeviceChangeWatcher` | Per-reader worker: coalesced scans, observe → pull → apply → verify → ack. An alarm may start a scan; P5 showed it cannot replace one. |
 | `G/LocalMemberStore`, `RosterStateStore`, JSON files | SQLite journal (§11) |
 | `G/BackendLink` outbox semantics, `DurableOutboundStore` | Bounded durable business messages; telemetry not durable |
-| `TrueFaceDeviceAdapter.UpsertUser` partial RMW | Full logical-record write, face separate (subject to P3, P14) |
+| `TrueFaceDeviceAdapter.UpsertUser` partial RMW | Full logical-record write, including validity (P3). Face stays a separate call: UPDATE to replace, not a second INSERT (P14). |
 | `CommandDispatcher` in-memory dedupe | Applied-revision persisted in journal |
 | `AttendanceLinker` mutation | Append-only resolution at read time (§14) |
 | `F/.../DeviceDetailPage` conflicts tab, `DeviceSyncPanel`, `MembershipPanel` sync state | Review queue + per-reader projection status |
@@ -220,7 +239,7 @@ Flyway in `backend/src/main/resources/db/migration/`.
 - Command types made redundant by projections: `ENROLL_FACE` (legacy), `REPORT_DEVICE_USER`, `REFRESH_DEVICE_USERS`, `RECONCILE_DEVICE` (as push command), `CLEAR_DEVICE_LOGS` (destructive; decision needed, E7).
 - `DeviceSyncState` on `membership`; dead statuses ACKNOWLEDGED/FAILED.
 - Gateway HTTP poll loop in `GatewayWorker.ExecuteAsync` if pull-over-WebSocket covers it (decision, E5).
-- `docs/product.md` statements: every member on every device, later change wins, device delete deactivates, freeze blocks entry.
+- `docs/product.md` statements that this design removes: every member on every device, later change wins, device delete deactivates the member. The statement that freeze blocks entry stays; P1 confirmed it.
 
 ## 11. APIs and WebSocket messages that must change
 
@@ -234,14 +253,14 @@ Flyway in `backend/src/main/resources/db/migration/`.
 | `DEVICE_USER_CHANGED` | applied as authoritative edit | Becomes observation (baseline/observed), creates review/pending enrollment |
 | `RECONCILIATION_RESULT` | triggers auto-import | Observation snapshot with scan trigger metadata |
 | `ENROLLMENT_RESULT` | face enrollment | Pending enrollment record |
-| `DEVICE_EVENT` | attendance with fingerprint | Event identity `(deviceId, recNo)` candidate (P6/P13); time-window backfill (P7) |
+| `DEVICE_EVENT` | attendance with fingerprint | Live access events did not arrive (P13). Ingest from a time-window log poll (P7). Punch times are UTC (P18). Do not tail by record number. |
 | `DEVICE_ALARM` | raw | Scan trigger only |
 | `/internal/gateway/commands` (poll) | per-command claim | Revision pull, or removed |
 | `/internal/gateway/messages` | unauthenticated fallback possible | Same mandatory auth |
 | `GET/POST /api/v1/sync-commands`, `/{id}/retry`, `/{id}/cancel` | operator retries | Per-reader projection status / repair |
 | `/api/v1/members/{id}/device-sync` (`retry`, `read`) | "newer copy wins" | Per-reader desired vs observed; read = request observation |
 | `DELETE /api/v1/members/{id}` | deactivates + removes everywhere | Separate freeze / remove-from-readers / archive |
-| `PUT /api/v1/members/{id}/authority` | pushes authority | Projected ADMIN (P19) |
+| `PUT /api/v1/members/{id}/authority` | pushes `emAuthority` | Stop projecting it as reader-menu permission. The menu asks for the reader password (operator check after P19). |
 | `/api/v1/devices/{id}/reconcile`, `/sync-now`, `/import-users`, `/conflicts`, `/conflicts/{cid}/resolve` | auto-import, DISMISS/REMOVE | Review queue endpoints with §21 actions; bootstrap tooling |
 | New | — | Review items, pending enrollments, mapping link/unlink, audit |
 
@@ -256,7 +275,7 @@ Flyway in `backend/src/main/resources/db/migration/`.
 7. `device_sync_command`: freeze, then drop after cutover (keep for rollback window).
 8. `reconciliation_conflict`: migrate OPEN rows into review items, then drop.
 9. `gateway`: enforce credential presence; use `token_expires_at`.
-10. `attendance_event`: add `rec_no` candidate unique key (conditional on P6/P13); stop mutating `member_id`.
+10. `attendance_event`: stop mutating `member_id`. Identity comes from the polled log, not from a live event (P13). A record number may be stored with the row; it is not a query cursor (P7), and it is not yet proven stable across power loss or a full log (P6).
 11. `AbstractIntegrationTest.resetDatabase` must follow every table change.
 
 ## 13. Tests that become invalid
@@ -270,7 +289,7 @@ Flyway in `backend/src/main/resources/db/migration/`.
 | `BT/AttendanceLinkingIT` | linker mutating rows | C20 |
 | `BT/AccessWindowIT` | device dates applied to memberships | C9 |
 | `GT/LocalSyncTests` | most (fan-out, timestamp, `AlignReaders`) | C3, C10 |
-| `GT/FaceSyncTests` | `Read_from_device_reports_an_unchanged_photo_with_its_original_time`, `Empty_reader_next_to_a_full_one_gets_its_users`, `Reader_saying_no_photo_never_removes_a_known_photo`, `User_already_known_from_another_reader...` | C4, C10, P15 |
+| `GT/FaceSyncTests` | `Read_from_device_reports_an_unchanged_photo_with_its_original_time`, `Empty_reader_next_to_a_full_one_gets_its_users`, `Reader_saying_no_photo_never_removes_a_known_photo`, `User_already_known_from_another_reader...` | C4, C10. P15: `0x800004B5` is also a missing user; the fail code is required. |
 | `GT/TrueFaceUpsertTests` | partial-mutation cases | C12 |
 | `GT/RemoteDeviceAdapterTests` | all | simulator removed |
 | `frontend/e2e/smoke.spec.ts` | sync panel / conflicts expectations | UI replaced |
@@ -280,7 +299,7 @@ Flyway in `backend/src/main/resources/db/migration/`.
 - `BT/GatewayCredentialIT`, `GatewaySessionRegistryTest`, `ProdSecurityGuardTest` (extend), `StaffLiveHandshakeInterceptorTest`.
 - Attendance idempotency tests; `theSameDeviceUserIdOnTwoReadersStaysWithEachReadersMember`.
 - Non-sync ITs: `AuthAndSecurityIT`, `MemberListIT`, `MembershipFlowIT`, `ObservabilitySecurityIT`, `Phase6IT`, `Phase7SecurityIT`, `Phase9IT`, `RateLimitIT`, `RbacSeedIT`, `TenantIsolationIT`, `ProdBootstrapSeederTest`, `MemberCoverageTest`.
-- `GT/CommandDispatcherTests` (serialization parts), `TrueFaceNameTests` (pending P17), `EnvelopeTests`, `GatewayOptionsTests`, `ConfigAndRotationTests`, `MockDeviceAdapterTests`, `TrueFaceAdapterGuardTests`, digest tests.
+- `GT/CommandDispatcherTests` (serialization parts), `TrueFaceNameTests` (P17 matched: `szName` 31, `szNameEx` 127; extend them for the `szName`-only write clearing `szNameEx`), `EnvelopeTests`, `GatewayOptionsTests`, `ConfigAndRotationTests`, `MockDeviceAdapterTests`, `TrueFaceAdapterGuardTests`, digest tests.
 - `frontend/.../backendUrls.selftest.ts`; SdkProbe `--self-test`.
 
 ## 15. Missing tests
@@ -291,11 +310,12 @@ Flyway in `backend/src/main/resources/db/migration/`.
 - Reconnect order: observe before apply.
 - SQLite journal crash/restart.
 - One reader offline does not block others.
-- Coalesced scan + alarm-triggered scan; a short/failed user list never becomes deletions (P16).
-- deviceUserId collision → mapping conflict, no overwrite.
-- Freeze vs remove distinct; ADMIN projection (P19).
-- Factory-reset reader rebuild (P12).
-- Attendance append-only, `(deviceId, recNo)` identity, backfill window, `QueryAttendance` failure surfaced (not `[]`).
+- Coalesced scan. An alarm is not a substitute for the scan (P5). A short or failed user list never becomes deletions (P16).
+- deviceUserId collision → mapping conflict, no overwrite. Screen ids were the smallest free number (P2). The same face may exist on two ids (P9).
+- Freeze vs remove distinct. Freeze blocks the door (P1) and leaves the user and face in place.
+- No device-ADMIN projection. Reader menu access is the reader password, not `emAuthority`.
+- Replaced-reader rebuild from the server projection, including faces. An in-place factory reset does not exist on this unit. An empty roster is a bad read, not a mass delete.
+- Attendance append-only. Backfill by time window. Punch timestamps converted from UTC. `QueryAttendance` failure surfaced (not `[]`). Live `ALARM_ACCESS_CTL_EVENT` is not the ingest path (P13).
 - Frontend: review queue actions, pending enrollment approval (none exist; no frontend unit tests, e2e not in CI).
 - CI: no backend workflow; only `gateway-msi.yml`.
 
@@ -307,43 +327,44 @@ Flyway in `backend/src/main/resources/db/migration/`.
 | --- | --- | --- | --- |
 | Mandatory gateway auth (§15) | `GatewayAuthService.authenticate` anonymous; `registerIfHandshake` | Missing | none |
 | Server-authoritative desired state (§2, §5) | Per-command outbox `DeviceSyncService` | Missing | none |
-| Per-reader projection (§5) | `provisionMember` all readers | Missing | P10 (capacity) |
+| Per-reader projection (§5) | `provisionMember` all readers | Missing | P10 gives a sample (~1,200 users, 3–5 s), not a ceiling |
 | Monotonic revision + pull/ack (§10) | Push + `handleResult` | Missing | none |
-| Verify-then-ack (§10) | `markHeldBySource`, `skipped` = success | Contradicts | P3, P14, P15 |
-| Three-way reconcile (§7) | Two-way snapshot `applyDeviceUserSnapshot` | Partial (no baseline) | P4, P16 |
+| Verify-then-ack (§10) | `markHeldBySource`, `skipped` = success | Contradicts | P3, P14, P15 measured. Verify the full record and the fail code, not `0x800004B5` alone. |
+| Three-way reconcile (§7) | Two-way snapshot `applyDeviceUserSnapshot` | Partial (no baseline) | P4: do not use `stuUpdateTime`. P16: trust a list only when it matches the announced total. |
 | Review queue (§21) | DISMISS/REMOVE conflicts | Missing | none |
-| Pending enrollment (§8) | `createFromDevice` auto-create | Contradicts | P2, P9 |
+| Pending enrollment (§8) | `createFromDevice` auto-create | Contradicts | P2, P9 measured. Screen ids fill the smallest free number. Duplicate faces are accepted. |
 | publicId identity; mapping only (§5) | `Member.getDeviceUserId` serial; `findMember` fallback | Contradicts | P2 |
-| Full logical record writes (§10) | `UpsertUser` RMW, `ConvergeUser` partial | Partial | P3 |
-| Freeze ≠ remove (§6) | DELETE deactivates + removes | Contradicts | P1 |
-| ADMIN projection (§9) | authority push exists | Partial | P19 |
-| No timestamp ordering (§2) | `Wins`, `isAfter`, `stuUpdateTime` | Contradicts | P4 |
+| Full logical record writes (§10) | `UpsertUser` RMW, `ConvergeUser` partial | Contradicts | P3 measured. A partial insert zeros validity. |
+| Freeze ≠ remove (§6) | DELETE deactivates + removes | Contradicts | P1 measured. Freeze blocks; keep the user and the face. |
+| ADMIN projection (§9) | authority push exists | Drop for this reader | Operator: menu is password-gated for everyone. Do not project `emAuthority`. |
+| No timestamp ordering (§2) | `Wins`, `isAfter`, `stuUpdateTime` | Contradicts | P4 measured. The device field stays zero. |
 | SQLite journal, one worker per reader (§11) | JSON files, single watcher loop | Missing | none |
-| Coalesced scans; alarms as triggers (§12) | 15 s full polling | Contradicts | P5, P10, P16 |
+| Coalesced scans; alarms as triggers (§12) | 15 s full polling | Contradicts | P5: SDK edits were silent, so the scan stays. P16: refuse a short list. P10: one roster sample only. |
 | Telemetry not durable (§11) | heartbeats in outbox | Contradicts | none |
-| Bootstrap without master (§13) | `importUsers`, `AlignReaders` | Contradicts | P2, P9, P12 |
-| Attendance by window, recNo identity, append-only (§14) | fingerprint + linker mutation | Partial | P6, P7, P8, P13, P18 |
-| Validity boundaries / time zone (§6) | UTC reader, 23:59:59 | Unverified | P11, P18 |
-| Factory reset repair (§16) | none | Missing | P12 |
+| Bootstrap without master (§13) | `importUsers`, `AlignReaders` | Contradicts | P2, P9 measured. P12 is a replaced unit, not an in-place reset. |
+| Attendance by window, append-only (§14) | fingerprint + linker mutation; live `DEVICE_EVENT` | Contradicts | P7, P13, P18 measured. P6 reboot/full-log and P8 drop policy remain open and do not block the window design. |
+| Validity boundaries / time zone (§6) | `SynchronizeTime` forces UTC | Contradicts | P11, P18 measured. Leave the reader on India local time. Treat punch `stuTime` as UTC. |
+| Replaced-reader repair (§16) | none | Missing | No in-place factory reset on this unit. Rebuild a new reader from the projection. |
 | Observability per reader (§17) | single dot | Partial | none |
 
 ## B. Migration phases
 
-These follow §19 M0–M7, ordered by what the current code forces.
+These follow §19 M0–M7, ordered by what the current code forces. Phase 0 for this Windows gateway and this reader is recorded.
 
-- **Phase 0: POC (M0).** Run `--gates` P1–P19 on the gym reader (spare reader for P6 full log / P12). Record verdicts in §18.
-- **Phase 1: Security hardening.** Mandatory gateway credential, bound identity, device ownership check, token expiry. Independent of the hardware results.
-- **Phase 2: Canonical model (M1).** Projection, revision, baseline, review, pending enrollment tables; mapping decoupled from serial. Old paths still run.
-- **Phase 3: Gateway persistence (M2).** SQLite journal, per-reader worker, bounded durable messages, telemetry split.
-- **Phase 4: Desired-state sync (M3).** Revision pull/apply/verify/ack, running in shadow next to the outbox.
-- **Phase 5: Observations and review (M4).** `DEVICE_USER_CHANGED` / snapshots become observations, review UI, pending enrollment; timestamp merge turned off.
-- **Phase 6: Bootstrap migration (M5).** Map existing gym readers' users to members; ambiguities go to review.
-- **Phase 7: Attendance (M6).** Cursor/backfill per P6–P8, P13, P18; append-only.
+- **Phase 0: POC (M0).** Done for member sync. Results: [device-poc-results.md](device-poc-results.md). Not done, and not required to start: a spare-reader full log, and record numbers across a clean power loss.
+- **Phase 1: Security hardening.** Mandatory gateway credential, bound identity, device ownership check, token expiry.
+- **Phase 2: Canonical model (M1).** Projection, revision, baseline, review, pending enrollment tables; mapping decoupled from serial. No device-ADMIN projection. Old paths still run.
+- **Phase 3: Gateway persistence (M2).** SQLite journal, per-reader worker, bounded durable messages, telemetry split. Windows gateway only.
+- **Phase 4: Desired-state sync (M3).** Revision pull/apply/verify/ack, running in shadow next to the outbox. User writes include the full validity window. Face replace is UPDATE, or remove then INSERT. Verify with the P15 fail code.
+- **Phase 5: Observations and review (M4).** `DEVICE_USER_CHANGED` / snapshots become observations, review UI, pending enrollment; timestamp merge turned off. Scans stay, because edit alarms were silent. Screen-created ids are the smallest free number and must not be overwritten.
+- **Phase 6: Bootstrap migration (M5).** Map existing gym readers' users to members; ambiguities go to review. A replaced reader is rebuilt from the projection. This unit cannot be factory-reset in place.
+- **Phase 7: Attendance (M6).** Poll the log by time window. Store punch times as UTC. Do not ingest from `ALARM_ACCESS_CTL_EVENT`. Append-only. Leave the reader clock on India local time.
 - **Phase 8: Cutover and deletion (M7).** Disable the outbox, fan-out and timestamp paths; keep a rollback switch for a window; then delete §10 items and drop tables.
 
 ## C. Dependencies between phases
 
-- Phase 0 blocks claims, not the scaffolding. Phases 1–3 can start before the POC. Phase 4 apply/verify semantics need P3, P14, P15 (and P1 for freeze). Phase 5 needs P4, P5, P16 (scan triggers, deletion detection) and P2, P9 (provisional ids, duplicate faces). Phase 7 needs P6, P7, P8, P13, P18.
+- Phase 0 no longer blocks member sync. The apply/verify facts for phase 4 (P1, P3, P14, P15), the observation facts for phase 5 (P2, P4, P5, P9, P16), and the attendance shape for phase 7 (P7, P13, P18, and the P11 local validity clock) are measured.
+- Phase 7 may state a retention floor of record 1 still present from 2025-10-12 and about 124,000 reported rows. It must not claim a drop policy, or that record numbers survive reboot or a full disk.
 - Phase 2 is required by phases 4, 5 and 6.
 - Phase 3 is required by phase 4 (applied revision must survive restart).
 - Phase 1 should land before phase 4 exposes the revision pull (it must not be anonymous).
@@ -352,30 +373,36 @@ These follow §19 M0–M7, ordered by what the current code forces.
 
 ## D. Risks
 
-1. **Freeze may not block the door (P1).** If NOT OBSERVED, disabled members keep entry; access enforcement needs a removal-based fallback.
-2. **Anonymous gateway access is live today** (C1, C2): any client reaching `/gateway` with no shared token configured can report or receive data. Highest-priority non-hardware risk.
-3. **Identity coupling** (C5): existing readers store serial-based deviceUserIds; decoupling needs a careful backfill and must not rewrite existing gym users.
-4. **Silent data loss during transition** if timestamp merge and observation ingestion both run (double application).
-5. **Deletion false positives** if a user list is short or fails (P16 UNKNOWN; current `DetectDeletions` treats it as deletes).
-6. **Time zone errors** in validity and attendance (P11, P18; reader forced to UTC today).
-7. **Attendance gaps** if retention (P8) is shorter than outages, or if no "after recNo" query exists (P7).
-8. **Face fidelity** (P14): if the reader re-encodes photos, hash-based change detection gives false changes.
-9. **Duplicate faces across ids** (P9) could break provisional enrollment propagation.
-10. **ADMIN on readers** (P19): projecting ADMIN to all readers widens who can open reader menus.
+1. **Anonymous gateway access is live today** (C1, C2): any client reaching `/gateway` with no shared token configured can report or receive data. Highest-priority non-hardware risk.
+2. **Identity coupling** (C5): existing readers store serial-based deviceUserIds; decoupling needs a careful backfill and must not rewrite existing gym users.
+3. **Silent data loss during transition** if timestamp merge and observation ingestion both run (double application).
+4. **Partial writes clear validity** (P3, C12). Shipping the new apply path with the current `UpsertUser` would zero membership dates.
+5. **Deletion false positives.** P16 showed a healthy list is repeatable. `DetectDeletions` still treats a short list as deletes. An empty roster on this reader is a bad read, not a factory reset.
+6. **Forcing the reader clock to UTC** (C17). `SynchronizeTime` would move the clock the door uses for validity. Punch timestamps are already UTC and must be converted, not "fixed" by changing the device clock.
+7. **Attendance gaps.** There is no "after recNo" query (P7). History on this unit goes back at least to 2025-10-12, and the drop-when-full rule is unmeasured. Live events will not fill the gap (P13).
+8. **Face hash false changes** (P14, P21). The original 44 KB file read back byte for byte. Padded files at 100 KB and above were stored as a different 17 KB image. Hash the bytes read back, not the file that was sent, when the reader re-encodes.
+9. **Duplicate faces** (P9). Provisional enrollment cannot assume one face belongs to one device user.
+10. **Reader password is the menu.** Projecting `emAuthority=Administrators` does not control who can edit the reader, and it must not be described as that control.
 11. **No backend CI and no frontend tests**: regressions during the migration would go unnoticed.
 12. **Rollback**: dropping `device_sync_command` / `*_changed_at` too early removes the rollback path.
 
 ## E. Questions needing human decisions
 
-1. If P1 is NOT OBSERVED (freeze does not block): should "access disallowed" be enforced by removing the user from the reader (losing the on-reader face) or by an expired validity window (depends on P11)?
-2. Which readers get which members (per-reader projection rule): all active members, by branch, or chosen per member?
-3. What should the existing serial-based deviceUserIds become: keep them as mapping values forever, or migrate to new ids (which rewrites gym users)?
-4. Who may approve review items and pending enrollments (role), and is there an SLA after which a pending enrollment is rejected?
-5. Keep the HTTP poll fallback (`/internal/gateway/commands`) or require WebSocket only?
-6. Is attendance in scope for the first release (M6 marked optional)?
-7. Keep `CLEAR_DEVICE_LOGS` at all, given it destroys reader data?
-8. Should the reader clock stay on UTC or local time (affects screen display, validity boundaries, P11/P18)?
-9. Should ADMIN be projected to every reader or only the reader where it was granted (P19)?
-10. Length of the rollback window before deleting the old outbox and timestamp columns.
-11. Should `docs/product.md` be rewritten now (it asserts behaviors this design removes) or at cutover?
-12. Should P13–P19 be added to §18 of the architecture doc?
+Closed by the POC, and no longer questions:
+
+- Freeze is how "access disallowed" is enforced. It blocks the door and keeps the face (P1).
+- The reader clock stays on India local time. Punch timestamps are read as UTC. `SynchronizeTime` must not move this reader to UTC (P11, P18).
+- Device ADMIN is not projected. The reader menu is the reader password (operator check).
+- The gateway stays on Windows.
+
+Still open:
+
+1. Which readers get which members (per-reader projection rule): all active members, by branch, or chosen per member?
+2. What should the existing serial-based deviceUserIds become: keep them as mapping values forever, or migrate to new ids (which rewrites gym users)?
+3. Who may approve review items and pending enrollments (role), and is there an SLA after which a pending enrollment is rejected?
+4. Keep the HTTP poll fallback (`/internal/gateway/commands`) or require WebSocket only?
+5. Is attendance in scope for the first release (M6 marked optional)? The shape is known; the full-log and reboot-persistence claims are not.
+6. Keep `CLEAR_DEVICE_LOGS` at all, given it destroys reader data?
+7. Length of the rollback window before deleting the old outbox and timestamp columns.
+8. Should `docs/product.md` be rewritten now (it asserts behaviors this design removes) or at cutover? The freeze claim in it is confirmed and should stay.
+9. When the architecture doc is next revised, replace the UNKNOWN column in §18 with a pointer to [device-poc-results.md](device-poc-results.md). That doc is the record until then.

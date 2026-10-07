@@ -1,0 +1,329 @@
+namespace Gym.Gateway.Adapters;
+
+/// <summary>
+/// Hardware-independent reader used by tests. It stores and returns what a caller wrote, and it can
+/// be scripted to answer with the failures measured on the reader. It does not choose a member and
+/// it does not allocate a device user id.
+/// This is not <see cref="IDeviceAdapter"/>. That interface is the existing command path: partial
+/// user merges, face upsert, and create-overwrites. Those are not this reader's behavior.
+/// </summary>
+public sealed class FakeReader
+{
+    public const int SdkErrorMissingRecord = unchecked((int)0x800004B5);
+    public const string FailPhotoExist = "PHOTO_EXIST";
+    public const string FailNoRecord = "NO_RECORD";
+    public const string FailUnknown = "UNKNOWN";
+    public const string FailOccupied = "OCCUPIED";
+
+    private readonly object _gate = new();
+    private readonly Dictionary<string, ReaderUser> _users = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, byte[]> _faces = new(StringComparer.Ordinal);
+    private readonly List<ReaderPunch> _punches = [];
+    private readonly Dictionary<FakeReaderOperation, Queue<string>> _failures = [];
+    private readonly Queue<ReaderListResult> _listScripts = [];
+
+    public void ScriptFailure(FakeReaderOperation operation, string error = "failed")
+    {
+        lock (_gate)
+        {
+            if (!_failures.TryGetValue(operation, out var queued))
+            {
+                queued = new Queue<string>();
+                _failures[operation] = queued;
+            }
+
+            queued.Enqueue(error);
+        }
+    }
+
+    /// <summary>
+    /// The next list returns this page and announced total and does not change who is stored.
+    /// A short or empty page is a bad read when the count differs from <paramref name="announcedTotal"/>.
+    /// </summary>
+    public void ScriptList(int announcedTotal, params ReaderUser[] users)
+    {
+        lock (_gate)
+        {
+            _listScripts.Enqueue(ReaderListResult.Page(announcedTotal, users));
+        }
+    }
+
+    public void ScriptListFailure(string error = "failed")
+    {
+        lock (_gate)
+        {
+            _listScripts.Enqueue(ReaderListResult.Failed(error));
+        }
+    }
+
+    public ReaderListResult ListUsers()
+    {
+        lock (_gate)
+        {
+            if (TakeFailure(FakeReaderOperation.ListUsers, out var error))
+            {
+                return ReaderListResult.Failed(error);
+            }
+
+            if (_listScripts.Count > 0)
+            {
+                return _listScripts.Dequeue();
+            }
+
+            var users = _users.Values.OrderBy(u => u.DeviceUserId, StringComparer.Ordinal).ToArray();
+            return ReaderListResult.Page(users.Length, users);
+        }
+    }
+
+    public ReaderUserResult GetUser(string deviceUserId)
+    {
+        lock (_gate)
+        {
+            if (TakeFailure(FakeReaderOperation.GetUser, out var error))
+            {
+                return ReaderUserResult.Failed(error);
+            }
+
+            return _users.TryGetValue(deviceUserId, out var user)
+                ? ReaderUserResult.Found(user)
+                : ReaderUserResult.NoRecord();
+        }
+    }
+
+    public ReaderCallResult CreateUser(ReaderUser user)
+    {
+        lock (_gate)
+        {
+            if (TakeFailure(FakeReaderOperation.CreateUser, out var error))
+            {
+                return ReaderCallResult.Failed(error);
+            }
+
+            if (string.IsNullOrWhiteSpace(user.DeviceUserId))
+            {
+                return ReaderCallResult.Failed("device user id is required");
+            }
+
+            if (_users.ContainsKey(user.DeviceUserId))
+            {
+                return ReaderCallResult.Occupied(user.DeviceUserId);
+            }
+
+            _users[user.DeviceUserId] = user;
+            return ReaderCallResult.Success();
+        }
+    }
+
+    public ReaderFaceResult GetFace(string deviceUserId)
+    {
+        lock (_gate)
+        {
+            if (TakeFailure(FakeReaderOperation.GetFace, out var error))
+            {
+                return ReaderFaceResult.Failed(error);
+            }
+
+            if (!_users.ContainsKey(deviceUserId))
+            {
+                return ReaderFaceResult.NoRecord();
+            }
+
+            return _faces.TryGetValue(deviceUserId, out var photo)
+                ? ReaderFaceResult.Found(Copy(photo))
+                : ReaderFaceResult.NoPhoto();
+        }
+    }
+
+    public ReaderCallResult UpdateFace(string deviceUserId, byte[]? jpeg)
+    {
+        lock (_gate)
+        {
+            if (TakeFailure(FakeReaderOperation.UpdateFace, out var error))
+            {
+                return ReaderCallResult.Failed(error);
+            }
+
+            if (!_users.ContainsKey(deviceUserId))
+            {
+                return ReaderCallResult.NoRecord();
+            }
+
+            if (jpeg is { Length: > 0 })
+            {
+                _faces[deviceUserId] = Copy(jpeg);
+            }
+
+            return ReaderCallResult.Success();
+        }
+    }
+
+    public ReaderCallResult InsertFace(string deviceUserId, byte[]? jpeg)
+    {
+        lock (_gate)
+        {
+            if (TakeFailure(FakeReaderOperation.InsertFace, out var error))
+            {
+                return ReaderCallResult.Failed(error);
+            }
+
+            if (!_users.ContainsKey(deviceUserId))
+            {
+                return ReaderCallResult.NoRecord();
+            }
+
+            if (jpeg is not { Length: > 0 })
+            {
+                return ReaderCallResult.Failed("face image is required");
+            }
+
+            if (_faces.ContainsKey(deviceUserId))
+            {
+                return ReaderCallResult.PhotoExist();
+            }
+
+            _faces[deviceUserId] = Copy(jpeg);
+            return ReaderCallResult.Success();
+        }
+    }
+
+    public ReaderCallResult RemoveFace(string deviceUserId)
+    {
+        lock (_gate)
+        {
+            if (TakeFailure(FakeReaderOperation.RemoveFace, out var error))
+            {
+                return ReaderCallResult.Failed(error);
+            }
+
+            _faces.Remove(deviceUserId);
+            return ReaderCallResult.Success();
+        }
+    }
+
+    public void AddPunch(ReaderPunch punch)
+    {
+        lock (_gate)
+        {
+            _punches.Add(punch);
+        }
+    }
+
+    public ReaderPunchResult QueryPunches(DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    {
+        lock (_gate)
+        {
+            if (TakeFailure(FakeReaderOperation.QueryPunches, out var error))
+            {
+                return ReaderPunchResult.Failed(error);
+            }
+
+            var matched = _punches
+                .Where(p => p.OccurredAtUtc >= fromUtc && p.OccurredAtUtc <= toUtc)
+                .OrderBy(p => p.OccurredAtUtc)
+                .ThenBy(p => p.RecordNumber)
+                .ToArray();
+            return ReaderPunchResult.Found(matched);
+        }
+    }
+
+    private bool TakeFailure(FakeReaderOperation operation, out string error)
+    {
+        if (_failures.TryGetValue(operation, out var queued) && queued.Count > 0)
+        {
+            error = queued.Dequeue();
+            return true;
+        }
+
+        error = "";
+        return false;
+    }
+
+    private static byte[] Copy(byte[] jpeg) => jpeg.ToArray();
+}
+
+public enum FakeReaderOperation
+{
+    ListUsers,
+    GetUser,
+    CreateUser,
+    GetFace,
+    UpdateFace,
+    InsertFace,
+    RemoveFace,
+    QueryPunches
+}
+
+public sealed record ReaderUser(
+    string DeviceUserId,
+    string? Name,
+    string? NameEx,
+    int UserStatus,
+    DateTimeOffset? ValidFrom,
+    DateTimeOffset? ValidTo,
+    string? Authority,
+    int DoorNum,
+    int TimeSectionNum);
+
+public sealed record ReaderPunch(
+    string? DeviceUserId,
+    DateTimeOffset OccurredAtUtc,
+    long RecordNumber,
+    string Method,
+    bool Granted,
+    int? ErrorCode);
+
+public sealed record ReaderCallResult(bool Ok, string? FailCode, int? SdkError, string? Error)
+{
+    public static ReaderCallResult Success() => new(true, null, null, null);
+
+    public static ReaderCallResult Failed(string error) => new(false, null, null, error);
+
+    public static ReaderCallResult NoRecord() =>
+        new(false, FakeReader.FailNoRecord, FakeReader.SdkErrorMissingRecord, FakeReader.FailNoRecord);
+
+    public static ReaderCallResult PhotoExist() =>
+        new(false, FakeReader.FailPhotoExist, FakeReader.SdkErrorMissingRecord, FakeReader.FailPhotoExist);
+
+    public static ReaderCallResult Occupied(string deviceUserId) =>
+        new(false, FakeReader.FailOccupied, null, deviceUserId);
+}
+
+public sealed record ReaderUserResult(bool Ok, ReaderUser? User, string? FailCode, int? SdkError, string? Error)
+{
+    public static ReaderUserResult Found(ReaderUser user) => new(true, user, null, null, null);
+
+    public static ReaderUserResult NoRecord() =>
+        new(false, null, FakeReader.FailNoRecord, FakeReader.SdkErrorMissingRecord, FakeReader.FailNoRecord);
+
+    public static ReaderUserResult Failed(string error) => new(false, null, null, null, error);
+}
+
+public sealed record ReaderFaceResult(bool Ok, byte[]? Bytes, string? FailCode, int? SdkError, string? Error)
+{
+    public static ReaderFaceResult Found(byte[] bytes) => new(true, bytes, null, null, null);
+
+    public static ReaderFaceResult NoPhoto() =>
+        new(false, null, FakeReader.FailUnknown, FakeReader.SdkErrorMissingRecord, FakeReader.FailUnknown);
+
+    public static ReaderFaceResult NoRecord() =>
+        new(false, null, FakeReader.FailNoRecord, FakeReader.SdkErrorMissingRecord, FakeReader.FailNoRecord);
+
+    public static ReaderFaceResult Failed(string error) => new(false, null, null, null, error);
+}
+
+public sealed record ReaderListResult(bool Ok, int AnnouncedTotal, IReadOnlyList<ReaderUser> Users, string? Error)
+{
+    public bool CountMatchesAnnouncedTotal => Ok && Users.Count == AnnouncedTotal;
+
+    public static ReaderListResult Page(int announcedTotal, IReadOnlyList<ReaderUser> users) =>
+        new(true, announcedTotal, users, null);
+
+    public static ReaderListResult Failed(string error) => new(false, 0, [], error);
+}
+
+public sealed record ReaderPunchResult(bool Ok, IReadOnlyList<ReaderPunch> Punches, string? Error)
+{
+    public static ReaderPunchResult Found(IReadOnlyList<ReaderPunch> punches) => new(true, punches, null);
+
+    public static ReaderPunchResult Failed(string error) => new(false, [], error);
+}

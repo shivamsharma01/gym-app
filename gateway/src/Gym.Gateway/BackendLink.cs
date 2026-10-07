@@ -225,7 +225,13 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
     }
 
-    public async Task RunWebSocketAsync(Func<GatewayEnvelope, Task> onMessage, CancellationToken cancellationToken)
+    public Task RunWebSocketAsync(Func<GatewayEnvelope, Task> onMessage, CancellationToken cancellationToken) =>
+        RunWebSocketAsync(onMessage, null, cancellationToken);
+
+    public async Task RunWebSocketAsync(
+        Func<GatewayEnvelope, Task> onMessage,
+        Func<DesiredRevisionNotice, CancellationToken, Task>? onDesiredRevision,
+        CancellationToken cancellationToken)
     {
         if (!_options.UseWebSocket)
         {
@@ -247,7 +253,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 _reconnectAttempt = 0;
                 _log.LogInformation("WebSocket connected");
                 await ReplayPendingAsync(cancellationToken).ConfigureAwait(false);
-                await ReceiveLoopAsync(socket, onMessage, cancellationToken).ConfigureAwait(false);
+                await ReceiveLoopAsync(socket, onMessage, onDesiredRevision, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -314,6 +320,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     private async Task ReceiveLoopAsync(
         ClientWebSocket socket,
         Func<GatewayEnvelope, Task> onMessage,
+        Func<DesiredRevisionNotice, CancellationToken, Task>? onDesiredRevision,
         CancellationToken cancellationToken)
     {
         var buffer = new byte[64 * 1024];
@@ -333,6 +340,23 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             } while (!result.EndOfMessage);
 
             var json = Encoding.UTF8.GetString(ms.ToArray());
+            try
+            {
+                if (await InboundDispatch.RouteAsync(
+                        json,
+                        _ => Task.CompletedTask,
+                        onDesiredRevision ?? ((_, _) => Task.CompletedTask),
+                        cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Desired revision failed; the WebSocket stays open");
+                continue;
+            }
+
             GatewayEnvelope? envelope;
             try
             {

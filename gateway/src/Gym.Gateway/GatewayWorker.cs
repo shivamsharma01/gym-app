@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
 using Gym.Gateway.Adapters;
+using Gym.Gateway.Config;
+using Gym.Gateway.Execution;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -22,6 +24,12 @@ public sealed class GatewayWorker : BackgroundService
     private readonly ConcurrentDictionary<string, Channel<GatewayEnvelope>> _inbox = new(StringComparer.Ordinal);
     private DeviceChangeWatcher? _watcher;
     private CommandDispatcher? _dispatcher;
+    private readonly DesiredRevisionHub _desiredRevisions;
+    private readonly IReaderAdapterFactory? _readerFactory;
+    private readonly IDesiredStateClient _desired;
+    private readonly string _readerJournalDirectory;
+    private readonly List<ReaderWorker> _readerWorkers = [];
+    private bool _readersAttached;
     private long _commandsReceived;
     private DateTimeOffset _lastCommandAt;
     private CancellationToken _stop;
@@ -30,13 +38,32 @@ public sealed class GatewayWorker : BackgroundService
         GatewayOptions options,
         BackendLink link,
         ILogger<GatewayWorker> log,
-        ILoggerFactory logFactory)
+        ILoggerFactory logFactory,
+        IReaderAdapterFactory readers)
+        : this(options, link, log, logFactory, readers, desired: null, journalDirectory: null)
+    {
+    }
+
+    internal GatewayWorker(
+        GatewayOptions options,
+        BackendLink link,
+        ILogger<GatewayWorker> log,
+        ILoggerFactory logFactory,
+        IReaderAdapterFactory? readers,
+        IDesiredStateClient? desired,
+        string? journalDirectory)
     {
         _options = options;
         _link = link;
         _log = log;
         _logFactory = logFactory;
         _locks = new DeviceLocks(logFactory.CreateLogger<DeviceLocks>());
+        _desiredRevisions = new DesiredRevisionHub(logFactory.CreateLogger<DesiredRevisionHub>());
+        _readerFactory = readers;
+        _desired = desired ?? DesiredStateClient.Create(options.BackendUrl, options.Token);
+        _readerJournalDirectory = string.IsNullOrWhiteSpace(journalDirectory)
+            ? Path.Combine(GatewayConfigStore.DefaultConfigDirectory(), "reader-journal")
+            : journalDirectory;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -86,9 +113,10 @@ public sealed class GatewayWorker : BackgroundService
             _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _link, _roster, _locks,
             (deviceId, userId) => _watcher!.ReportUserAsync(deviceId, userId, stoppingToken),
             _watcher);
+        AttachReaders();
 
         var sendLoop = SendLoopAsync(_link, stoppingToken);
-        var wsLoop = _link.RunWebSocketAsync(AcceptCommand, stoppingToken);
+        var wsLoop = _link.RunWebSocketAsync(AcceptCommand, _desiredRevisions.HandleAsync, stoppingToken);
         var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
         var poll = PollLoopAsync(_link, stoppingToken);
         var watch = _watcher.RunAsync(TimeSpan.FromSeconds(Math.Max(15, _options.RosterPollSeconds)), stoppingToken);
@@ -247,8 +275,97 @@ public sealed class GatewayWorker : BackgroundService
             adapter.Dispose();
         }
 
+        DisposeReaders();
         _outbound.Writer.TryComplete();
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public override void Dispose()
+    {
+        DisposeReaders();
+        base.Dispose();
+    }
+
+    /// <summary>
+    /// Binds <see cref="ReaderWorker"/> to each configured reader that has an adapter. A device
+    /// with no adapter is left unwired, and a desired revision for it is not acknowledged.
+    /// </summary>
+    internal void AttachReaders()
+    {
+        if (_readersAttached)
+        {
+            return;
+        }
+
+        _readersAttached = true;
+        if (_readerFactory == null)
+        {
+            _log.LogInformation("No reader adapter is configured; desired revisions will not be acknowledged");
+            return;
+        }
+
+        foreach (var device in _options.Devices.Where(d => !string.IsNullOrWhiteSpace(d.DeviceId)))
+        {
+            var reader = _readerFactory.Open(device.DeviceId, OnlineAdapter(device.DeviceId));
+            if (reader == null)
+            {
+                _log.LogInformation(
+                    "Reader {DeviceId} has no worker; desired revisions will not be acknowledged",
+                    device.DeviceId);
+                continue;
+            }
+
+            var journal = Path.Combine(_readerJournalDirectory, JournalFile(device.DeviceId));
+            var worker = new ReaderWorker(device.DeviceId, reader, journal);
+            _readerWorkers.Add(worker);
+            var path = new DesiredRevisionPath(device.DeviceId, worker, reader, _desired);
+            _desiredRevisions.Attach(device.DeviceId, path.HandleAsync);
+        }
+    }
+
+    internal Task ReceiveDesiredAsync(DesiredRevisionNotice notice, CancellationToken cancellationToken) =>
+        _desiredRevisions.HandleAsync(notice, cancellationToken);
+
+    internal void UseConnectedAdapter(IDeviceAdapter adapter)
+    {
+        var deviceId = string.IsNullOrWhiteSpace(adapter.DeviceId)
+            ? _options.Devices.FirstOrDefault(device => !string.IsNullOrWhiteSpace(device.DeviceId))?.DeviceId
+            : adapter.DeviceId;
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            throw new ArgumentException("A connected adapter needs a device id.", nameof(adapter));
+        }
+
+        _adapters[deviceId] = adapter;
+    }
+
+    private IDeviceAdapter? OnlineAdapter(string deviceId)
+    {
+        if (!_adapters.TryGetValue(deviceId, out var adapter))
+        {
+            return null;
+        }
+
+        return string.Equals(adapter.GetHealth().ConnectionState, TimedDeviceAdapter.OnlineState, StringComparison.Ordinal)
+            ? adapter
+            : null;
+    }
+
+    private static string JournalFile(string deviceId)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var name = new string(deviceId.Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray());
+        return name + ".sqlite";
+    }
+
+    private void DisposeReaders()
+    {
+        foreach (var worker in _readerWorkers)
+        {
+            worker.Dispose();
+        }
+
+        _readerWorkers.Clear();
     }
 
     /// <summary>

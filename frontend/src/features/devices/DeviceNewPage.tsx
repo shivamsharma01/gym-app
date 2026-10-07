@@ -18,6 +18,7 @@ const schema = z.object({
   model: z.string().optional(),
   serialNumber: z.string().optional(),
   gatewayId: z.string().optional(),
+  projectionEnabled: z.boolean().optional(),
 })
 
 type Form = z.infer<typeof schema>
@@ -30,7 +31,7 @@ export function DeviceNewPage() {
   })
   const form = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { name: '', role: 'ENTRANCE', host: '', port: '37777', model: 'TrueFace 3000', serialNumber: '', gatewayId: '' },
+    defaultValues: { name: '', role: 'ENTRANCE', host: '', port: '37777', model: 'TrueFace 3000', serialNumber: '', gatewayId: '', projectionEnabled: false },
   })
   useEffect(() => {
     const rows = gateways.data?.content ?? []
@@ -50,6 +51,7 @@ export function DeviceNewPage() {
           model: body.model || null,
           serialNumber: body.serialNumber || null,
           gatewayId: body.gatewayId || null,
+          projectionEnabled: body.projectionEnabled === true,
         }),
       }),
     onSuccess: (d) => navigate(`/app/devices/${d.id}`),
@@ -108,6 +110,10 @@ export function DeviceNewPage() {
             ))}
           </Select>
         </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" {...form.register('projectionEnabled')} />
+          This reader uses desired-state sync
+        </label>
         {create.error ? <QueryError error={create.error} /> : null}
         <div className="flex gap-2">
           <Button type="submit" disabled={create.isPending}>

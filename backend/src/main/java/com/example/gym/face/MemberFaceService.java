@@ -64,6 +64,23 @@ public class MemberFaceService {
     @Transactional
     public MemberFace upload(String memberPublicId, byte[] raw, Long tenantId) {
         Member member = memberService.getByPublicId(memberPublicId, tenantId);
+        Optional<MemberFace> existing = faceRepository.findByMemberId(member.getId());
+        String previousSha = existing.map(MemberFace::getSha256).orElse(null);
+        int previousVersion = existing.map(MemberFace::getFaceVersion).orElse(-1);
+        MemberFace face = storeUploaded(member, raw);
+        boolean unchanged = previousSha != null && previousSha.equals(face.getSha256()) && previousVersion == face.getFaceVersion();
+        if (!unchanged) {
+            provisioning.pushFace(member, face, Set.of());
+        }
+        return face;
+    }
+
+    /**
+     * Stores a staff photo without pushing it. Used when the caller writes a desired projection in
+     * the same transaction, before any device mapping exists.
+     */
+    @Transactional
+    public MemberFace storeUploaded(Member member, byte[] raw) {
         byte[] jpeg = FaceImageProcessor.normalise(raw, FaceImageProcessor.MIN_SIDE_MANUAL);
         String sha = FaceStorageService.sha256(jpeg);
         Optional<MemberFace> existing = faceRepository.findByMemberId(member.getId());
@@ -73,7 +90,6 @@ public class MemberFaceService {
         MemberFace face = store(member, jpeg, sha, FaceSource.MANUAL, null, Instant.now());
         member.setFaceChangedAt(face.getChangedAt());
         memberRepository.save(member);
-        provisioning.pushFace(member, face, Set.of());
         FlowLog.info("face", "photo stored member={} version={}", member.getPublicId(), face.getFaceVersion());
         auditService.record(AuditActions.MEMBER_FACE_UPDATED, AuditActions.RESULT_SUCCESS,
                 "Member", member.getPublicId(), serialDetails(member, "faceVersion", face.getFaceVersion()));

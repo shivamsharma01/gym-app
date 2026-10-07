@@ -1,0 +1,146 @@
+using Gym.Gateway.Adapters;
+using Gym.Gateway.Execution;
+using Xunit;
+
+namespace Gym.Gateway.Tests;
+
+public class MemberCreateWorkerTests : IDisposable
+{
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-v1-" + Guid.NewGuid().ToString("N"));
+    private static readonly DateTimeOffset ValidFrom = new(2026, 10, 8, 0, 0, 0, TimeSpan.FromHours(5.5));
+    private static readonly DateTimeOffset ValidTo = new(2026, 10, 8, 23, 59, 59, TimeSpan.FromHours(5.5));
+    private static readonly byte[] Face = [1, 2, 3, 4, 5];
+
+    public MemberCreateWorkerTests()
+    {
+        Directory.CreateDirectory(_directory);
+    }
+
+    [Fact]
+    public void Create_reads_back_then_acks_and_restart_does_not_create_again()
+    {
+        const string publicId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        var reader = new FakeReader();
+        var journal = Path.Combine(_directory, "reader.sqlite");
+        var desired = Member("1", nameEx: "Asha Test needs the long name field");
+
+        using (var worker = Start(journal, reader))
+        {
+            var result = worker.ApplyMember(desired);
+            Assert.Equal(MemberApplyKind.Applied, result.Kind);
+            Assert.Equal(1, worker.AppliedRevision);
+            Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
+        }
+
+        var user = reader.GetUser("1").User;
+        Assert.NotNull(user);
+        Assert.Equal("1", user.DeviceUserId);
+        Assert.Equal("Asha", user.Name);
+        Assert.Equal("Asha Test needs the long name field", user.NameEx);
+        Assert.Equal(0, user.UserStatus);
+        Assert.Equal(ValidFrom, user.ValidFrom);
+        Assert.Equal(ValidTo, user.ValidTo);
+        Assert.Equal("Customer", user.Authority);
+        Assert.Equal(1, user.DoorNum);
+        Assert.Equal(1, user.TimeSectionNum);
+        Assert.Equal(Face, reader.GetFace("1").Bytes);
+        Assert.Equal(new[] { "CreateUser 1", "InsertFace 1" }, reader.Writes);
+        Assert.DoesNotContain(reader.Writes, line => line.Contains(publicId, StringComparison.Ordinal));
+        Assert.NotEqual(publicId, user.DeviceUserId);
+        Assert.DoesNotContain(publicId, user.Name ?? "", StringComparison.Ordinal);
+        Assert.DoesNotContain(publicId, user.NameEx ?? "", StringComparison.Ordinal);
+
+        using var restarted = Start(journal, reader);
+        Assert.Equal(MemberApplyKind.AlreadyApplied, restarted.ApplyMember(desired).Kind);
+        Assert.Equal(new[] { "CreateUser 1", "InsertFace 1" }, reader.Writes);
+    }
+
+    [Fact]
+    public void Occupied_id_is_not_overwritten_and_the_next_revision_uses_the_server_id()
+    {
+        var reader = new FakeReader();
+        reader.CreateUser(new ReaderUser("1", "Already there", null, 0, ValidFrom, ValidTo, "Customer", 1, 1));
+        var journal = Path.Combine(_directory, "occupied.sqlite");
+        using var worker = Start(journal, reader);
+
+        var occupied = worker.ApplyMember(Member("1", nameEx: null));
+        Assert.Equal(MemberApplyKind.Occupied, occupied.Kind);
+        Assert.Equal("1", occupied.Detail);
+        Assert.Equal(0, worker.AppliedRevision);
+        Assert.Empty(worker.PendingAcks);
+        Assert.Equal("Already there", reader.GetUser("1").User!.Name);
+        Assert.Equal(new[] { "CreateUser 1" }, reader.Writes);
+
+        var retry = worker.ApplyMember(Member("2", nameEx: null));
+        Assert.Equal(MemberApplyKind.Applied, retry.Kind);
+        Assert.Equal("Already there", reader.GetUser("1").User!.Name);
+        Assert.Equal("Asha", reader.GetUser("2").User!.Name);
+        Assert.Equal(new[] { "CreateUser 1", "CreateUser 2", "InsertFace 2" }, reader.Writes);
+    }
+
+    [Fact]
+    public void Face_hash_mismatch_does_not_ack()
+    {
+        var reader = new FakeReader();
+        reader.ScriptFaceReadBack([9, 9, 9]);
+        using var worker = Start(Path.Combine(_directory, "mismatch.sqlite"), reader);
+
+        var result = worker.ApplyMember(Member("1", nameEx: null));
+        Assert.Equal(MemberApplyKind.Failed, result.Kind);
+        Assert.Equal(0, worker.AppliedRevision);
+        Assert.Empty(worker.PendingAcks);
+        Assert.Equal("read-back mismatch", worker.Retry!.LastError);
+        Assert.Equal(new[] { "CreateUser 1", "InsertFace 1" }, reader.Writes);
+    }
+
+    [Fact]
+    public void Face_insert_failure_leaves_the_user_and_the_retry_inserts_the_face()
+    {
+        var reader = new FakeReader();
+        reader.ScriptFailure(FakeReaderOperation.InsertFace, "failed");
+        using var worker = Start(Path.Combine(_directory, "face-retry.sqlite"), reader);
+        var desired = Member("1", nameEx: null);
+
+        var failed = worker.ApplyMember(desired);
+        Assert.Equal(MemberApplyKind.Failed, failed.Kind);
+        Assert.Equal(0, worker.AppliedRevision);
+        Assert.Empty(worker.PendingAcks);
+        Assert.NotNull(reader.GetUser("1").User);
+        Assert.False(reader.GetFace("1").Ok);
+        Assert.Equal(new[] { "CreateUser 1" }, reader.Writes);
+
+        var retried = worker.ApplyMember(desired);
+        Assert.Equal(MemberApplyKind.Applied, retried.Kind);
+        Assert.Equal(Face, reader.GetFace("1").Bytes);
+        Assert.Equal(new[] { "CreateUser 1", "InsertFace 1" }, reader.Writes);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_directory))
+        {
+            Directory.Delete(_directory, true);
+        }
+    }
+
+    private ReaderWorker Start(string journal, FakeReader reader)
+    {
+        return new ReaderWorker("reader-1", reader, journal, TimeSpan.Zero);
+    }
+
+    private static DesiredMember Member(string deviceUserId, string? nameEx)
+    {
+        return new DesiredMember(
+            deviceUserId == "2" ? 2 : 1,
+            deviceUserId,
+            "Asha",
+            nameEx,
+            0,
+            ValidFrom,
+            ValidTo,
+            "Customer",
+            1,
+            1,
+            Face);
+    }
+}

@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Gym.Gateway.Adapters;
 using Microsoft.Data.Sqlite;
 
@@ -6,11 +7,11 @@ namespace Gym.Gateway.Execution;
 /// <summary>
 /// Execution state for one reader. The SQLite file remembers the verified revision, the ack that
 /// still has to be sent, and retry metadata. It does not record heartbeats and it does not decide
-/// which member wins. Device calls go through <see cref="FakeReader"/>.
+/// which member wins. Device calls go through <see cref="IReaderAdapter"/>.
 /// </summary>
 public sealed class ReaderWorker : IDisposable
 {
-    private readonly FakeReader _reader;
+    private readonly IReaderAdapter _reader;
     private readonly string _readerId;
     private readonly Func<DateTimeOffset> _clock;
     private readonly TimeSpan _retryDelay;
@@ -20,7 +21,7 @@ public sealed class ReaderWorker : IDisposable
 
     public ReaderWorker(
         string readerId,
-        FakeReader reader,
+        IReaderAdapter reader,
         string journalPath,
         TimeSpan? retryDelay = null,
         Func<DateTimeOffset>? clock = null)
@@ -127,7 +128,7 @@ public sealed class ReaderWorker : IDisposable
         _health = state;
     }
 
-    public ApplyOutcome Apply(long revision, Func<FakeReader, Verification> verify)
+    public ApplyOutcome Apply(long revision, Func<IReaderAdapter, Verification> verify)
     {
         if (revision <= 0)
         {
@@ -172,6 +173,153 @@ public sealed class ReaderWorker : IDisposable
             CommitVerified(revision);
             return ApplyOutcome.Verified;
         }
+    }
+
+    /// <summary>
+    /// Creates the user and inserts the face, then reads both back. The revision is journaled only
+    /// when the read-back matches. An occupied id is reported and nothing is written over it.
+    /// </summary>
+    public MemberApplyResult ApplyMember(DesiredMember desired)
+    {
+        ArgumentNullException.ThrowIfNull(desired);
+        if (desired.Face is not { Length: > 0 })
+        {
+            throw new ArgumentException("The desired member has no face.", nameof(desired));
+        }
+
+        string? occupiedId = null;
+        var outcome = Apply(desired.Revision, reader =>
+        {
+            var step = WriteAndReadBack(reader, desired);
+            if (step.Occupied)
+            {
+                occupiedId = desired.DeviceUserId;
+            }
+
+            return step.Verification;
+        });
+        if (occupiedId != null)
+        {
+            ClearRetry();
+            return new MemberApplyResult(MemberApplyKind.Occupied, occupiedId);
+        }
+
+        var kind = outcome switch
+        {
+            ApplyOutcome.Verified => MemberApplyKind.Applied,
+            ApplyOutcome.AlreadyVerified => MemberApplyKind.AlreadyApplied,
+            ApplyOutcome.WaitingToRetry => MemberApplyKind.Waiting,
+            ApplyOutcome.NotReady => MemberApplyKind.NotReady,
+            _ => MemberApplyKind.Failed
+        };
+        return new MemberApplyResult(kind, null);
+    }
+
+    private static WriteStep WriteAndReadBack(IReaderAdapter reader, DesiredMember desired)
+    {
+        var existing = reader.GetUser(desired.DeviceUserId);
+        if (existing.Ok)
+        {
+            if (!SameUser(existing.User!, desired))
+            {
+                var occupied = reader.CreateUser(Record(desired));
+                return occupied.FailCode == FakeReader.FailOccupied
+                    ? WriteStep.Collision()
+                    : WriteStep.Fail(occupied.Error ?? occupied.FailCode);
+            }
+        }
+        else if (existing.FailCode == FakeReader.FailNoRecord)
+        {
+            var created = reader.CreateUser(Record(desired));
+            if (!created.Ok)
+            {
+                return created.FailCode == FakeReader.FailOccupied
+                    ? WriteStep.Collision()
+                    : WriteStep.Fail(created.Error);
+            }
+        }
+        else
+        {
+            return WriteStep.Fail(existing.Error);
+        }
+
+        var face = reader.GetFace(desired.DeviceUserId);
+        if (!face.Ok)
+        {
+            if (face.FailCode is not (FakeReader.FailUnknown or FakeReader.FailNoRecord))
+            {
+                return WriteStep.Fail(face.Error);
+            }
+
+            var inserted = reader.InsertFace(desired.DeviceUserId, desired.Face);
+            if (!inserted.Ok)
+            {
+                return WriteStep.Fail(inserted.Error ?? inserted.FailCode);
+            }
+        }
+
+        var readUser = reader.GetUser(desired.DeviceUserId);
+        var readFace = reader.GetFace(desired.DeviceUserId);
+        if (!readUser.Ok || readUser.User == null || !readFace.Ok || readFace.Bytes == null)
+        {
+            return WriteStep.Fail(readUser.Error ?? readFace.Error ?? "read-back failed");
+        }
+
+        if (!SameUser(readUser.User, desired) || !SameHash(readFace.Bytes, desired.Face))
+        {
+            return WriteStep.Fail("read-back mismatch");
+        }
+
+        return WriteStep.Done();
+    }
+
+    private static ReaderUser Record(DesiredMember desired) => new(
+        desired.DeviceUserId,
+        desired.Name,
+        desired.NameEx,
+        desired.UserStatus,
+        desired.ValidFrom,
+        desired.ValidTo,
+        desired.Authority,
+        desired.DoorNum,
+        desired.TimeSectionNum);
+
+    private static bool SameUser(ReaderUser user, DesiredMember desired)
+    {
+        return user.DeviceUserId == desired.DeviceUserId
+            && user.Name == desired.Name
+            && user.NameEx == desired.NameEx
+            && user.UserStatus == desired.UserStatus
+            && user.ValidFrom == desired.ValidFrom
+            && user.ValidTo == desired.ValidTo
+            && user.Authority == desired.Authority
+            && user.DoorNum == desired.DoorNum
+            && user.TimeSectionNum == desired.TimeSectionNum;
+    }
+
+    private static bool SameHash(byte[] readBack, byte[] sent)
+    {
+        return CryptographicOperations.FixedTimeEquals(SHA256.HashData(readBack), SHA256.HashData(sent));
+    }
+
+    private void ClearRetry()
+    {
+        lock (_gate)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "DELETE FROM retry_state WHERE reader_id = $reader";
+            command.Parameters.AddWithValue("$reader", _readerId);
+            command.ExecuteNonQuery();
+        }
+    }
+
+    private readonly record struct WriteStep(Verification Verification, bool Occupied)
+    {
+        public static WriteStep Done() => new(new Verification(true, null), false);
+
+        public static WriteStep Fail(string? error) => new(new Verification(false, error), false);
+
+        public static WriteStep Collision() => new(new Verification(false, FakeReader.FailOccupied), true);
     }
 
     public void MarkAckDelivered(long revision)

@@ -90,6 +90,7 @@ public class DeviceService {
         device.setModel(request.model());
         device.setSerialNumber(request.serialNumber());
         device.setGatewayId(resolveGatewayId(request.gatewayId(), tenantId));
+        device.setProjectionEnabled(Boolean.TRUE.equals(request.projectionEnabled()));
         Device saved = deviceRepository.save(device);
         provisioning.provisionDevice(saved);
         FlowLog.info("device", "created id={} name={} role={}", saved.getPublicId(), saved.getName(), saved.getRole());
@@ -109,6 +110,9 @@ public class DeviceService {
         device.setSerialNumber(request.serialNumber());
         Long previousGatewayId = device.getGatewayId();
         device.setGatewayId(resolveGatewayId(request.gatewayId(), tenantId));
+        if (request.projectionEnabled() != null) {
+            device.setProjectionEnabled(request.projectionEnabled());
+        }
         Device saved = deviceRepository.save(device);
         if (saved.getGatewayId() != null && !saved.getGatewayId().equals(previousGatewayId)) {
             provisioning.provisionDevice(saved);
@@ -145,6 +149,10 @@ public class DeviceService {
     public MemberDeviceMapping createMapping(String devicePublicId, String memberPublicId,
                                              String requestedDeviceUserId, Long tenantId) {
         Device device = getByPublicId(devicePublicId, tenantId);
+        if (device.isProjectionEnabled()) {
+            throw CommonExceptions.conflict(
+                    "This reader is updated from desired state, not the command outbox");
+        }
         Member member = memberService.getByPublicId(memberPublicId, tenantId);
         final String deviceUserId = StringUtils.hasText(requestedDeviceUserId)
                 ? requestedDeviceUserId.trim() : member.getDeviceUserId();

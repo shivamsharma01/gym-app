@@ -133,6 +133,7 @@ export type Device = {
   connectionState: string
   lastSeenAt: string | null
   gatewayAssigned: boolean
+  projectionEnabled: boolean
   createdAt: string
 }
 

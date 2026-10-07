@@ -75,7 +75,7 @@ public class MemberDeviceProvisioningService {
         List<String> noGateway = new ArrayList<>();
         List<String> alreadyMapped = new ArrayList<>();
         for (Device device : deviceRepository.findByTenantId(member.getTenantId())) {
-            if (skipDeviceIds.contains(device.getId())) {
+            if (skipDeviceIds.contains(device.getId()) || device.isProjectionEnabled()) {
                 continue;
             }
             if (device.getGatewayId() == null) {
@@ -95,7 +95,7 @@ public class MemberDeviceProvisioningService {
     /** Backfills all active members onto a device that just got a gateway. */
     @Transactional
     public int provisionDevice(Device device) {
-        if (device.getGatewayId() == null) {
+        if (device.getGatewayId() == null || device.isProjectionEnabled()) {
             return 0;
         }
         int added = 0;
@@ -198,7 +198,7 @@ public class MemberDeviceProvisioningService {
     public void reseedEverywhere(Member member) {
         deviceSyncService.cancelOpenForMember(member.getId());
         for (Device device : deviceRepository.findByTenantId(member.getTenantId())) {
-            if (device.getGatewayId() == null) {
+            if (device.getGatewayId() == null || device.isProjectionEnabled()) {
                 continue;
             }
             MemberDeviceMapping mapping = mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())
@@ -295,6 +295,10 @@ public class MemberDeviceProvisioningService {
             return;
         }
         for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(member.getId())) {
+            Device device = deviceRepository.findById(mapping.getDeviceId()).orElse(null);
+            if (device != null && device.isProjectionEnabled()) {
+                continue;
+            }
             if (serial.equals(mapping.getDeviceUserId())) {
                 if (mapping.getPendingDeviceUserId() != null) {
                     deviceSyncService.supersede(mapping.getDeviceId(), member.getId(),
@@ -370,6 +374,9 @@ public class MemberDeviceProvisioningService {
     // --- internals -------------------------------------------------------------------------------
 
     private boolean ensureMapping(Member member, Device device) {
+        if (device.isProjectionEnabled()) {
+            return false;
+        }
         if (mappingRepository.existsByDeviceIdAndMemberId(device.getId(), member.getId())) {
             return false;
         }

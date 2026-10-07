@@ -7,7 +7,7 @@ namespace Gym.Gateway.Adapters;
 /// This is not <see cref="IDeviceAdapter"/>. That interface is the existing command path: partial
 /// user merges, face upsert, and create-overwrites. Those are not this reader's behavior.
 /// </summary>
-public sealed class FakeReader
+public sealed class FakeReader : IReaderAdapter
 {
     public const int SdkErrorMissingRecord = unchecked((int)0x800004B5);
     public const string FailPhotoExist = "PHOTO_EXIST";
@@ -21,6 +21,31 @@ public sealed class FakeReader
     private readonly List<ReaderPunch> _punches = [];
     private readonly Dictionary<FakeReaderOperation, Queue<string>> _failures = [];
     private readonly Queue<ReaderListResult> _listScripts = [];
+    private readonly List<string> _writes = [];
+    private byte[]? _scriptedFaceReadBack;
+
+    public IReadOnlyList<string> Writes
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _writes.ToArray();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The next face read of a user who already has a photo returns these bytes. Stored bytes stay
+    /// as inserted, so a hash of the read-back can differ.
+    /// </summary>
+    public void ScriptFaceReadBack(byte[] jpeg)
+    {
+        lock (_gate)
+        {
+            _scriptedFaceReadBack = Copy(jpeg);
+        }
+    }
 
     public void ScriptFailure(FakeReaderOperation operation, string error = "failed")
     {
@@ -110,6 +135,7 @@ public sealed class FakeReader
             }
 
             _users[user.DeviceUserId] = user;
+            _writes.Add("CreateUser " + user.DeviceUserId);
             return ReaderCallResult.Success();
         }
     }
@@ -129,7 +155,7 @@ public sealed class FakeReader
             }
 
             return _faces.TryGetValue(deviceUserId, out var photo)
-                ? ReaderFaceResult.Found(Copy(photo))
+                ? ReaderFaceResult.Found(Copy(_scriptedFaceReadBack ?? photo))
                 : ReaderFaceResult.NoPhoto();
         }
     }
@@ -182,6 +208,7 @@ public sealed class FakeReader
             }
 
             _faces[deviceUserId] = Copy(jpeg);
+            _writes.Add("InsertFace " + deviceUserId);
             return ReaderCallResult.Success();
         }
     }

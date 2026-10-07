@@ -1,0 +1,348 @@
+using System.Net.WebSockets;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Gym.Gateway;
+using Gym.Gateway.Adapters;
+using Gym.Gateway.Execution;
+
+var arguments = Arguments.Parse(args);
+try
+{
+    return await Harness.RunAsync(arguments);
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine(ex);
+    return 1;
+}
+
+internal static class Harness
+{
+    public static async Task<int> RunAsync(Arguments arguments)
+    {
+        using var http = DesiredStateClient.CreateHttp(arguments.Token);
+        var client = new DesiredStateClient(http, arguments.BaseUrl);
+        var reader = new FakeReader();
+        if (arguments.Mode == "occupied")
+        {
+            var seeded = reader.CreateUser(new ReaderUser(
+                arguments.Occupy, "Already there", null, 0,
+                new DateTimeOffset(2026, 10, 8, 0, 0, 0, TimeSpan.FromHours(5.5)),
+                new DateTimeOffset(2026, 10, 8, 23, 59, 59, TimeSpan.FromHours(5.5)),
+                "Customer", 1, 1));
+            if (!seeded.Ok)
+            {
+                throw new InvalidOperationException(seeded.Error ?? "pre-seed failed");
+            }
+
+            var face = reader.InsertFace(arguments.Occupy, [9, 9, 9, 9]);
+            if (!face.Ok)
+            {
+                throw new InvalidOperationException(face.Error ?? "pre-seed face failed");
+            }
+        }
+
+        if (arguments.Mode == "face")
+        {
+            reader.ScriptFaceReadBack([7, 7, 7, 7]);
+        }
+
+        var baseline = reader.Writes.Count;
+        var journalDirectory = Path.GetDirectoryName(arguments.Journal);
+        if (!string.IsNullOrEmpty(journalDirectory))
+        {
+            Directory.CreateDirectory(journalDirectory);
+        }
+
+        using var socket = new ClientWebSocket();
+        socket.Options.SetRequestHeader("Authorization", "Bearer " + arguments.Token);
+        using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await socket.ConnectAsync(WebSocketUri(arguments.BaseUrl), lifetime.Token).ConfigureAwait(false);
+
+        var receiving = ReceiveTextAsync(socket, lifetime.Token);
+        Console.WriteLine("READY");
+        Console.Out.Flush();
+        var noticeJson = await receiving.ConfigureAwait(false);
+
+        var legacy = false;
+        var executedAgain = false;
+        long applied;
+        int pending;
+        using (var first = Start(arguments, reader))
+        {
+            if (!await RouteAsync(noticeJson, arguments, first, reader, client, () => legacy = true, lifetime.Token)
+                    .ConfigureAwait(false))
+            {
+                throw new InvalidOperationException("The revision notice was not routed to the reader path");
+            }
+
+            if (arguments.Mode != "restart")
+            {
+                (applied, pending) = Snapshot(first);
+            }
+            else
+            {
+                applied = 0;
+                pending = 0;
+            }
+        }
+
+        if (arguments.Mode == "restart")
+        {
+            var beforeRestart = reader.Writes.Count;
+            using var restarted = Start(arguments, reader);
+            if (!await RouteAsync(noticeJson, arguments, restarted, reader, client, () => legacy = true, lifetime.Token)
+                    .ConfigureAwait(false))
+            {
+                throw new InvalidOperationException("The revision notice was not routed to the reader path");
+            }
+
+            executedAgain = reader.Writes.Count != beforeRestart;
+            (applied, pending) = Snapshot(restarted);
+        }
+        else
+        {
+            await DrainAsync(socket, arguments, reader, client, () => legacy = true, lifetime.Token).ConfigureAwait(false);
+        }
+
+        return Finish(arguments, reader, client, baseline, applied, pending, executedAgain, legacy);
+    }
+
+    private static (long Applied, int Pending) Snapshot(ReaderWorker worker) =>
+        (worker.AppliedRevision, worker.PendingAcks.Count);
+
+    private static async Task<bool> RouteAsync(
+        string json,
+        Arguments arguments,
+        ReaderWorker worker,
+        FakeReader reader,
+        DesiredStateClient client,
+        Action onLegacy,
+        CancellationToken cancellationToken)
+    {
+        var path = new DesiredRevisionPath(arguments.DeviceId, worker, reader, client);
+        return await InboundDispatch.RouteAsync(
+            json,
+            _ =>
+            {
+                onLegacy();
+                return Task.FromException(new InvalidOperationException("legacy command dispatcher received the revision"));
+            },
+            (notice, token) => path.HandleAsync(notice, token),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static int Finish(
+        Arguments arguments,
+        FakeReader reader,
+        DesiredStateClient client,
+        int baseline,
+        long applied,
+        int pending,
+        bool executedAgain,
+        bool legacy)
+    {
+        var writes = reader.Writes.Skip(baseline).ToArray();
+        var users = reader.ListUsers().Users.Select(user =>
+        {
+            var face = reader.GetFace(user.DeviceUserId);
+            var bytes = face.Bytes ?? [];
+            return new
+            {
+                id = user.DeviceUserId,
+                name = user.Name,
+                nameEx = user.NameEx,
+                faceHex = Convert.ToHexString(bytes).ToLowerInvariant(),
+                faceSha256 = bytes.Length == 0
+                    ? ""
+                    : Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()
+            };
+        }).ToArray();
+        var created = writes.LastOrDefault(line => line.StartsWith("CreateUser ", StringComparison.Ordinal));
+        var createdId = created == null ? null : created["CreateUser ".Length..];
+        var publicIdLeaked = arguments.PublicId.Length > 0 && Leaked(
+            arguments.PublicId,
+            writes,
+            client.PullTranscript,
+            client.OccupiedIds,
+            users.Select(user => ((string?)user.id, (string?)user.name, (string?)user.nameEx)));
+        var acked = client.AcknowledgementPosts > 0;
+        var ok = arguments.Mode switch
+        {
+            "face" => !acked && applied == 0 && pending == 0 && !publicIdLeaked && !legacy,
+            "occupied" => acked
+                && client.OccupiedIds.Count == 1
+                && client.OccupiedIds[0] == arguments.Occupy
+                && !string.IsNullOrWhiteSpace(createdId)
+                && createdId != arguments.Occupy
+                && createdId != arguments.PublicId
+                && !publicIdLeaked
+                && !executedAgain
+                && !legacy,
+            _ => acked && !publicIdLeaked && !executedAgain && !legacy
+        };
+        var report = JsonSerializer.Serialize(new
+        {
+            ok,
+            acked,
+            ackCount = client.AcknowledgementPosts,
+            publicIdLeaked,
+            pullTranscript = client.PullTranscript,
+            executedAgain,
+            legacyDispatched = legacy,
+            occupiedId = client.OccupiedIds.FirstOrDefault(),
+            createdId,
+            appliedLocal = applied,
+            pendingAcks = pending,
+            writes,
+            users
+        });
+        if (!string.IsNullOrWhiteSpace(arguments.ResultPath))
+        {
+            File.WriteAllText(arguments.ResultPath, report);
+        }
+
+        Console.WriteLine(report);
+        Console.Out.Flush();
+        return ok ? 0 : 1;
+    }
+
+    private static bool Leaked(
+        string publicId,
+        IReadOnlyList<string> writes,
+        string transcript,
+        IReadOnlyList<string> occupiedIds,
+        IEnumerable<(string? Id, string? Name, string? NameEx)> users)
+    {
+        if (writes.Any(line => line.Contains(publicId, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (transcript.Contains(publicId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (occupiedIds.Any(id => string.Equals(id, publicId, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        return users.Any(user =>
+            string.Equals(user.Id, publicId, StringComparison.Ordinal)
+            || (user.Name != null && user.Name.Contains(publicId, StringComparison.Ordinal))
+            || (user.NameEx != null && user.NameEx.Contains(publicId, StringComparison.Ordinal)));
+    }
+
+    private static async Task DrainAsync(
+        ClientWebSocket socket,
+        Arguments arguments,
+        FakeReader reader,
+        DesiredStateClient client,
+        Action onLegacy,
+        CancellationToken cancellationToken)
+    {
+        while (socket.State == WebSocketState.Open)
+        {
+            using var extra = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            extra.CancelAfter(TimeSpan.FromSeconds(1));
+            string json;
+            try
+            {
+                json = await ReceiveTextAsync(socket, extra.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            using var worker = Start(arguments, reader);
+            var handled = await RouteAsync(json, arguments, worker, reader, client, onLegacy, cancellationToken)
+                .ConfigureAwait(false);
+            if (!handled)
+            {
+                onLegacy();
+                throw new InvalidOperationException("Follow-up frame was not a desired revision");
+            }
+        }
+    }
+
+    private static ReaderWorker Start(Arguments arguments, FakeReader reader) =>
+        new(arguments.DeviceId, reader, arguments.Journal, TimeSpan.Zero);
+
+    private static Uri WebSocketUri(string baseUrl)
+    {
+        var http = new Uri(baseUrl.TrimEnd('/') + "/");
+        var builder = new UriBuilder(http)
+        {
+            Scheme = http.Scheme == "https" ? "wss" : "ws",
+            Path = "/gateway",
+            Query = ""
+        };
+        return builder.Uri;
+    }
+
+    private static async Task<string> ReceiveTextAsync(ClientWebSocket socket, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[64 * 1024];
+        using var message = new MemoryStream();
+        WebSocketReceiveResult result;
+        do
+        {
+            result = await socket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                throw new InvalidOperationException("WebSocket closed before the revision notice");
+            }
+
+            message.Write(buffer, 0, result.Count);
+        } while (!result.EndOfMessage);
+
+        return Encoding.UTF8.GetString(message.ToArray());
+    }
+}
+
+internal sealed class Arguments
+{
+    public required string BaseUrl { get; init; }
+    public required string Token { get; init; }
+    public required string DeviceId { get; init; }
+    public required string PublicId { get; init; }
+    public required string Mode { get; init; }
+    public required string Journal { get; init; }
+    public string Occupy { get; init; } = "";
+    public string? ResultPath { get; init; }
+
+    public static Arguments Parse(string[] args)
+    {
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (!args[i].StartsWith("--", StringComparison.Ordinal) || i + 1 >= args.Length)
+            {
+                throw new InvalidOperationException("Expected --name value pairs");
+            }
+
+            values[args[i][2..]] = args[++i];
+        }
+
+        string Required(string name) =>
+            values.TryGetValue(name, out var value) && value.Length > 0
+                ? value
+                : throw new InvalidOperationException("Missing --" + name);
+
+        return new Arguments
+        {
+            BaseUrl = Required("base"),
+            Token = Required("token"),
+            DeviceId = Required("device"),
+            PublicId = values.GetValueOrDefault("public-id") ?? "",
+            Mode = Required("mode"),
+            Journal = Required("journal"),
+            Occupy = values.GetValueOrDefault("occupy") ?? "",
+            ResultPath = values.GetValueOrDefault("result")
+        };
+    }
+}

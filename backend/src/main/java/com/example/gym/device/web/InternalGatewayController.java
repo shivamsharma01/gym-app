@@ -1,11 +1,16 @@
 package com.example.gym.device.web;
 
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.device.DesiredProjectionService;
 import com.example.gym.device.GatewayAuthService;
 import com.example.gym.device.GatewayCommandPollService;
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.GatewayService;
 import com.example.gym.device.domain.Gateway;
+import com.example.gym.device.dto.DesiredStateRequests.AcknowledgeRevision;
+import com.example.gym.device.dto.DesiredStateRequests.DesiredPage;
+import com.example.gym.device.dto.DesiredStateRequests.ReportOccupied;
+import com.example.gym.device.dto.DesiredStateRequests.RevisionNotice;
 import com.example.gym.device.dto.DeviceResponses.DeviceView;
 import com.example.gym.device.dto.GatewayCredentialResponse;
 import com.example.gym.device.dto.GatewayEnrollRequest;
@@ -25,6 +30,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -42,17 +48,20 @@ public class InternalGatewayController {
     private final GatewayMessageService messageService;
     private final GatewayCommandPollService pollService;
     private final MemberFaceService faceService;
+    private final DesiredProjectionService desiredProjection;
 
     public InternalGatewayController(GatewayAuthService authService,
                                      GatewayService gatewayService,
                                      GatewayMessageService messageService,
                                      GatewayCommandPollService pollService,
-                                     MemberFaceService faceService) {
+                                     MemberFaceService faceService,
+                                     DesiredProjectionService desiredProjection) {
         this.authService = authService;
         this.gatewayService = gatewayService;
         this.messageService = messageService;
         this.pollService = pollService;
         this.faceService = faceService;
+        this.desiredProjection = desiredProjection;
     }
 
     @PostMapping(value = "/enroll", consumes = MediaType.APPLICATION_JSON_VALUE,
@@ -113,6 +122,31 @@ public class InternalGatewayController {
         Gateway gateway = requireBoundGateway(authorization);
         GatewayFaceUpload upload = faceService.acceptGatewayUpload(gateway, body);
         return Map.of("uploadId", upload.getPublicId(), "sha256", upload.getSha256());
+    }
+
+    @GetMapping(value = "/desired", produces = MediaType.APPLICATION_JSON_VALUE)
+    public DesiredPage desired(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestParam("deviceId") String deviceId,
+            @RequestParam(value = "after", defaultValue = "0") long after,
+            @RequestParam(value = "limit", defaultValue = "20") int limit) {
+        return desiredProjection.pull(requireBoundGateway(authorization), deviceId, after, limit);
+    }
+
+    @PostMapping(value = "/desired/ack", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public RevisionNotice acknowledgeDesired(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @Valid @RequestBody AcknowledgeRevision ack) {
+        return desiredProjection.acknowledge(requireBoundGateway(authorization), ack);
+    }
+
+    @PostMapping(value = "/desired/occupied", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public RevisionNotice occupiedDesired(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @Valid @RequestBody ReportOccupied report) {
+        return desiredProjection.occupied(requireBoundGateway(authorization), report);
     }
 
     private Gateway requireBoundGateway(String authorization) {

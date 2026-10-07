@@ -57,6 +57,10 @@ public class Device extends TenantAwareEntity {
     @Column(name = "roster_compared_at", insertable = false, updatable = false)
     private Instant rosterComparedAt;
 
+    /** When set, this reader is written from desired state. The command outbox does not create users on it. */
+    @Column(name = "projection_enabled", nullable = false)
+    private boolean projectionEnabled;
+
     protected Device() {
     }
 
@@ -153,5 +157,13 @@ public class Device extends TenantAwareEntity {
 
     public Instant getRosterComparedAt() {
         return rosterComparedAt;
+    }
+
+    public boolean isProjectionEnabled() {
+        return projectionEnabled;
+    }
+
+    public void setProjectionEnabled(boolean projectionEnabled) {
+        this.projectionEnabled = projectionEnabled;
     }
 }

@@ -61,6 +61,14 @@ public class MemberService {
 
     @Transactional
     public Member create(CreateMember request, Long tenantId) {
+        Member saved = saveNew(request, tenantId);
+        provisioning.provisionMember(saved, Set.of());
+        return saved;
+    }
+
+    /** Persists the member without sending them to a reader. The caller provisions or projects. */
+    @Transactional
+    public Member saveNew(CreateMember request, Long tenantId) {
         String code = StringUtils.hasText(request.memberCode())
                 ? request.memberCode().trim()
                 : numbers.newMemberCode(tenantId);
@@ -85,8 +93,6 @@ public class MemberService {
             member.setDeviceAuthority(DeviceAuthority.fromString(request.deviceAuthority()));
         }
         Member saved = memberRepository.save(member);
-        provisioning.provisionMember(saved, Set.of());
-
         FlowLog.info("member", "created id={} code={} serial={}", saved.getPublicId(), saved.getMemberCode(), serial);
         auditService.record(AuditActions.MEMBER_CREATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(),

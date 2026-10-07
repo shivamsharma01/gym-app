@@ -6,9 +6,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.domain.DeviceConnectionState;
+import com.example.gym.device.domain.GatewayStatus;
+import com.example.gym.device.domain.SyncCommandState;
 import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
 import java.time.Instant;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -131,6 +135,262 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("Entrance"))
                 .andExpect(jsonPath("$[0].host").value("10.0.0.1"));
+    }
+
+    @Test
+    void missingTokenCannotRegisterPollPushOrIngest() throws Exception {
+        String register = message(gatewayId, null, "REGISTER_GATEWAY", "{\"agentVersion\":\"1\"}");
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(register))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + staffToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(register))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/internal/gateway/commands"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/internal/gateway/devices"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/internal/gateway/credentials/rotate"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/internal/gateway/faces")
+                        .contentType(MediaType.IMAGE_JPEG)
+                        .content(new byte[] {1, 2, 3}))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/internal/gateway/faces/missing/1"))
+                .andExpect(status().isUnauthorized());
+
+        assertThat(gatewayRepository.findByPublicId(gatewayId).orElseThrow().getStatus())
+                .isEqualTo(GatewayStatus.UNKNOWN);
+    }
+
+    @Test
+    void expiredCredentialIsRejected() throws Exception {
+        String credential = enroll(gatewayId, enrollmentToken);
+        var gateway = gatewayRepository.findByPublicId(gatewayId).orElseThrow();
+        gateway.setTokenExpiresAt(Instant.now().minusSeconds(60));
+        gatewayRepository.saveAndFlush(gateway);
+
+        assertRejected(credential);
+    }
+
+    @Test
+    void credentialWithoutExpiryIsRejected() throws Exception {
+        String credential = enroll(gatewayId, enrollmentToken);
+        var gateway = gatewayRepository.findByPublicId(gatewayId).orElseThrow();
+        gateway.setTokenExpiresAt(null);
+        gatewayRepository.saveAndFlush(gateway);
+
+        assertRejected(credential);
+    }
+
+    @Test
+    void enrollmentIgnoresTheBodyGatewayId() throws Exception {
+        String other = mockMvc.perform(post("/api/v1/gateways")
+                        .header("Authorization", "Bearer " + staffToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Side door\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String otherId = readJson(other).get("id").asString();
+        String otherEnrollment = readJson(other).get("token").asString();
+
+        mockMvc.perform(post("/internal/gateway/enroll")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(enrollBody(otherId, enrollmentToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gatewayId").value(gatewayId));
+
+        enroll(otherId, otherEnrollment);
+    }
+
+    @Test
+    void messageBodyGatewayIdIsIgnored() throws Exception {
+        String credential = enroll(gatewayId, enrollmentToken);
+        String other = mockMvc.perform(post("/api/v1/gateways")
+                        .header("Authorization", "Bearer " + staffToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Other lane\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String otherId = readJson(other).get("id").asString();
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + credential)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(message(otherId, null, "REGISTER_GATEWAY", "{\"agentVersion\":\"9\"}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("REGISTERED"));
+
+        var authenticated = gatewayRepository.findByPublicId(gatewayId).orElseThrow();
+        var claimed = gatewayRepository.findByPublicId(otherId).orElseThrow();
+        assertThat(authenticated.getStatus()).isEqualTo(GatewayStatus.ONLINE);
+        assertThat(authenticated.getAgentVersion()).isEqualTo("9");
+        assertThat(claimed.getStatus()).isEqualTo(GatewayStatus.UNKNOWN);
+        assertThat(claimed.getAgentVersion()).isNull();
+    }
+
+    @Test
+    void gatewayCannotReportOrAcknowledgeAnotherGatewaysDevice() throws Exception {
+        String credential = enroll(gatewayId, enrollmentToken);
+        String other = mockMvc.perform(post("/api/v1/gateways")
+                        .header("Authorization", "Bearer " + staffToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Other lane\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode otherNode = readJson(other);
+        String otherId = otherNode.get("id").asString();
+        enroll(otherId, otherNode.get("token").asString());
+
+        String ownDeviceId = createDevice("Own reader", "10.0.0.8", gatewayId);
+        String foreignDeviceId = createDevice("Foreign reader", "10.0.0.9", otherId);
+        String planId = readJson(mockMvc.perform(post("/api/v1/plans")
+                        .header("Authorization", "Bearer " + staffToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Monthly\",\"price\":1000.00,\"currency\":\"INR\",\"durationDays\":30}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        String memberId = readJson(mockMvc.perform(post("/api/v1/members")
+                        .header("Authorization", "Bearer " + staffToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"serialNumber\":\"1001\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        mockMvc.perform(post("/api/v1/memberships")
+                        .header("Authorization", "Bearer " + staffToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"memberId\":\"" + memberId + "\",\"planId\":\"" + planId + "\"}"))
+                .andExpect(status().isCreated());
+
+        Long foreignDevicePk = deviceRepository.findByPublicId(foreignDeviceId).orElseThrow().getId();
+        var foreignCommand = deviceSyncCommandRepository.findAll().stream()
+                .filter(command -> foreignDevicePk.equals(command.getDeviceId()))
+                .findFirst()
+                .orElseThrow();
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + credential)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(message(otherId, foreignDeviceId, "DEVICE_STATUS",
+                                "{\"connectionState\":\"ONLINE\"}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("ERROR"))
+                .andExpect(jsonPath("$.payload.error").value("device is not owned by this gateway"));
+        assertThat(deviceRepository.findByPublicId(foreignDeviceId).orElseThrow().getConnectionState())
+                .isEqualTo(DeviceConnectionState.UNKNOWN);
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + credential)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(message(otherId, foreignDeviceId, "SYNC_RESULT",
+                                "{\"ok\":true}", foreignCommand.getCorrelationId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("ERROR"))
+                .andExpect(jsonPath("$.payload.error").value("device is not owned by this gateway"));
+        assertThat(deviceSyncCommandRepository.findById(foreignCommand.getId()).orElseThrow().getState())
+                .isEqualTo(SyncCommandState.PENDING);
+
+        String polled = mockMvc.perform(get("/internal/gateway/commands")
+                        .header("Authorization", "Bearer " + credential))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        readJson(polled).forEach(node ->
+                assertThat(node.path("deviceId").asString()).isNotEqualTo(foreignDeviceId));
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + credential)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(message(otherId, ownDeviceId, "DEVICE_STATUS",
+                                "{\"connectionState\":\"ONLINE\"}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("ACK"));
+        assertThat(deviceRepository.findByPublicId(ownDeviceId).orElseThrow().getConnectionState())
+                .isEqualTo(DeviceConnectionState.ONLINE);
+    }
+
+    @Test
+    void validCredentialCanRegisterPollAndIngestItsOwnDevice() throws Exception {
+        String credential = enroll(gatewayId, enrollmentToken);
+        String deviceId = createDevice("Entrance", "10.0.0.8", gatewayId);
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + credential)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(message(gatewayId, null, "REGISTER_GATEWAY", "{\"agentVersion\":\"1.2.3\"}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("REGISTERED"));
+        assertThat(gatewayRepository.findByPublicId(gatewayId).orElseThrow().getStatus())
+                .isEqualTo(GatewayStatus.ONLINE);
+
+        mockMvc.perform(get("/internal/gateway/commands")
+                        .header("Authorization", "Bearer " + credential))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + credential)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(message(gatewayId, deviceId, "DEVICE_STATUS",
+                                "{\"connectionState\":\"ONLINE\",\"firmware\":\"1.0\"}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("ACK"));
+        assertThat(deviceRepository.findByPublicId(deviceId).orElseThrow().getConnectionState())
+                .isEqualTo(DeviceConnectionState.ONLINE);
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + credential)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(message(gatewayId, null, "HEARTBEAT", "{}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("ACK"));
+        assertThat(gatewayRepository.findByPublicId(gatewayId).orElseThrow().getLastHeartbeatAt())
+                .isNotNull();
+    }
+
+    private void assertRejected(String credential) throws Exception {
+        mockMvc.perform(get("/internal/gateway/devices")
+                        .header("Authorization", "Bearer " + credential))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/internal/gateway/commands")
+                        .header("Authorization", "Bearer " + credential))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + credential)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(message(gatewayId, null, "REGISTER_GATEWAY", "{\"agentVersion\":\"1\"}")))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/internal/gateway/credentials/rotate")
+                        .header("Authorization", "Bearer " + credential))
+                .andExpect(status().isUnauthorized());
+    }
+
+    private String createDevice(String name, String host, String ownerGatewayId) throws Exception {
+        String created = mockMvc.perform(post("/api/v1/devices")
+                        .header("Authorization", "Bearer " + staffToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"" + name + "\",\"role\":\"ENTRANCE\",\"host\":\"" + host + "\","
+                                + "\"port\":37777,\"gatewayId\":\"" + ownerGatewayId + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return readJson(created).get("id").asString();
+    }
+
+    private static String message(String bodyGatewayId, String deviceId, String type, String payload) {
+        return message(bodyGatewayId, deviceId, type, payload, UUID.randomUUID().toString());
+    }
+
+    private static String message(String bodyGatewayId, String deviceId, String type, String payload,
+                                  String correlationId) {
+        String deviceJson = deviceId == null ? "null" : "\"" + deviceId + "\"";
+        return """
+                {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":%s,\
+                "type":"%s","correlationId":"%s","payload":%s}
+                """.formatted(UUID.randomUUID(), Instant.now(), bodyGatewayId, deviceJson, type,
+                correlationId, payload);
     }
 
     private String enroll(String id, String enrollment) throws Exception {

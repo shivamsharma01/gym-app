@@ -82,14 +82,14 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
                   {"deviceUserId":"2002","name":"Frozen User","frozen":true},
                   {"deviceUserId":"2003","name":"NoEnd","frozen":false,"validFrom":"2025-01-01T00:00:00.000Z"}
                 ]}
-                """));
+                """), gatewayId);
         gatewayMessageService.process(envelope(exitId, "RECONCILIATION_RESULT",
                 """
                 {"ok":true,"deviceUsers":[
                   {"deviceUserId":"2001","name":"Ada Lovelace","frozen":false,
                    "validFrom":"2024-01-01T00:00:00.000Z","validTo":"2026-12-31T00:00:00.000Z"}
                 ]}
-                """));
+                """), gatewayId);
 
         Long entrance = deviceRepository.findByPublicId(entranceId).orElseThrow().getId();
         assertThat(memberRepository.count()).isEqualTo(3);
@@ -155,7 +155,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
         gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
                 """
                 {"ok":true,"deviceUsers":[{"deviceUserId":"2001","name":"Ada Lovelace","frozen":false}]}
-                """));
+                """), gatewayId);
         assertThat(memberRepository.count()).isEqualTo(3);
 
         // Manual create still MANUAL
@@ -174,7 +174,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
                   {"deviceUserId":"3001","name":"Export Me","frozen":false,
                    "validFrom":"2025-01-01T00:00:00.000Z","validTo":"2026-01-01T00:00:00.000Z"}
                 ]}
-                """));
+                """), gatewayId);
         postJson("/api/v1/devices/" + entranceId + "/import-users", null)
                 .andExpect(status().isOk());
 
@@ -200,14 +200,14 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
         gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
                 """
                 {"ok":true,"usersComplete":false,"deviceUsers":[]}
-                """));
+                """), gatewayId);
         assertThat(reconciliationConflictRepository.findAll())
                 .noneMatch(c -> c.getConflictType().name().equals("MISSING_ON_DEVICE"));
 
         gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
                 """
                 {"ok":true,"deviceUsers":[]}
-                """));
+                """), gatewayId);
         assertThat(reconciliationConflictRepository.findAll())
                 .anyMatch(c -> c.getConflictType().name().equals("MISSING_ON_DEVICE"));
     }
@@ -220,7 +220,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
         gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
                 """
                 {"ok":true,"rosterDigest":"v1:empty","deviceUsers":[]}
-                """));
+                """), gatewayId);
         assertThat(deviceRepository.findRosterState(entrance).orElseThrow().getRosterDigest()).isEqualTo("v1:empty");
         assertThat(readJson(deviceService.reconcile(entranceId, tenantId).getPayload()).get("knownDigest").asString())
                 .isEqualTo("v1:empty");
@@ -234,7 +234,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
         gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
                 """
                 {"ok":true,"usersUnchanged":true,"rosterDigest":"v1:empty","deviceUsers":[]}
-                """));
+                """), gatewayId);
         assertThat(reconciliationConflictRepository.findAll())
                 .noneMatch(c -> c.getConflictType().name().equals("MISSING_ON_DEVICE"));
 
@@ -242,7 +242,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
         gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT",
                 """
                 {"ok":true,"rosterDigest":"v1:before-create","deviceUsers":[]}
-                """));
+                """), gatewayId);
         assertThat(deviceRepository.findRosterState(entrance).orElseThrow().getRosterDigest()).isNull();
     }
 

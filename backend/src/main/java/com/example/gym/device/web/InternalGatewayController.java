@@ -2,8 +2,6 @@ package com.example.gym.device.web;
 
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.device.GatewayAuthService;
-import com.example.gym.device.GatewayAuthService.Kind;
-import com.example.gym.device.GatewayAuthService.Outcome;
 import com.example.gym.device.GatewayCommandPollService;
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.GatewayService;
@@ -31,8 +29,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * REST fallback of the gateway protocol (ingest + command poll) plus enrollment and credential
- * rotation. Authenticated with the per-gateway operational credential (or enrollment for enroll)
- * — never a user JWT.
+ * rotation. Live calls require the per-gateway operational credential. Enrollment exchanges a
+ * one-time enrollment token; the gateway id on that request is not the identity. Never a user JWT.
+ * There is no anonymous or shared-token path.
  */
 @RestController
 @RequestMapping("/internal/gateway")
@@ -81,8 +80,7 @@ public class InternalGatewayController {
     public String ingest(@RequestHeader(value = "Authorization", required = false) String authorization,
                          @RequestBody String raw) {
         Gateway gateway = requireGateway(authorization);
-        String boundId = gateway == null ? null : gateway.getPublicId();
-        Optional<String> reply = messageService.process(raw, boundId);
+        Optional<String> reply = messageService.process(raw, gateway.getPublicId());
         return reply.orElse("{}");
     }
 
@@ -118,22 +116,14 @@ public class InternalGatewayController {
     }
 
     private Gateway requireBoundGateway(String authorization) {
-        Gateway gateway = requireGateway(authorization);
-        if (gateway == null) {
-            throw CommonExceptions.unauthorized("Per-gateway credential required");
-        }
-        return gateway;
+        return requireGateway(authorization);
     }
 
-    /** @return the bound gateway, or null when authenticated via the deployment shared token. */
+    /** The gateway that owns the presented operational credential. Missing or expired tokens fail. */
     private Gateway requireGateway(String authorization) {
         String token = bearer(authorization);
-        Outcome outcome = authService.authenticate(token)
-                .orElseThrow(() -> CommonExceptions.unauthorized("Invalid gateway token"));
-        if (outcome.kind() == Kind.GATEWAY) {
-            return outcome.gateway();
-        }
-        return null;
+        return authService.authenticate(token)
+                .orElseThrow(() -> CommonExceptions.unauthorized("Invalid or expired gateway token"));
     }
 
     private String bearer(String authorization) {

@@ -120,7 +120,7 @@ class FaceSyncIT extends AbstractIntegrationTest {
 
         // A late result for the superseded v1 command does not mark v1 as on the device.
         gatewayMessageService.process(envelope(entranceId, "SYNC_RESULT", v1.getFirst().getCorrelationId(),
-                "{\"ok\":true,\"faceVersion\":1}"));
+                "{\"ok\":true,\"faceVersion\":1}"), gatewayId);
         MemberDeviceMapping mapping = mapping(memberId, v1.getFirst().getDeviceId());
         assertThat(mapping.getFaceVersionSynced()).isNull();
 
@@ -129,7 +129,7 @@ class FaceSyncIT extends AbstractIntegrationTest {
                 .filter(c -> c.getState() == SyncCommandState.PENDING && c.getDeviceId().equals(entrance))
                 .findFirst().orElseThrow();
         gatewayMessageService.process(envelope(entranceId, "SYNC_RESULT", v2.getCorrelationId(),
-                "{\"ok\":true,\"faceVersion\":2}"));
+                "{\"ok\":true,\"faceVersion\":2}"), gatewayId);
         assertThat(mapping(memberId, entrance).getFaceVersionSynced()).isEqualTo(2);
         assertThat(mapping(memberId, entrance).getFaceSyncState().name()).isEqualTo("SYNCED");
 
@@ -293,7 +293,7 @@ class FaceSyncIT extends AbstractIntegrationTest {
                 .findFirst().orElseThrow();
 
         gatewayMessageService.process(envelope(entranceId, "SYNC_RESULT", create.getCorrelationId(),
-                "{\"ok\":true,\"skipped\":true,\"reason\":\"name changed on device at a later time\"}"));
+                "{\"ok\":true,\"skipped\":true,\"reason\":\"name changed on device at a later time\"}"), gatewayId);
 
         DeviceSyncCommand after = deviceSyncCommandRepository.findById(create.getId()).orElseThrow();
         assertThat(after.getState()).isEqualTo(SyncCommandState.SUCCEEDED);
@@ -517,7 +517,7 @@ class FaceSyncIT extends AbstractIntegrationTest {
 
     private void deviceUserChanged(String devicePublicId, String payload) {
         gatewayMessageService.process(envelope(devicePublicId, "DEVICE_USER_CHANGED",
-                UUID.randomUUID().toString(), payload));
+                UUID.randomUUID().toString(), payload), gatewayId);
     }
 
     private static String faceChange(String userId, String name, Instant at, String uploadId) {

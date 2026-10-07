@@ -130,7 +130,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .isEqualTo(SyncCommandState.PENDING);
 
         gatewayMessageService.process(envelope("SYNC_RESULT", create.getCorrelationId(),
-                "{\"ok\":true}"));
+                "{\"ok\":true}"), gatewayId);
 
         assertThat(deviceSyncCommandRepository.findById(create.getId()).orElseThrow().getState())
                 .isEqualTo(SyncCommandState.SUCCEEDED);
@@ -149,13 +149,13 @@ class DeviceSyncIT extends AbstractIntegrationTest {
         // Another device on the same gateway already got these via the gateway's local fan-out.
         var first = userCommands.getFirst();
         gatewayMessageService.process(envelope("SYNC_RESULT", first.getCorrelationId(),
-                "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"));
+                "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"), gatewayId);
         assertThat(memberDeviceMappingRepository.findAll().getFirst().getSyncState().name())
                 .as("other detail commands are still queued").isEqualTo("PENDING");
 
         for (var command : userCommands.subList(1, userCommands.size())) {
             gatewayMessageService.process(envelope("SYNC_RESULT", command.getCorrelationId(),
-                    "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"));
+                    "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"), gatewayId);
         }
         var mapping = memberDeviceMappingRepository.findAll().getFirst();
         assertThat(mapping.getSyncState().name()).isEqualTo("SYNCED");
@@ -165,7 +165,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 java.util.Map.of("deviceUserId", "1001", "faceVersion", 1, "sha256", "abc"));
         assertThat(memberDeviceMappingRepository.findAll().getFirst().getFaceSyncState().name()).isEqualTo("PENDING");
         gatewayMessageService.process(envelope("SYNC_RESULT", face.getCorrelationId(),
-                "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"));
+                "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"), gatewayId);
 
         mapping = memberDeviceMappingRepository.findAll().getFirst();
         assertThat(mapping.getFaceSyncState().name()).isEqualTo("SYNCED");
@@ -176,7 +176,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     void membershipDeviceStateFollowsCommandsThatCarryNoMembership() {
         for (var command : deviceSyncCommandRepository.findAll()) {
             if (command.getMemberId() != null) {
-                gatewayMessageService.process(envelope("SYNC_RESULT", command.getCorrelationId(), "{\"ok\":true}"));
+                gatewayMessageService.process(envelope("SYNC_RESULT", command.getCorrelationId(), "{\"ok\":true}"), gatewayId);
             }
         }
         var mapping = memberDeviceMappingRepository.findAll().getFirst();
@@ -191,7 +191,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 null, SyncCommandType.UPDATE_USER, java.util.Map.of("deviceUserId", mapping.getDeviceUserId()));
         assertThat(membershipRepository.findByPublicIdAndDeletedFalse(membershipId).orElseThrow().getDeviceSyncState().name())
                 .isEqualTo("PENDING");
-        gatewayMessageService.process(envelope("SYNC_RESULT", update.getCorrelationId(), "{\"ok\":true}"));
+        gatewayMessageService.process(envelope("SYNC_RESULT", update.getCorrelationId(), "{\"ok\":true}"), gatewayId);
 
         assertThat(membershipRepository.findByPublicIdAndDeletedFalse(membershipId).orElseThrow().getDeviceSyncState().name())
                 .isEqualTo("SYNCED");
@@ -240,8 +240,8 @@ class DeviceSyncIT extends AbstractIntegrationTest {
         String event = envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
                 "{\"deviceUserId\":\"1001\",\"occurredAt\":\"" + occurred
                         + "\",\"method\":\"FACE\",\"granted\":true,\"recNo\":42}");
-        gatewayMessageService.process(event);
-        gatewayMessageService.process(event); // duplicate recNo
+        gatewayMessageService.process(event, gatewayId);
+        gatewayMessageService.process(event, gatewayId); // duplicate recNo
 
         mockMvc.perform(get("/api/v1/attendance").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -253,7 +253,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
         gatewayMessageService.process(envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
                 "{\"deviceUserId\":\"1001\",\"occurredAt\":\"" + occurred
-                        + "\",\"method\":\"FACE\",\"granted\":false,\"recNo\":43}"));
+                        + "\",\"method\":\"FACE\",\"granted\":false,\"recNo\":43}"), gatewayId);
 
         mockMvc.perform(get("/api/v1/security-events").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -361,7 +361,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
         // A punch under the new id still credits the same member while the reader is moving.
         gatewayMessageService.process(envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
                 "{\"deviceUserId\":\"7\",\"occurredAt\":\"2026-09-11T07:00:00Z\","
-                        + "\"method\":\"FACE\",\"granted\":true,\"recNo\":77}"));
+                        + "\"method\":\"FACE\",\"granted\":true,\"recNo\":77}"), gatewayId);
         assertThat(attendanceEventRepository.findAll()).singleElement()
                 .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(ashaId));
 
@@ -373,7 +373,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
         assertThat(deviceSyncCommandRepository.findAll())
                 .noneMatch(c -> c.getType() == SyncCommandType.REMOVE_USER);
 
-        gatewayMessageService.process(envelope("SYNC_RESULT", create.getCorrelationId(), "{\"ok\":true}"));
+        gatewayMessageService.process(envelope("SYNC_RESULT", create.getCorrelationId(), "{\"ok\":true}"), gatewayId);
 
         mapping = memberDeviceMappingRepository.findByMemberId(ashaId).getFirst();
         assertThat(mapping.getDeviceUserId()).isEqualTo("7");

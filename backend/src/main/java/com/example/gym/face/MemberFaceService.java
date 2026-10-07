@@ -5,7 +5,10 @@ import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.MemberDeviceProvisioningService;
+import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.Gateway;
+import com.example.gym.device.repo.DeviceRepository;
+import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberService;
@@ -34,6 +37,8 @@ public class MemberFaceService {
     private final MemberRepository memberRepository;
     private final MemberDeviceProvisioningService provisioning;
     private final AuditService auditService;
+    private final DeviceRepository deviceRepository;
+    private final MemberDeviceMappingRepository mappingRepository;
 
     public MemberFaceService(MemberFaceRepository faceRepository,
                              GatewayFaceUploadRepository uploadRepository,
@@ -41,7 +46,9 @@ public class MemberFaceService {
                              MemberService memberService,
                              MemberRepository memberRepository,
                              MemberDeviceProvisioningService provisioning,
-                             AuditService auditService) {
+                             AuditService auditService,
+                             DeviceRepository deviceRepository,
+                             MemberDeviceMappingRepository mappingRepository) {
         this.faceRepository = faceRepository;
         this.uploadRepository = uploadRepository;
         this.storage = storage;
@@ -49,6 +56,8 @@ public class MemberFaceService {
         this.memberRepository = memberRepository;
         this.provisioning = provisioning;
         this.auditService = auditService;
+        this.deviceRepository = deviceRepository;
+        this.mappingRepository = mappingRepository;
     }
 
     /** Staff upload (React). Returns the current face (unchanged when the image is identical). */
@@ -140,12 +149,18 @@ public class MemberFaceService {
         provisioning.deleteFace(member, Set.of(sourceDeviceId));
     }
 
-    /** Gateway download of a specific face version (must be the current one). */
+    /**
+     * Gateway download of a specific face version (must be the current one). The member must be
+     * mapped to a device assigned to this gateway. Another gateway in the same tenant is refused.
+     */
     @Transactional(readOnly = true)
     public FaceImage imageForGateway(Gateway gateway, String memberPublicId, int version) {
         Member member = memberRepository.findByPublicId(memberPublicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Member"));
         TenantGuard.check(member.getTenantId(), gateway.getTenantId(), "Member");
+        if (!memberAssignedToGateway(gateway, member.getId())) {
+            throw CommonExceptions.forbidden("Member is not assigned to a device on this gateway");
+        }
         MemberFace face = faceRepository.findByMemberId(member.getId())
                 .filter(f -> f.getFaceVersion() == version)
                 .orElseThrow(() -> CommonExceptions.notFound("Face version"));
@@ -153,18 +168,31 @@ public class MemberFaceService {
     }
 
     /**
-     * Stores an image the gateway read from a device. Returns the upload id to reference from
-     * DEVICE_USER_CHANGED. Device JPEGs that already fit are kept byte-identical so echo
-     * suppression by sha256 stays stable.
+     * Stores an image the gateway read from one of its own devices. Returns the upload id to
+     * reference from DEVICE_USER_CHANGED. Does not read or replace a member face. A gateway with
+     * no assigned device cannot deposit face bytes. Device JPEGs that already fit are kept
+     * byte-identical so echo suppression by sha256 stays stable.
      */
     @Transactional
     public GatewayFaceUpload acceptGatewayUpload(Gateway gateway, byte[] raw) {
+        if (deviceRepository.findByGatewayId(gateway.getId()).isEmpty()) {
+            throw CommonExceptions.forbidden("Gateway has no assigned device");
+        }
         byte[] jpeg = FaceImageProcessor.normaliseFromDevice(raw);
         String sha = FaceStorageService.sha256(jpeg);
         String key = FaceStorageService.uploadKey(gateway.getTenantId());
         storage.writeInTransaction(key, jpeg);
         return uploadRepository.save(new GatewayFaceUpload(gateway.getTenantId(), gateway.getId(), key, sha,
                 jpeg.length));
+    }
+
+    private boolean memberAssignedToGateway(Gateway gateway, Long memberId) {
+        for (Device device : deviceRepository.findByGatewayId(gateway.getId())) {
+            if (mappingRepository.existsByDeviceIdAndMemberId(device.getId(), memberId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Transactional(readOnly = true)

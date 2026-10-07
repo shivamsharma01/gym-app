@@ -96,20 +96,22 @@ public class GatewayService {
     }
 
     /**
-     * Exchanges a valid enrollment token for a long-lived operational credential.
+     * Exchanges a valid enrollment token for a long-lived operational credential. The gateway is
+     * the row that stores that token's hash. {@code requestedGatewayId} is ignored when it
+     * disagrees, so a caller cannot enroll as a different gateway.
      */
     @Transactional
-    public GatewayCredentialResponse enroll(String gatewayPublicId, String enrollmentToken) {
+    public GatewayCredentialResponse enroll(String requestedGatewayId, String enrollmentToken) {
         if (!StringUtils.hasText(enrollmentToken)) {
             throw CommonExceptions.unauthorized("Invalid enrollment token");
         }
-        Gateway gateway = gatewayRepository.findByPublicId(gatewayPublicId)
-                .orElseThrow(() -> CommonExceptions.notFound("Gateway"));
-
         String enrollmentHash = authService.hash(enrollmentToken);
-        if (gateway.getEnrollmentTokenHash() == null
-                || !gateway.getEnrollmentTokenHash().equals(enrollmentHash)) {
-            throw CommonExceptions.unauthorized("Invalid enrollment token");
+        Gateway gateway = gatewayRepository.findByEnrollmentTokenHash(enrollmentHash)
+                .orElseThrow(() -> CommonExceptions.unauthorized("Invalid enrollment token"));
+        if (StringUtils.hasText(requestedGatewayId)
+                && !requestedGatewayId.equals(gateway.getPublicId())) {
+            FlowLog.info("gateway", "ignoring enrollment body gateway id; token belongs to {}",
+                    gateway.getPublicId());
         }
         if (gateway.getEnrollmentConsumedAt() != null) {
             throw CommonExceptions.conflict("Enrollment token has already been used");

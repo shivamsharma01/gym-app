@@ -87,7 +87,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
                  "deviceUsers":[{"deviceUserId":"1114","name":"Ravi Kumar","frozen":false}],
                  "events":[{"deviceUserId":"1114","occurredAt":"2026-10-02T06:00:00Z",
                             "method":"FACE","granted":true,"recNo":501}]}
-                """));
+                """), gatewayId);
 
         Member ravi = memberBySerial("1114");
         assertThat(attendanceEventRepository.findAll()).singleElement()
@@ -114,7 +114,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].memberLinked").value(false))
                 .andExpect(jsonPath("$.content[0].memberName").doesNotExist());
 
-        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("792", "Meera Shah")));
+        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("792", "Meera Shah")), gatewayId);
 
         Member meera = memberBySerial("792");
         assertThat(eventsOn(entrance, "792")).hasSize(2)
@@ -168,7 +168,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         assertThat(eventsOn(exit, "6001")).singleElement()
                 .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(bina.getId()));
 
-        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("8001", "Esha Jain")));
+        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("8001", "Esha Jain")), gatewayId);
 
         Member esha = memberBySerial("8001");
         assertThat(eventsOn(entrance, "8001")).singleElement()
@@ -210,7 +210,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         punch(entranceId, "1001");
         moveSerial(asha, "7");
 
-        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("1001", "Kiran Das")));
+        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("1001", "Kiran Das")), gatewayId);
 
         Member kiran = memberBySerial("1001");
         assertThat(kiran.getId()).isNotEqualTo(asha.getId());
@@ -226,7 +226,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
             long n = recNo.getAndIncrement();
             gatewayMessageService.process(envelope(entranceId, "DEVICE_EVENT", """
                     {"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}
-                    """.formatted(user, sameTime, n)));
+                    """.formatted(user, sameTime, n)), gatewayId);
         }
         punch(entranceId, "early");
 
@@ -259,7 +259,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         assertThat(creates).hasSize(2);
         for (var create : creates) {
             String deviceId = create.getDeviceId().equals(entrance) ? entranceId : exitId;
-            gatewayMessageService.process(envelope(deviceId, "SYNC_RESULT", create.getCorrelationId(), "{\"ok\":true}"));
+            gatewayMessageService.process(envelope(deviceId, "SYNC_RESULT", create.getCorrelationId(), "{\"ok\":true}"), gatewayId);
         }
         assertThat(memberDeviceMappingRepository.findByMemberId(member.getId()))
                 .allMatch(m -> serial.equals(m.getDeviceUserId()) && m.getPendingDeviceUserId() == null);
@@ -294,7 +294,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         long n = recNo.getAndIncrement();
         gatewayMessageService.process(envelope(devicePublicId, "DEVICE_EVENT", """
                 {"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}
-                """.formatted(deviceUserId, Instant.parse("2026-10-02T05:00:00Z").plusSeconds(n), n)));
+                """.formatted(deviceUserId, Instant.parse("2026-10-02T05:00:00Z").plusSeconds(n), n)), gatewayId);
     }
 
     private static String newReaderUser(String deviceUserId, String name) {

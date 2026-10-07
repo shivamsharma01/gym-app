@@ -278,7 +278,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
         gatewayMessageService.process("""
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
-                """.formatted(UUID.randomUUID(), Instant.now(), gatewayId, deviceId, UUID.randomUUID(), payload));
+                """.formatted(UUID.randomUUID(), Instant.now(), gatewayId, deviceId, UUID.randomUUID(), payload), gatewayId);
     }
 
     private ResultActions postJson(String path, String body) throws Exception {

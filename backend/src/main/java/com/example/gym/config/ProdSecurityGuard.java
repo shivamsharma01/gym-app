@@ -12,7 +12,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * Fails fast in {@code prod} if the JWT signing secret is missing, too short, or still the
- * documented local-dev default. Compose and real deploys must set {@code APP_SECURITY_JWT_SECRET}.
+ * documented local-dev default, if the in-process gateway simulator is enabled, or if the obsolete
+ * shared gateway token is set. A shared token is not a credential and must not be configurable as
+ * a way back to anonymous gateway access. Compose and real deploys must set
+ * {@code APP_SECURITY_JWT_SECRET}. Gateway connections use a per-gateway credential.
  */
 @Component
 @Profile("prod")
@@ -26,12 +29,15 @@ public class ProdSecurityGuard implements ApplicationRunner {
 
     private final String jwtSecret;
     private final boolean simulatorEnabled;
+    private final String sharedGatewayToken;
 
     public ProdSecurityGuard(
             @Value("${app.security.jwt.secret}") String jwtSecret,
-            @Value("${app.gateway.simulator-enabled:false}") boolean simulatorEnabled) {
+            @Value("${app.gateway.simulator-enabled:false}") boolean simulatorEnabled,
+            @Value("${app.gateway.shared-token:}") String sharedGatewayToken) {
         this.jwtSecret = jwtSecret == null ? "" : jwtSecret.trim();
         this.simulatorEnabled = simulatorEnabled;
+        this.sharedGatewayToken = sharedGatewayToken == null ? "" : sharedGatewayToken.trim();
     }
 
     @Override
@@ -47,6 +53,12 @@ public class ProdSecurityGuard implements ApplicationRunner {
             throw new IllegalStateException(
                     "prod profile forbids APP_GATEWAY_SIMULATOR_ENABLED=true (not real hardware)");
         }
-        log.info("Prod security guard OK (JWT secret present, simulator disabled)");
+        if (!sharedGatewayToken.isBlank()) {
+            throw new IllegalStateException(
+                    "prod profile rejects APP_GATEWAY_SHARED_TOKEN. "
+                            + "Gateway connections require a per-gateway credential. "
+                            + "A shared token is not accepted and cannot turn anonymous access on.");
+        }
+        log.info("Prod security guard OK (JWT secret present, simulator disabled, no shared gateway token)");
     }
 }

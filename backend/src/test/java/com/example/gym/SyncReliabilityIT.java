@@ -111,7 +111,7 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
     @Test
     void registeringAGatewayRunsTheCatchUpStep() {
         gatewayMessageService.process(envelope("REGISTER_GATEWAY", UUID.randomUUID().toString(),
-                "{\"agentVersion\":\"1\"}"));
+                "{\"agentVersion\":\"1\"}"), gatewayId);
         assertThat(deviceSyncCommandRepository.findAll())
                 .anyMatch(c -> c.getType() == SyncCommandType.RECONCILE_DEVICE && c.getDeviceId().equals(device));
     }
@@ -128,14 +128,14 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
                  "faceChanged":false,"faceRemoved":false}
                 """.formatted(Instant.now()));
 
-        assertThat(gatewayMessageService.process(message).orElseThrow()).contains("ERROR");
+        assertThat(gatewayMessageService.process(message, gatewayId).orElseThrow()).contains("ERROR");
         assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isFalse();
         assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "9100")).isEmpty();
 
         // Resent (the gateway keeps it until ACK): processed this time, then deduplicated.
-        assertThat(gatewayMessageService.process(message).orElseThrow()).contains("ACK");
+        assertThat(gatewayMessageService.process(message, gatewayId).orElseThrow()).contains("ACK");
         assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "9100")).isPresent();
-        gatewayMessageService.process(message);
+        gatewayMessageService.process(message, gatewayId);
         verify(deviceUserChangeService, times(2)).apply(any(), any());
         doCallRealMethod().when(deviceUserChangeService).apply(any(), any());
     }
@@ -194,12 +194,12 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
                 {"deviceUserId":"9300","name":"Asha Pal","frozen":false,"deviceChangedAt":"%s","isNew":true,
                  "profileChanged":true,"nameChanged":true,"frozenChanged":false,"validityChanged":false,
                  "faceChanged":false,"faceRemoved":false,"siblingsUpdated":true,"siblingDeviceIds":["%s"]}
-                """.formatted(Instant.now(), exitId)));
+                """.formatted(Instant.now(), exitId)), gatewayId);
         gatewayMessageService.process(envelope("DEVICE_USER_CHANGED", UUID.randomUUID().toString(), """
                 {"deviceUserId":"9300","name":"Asha Pal Singh","frozen":false,"deviceChangedAt":"%s","isNew":false,
                  "profileChanged":true,"nameChanged":true,"frozenChanged":false,"validityChanged":false,
                  "faceChanged":false,"faceRemoved":false,"siblingsUpdated":true,"siblingDeviceIds":["%s"]}
-                """.formatted(Instant.now(), exitId)));
+                """.formatted(Instant.now(), exitId)), gatewayId);
 
         assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "9300")).isPresent();
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(exit, "9300")).isPresent();
@@ -210,7 +210,7 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
                 {"deviceUserId":"9301","name":"Ravi Jain","frozen":false,"deviceChangedAt":"%s","isNew":true,
                  "profileChanged":true,"nameChanged":true,"frozenChanged":false,"validityChanged":false,
                  "faceChanged":false,"faceRemoved":false}
-                """.formatted(Instant.now())));
+                """.formatted(Instant.now())), gatewayId);
         assertThat(userCommands(exit)).extracting(DeviceSyncCommand::getType).contains(SyncCommandType.CREATE_USER);
         assertThat(userCommands(device)).isEmpty();
     }

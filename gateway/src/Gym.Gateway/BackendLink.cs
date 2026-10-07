@@ -80,7 +80,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             {
                 Scheme = http.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws",
                 Path = "/gateway",
-                Query = "token=" + Uri.EscapeDataString(_options.Token)
+                Query = string.Empty
             };
             return builder.Uri;
         }
@@ -442,7 +442,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
 
     private static string Redact(Uri uri)
     {
-        var builder = new UriBuilder(uri) { Query = "token=***" };
+        var builder = new UriBuilder(uri) { Query = string.Empty };
         return builder.Uri.ToString();
     }
 }

@@ -41,11 +41,11 @@ Copy UNKNOWN into the architecture document as UNKNOWN. Do not reinterpret the e
 ## Run
 
 ```powershell
-sc stop "Gym Gateway"
 $env:TRUEFACE_PASSWORD = "<reader password>"
 .\Gym.Gateway.SdkProbe.exe --reader 192.168.1.201 --gates --photo C:\walker.jpg --photo2 C:\walker2.jpg
-sc start "Gym Gateway"
 ```
+
+If the Gym Gateway service is installed on that PC, run `sc stop "Gym Gateway"` first and `sc start "Gym Gateway"` afterwards. If it is not installed, skip both. The probe needs nothing else on the PC. If the reader user is not `admin`, add `--username <name>`.
 
 Other options:
 
@@ -66,7 +66,7 @@ The prompts always say what to type. The last option, `k`, always means skip, an
 | P5 screen face (×2)        | On the reader screen, open the test user and enrol the face again (same person). A trial counts only if the stored photo changed.                                    |
 | P17 screen                 | Open the test user on the reader screen and say which name is shown.                                                                                                 |
 | P19 admin menu (×4)        | Try to open the reader's admin menu with your face: twice while the test user is an administrator, twice while it is a normal user. Close the menu without changing anything. |
-| P6 reboot (×2)             | Type `r`, then power-cycle the reader. The probe first waits up to 6 minutes for the SDK to reconnect its existing login (P20), logs in again only if that fails, and then asks for one walk. |
+| P6 reboot (×2)             | Type `r`, then power-cycle the reader. The probe first waits up to 6 minutes for the SDK to reconnect its existing login (P20), logs in again only if that fails, and then asks for one walk. If the reader cannot be rebooted, type `n` and unplug the reader's network cable for about a minute instead: P20 is still tested, but that trial counts as UNKNOWN for P6. |
 | P6 full log / P12 reset    | Only shown with `--spare-reader`. Answer only if this really is a spare reader.                                                                                      |
 
 ## What each check does

@@ -74,11 +74,12 @@ internal sealed class GateSuite
         Add("P17", "How are szName (31 chars) and szNameEx (127 chars) stored and read back?");
         Add("P18", "Are stored punch times in the reader's own clock?");
         Add("P19", "Does emAuthority=Administrators (and only that) open the reader's admin menu?");
-        Add("P20", "After a reader power cycle, does the SDK reconnect the same login by itself and keep delivering door events?");
+        Add("P20", "After the reader drops off (power cycle or network unplug), does the SDK reconnect the same login by itself and keep delivering door events?");
         Add("P21", "What photo sizes does the reader accept, and what does it answer above its limit?");
     }
 
     private readonly List<(bool? Back, bool? Events)> _p20 = [];
+    private bool _p20Unplugged;
 
     private sealed record WalkRecord(string Label, string UserId, DateTime Before, DateTime After, List<Punch> Mine, List<AlarmSeen> Alarms);
 
@@ -1009,12 +1010,13 @@ internal sealed class GateSuite
         }
 
         var all = back == Verdict.NotObserved ? Verdict.NotObserved : GateVerdicts.AllOf([back, events]);
-        g.Set(all, all switch
+        var how = _p20Unplugged ? " (at least one trial was a network unplug, not a power cycle)" : "";
+        g.Set(all, (all switch
         {
-            Verdict.Observed => "on both reboots the old login answered again and the walk's door event arrived on it",
-            Verdict.NotObserved => back == Verdict.NotObserved ? "on both reboots the old login never answered again; a new login was needed" : "the old login answered, but door events stopped arriving on it",
-            _ => "reboots were skipped, the reboot could not be confirmed, or the door-event part could not be judged"
-        });
+            Verdict.Observed => "on both trials the old login answered again and the walk's door event arrived on it",
+            Verdict.NotObserved => back == Verdict.NotObserved ? "on both trials the old login never answered again; a new login was needed" : "the old login answered, but door events stopped arriving on it",
+            _ => "trials were skipped, the drop-off could not be confirmed, or the door-event part could not be judged"
+        }) + how);
     }
 
     private void P21()
@@ -1338,13 +1340,21 @@ internal sealed class GateSuite
         var trials = new List<bool?>();
         for (var t = 1; t <= Trials; t++)
         {
-            var key = Ask($"  [P6 reboot {t}] Power the reader off and on now. r = I am rebooting it now, k = skip: ", "rk");
-            if (key != 'r')
+            var key = Ask($"  [P6 reboot {t}] Type r, then power the reader off and on. If it cannot be rebooted, type n and unplug the reader's "
+                          + "network cable for about a minute instead (tests reconnecting only). k = skip: ", "rnk");
+            if (key == 'k')
             {
                 Note("P6", $"reboot {t}: skipped");
                 trials.Add(null);
                 _p20.Add((null, null));
                 continue;
+            }
+
+            var unplug = key == 'n';
+            if (unplug)
+            {
+                _p20Unplugged = true;
+                _r.Line("  unplug the reader's network cable now, wait about a minute, then plug it back in.");
             }
 
             var before = _seenPunches.Keys.ToList();
@@ -1371,6 +1381,14 @@ internal sealed class GateSuite
             {
                 Note("P20", $"reboot {t}: {(same == false ? "the old login did not come back; logged in again" : "could not tell whether the reader actually restarted; logged in again")}");
                 _p20.Add((same, null));
+            }
+
+            if (unplug)
+            {
+                Note("P6", $"reboot {t}: network unplug instead of a reboot; record numbers across a power loss were not tested");
+                Remember(_s.QueryPunches(_runStart.AddMinutes(-1), Clock().AddMinutes(1)));
+                trials.Add(null);
+                continue;
             }
 
             bool? continues = mine.Count == 0 || highest == null ? null : mine.Max(p => p.RecNo) > highest;

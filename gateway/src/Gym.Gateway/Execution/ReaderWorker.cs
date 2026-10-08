@@ -276,7 +276,7 @@ public sealed class ReaderWorker : IDisposable
                 return null;
             }
 
-            if (SamePerson(existing.User!, desired) || Owns(desired.DeviceUserId))
+            if (ReplacesExisting(existing.User!, desired))
             {
                 var replaced = reader.ReplaceUser(Record(desired));
                 if (replaced.Ok)
@@ -380,6 +380,9 @@ public sealed class ReaderWorker : IDisposable
         desired.Authority,
         desired.DoorNum,
         desired.TimeSectionNum);
+
+    private bool ReplacesExisting(ReaderUser user, DesiredMember desired) =>
+        SamePerson(user, desired) || Owns(desired.DeviceUserId);
 
     private static bool SamePerson(ReaderUser user, DesiredMember desired)
     {

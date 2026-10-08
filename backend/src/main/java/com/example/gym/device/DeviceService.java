@@ -211,6 +211,9 @@ public class DeviceService {
     /** Enqueue reconcile if none is already in flight (used on gateway connect / device reconnect). */
     @Transactional
     public void enqueueReconcileIfAbsent(Device device) {
+        if (device.isProjectionEnabled()) {
+            return;
+        }
         if (deviceSyncService.hasActiveReconcile(device.getId())) {
             return;
         }

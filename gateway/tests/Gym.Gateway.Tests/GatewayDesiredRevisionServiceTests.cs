@@ -19,6 +19,20 @@ public class GatewayDesiredRevisionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Reconnect_on_the_live_gateway_reads_before_it_writes()
+    {
+        var fake = new FakeReader();
+        var desired = new RecordingDesiredState(Member("1"));
+        using var gateway = Start(new SuppliedReaderFactory(_ => fake), desired, ConnectedMock("reader-1"));
+
+        await gateway.ReconnectReadersAsync(CancellationToken.None);
+
+        Assert.Equal("ListUsers", fake.Calls[0]);
+        Assert.Equal(new[] { "CreateUser 1", "InsertFace 1" }, fake.Writes);
+        Assert.Single(desired.Acknowledgements);
+    }
+
+    [Fact]
     public async Task Live_gateway_path_invokes_the_worker_and_acks_after_read_back()
     {
         var fake = new FakeReader();

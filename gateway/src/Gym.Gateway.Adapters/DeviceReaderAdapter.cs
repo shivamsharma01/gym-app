@@ -224,6 +224,24 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
         return ReaderCallResult.Success();
     }
 
+    public ReaderListResult ListUsers()
+    {
+        if (!Online(out var error))
+        {
+            return ReaderListResult.Failed(error);
+        }
+
+        try
+        {
+            var users = _device.ListUsers().Select(Map).ToArray();
+            return ReaderListResult.Page(users.Length, users);
+        }
+        catch (Exception ex)
+        {
+            return ReaderListResult.Failed(ex.Message);
+        }
+    }
+
     /// <summary>NO_RECORD is a missing user. UNKNOWN, including the shared SDK error, is not.</summary>
     internal static ReaderUserResult FromLookup(TrueFaceDeviceAdapter.UserLookup lookup) =>
         lookup switch

@@ -6,6 +6,11 @@ namespace Gym.Gateway.Adapters;
 /// </summary>
 public interface IReaderAdapter
 {
+    /// <summary>
+    /// Reads who is on the reader. A failed list means the reader did not answer, and nothing is written.
+    /// </summary>
+    ReaderListResult ListUsers();
+
     ReaderUserResult GetUser(string deviceUserId);
 
     ReaderCallResult CreateUser(ReaderUser user);

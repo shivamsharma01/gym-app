@@ -277,6 +277,13 @@ public class DeviceSyncService {
         int waiting = 0;
         int failed = 0;
         for (DeviceSyncCommand command : due) {
+            if (withholdProjectionReplay(command)) {
+                command.setState(SyncCommandState.CANCELLED);
+                command.setCompletedAt(Instant.now());
+                command.setLastError("This reader follows desired revisions");
+                commandRepository.save(command);
+                continue;
+            }
             GatewayCommandTransport.Outcome outcome;
             try {
                 outcome = transport.dispatch(command);
@@ -661,6 +668,17 @@ public class DeviceSyncService {
         command.setNextAttemptAt(Instant.now().plus(properties.getOutbox().getOfflineRecheck()));
         FlowLog.debug("sync", "{} corr={} device={} waits: gateway offline, recheck at {}",
                 command.getType(), command.getCorrelationId(), command.getDeviceId(), command.getNextAttemptAt());
+    }
+
+    /**
+     * A flagged reader is not given the old command on reconnect. Door and clock commands stay.
+     */
+    private boolean withholdProjectionReplay(DeviceSyncCommand command) {
+        if (command.getType() != SyncCommandType.RECONCILE_DEVICE
+                && !PROJECTION_READER_SKIPS.contains(command.getType())) {
+            return false;
+        }
+        return projectionReader(command.getDeviceId());
     }
 
     /** Makes every waiting command of the gateway's devices due now (called when it connects). */

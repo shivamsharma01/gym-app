@@ -116,7 +116,8 @@ public sealed class GatewayWorker : BackgroundService
         AttachReaders();
 
         var sendLoop = SendLoopAsync(_link, stoppingToken);
-        var wsLoop = _link.RunWebSocketAsync(AcceptCommand, _desiredRevisions.HandleAsync, stoppingToken);
+        var wsLoop = _link.RunWebSocketAsync(
+            AcceptCommand, _desiredRevisions.HandleAsync, ReconnectReadersAsync, stoppingToken);
         var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
         var poll = PollLoopAsync(_link, stoppingToken);
         var watch = _watcher.RunAsync(TimeSpan.FromSeconds(Math.Max(15, _options.RosterPollSeconds)), stoppingToken);
@@ -322,9 +323,12 @@ public sealed class GatewayWorker : BackgroundService
             var worker = new ReaderWorker(deviceId, reader, journal);
             _readerWorkers.Add(worker);
             var path = new DesiredRevisionPath(deviceId, worker, reader, _desired);
-            _desiredRevisions.Attach(deviceId, path.HandleAsync);
+            _desiredRevisions.Attach(deviceId, path.HandleAsync, path.ReconnectAsync);
         }
     }
+
+    internal Task ReconnectReadersAsync(CancellationToken cancellationToken) =>
+        _desiredRevisions.ReconnectAsync(cancellationToken);
 
     internal Task ReceiveDesiredAsync(DesiredRevisionNotice notice, CancellationToken cancellationToken) =>
         _desiredRevisions.HandleAsync(notice, cancellationToken);

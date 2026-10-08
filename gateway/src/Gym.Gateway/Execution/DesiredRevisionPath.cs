@@ -6,6 +6,7 @@ namespace Gym.Gateway.Execution;
 /// <summary>
 /// Pulls one reader's desired member, writes it through <see cref="ReaderWorker"/>, and posts the
 /// acknowledgement only after the user and face read back. An occupied id is reported as that id.
+/// Reconnect reads the reader before that pull. A silent reader is not written.
 /// </summary>
 public sealed class DesiredRevisionPath
 {
@@ -35,6 +36,21 @@ public sealed class DesiredRevisionPath
         }
 
         return HandleAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Reconnect order after the gateway is authenticated: the reader answers a read, then pull,
+    /// apply, verify, and ack. A list that fails applies nothing.
+    /// </summary>
+    public async Task ReconnectAsync(CancellationToken cancellationToken)
+    {
+        var observed = _reader.ListUsers();
+        if (!observed.Ok)
+        {
+            return;
+        }
+
+        await HandleAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private enum ItemStep

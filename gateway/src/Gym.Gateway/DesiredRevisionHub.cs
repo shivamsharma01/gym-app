@@ -9,6 +9,7 @@ namespace Gym.Gateway;
 public sealed class DesiredRevisionHub
 {
     private readonly Dictionary<string, Func<DesiredRevisionNotice, CancellationToken, Task>> _paths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Func<CancellationToken, Task>> _reconnects = new(StringComparer.Ordinal);
     private readonly ILogger<DesiredRevisionHub> _log;
 
     public DesiredRevisionHub(ILogger<DesiredRevisionHub> log)
@@ -16,7 +17,10 @@ public sealed class DesiredRevisionHub
         _log = log;
     }
 
-    public void Attach(string deviceId, Func<DesiredRevisionNotice, CancellationToken, Task> handle)
+    public void Attach(
+        string deviceId,
+        Func<DesiredRevisionNotice, CancellationToken, Task> handle,
+        Func<CancellationToken, Task> reconnect)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
         {
@@ -24,7 +28,29 @@ public sealed class DesiredRevisionHub
         }
 
         ArgumentNullException.ThrowIfNull(handle);
+        ArgumentNullException.ThrowIfNull(reconnect);
         _paths[deviceId] = handle;
+        _reconnects[deviceId] = reconnect;
+    }
+
+    /// <summary>Each attached reader is read before its desired revisions are pulled.</summary>
+    public async Task ReconnectAsync(CancellationToken cancellationToken)
+    {
+        foreach (var (deviceId, reconnect) in _reconnects)
+        {
+            try
+            {
+                await reconnect(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Reader {DeviceId} reconnect did not apply desired state", deviceId);
+            }
+        }
     }
 
     public Task HandleAsync(DesiredRevisionNotice notice, CancellationToken cancellationToken)

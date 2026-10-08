@@ -2,6 +2,7 @@ package com.example.gym.device;
 
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.repo.DeviceRepository;
+import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,14 +39,19 @@ public class GatewayConnectedListener {
     public void onGatewayConnected(GatewayConnectedEvent event) {
         try {
             List<Device> devices = deviceRepository.findByGatewayId(event.gatewayInternalId());
+            List<Device> commandReaders = new ArrayList<>();
             for (Device device : devices) {
+                if (device.isProjectionEnabled()) {
+                    continue;
+                }
+                commandReaders.add(device);
                 provisioning.provisionDevice(device);
                 deviceService.enqueueReconcileIfAbsent(device);
             }
-            int woken = deviceSyncService.wakeGateway(devices.stream().map(Device::getId).toList());
+            int woken = deviceSyncService.wakeGateway(commandReaders.stream().map(Device::getId).toList());
             int dispatched = deviceSyncService.dispatchDue();
             log.info("Gateway {} connected: reconcile queued for {} device(s), {} waiting command(s) released, "
-                    + "dispatched {}", event.gatewayPublicId(), devices.size(), woken, dispatched);
+                    + "dispatched {}", event.gatewayPublicId(), commandReaders.size(), woken, dispatched);
         } catch (RuntimeException ex) {
             // The regular dispatcher and reconcile schedule still catch up; don't fail the registration.
             log.error("Post-connect sync for gateway {} failed", event.gatewayPublicId(), ex);

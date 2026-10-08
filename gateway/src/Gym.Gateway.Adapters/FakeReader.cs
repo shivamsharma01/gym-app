@@ -22,6 +22,7 @@ public sealed class FakeReader : IReaderAdapter
     private readonly Dictionary<FakeReaderOperation, Queue<string>> _failures = [];
     private readonly Queue<ReaderListResult> _listScripts = [];
     private readonly List<string> _writes = [];
+    private readonly List<string> _calls = [];
     private byte[]? _scriptedFaceReadBack;
     private bool _scriptUnknownUser;
     private bool _keepUserOnRemove;
@@ -37,6 +38,18 @@ public sealed class FakeReader : IReaderAdapter
             lock (_gate)
             {
                 return _writes.ToArray();
+            }
+        }
+    }
+
+    /// <summary>Every reader call, in order, including reads. Writes are the subset that stored a change.</summary>
+    public IReadOnlyList<string> Calls
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _calls.ToArray();
             }
         }
     }
@@ -125,6 +138,7 @@ public sealed class FakeReader : IReaderAdapter
     {
         lock (_gate)
         {
+            Note("ListUsers");
             if (TakeFailure(FakeReaderOperation.ListUsers, out var error))
             {
                 return ReaderListResult.Failed(error);
@@ -144,6 +158,7 @@ public sealed class FakeReader : IReaderAdapter
     {
         lock (_gate)
         {
+            Note("GetUser");
             if (TakeFailure(FakeReaderOperation.GetUser, out var error))
             {
                 return ReaderUserResult.Failed(error);
@@ -167,6 +182,7 @@ public sealed class FakeReader : IReaderAdapter
     {
         lock (_gate)
         {
+            Note("CreateUser");
             if (TakeFailure(FakeReaderOperation.CreateUser, out var error))
             {
                 return ReaderCallResult.Failed(error);
@@ -192,6 +208,7 @@ public sealed class FakeReader : IReaderAdapter
     {
         lock (_gate)
         {
+            Note("ReplaceUser");
             if (!_users.ContainsKey(user.DeviceUserId))
             {
                 return ReaderCallResult.NoRecord();
@@ -207,6 +224,7 @@ public sealed class FakeReader : IReaderAdapter
     {
         lock (_gate)
         {
+            Note("GetFace");
             if (TakeFailure(FakeReaderOperation.GetFace, out var error))
             {
                 return ReaderFaceResult.Failed(error);
@@ -227,6 +245,7 @@ public sealed class FakeReader : IReaderAdapter
     {
         lock (_gate)
         {
+            Note("UpdateFace");
             if (TakeFailure(FakeReaderOperation.UpdateFace, out var error))
             {
                 return ReaderCallResult.Failed(error);
@@ -252,6 +271,7 @@ public sealed class FakeReader : IReaderAdapter
     {
         lock (_gate)
         {
+            Note("InsertFace");
             if (TakeFailure(FakeReaderOperation.InsertFace, out var error))
             {
                 return ReaderCallResult.Failed(error);
@@ -282,6 +302,7 @@ public sealed class FakeReader : IReaderAdapter
     {
         lock (_gate)
         {
+            Note("RemoveUser");
             if (TakeFailure(FakeReaderOperation.RemoveUser, out var error))
             {
                 return ReaderCallResult.Failed(error);
@@ -302,6 +323,7 @@ public sealed class FakeReader : IReaderAdapter
     {
         lock (_gate)
         {
+            Note("RemoveFace");
             if (TakeFailure(FakeReaderOperation.RemoveFace, out var error))
             {
                 return ReaderCallResult.Failed(error);
@@ -370,6 +392,8 @@ public sealed class FakeReader : IReaderAdapter
         error = "";
         return false;
     }
+
+    private void Note(string call) => _calls.Add(call);
 
     private static byte[] Copy(byte[] jpeg) => jpeg.ToArray();
 }

@@ -184,6 +184,14 @@ public class LiveReaderAdapterTests : IDisposable
     }
 
     [Fact]
+    public void A_reader_that_is_not_online_does_not_answer_the_reconnect_read()
+    {
+        var reader = new DeviceReaderAdapter(new MockDeviceAdapter());
+        var listed = reader.ListUsers();
+        Assert.False(listed.Ok);
+    }
+
+    [Fact]
     public void Removing_a_user_is_no_record_and_a_second_remove_succeeds()
     {
         var device = new MockDeviceAdapter();

@@ -226,11 +226,12 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     }
 
     public Task RunWebSocketAsync(Func<GatewayEnvelope, Task> onMessage, CancellationToken cancellationToken) =>
-        RunWebSocketAsync(onMessage, null, cancellationToken);
+        RunWebSocketAsync(onMessage, null, null, cancellationToken);
 
     public async Task RunWebSocketAsync(
         Func<GatewayEnvelope, Task> onMessage,
         Func<DesiredRevisionNotice, CancellationToken, Task>? onDesiredRevision,
+        Func<CancellationToken, Task>? onReconnect,
         CancellationToken cancellationToken)
     {
         if (!_options.UseWebSocket)
@@ -252,6 +253,18 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 _websocketLive = true;
                 _reconnectAttempt = 0;
                 _log.LogInformation("WebSocket connected");
+                if (onReconnect != null)
+                {
+                    try
+                    {
+                        await onReconnect(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _log.LogWarning(ex, "Reconnect read-before-write failed");
+                    }
+                }
+
                 await ReplayPendingAsync(cancellationToken).ConfigureAwait(false);
                 await ReceiveLoopAsync(socket, onMessage, onDesiredRevision, cancellationToken).ConfigureAwait(false);
             }

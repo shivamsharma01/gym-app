@@ -8,6 +8,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.GatewayConnectedEvent;
+import com.example.gym.device.GatewayConnectedListener;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
@@ -39,6 +41,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.MediaType;
@@ -59,8 +62,12 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     @LocalServerPort
     private int port;
 
+    @Autowired
+    private GatewayConnectedListener connected;
+
     private String token;
     private String gatewayToken;
+    private String gatewayPublicId;
     private String flaggedId;
     private Long flagged;
     private Long other;
@@ -100,12 +107,12 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         String createdGateway = postJson("/api/v1/gateways", "{\"name\":\"LAN\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        String gatewayId = readJson(createdGateway).get("id").asString();
-        gatewayToken = enroll(gatewayId, readJson(createdGateway).get("token").asString());
+        gatewayPublicId = readJson(createdGateway).get("id").asString();
+        gatewayToken = enroll(gatewayPublicId, readJson(createdGateway).get("token").asString());
 
-        flaggedId = createDevice("Entrance", true, gatewayId);
+        flaggedId = createDevice("Entrance", true, gatewayPublicId);
         flagged = deviceRepository.findByPublicId(flaggedId).orElseThrow().getId();
-        other = deviceRepository.findByPublicId(createDevice("Exit", false, gatewayId)).orElseThrow().getId();
+        other = deviceRepository.findByPublicId(createDevice("Exit", false, gatewayPublicId)).orElseThrow().getId();
     }
 
     @Test
@@ -458,6 +465,18 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
                     .doesNotContain(SyncCommandType.REMOVE_USER);
         }
+    }
+
+    @Test
+    void reconnectDoesNotReplayOutboxCommandsForTheFlaggedReader() throws Exception {
+        createOnReader("Asha", "Shah", "V6-RECONNECT", "7601");
+        var gateway = gatewayRepository.findByPublicId(gatewayPublicId).orElseThrow();
+
+        connected.onGatewayConnected(new GatewayConnectedEvent(gateway.getPublicId(), gateway.getId()));
+
+        assertThat(commands(flagged)).isEmpty();
+        assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
+                .contains(SyncCommandType.RECONCILE_DEVICE);
     }
 
     private static String readerTime(LocalDate day, LocalTime time) {

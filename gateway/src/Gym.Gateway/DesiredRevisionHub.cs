@@ -10,6 +10,7 @@ public sealed class DesiredRevisionHub
 {
     private readonly Dictionary<string, Func<DesiredRevisionNotice, CancellationToken, Task>> _paths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<CancellationToken, Task>> _reconnects = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Func<CancellationToken, Task>> _observations = new(StringComparer.Ordinal);
     private readonly ILogger<DesiredRevisionHub> _log;
 
     public DesiredRevisionHub(ILogger<DesiredRevisionHub> log)
@@ -20,7 +21,8 @@ public sealed class DesiredRevisionHub
     public void Attach(
         string deviceId,
         Func<DesiredRevisionNotice, CancellationToken, Task> handle,
-        Func<CancellationToken, Task> reconnect)
+        Func<CancellationToken, Task> reconnect,
+        Func<CancellationToken, Task>? observe = null)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
         {
@@ -31,6 +33,30 @@ public sealed class DesiredRevisionHub
         ArgumentNullException.ThrowIfNull(reconnect);
         _paths[deviceId] = handle;
         _reconnects[deviceId] = reconnect;
+        if (observe != null)
+        {
+            _observations[deviceId] = observe;
+        }
+    }
+
+    /// <summary>Each flagged reader uploads a trusted list. A failed reader does not stop the next.</summary>
+    public async Task ObserveAsync(CancellationToken cancellationToken)
+    {
+        foreach (var (deviceId, observe) in _observations)
+        {
+            try
+            {
+                await observe(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Reader {DeviceId} observation was not uploaded", deviceId);
+            }
+        }
     }
 
     /// <summary>Each attached reader is read before its desired revisions are pulled.</summary>

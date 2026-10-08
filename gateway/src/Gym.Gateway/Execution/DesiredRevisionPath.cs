@@ -7,6 +7,7 @@ namespace Gym.Gateway.Execution;
 /// Pulls one reader's desired member, writes it through <see cref="ReaderWorker"/>, and posts the
 /// acknowledgement only after the user and face read back. An occupied id is reported as that id.
 /// Reconnect reads the reader before that pull. A silent reader is not written.
+/// A trusted list uploads reader-created ids. It does not copy them to another reader.
 /// </summary>
 public sealed class DesiredRevisionPath
 {
@@ -14,8 +15,14 @@ public sealed class DesiredRevisionPath
     private readonly ReaderWorker _worker;
     private readonly IReaderAdapter _reader;
     private readonly IDesiredStateClient _client;
+    private readonly IReaderObservationUpload? _observations;
 
-    public DesiredRevisionPath(string deviceId, ReaderWorker worker, IReaderAdapter reader, IDesiredStateClient client)
+    public DesiredRevisionPath(
+        string deviceId,
+        ReaderWorker worker,
+        IReaderAdapter reader,
+        IDesiredStateClient client,
+        IReaderObservationUpload? observations = null)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
         {
@@ -26,6 +33,7 @@ public sealed class DesiredRevisionPath
         _worker = worker ?? throw new ArgumentNullException(nameof(worker));
         _reader = reader ?? throw new ArgumentNullException(nameof(reader));
         _client = client ?? throw new ArgumentNullException(nameof(client));
+        _observations = observations;
     }
 
     public Task HandleAsync(DesiredRevisionNotice notice, CancellationToken cancellationToken)
@@ -50,7 +58,51 @@ public sealed class DesiredRevisionPath
             return;
         }
 
+        await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
         await HandleAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A trusted list uploads reader-created ids. It does not pull or write desired state.
+    /// </summary>
+    public async Task ObserveAsync(CancellationToken cancellationToken)
+    {
+        var observed = _reader.ListUsers();
+        if (!observed.Ok)
+        {
+            return;
+        }
+
+        await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task UploadNewPeopleAsync(ReaderListResult observed, CancellationToken cancellationToken)
+    {
+        if (_observations == null || !observed.CountMatchesAnnouncedTotal)
+        {
+            return;
+        }
+
+        var fresh = observed.Users
+            .Where(user => !string.IsNullOrWhiteSpace(user.DeviceUserId) && !_worker.HasWritten(user.DeviceUserId))
+            .ToList();
+        if (fresh.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await _observations.UploadAsync(_deviceId, fresh, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // The person stays on this reader. Nothing is copied to another reader.
+        }
     }
 
     private enum ItemStep

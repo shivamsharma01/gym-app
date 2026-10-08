@@ -12,6 +12,8 @@ public interface DesiredMemberProjectionRepository extends JpaRepository<Desired
 
     Optional<DesiredMemberProjection> findByDeviceIdAndMemberId(Long deviceId, Long memberId);
 
+    Optional<DesiredMemberProjection> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
+
     Optional<DesiredMemberProjection> findByDeviceIdAndRevision(Long deviceId, Long revision);
 
     List<DesiredMemberProjection> findByDeviceIdAndRevisionGreaterThanOrderByRevisionAsc(

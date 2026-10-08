@@ -124,6 +124,7 @@ public sealed class GatewayWorker : BackgroundService
         var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
         var poll = PollLoopAsync(_link, stoppingToken);
         var watch = _watcher.RunAsync(TimeSpan.FromSeconds(Math.Max(15, _options.RosterPollSeconds)), stoppingToken);
+        var observe = ObserveReadersAsync(stoppingToken);
         var clock = TimeSyncLoopAsync(stoppingToken);
         var statusLog = StatusLoopAsync(stoppingToken);
         var readerHealth = ReaderHealthLoopAsync(stoppingToken);
@@ -134,7 +135,8 @@ public sealed class GatewayWorker : BackgroundService
             new { agentVersion = "gym-gateway-0.5" },
             null), stoppingToken).ConfigureAwait(false);
 
-        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, watch, clock, statusLog, readerHealth).ConfigureAwait(false);
+        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, watch, observe, clock, statusLog, readerHealth)
+            .ConfigureAwait(false);
     }
 
     /// <summary>Logs in again to readers whose session broke, each when its pause has passed.</summary>
@@ -345,8 +347,9 @@ public sealed class GatewayWorker : BackgroundService
             return;
         }
 
-        foreach (var deviceId in _options.Devices.Select(device => device.DeviceId).Where(id => !string.IsNullOrWhiteSpace(id)))
+        foreach (var device in _options.Devices.Where(device => !string.IsNullOrWhiteSpace(device.DeviceId)))
         {
+            var deviceId = device.DeviceId;
             var reader = _readerFactory.Open(deviceId, OnlineAdapter(deviceId));
             if (reader == null)
             {
@@ -359,13 +362,37 @@ public sealed class GatewayWorker : BackgroundService
             var journal = Path.Combine(_readerJournalDirectory, JournalFile(deviceId));
             var worker = new ReaderWorker(deviceId, reader, journal);
             _readerWorkers.Add(worker);
-            var path = new DesiredRevisionPath(deviceId, worker, reader, _desired);
-            _desiredRevisions.Attach(deviceId, path.HandleAsync, path.ReconnectAsync);
+            IReaderObservationUpload? observations = device.ProjectionEnabled
+                ? new ReaderObservationUpload(_options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>())
+                : null;
+            var path = new DesiredRevisionPath(deviceId, worker, reader, _desired, observations);
+            _desiredRevisions.Attach(
+                deviceId,
+                path.HandleAsync,
+                path.ReconnectAsync,
+                device.ProjectionEnabled ? path.ObserveAsync : null);
         }
     }
 
     internal Task ReconnectReadersAsync(CancellationToken cancellationToken) =>
         _desiredRevisions.ReconnectAsync(cancellationToken);
+
+    private async Task ObserveReadersAsync(CancellationToken cancellationToken)
+    {
+        var interval = TimeSpan.FromSeconds(Math.Max(15, _options.RosterPollSeconds));
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+                await _desiredRevisions.ObserveAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+    }
 
     internal Task ReceiveDesiredAsync(DesiredRevisionNotice notice, CancellationToken cancellationToken) =>
         _desiredRevisions.HandleAsync(notice, cancellationToken);

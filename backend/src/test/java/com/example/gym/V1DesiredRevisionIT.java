@@ -13,6 +13,7 @@ import com.example.gym.device.GatewayConnectedListener;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
+import com.example.gym.device.domain.PendingEnrollment;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.device.domain.SyncCommandType;
@@ -31,8 +32,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.UUID;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.TimeUnit;
@@ -500,6 +503,51 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         assertThat(revision().getAppliedRevision()).isEqualTo(1);
         assertThat(projection(side, created.get("id").asString()).getReaderName()).isEqualTo("Bina Shah");
         assertThat(projection(side, created.get("id").asString()).getRevision()).isEqualTo(1);
+    }
+
+    @Test
+    void aPersonCreatedOnTheReaderWaitsWithoutAMember() throws Exception {
+        JsonNode created = createOnReader("Asha", "Shah", "V8-OWNED", "7801");
+        long members = memberRepository.count();
+        String allocated = mapping(created.get("id").asString()).getDeviceUserId();
+
+        postObservation("7", "Walk In", false);
+        postObservation("7", "Walk In Again", false);
+        postObservation(allocated, "Asha Shah", false);
+        postObservation("8", "Gone", true);
+
+        assertThat(memberRepository.count()).isEqualTo(members);
+        assertThat(pendingEnrollmentRepository.findByDeviceId(flagged)).singleElement()
+                .extracting(PendingEnrollment::getDeviceUserId, PendingEnrollment::getReviewStatus)
+                .containsExactly("7", PendingEnrollment.PENDING);
+        assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(flagged, "7").orElseThrow())
+                .extracting(row -> row.getDeviceUserId(), row -> row.getReaderName())
+                .containsExactly("7", "Walk In Again");
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(flagged, "7")).isEmpty();
+        assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(flagged, allocated)).isEmpty();
+
+        JsonNode imported = readJson(mockMvc.perform(post("/api/v1/devices/" + flaggedId + "/import-users")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(imported.get("created").asInt()).isZero();
+        assertThat(memberRepository.count()).isEqualTo(members);
+    }
+
+    private void postObservation(String deviceUserId, String name, boolean deleted) throws Exception {
+        String payload = """
+                {"deviceUserId":"%s","name":"%s","isNew":true,"deleted":%s}
+                """.formatted(deviceUserId, name, deleted);
+        String envelope = """
+                {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
+                "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
+                """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, flaggedId,
+                UUID.randomUUID(), payload);
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(envelope))
+                .andExpect(status().isOk());
     }
 
     private static String readerTime(LocalDate day, LocalTime time) {

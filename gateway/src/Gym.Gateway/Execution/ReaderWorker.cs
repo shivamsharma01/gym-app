@@ -526,6 +526,14 @@ public sealed class ReaderWorker : IDisposable
         command.ExecuteNonQuery();
     }
 
+    public bool HasWritten(string deviceUserId)
+    {
+        lock (_gate)
+        {
+            return Owns(deviceUserId);
+        }
+    }
+
     private bool Owns(string deviceUserId)
     {
         using var command = _connection.CreateCommand();

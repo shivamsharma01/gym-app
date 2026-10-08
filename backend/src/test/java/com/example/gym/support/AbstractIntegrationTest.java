@@ -9,6 +9,8 @@ import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.DeviceUserSnapshotRepository;
 import com.example.gym.device.repo.DesiredMemberProjectionRepository;
+import com.example.gym.device.repo.DeviceObservedUserRepository;
+import com.example.gym.device.repo.PendingEnrollmentRepository;
 import com.example.gym.device.repo.GatewayMessageDedupeRepository;
 import com.example.gym.device.repo.GatewayRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
@@ -130,6 +132,12 @@ public abstract class AbstractIntegrationTest {
     protected DesiredMemberProjectionRepository desiredMemberProjectionRepository;
 
     @Autowired
+    protected DeviceObservedUserRepository deviceObservedUserRepository;
+
+    @Autowired
+    protected PendingEnrollmentRepository pendingEnrollmentRepository;
+
+    @Autowired
     protected ReaderRevisionRepository readerRevisionRepository;
 
     @Autowired
@@ -173,6 +181,8 @@ public abstract class AbstractIntegrationTest {
         securityEventRepository.deleteAllInBatch();
         reconciliationConflictRepository.deleteAllInBatch();
         deviceUserSnapshotRepository.deleteAllInBatch();
+        pendingEnrollmentRepository.deleteAllInBatch();
+        deviceObservedUserRepository.deleteAllInBatch();
         desiredMemberProjectionRepository.deleteAllInBatch();
         readerBlockedUserRepository.deleteAllInBatch();
         readerRevisionRepository.deleteAllInBatch();

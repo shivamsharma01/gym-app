@@ -84,6 +84,7 @@ public class DeviceUserChangeService {
     private final MemberDeviceProvisioningService provisioning;
     private final AuditService auditService;
     private final ApplicationEventPublisher events;
+    private final PendingEnrollmentService pendingEnrollments;
 
     public DeviceUserChangeService(MemberRepository memberRepository,
                                    MemberService memberService,
@@ -97,7 +98,8 @@ public class DeviceUserChangeService {
                                    MemberFaceService faceService,
                                    MemberDeviceProvisioningService provisioning,
                                    AuditService auditService,
-                                   ApplicationEventPublisher events) {
+                                   ApplicationEventPublisher events,
+                                   PendingEnrollmentService pendingEnrollments) {
         this.memberRepository = memberRepository;
         this.memberService = memberService;
         this.mappingRepository = mappingRepository;
@@ -111,6 +113,7 @@ public class DeviceUserChangeService {
         this.provisioning = provisioning;
         this.auditService = auditService;
         this.events = events;
+        this.pendingEnrollments = pendingEnrollments;
     }
 
     /** What a device reported, parsed once. */
@@ -124,6 +127,10 @@ public class DeviceUserChangeService {
 
     @Transactional
     public void apply(Device device, JsonNode payload) {
+        if (device.isProjectionEnabled()) {
+            pendingEnrollments.observe(device, payload);
+            return;
+        }
         String deviceUserId = text(payload, "deviceUserId");
         if (deviceUserId == null || deviceUserId.isBlank()) {
             return;
@@ -287,6 +294,9 @@ public class DeviceUserChangeService {
     @Transactional
     public boolean importFromReconcile(Device device, String deviceUserId, String name, boolean frozen,
                                        LocalDate validFrom, LocalDate validTo) {
+        if (device.isProjectionEnabled()) {
+            return false;
+        }
         if (commandRepository.existsByDeviceIdAndTypeAndStateIn(
                 device.getId(), SyncCommandType.REMOVE_USER, DeviceSyncService.OPEN_STATES)) {
             return false;

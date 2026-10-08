@@ -79,6 +79,9 @@ public class DeviceUserImportService {
         Device device = deviceRepository.findByPublicId(devicePublicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Device"));
         TenantGuard.check(device.getTenantId(), tenantId, "Device");
+        if (device.isProjectionEnabled()) {
+            return new ImportResult(0, 0, 0, 0, 0, 0);
+        }
 
         deviceService.reconcile(devicePublicId, tenantId);
 

@@ -79,7 +79,7 @@ Notes:
 - **Cost:** the 24-minute floor for setting up two new readers with 1,200 members, even when nothing changes
   on the readers.
 - **Fix:** send the next batch for a gateway as soon as it finishes the previous one (acknowledgement-driven),
-  with a per-gateway limit on commands in flight instead of a fixed timer. Alternatively, when a reader is new
+  with a limit on commands in flight for the gym's gateway instead of a fixed timer. Alternatively, when a reader is new
   to the server, run a reconcile first and queue commands only for users the reader is missing or holds
   differently.
 - **Result:** the "already the same" setup would drop from 25–40 minutes towards the 10–15 minute case.

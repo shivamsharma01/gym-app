@@ -354,7 +354,7 @@ public class GatewayMessageService {
 
     /**
      * Device named on the message, when it belongs to the authenticated gateway. An unknown device
-     * id is ignored (the message is still acknowledged). A device owned by another gateway is rejected.
+     * id is ignored (the message is still acknowledged). A device owned by another gym's gateway is rejected.
      */
     private Device ownedDevice(GatewayMessage message) {
         if (!StringUtils.hasText(message.deviceId())) {

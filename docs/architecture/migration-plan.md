@@ -34,13 +34,13 @@ The gateway stays Windows-only.
 
 ## M1 — Mandatory gateway authentication
 
-1. **Objective.** A gateway connection is accepted only with a valid per-gateway credential. Gateway id comes from that credential. Token expiry is enforced.
+1. **Objective.** A gym has one gateway. Its connection is accepted only with that gateway's credential. Gateway id comes from that credential. Token expiry is enforced.
 2. **Backend changes.** Remove the anonymous branch in `GatewayAuthService`. Ignore a gateway id asserted in the message body. Reject a device the credential's gateway does not own. Enforce `token_expires_at`.
 3. **Gateway changes.** Send only the issued credential. Rotation keeps using `CredentialRotationService`. No Linux build.
 4. **Frontend changes.** None, except failed gateway connections surface as auth failures rather than a silent offline reader.
 5. **Database changes.** No new tables. Existing `gateway` credential columns become required for a live connection.
 6. **API/message contract changes.** `/gateway` and `/internal/gateway/**` reject a missing or expired credential. `REGISTER_GATEWAY` no longer binds a self-asserted id.
-7. **Tests.** No token rejected. Expired token rejected. Wrong gateway cannot report a device. Message-body gateway id is ignored. Extend `GatewayCredentialIT` and `ProdSecurityGuardTest`.
+7. **Tests.** No token rejected. Expired token rejected. Another gym's gateway cannot report a device. Message-body gateway id is ignored. Extend `GatewayCredentialIT` and `ProdSecurityGuardTest`.
 8. **Migration considerations.** Issue credentials to the Windows gateway before deploy. A deploy with an empty shared token currently lets anyone in; that deploy stops working until the real credential is installed.
 9. **Rollback considerations.** Roll back the service build. Do not keep a runtime flag that turns anonymous access back on.
 10. **Dependencies.** None. This lands before any projection pull.

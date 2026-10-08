@@ -167,7 +167,7 @@ public class MemberFaceService {
 
     /**
      * Gateway download of a specific face version (must be the current one). The member must be
-     * mapped to a device assigned to this gateway. Another gateway in the same tenant is refused.
+     * mapped to a reader on this gym's gateway. Another gym's gateway is refused.
      */
     @Transactional(readOnly = true)
     public FaceImage imageForGateway(Gateway gateway, String memberPublicId, int version) {

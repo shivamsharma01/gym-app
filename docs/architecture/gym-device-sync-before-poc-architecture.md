@@ -329,7 +329,7 @@ Attendance is intentionally isolated from member synchronization. The reader sto
 
 # 15. Security requirements
 
-- **Gateway authentication is mandatory.** No connection without a valid per-gateway credential/certificate. Never bind gateway identity from an unauthenticated message payload.
+- **Gateway authentication is mandatory.** A gym has one gateway. No connection without that gateway's credential. Never bind gateway identity from an unauthenticated message payload.
 
 - **Gateway scope is tenant-bound.** A gateway may receive only its own tenant/gym projections.
 

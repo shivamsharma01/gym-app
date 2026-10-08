@@ -109,7 +109,7 @@ Code that still assumes the old unknowns:
 | --- | --- | --- |
 | `F/lib/api.ts`, `F/lib/types.ts` | REST client, types incl. `deviceSyncState`, conflicts, sync commands | types mirror the per-command model |
 | `F/lib/live.ts` `useStaffLive` | `/live` staff WebSocket | keep |
-| `F/components/AppShell.tsx` | One status dot aggregating all gateways | hides per-reader state |
+| `F/components/AppShell.tsx` | One status dot for the gym gateway | hides per-reader state |
 | `F/features/members/MemberDetailPage.tsx` | Deactivate → `DELETE /api/v1/members/{id}`; `DeviceSyncPanel` "Read from device" (tooltip "The newer copy wins", line 376), "Send again" | delete ≠ deprovision; timestamp language |
 | `F/features/members/MemberPhotoField.tsx` | Photo "sent to every device" | all-devices assumption |
 | `F/features/members/MembershipPanel.tsx` | Shows `deviceSyncState` | per-membership sync state replaced by per-reader projection |

@@ -188,15 +188,19 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void enrollmentIgnoresTheBodyGatewayId() throws Exception {
-        String other = mockMvc.perform(post("/api/v1/gateways")
+    void aGymCannotRegisterASecondGateway() throws Exception {
+        mockMvc.perform(post("/api/v1/gateways")
                         .header("Authorization", "Bearer " + staffToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Side door\"}"))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        String otherId = readJson(other).get("id").asString();
-        String otherEnrollment = readJson(other).get("token").asString();
+                        .content("{\"name\":\"Second PC\"}"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void enrollmentIgnoresTheBodyGatewayId() throws Exception {
+        OtherGym otherGym = otherGym("side-gym");
+        String otherId = otherGym.gatewayId();
+        String otherEnrollment = otherGym.enrollmentToken();
 
         mockMvc.perform(post("/internal/gateway/enroll")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -210,13 +214,7 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
     @Test
     void messageBodyGatewayIdIsIgnored() throws Exception {
         String credential = enroll(gatewayId, enrollmentToken);
-        String other = mockMvc.perform(post("/api/v1/gateways")
-                        .header("Authorization", "Bearer " + staffToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Other lane\"}"))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        String otherId = readJson(other).get("id").asString();
+        String otherId = otherGym("lane-gym").gatewayId();
 
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + credential)
@@ -236,32 +234,26 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
     @Test
     void gatewayCannotReportOrAcknowledgeAnotherGatewaysDevice() throws Exception {
         String credential = enroll(gatewayId, enrollmentToken);
-        String other = mockMvc.perform(post("/api/v1/gateways")
-                        .header("Authorization", "Bearer " + staffToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Other lane\"}"))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        JsonNode otherNode = readJson(other);
-        String otherId = otherNode.get("id").asString();
-        enroll(otherId, otherNode.get("token").asString());
+        OtherGym other = otherGym("foreign-gym");
+        String otherId = other.gatewayId();
+        enroll(otherId, other.enrollmentToken());
 
-        String ownDeviceId = createDevice("Own reader", "10.0.0.8", gatewayId);
-        String foreignDeviceId = createDevice("Foreign reader", "10.0.0.9", otherId);
+        String ownDeviceId = createDevice(staffToken, "Own reader", "10.0.0.8", gatewayId);
+        String foreignDeviceId = createDevice(other.staffToken(), "Foreign reader", "10.0.0.9", otherId);
         String planId = readJson(mockMvc.perform(post("/api/v1/plans")
-                        .header("Authorization", "Bearer " + staffToken)
+                        .header("Authorization", "Bearer " + other.staffToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Monthly\",\"price\":1000.00,\"currency\":\"INR\",\"durationDays\":30}"))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
         String memberId = readJson(mockMvc.perform(post("/api/v1/members")
-                        .header("Authorization", "Bearer " + staffToken)
+                        .header("Authorization", "Bearer " + other.staffToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"serialNumber\":\"1001\"}"))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
         mockMvc.perform(post("/api/v1/memberships")
-                        .header("Authorization", "Bearer " + staffToken)
+                        .header("Authorization", "Bearer " + other.staffToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"memberId\":\"" + memberId + "\",\"planId\":\"" + planId + "\"}"))
                 .andExpect(status().isCreated());
@@ -315,7 +307,7 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
     @Test
     void validCredentialCanRegisterPollAndIngestItsOwnDevice() throws Exception {
         String credential = enroll(gatewayId, enrollmentToken);
-        String deviceId = createDevice("Entrance", "10.0.0.8", gatewayId);
+        String deviceId = createDevice(staffToken, "Entrance", "10.0.0.8", gatewayId);
 
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + credential)
@@ -368,9 +360,25 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    private String createDevice(String name, String host, String ownerGatewayId) throws Exception {
+    private OtherGym otherGym(String slug) throws Exception {
+        Tenant tenant = createTenant(slug, slug);
+        String username = slug + "-admin";
+        createUser(tenant.getId(), username, username + "@gym.local", "GYM_ADMIN");
+        String staff = tokenFor(username);
+        String created = mockMvc.perform(post("/api/v1/gateways")
+                        .header("Authorization", "Bearer " + staff)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"LAN\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode node = readJson(created);
+        return new OtherGym(staff, node.get("id").asString(), node.get("token").asString());
+    }
+
+    private String createDevice(String ownerStaffToken, String name, String host, String ownerGatewayId)
+            throws Exception {
         String created = mockMvc.perform(post("/api/v1/devices")
-                        .header("Authorization", "Bearer " + staffToken)
+                        .header("Authorization", "Bearer " + ownerStaffToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"" + name + "\",\"role\":\"ENTRANCE\",\"host\":\"" + host + "\","
                                 + "\"port\":37777,\"gatewayId\":\"" + ownerGatewayId + "\"}"))
@@ -402,6 +410,9 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
         Instant expiresAt = Instant.parse(readJson(body).get("expiresAt").asString());
         assertThat(expiresAt).isAfter(Instant.now());
         return readJson(body).get("credential").asString();
+    }
+
+    private record OtherGym(String staffToken, String gatewayId, String enrollmentToken) {
     }
 
     private static String enrollBody(String gatewayId, String enrollmentToken) {

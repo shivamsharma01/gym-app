@@ -220,7 +220,7 @@ internal static class Harness
         });
         if (!string.IsNullOrWhiteSpace(arguments.ResultPath))
         {
-            File.WriteAllText(arguments.ResultPath, report);
+            await File.WriteAllTextAsync(arguments.ResultPath, report).ConfigureAwait(false);
         }
 
         Console.WriteLine(report);

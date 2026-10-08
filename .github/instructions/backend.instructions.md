@@ -74,9 +74,9 @@ disable blocks the door until POC P1 says so.
 
 ## Gateway trust
 
-Authenticated gateways only (enroll token, then rotating credential). A
-gateway sees only its own tenant/gym. Never take gateway identity from an
-unauthenticated payload.
+A gym has one gateway. It authenticates with an enrollment token, then a
+rotating credential, and sees only its own gym. Never take gateway identity
+from an unauthenticated payload.
 
 ## Attendance
 

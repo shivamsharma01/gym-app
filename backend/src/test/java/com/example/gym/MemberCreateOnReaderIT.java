@@ -53,7 +53,13 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
         String gatewayId = readJson(createdGateway).get("id").asString();
         gatewayToken = enroll(gatewayId, readJson(createdGateway).get("token").asString());
 
-        String otherGateway = postJson("/api/v1/gateways", "{\"name\":\"Other\"}")
+        Tenant otherTenant = createTenant("Other Gym", "other-gym");
+        createUser(otherTenant.getId(), "other-admin", "other-admin@gym.local", "GYM_ADMIN");
+        String otherStaff = tokenFor("other-admin");
+        String otherGateway = mockMvc.perform(post("/api/v1/gateways")
+                        .header("Authorization", "Bearer " + otherStaff)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Other\"}"))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         otherGatewayToken = enroll(readJson(otherGateway).get("id").asString(),
@@ -170,7 +176,13 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
     @Test
     void desiredPullRequiresTheReadersGateway() throws Exception {
         pull(null, flaggedId, 0).andExpect(status().isUnauthorized());
-        pull(otherGatewayToken, flaggedId, 0).andExpect(status().isForbidden());
+        pull(otherGatewayToken, flaggedId, 0).andExpect(status().isNotFound());
+        String looseId = readJson(postJson("/api/v1/devices",
+                "{\"name\":\"Loose\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.21\",\"port\":37777,"
+                        + "\"projectionEnabled\":true}")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        pull(gatewayToken, looseId, 0).andExpect(status().isForbidden());
         pull(gatewayToken, otherId, 0).andExpect(status().isNotFound());
     }
 

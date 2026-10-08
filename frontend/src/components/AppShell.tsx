@@ -87,7 +87,7 @@ export function AppShell() {
     enabled: Boolean(user?.tenantId) && !isPlatform,
     refetchInterval: 30_000,
   })
-  const gatewayState = gatewayConnectionState(gateways.data?.content)
+  const gatewayState = gatewayConnectionState(gateways.isSuccess, gateways.data?.content[0])
   const brand = isPlatform ? 'Platform' : brandDisplayName(settings.data, 'Gym')
   const logo = isPlatform ? null : brandLogo(settings.data)
 
@@ -233,13 +233,13 @@ export function AppShell() {
   )
 }
 
-function gatewayConnectionState(gateways: Gateway[] | undefined): 'live' | 'reconnecting' | 'offline' | 'off' {
-  if (!gateways) return 'off'
-  if (gateways.length === 0) return 'offline'
-  const online = gateways.filter((g) => g.status === 'ONLINE').length
-  if (online === gateways.length) return 'live'
-  if (online > 0) return 'reconnecting'
-  return 'offline'
+function gatewayConnectionState(
+  loaded: boolean,
+  gateway: Gateway | undefined,
+): 'live' | 'offline' | 'off' {
+  if (!loaded) return 'off'
+  if (!gateway) return 'offline'
+  return gateway.status === 'ONLINE' ? 'live' : 'offline'
 }
 
 function ThemeToggleButton({ theme, onToggle }: { theme: ThemeMode; onToggle: () => void }) {

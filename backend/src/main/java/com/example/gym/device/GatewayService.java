@@ -61,6 +61,9 @@ public class GatewayService {
      */
     @Transactional
     public GatewayCreated create(String name, Long tenantId) {
+        if (gatewayRepository.existsByTenantId(tenantId)) {
+            throw CommonExceptions.conflict("This gym already has a gateway");
+        }
         String enrollment = authService.newToken();
         // Placeholder operational hash until enroll — never equals the enrollment hash.
         String placeholder = authService.hash(authService.newToken());
@@ -193,7 +196,7 @@ public class GatewayService {
         });
     }
 
-    /** Marks gateways OFFLINE when the heartbeat has gone stale (connectivity, not device state). */
+    /** Marks the gym gateway OFFLINE when the heartbeat has gone stale (connectivity, not device state). */
     @Transactional
     public int markStaleOffline(Instant cutoff) {
         List<Gateway> stale = gatewayRepository.findByStatusAndLastHeartbeatAtBefore(

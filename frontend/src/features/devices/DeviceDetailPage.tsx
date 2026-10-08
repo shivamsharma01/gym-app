@@ -441,10 +441,8 @@ function Settings({ device }: { device: Device }) {
   const [port, setPort] = useState(device.port ? String(device.port) : '')
   const [model, setModel] = useState(device.model ?? '')
   const [serialNumber, setSerialNumber] = useState(device.serialNumber ?? '')
-  const [gatewayId, setGatewayId] = useState<string | undefined>(undefined)
-  const onlyGateway =
-    device.gatewayAssigned && gateways.data?.content.length === 1 ? gateways.data.content[0].id : ''
-  const effectiveGatewayId = gatewayId !== undefined ? gatewayId : onlyGateway
+  const gateway = gateways.data?.content[0]
+  const [assigned, setAssigned] = useState(device.gatewayAssigned)
   const save = useMutation({
     mutationFn: () =>
       api<Device>(`/api/v1/devices/${device.id}`, {
@@ -456,7 +454,7 @@ function Settings({ device }: { device: Device }) {
           port: port ? Number(port) : null,
           model: model || null,
           serialNumber: serialNumber || null,
-          gatewayId: effectiveGatewayId || null,
+          gatewayId: assigned && gateway ? gateway.id : null,
         }),
       }),
     onSuccess: () => {
@@ -514,15 +512,15 @@ function Settings({ device }: { device: Device }) {
         <Input value={serialNumber} onChange={(e) => setSerialNumber(e.target.value)} />
       </div>
       <div>
-        <Label>Assign gateway</Label>
-        <Select value={effectiveGatewayId} onChange={(e) => setGatewayId(e.target.value)}>
-          <option value="">Unassign gateway</option>
-          {gateways.data?.content.map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.name}
-            </option>
-          ))}
-        </Select>
+        <Label>Gateway</Label>
+        {gateway ? (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={assigned} onChange={(e) => setAssigned(e.target.checked)} />
+            <span>Assigned to {gateway.name}</span>
+          </label>
+        ) : (
+          <p className="text-sm text-muted">This gym has no gateway yet.</p>
+        )}
       </div>
       {save.error ? <QueryError error={save.error} /> : null}
       <Button type="submit" disabled={save.isPending}>

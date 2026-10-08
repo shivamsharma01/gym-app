@@ -38,7 +38,7 @@ The screen fills the smallest free integer (P2). Highest-known-plus-one stays aw
 
 ### F1 — Authenticated channel
 
-A gateway connection requires a valid per-gateway credential. The gateway id comes from the credential. Expired tokens fail. A gateway cannot speak for another gateway's device. Anonymous access is removed, with no flag to turn it back on. This is M1. No desired-state message exists until this is true.
+A gym has one gateway. Its connection requires that gateway's credential. The gateway id comes from the credential. Expired tokens fail. The gym's gateway cannot speak for another gym's reader. Anonymous access is removed, with no flag to turn it back on. This is M1. No desired-state message exists until this is true.
 
 ### F2 — Fake reader
 

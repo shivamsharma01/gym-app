@@ -44,7 +44,7 @@ import org.springframework.web.socket.WebSocketSession;
 
 /**
  * The three F1 follow-ups: a socket dies when its credential expires or is rotated, a gateway
- * cannot read another gateway's member face, and the handshake takes the credential from
+ * cannot read another gym's member face, and the handshake takes the credential from
  * Authorization rather than the URL.
  */
 class GatewayF1GapIT extends AbstractIntegrationTest {
@@ -168,37 +168,24 @@ class GatewayF1GapIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void gatewayCannotReadAnotherGatewaysMemberFace() throws Exception {
-        String otherCreated = createGateway("Side door");
-        String otherId = readJson(otherCreated).get("id").asString();
-        String otherCredential = enroll(otherId, readJson(otherCreated).get("token").asString());
-
+    void gatewayCannotReadAnotherGymsMemberFace() throws Exception {
         String deviceA = createDevice("Lane A", "10.1.0.1", gatewayId);
-        String deviceB = createDevice("Lane B", "10.1.0.2", otherId);
-
-        String memberOnB = createMember("OnlyB", "9101");
-        uploadPhoto(memberOnB, jpeg(Color.RED, 400));
-        unmap(memberOnB, deviceA);
-
-        String faceOnB = mockMvc.perform(get("/internal/gateway/faces/" + memberOnB + "/1")
-                        .header("Authorization", "Bearer " + otherCredential))
-                .andExpect(status().isOk())
-                .andExpect(header().exists("X-Face-Sha256"))
-                .andReturn().getResponse().getHeader("X-Face-Sha256");
-
-        mockMvc.perform(get("/internal/gateway/faces/" + memberOnB + "/1")
-                        .header("Authorization", "Bearer " + credential))
-                .andExpect(status().isForbidden());
-
         String memberOnA = createMember("OnlyA", "9102");
         uploadPhoto(memberOnA, jpeg(Color.BLUE, 400));
-        unmap(memberOnA, deviceB);
         mockMvc.perform(get("/internal/gateway/faces/" + memberOnA + "/1")
                         .header("Authorization", "Bearer " + credential))
                 .andExpect(status().isOk());
+
+        unmap(memberOnA, deviceA);
+        mockMvc.perform(get("/internal/gateway/faces/" + memberOnA + "/1")
+                        .header("Authorization", "Bearer " + credential))
+                .andExpect(status().isForbidden());
+
+        OtherGym other = otherGym("face-gym");
+        String otherCredential = enroll(other.gatewayId(), other.enrollmentToken());
         mockMvc.perform(get("/internal/gateway/faces/" + memberOnA + "/1")
                         .header("Authorization", "Bearer " + otherCredential))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
 
         String uploaded = mockMvc.perform(post("/internal/gateway/faces")
                         .header("Authorization", "Bearer " + credential)
@@ -211,11 +198,9 @@ class GatewayF1GapIT extends AbstractIntegrationTest {
                 readJson(uploaded).get("uploadId").asString()).orElseThrow();
         Long gatewayA = gatewayRepository.findByPublicId(gatewayId).orElseThrow().getId();
         assertThat(upload.getGatewayId()).isEqualTo(gatewayA);
-        assertThat(upload.getSha256()).isNotEqualTo(faceOnB);
 
-        String bareCreated = createGateway("No readers");
-        String bareId = readJson(bareCreated).get("id").asString();
-        String bareCredential = enroll(bareId, readJson(bareCreated).get("token").asString());
+        OtherGym bare = otherGym("bare-gym");
+        String bareCredential = enroll(bare.gatewayId(), bare.enrollmentToken());
         mockMvc.perform(post("/internal/gateway/faces")
                         .header("Authorization", "Bearer " + bareCredential)
                         .contentType(MediaType.IMAGE_JPEG)
@@ -256,6 +241,23 @@ class GatewayF1GapIT extends AbstractIntegrationTest {
         servlet.setQueryString("token=" + token);
         servlet.setParameter("token", token);
         return servlet;
+    }
+
+    private OtherGym otherGym(String slug) throws Exception {
+        Tenant tenant = createTenant(slug, slug);
+        String username = slug + "-admin";
+        createUser(tenant.getId(), username, username + "@gym.local", "GYM_ADMIN");
+        String staff = tokenFor(username);
+        String created = mockMvc.perform(post("/api/v1/gateways")
+                        .header("Authorization", "Bearer " + staff)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"LAN\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return new OtherGym(readJson(created).get("id").asString(), readJson(created).get("token").asString());
+    }
+
+    private record OtherGym(String gatewayId, String enrollmentToken) {
     }
 
     private String createGateway(String name) throws Exception {

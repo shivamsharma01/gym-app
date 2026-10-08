@@ -100,6 +100,7 @@ public sealed class GatewayWorker : BackgroundService
             }
         }
 
+        await NoteFlaggedReadersAsync(stoppingToken).ConfigureAwait(false);
         _watcher = new DeviceChangeWatcher(
             _adapters,
             _roster,
@@ -109,6 +110,8 @@ public sealed class GatewayWorker : BackgroundService
             _logFactory.CreateLogger<DeviceChangeWatcher>(),
             TimeSpan.FromMinutes(Math.Max(1, _options.FaceSweepMinutes)),
             store: new LocalMemberStore(LocalMemberStore.DefaultDirectory()));
+        _watcher.DesiredWorkersExecute(
+            _options.Devices.Where(device => device.ProjectionEnabled).Select(device => device.DeviceId));
         _dispatcher = new CommandDispatcher(
             _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _link, _roster, _locks,
             (deviceId, userId) => _watcher!.ReportUserAsync(deviceId, userId, stoppingToken),
@@ -288,6 +291,40 @@ public sealed class GatewayWorker : BackgroundService
     {
         DisposeReaders();
         base.Dispose();
+    }
+
+    /// <summary>
+    /// A flagged reader is written by its desired-revision worker. The device list is the source of
+    /// that flag. A saved flag remains when the list cannot be read.
+    /// </summary>
+    private async Task NoteFlaggedReadersAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_options.Token) || string.IsNullOrWhiteSpace(_options.BackendUrl))
+        {
+            return;
+        }
+
+        try
+        {
+            var client = new GatewayEnrollmentClient();
+            var remote = await client.ListDevicesAsync(_options.BackendUrl, _options.Token, cancellationToken)
+                .ConfigureAwait(false);
+            var flagged = remote.Where(device => device.ProjectionEnabled)
+                .Select(device => device.Id)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var device in _options.Devices)
+            {
+                device.ProjectionEnabled = flagged.Contains(device.DeviceId);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not read which readers follow desired revisions");
+        }
     }
 
     /// <summary>

@@ -15,6 +15,21 @@ public class LocalSyncTests
     private static readonly byte[] PhotoB = [0xFF, 0xD8, 0xFF, 0xE0, 0x09, 0x08, 0x07];
 
     [Fact]
+    public async Task A_flagged_reader_is_not_written_by_the_watcher_loop()
+    {
+        var gw = await Gateway.StartAsync();
+        gw.Faces.FailUploads = true;
+        gw.Watcher.DesiredWorkersExecute(["exit"]);
+
+        gw.Entrance.SimulateLocalUserChange("9001", "Walk In", PhotoA, emitEvent: false);
+        await gw.Scan("entrance");
+
+        Assert.Null(gw.Exit.GetUser("9001"));
+        await gw.Scan("exit");
+        Assert.Null(gw.Exit.GetUser("9001"));
+    }
+
+    [Fact]
     public async Task User_enrolled_offline_on_entrance_reaches_exit_immediately_and_server_later()
     {
         var gw = await Gateway.StartAsync();

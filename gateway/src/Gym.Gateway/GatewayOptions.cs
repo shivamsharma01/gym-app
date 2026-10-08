@@ -125,4 +125,7 @@ public sealed class DeviceEndpointOptions
     public string Username { get; set; } = "admin";
 
     public string Password { get; set; } = "";
+
+    /// <summary>When set, desired revisions write this reader. The watcher loop does not.</summary>
+    public bool ProjectionEnabled { get; set; }
 }

@@ -78,6 +78,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
     ];
 
     private readonly ConcurrentDictionary<string, (int Failures, DateTimeOffset Until)> _facePause = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _desiredWorkers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<(string DeviceId, string UserId), int> _faceFailures = new();
 
     /// <summary>Face reads per scan, so a full photo pass does not hold the reader while commands wait.</summary>
@@ -117,9 +118,26 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         _newUserFaceWatch = newUserFaceWatch ?? TimeSpan.FromMinutes(10);
     }
 
+    /// <summary>
+    /// These readers are written by their own desired-revision workers. This loop does not scan,
+    /// copy, or apply commands on them.
+    /// </summary>
+    public void DesiredWorkersExecute(IEnumerable<string> deviceIds)
+    {
+        foreach (var deviceId in deviceIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+        {
+            _desiredWorkers.Add(deviceId);
+        }
+    }
+
     /// <summary>Called from device event callbacks; never blocks.</summary>
     public void Trigger(string deviceId, string? deviceUserId)
     {
+        if (_desiredWorkers.Contains(deviceId))
+        {
+            return;
+        }
+
         _log.LogDebug("Reader {DeviceId} announced a user change (user={User}); scanning shortly", deviceId, deviceUserId);
         _triggers.Writer.TryWrite((deviceId, deviceUserId));
     }
@@ -162,10 +180,12 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
                 var periodic = DateTimeOffset.UtcNow >= _nextPoll;
                 var scanStarted = DateTimeOffset.UtcNow;
-                var deviceIds = periodic
+                var deviceIds = (periodic
                     ? _adapters.Keys.ToList()
                     : focus.Keys.Concat(_adapters.Keys.Where(FaceBatchReady))
-                        .Distinct(StringComparer.Ordinal).ToList();
+                        .Distinct(StringComparer.Ordinal).ToList())
+                    .Where(id => !_desiredWorkers.Contains(id))
+                    .ToList();
                 // One reader at a time. The other readers are still checked for name and access edits.
                 var faceDevice = NextFaceImportDevice();
                 foreach (var deviceId in deviceIds)
@@ -207,7 +227,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         CancellationToken cancellationToken,
         bool listUsers = true)
     {
-        if (!_adapters.TryGetValue(deviceId, out var adapter))
+        if (_desiredWorkers.Contains(deviceId) || !_adapters.TryGetValue(deviceId, out var adapter))
         {
             return 0;
         }
@@ -402,6 +422,11 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
         GatewayEnvelope command, byte[]? face, CancellationToken cancellationToken)
     {
         var deviceId = command.DeviceId;
+        if (deviceId != null && _desiredWorkers.Contains(deviceId))
+        {
+            return DispatchOutcome.SyncFail("desired revisions write this reader");
+        }
+
         var change = ToChange(command, face);
         if (change == null || deviceId == null || !_adapters.TryGetValue(deviceId, out var adapter))
         {
@@ -1046,6 +1071,11 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
     private void RememberCatchUp(string deviceId, IEnumerable<string> userIds)
     {
+        if (_desiredWorkers.Contains(deviceId))
+        {
+            return;
+        }
+
         var pending = _catchUp.GetOrAdd(deviceId, _ => new HashSet<string>(StringComparer.Ordinal));
         lock (pending)
         {
@@ -1447,7 +1477,7 @@ public sealed class DeviceChangeWatcher : ILocalMemberSync
 
         foreach (var (deviceId, adapter) in _adapters)
         {
-            if (deviceId == sourceDeviceId)
+            if (deviceId == sourceDeviceId || _desiredWorkers.Contains(deviceId))
             {
                 continue;
             }

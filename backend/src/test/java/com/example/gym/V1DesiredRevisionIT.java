@@ -475,8 +475,31 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         connected.onGatewayConnected(new GatewayConnectedEvent(gateway.getPublicId(), gateway.getId()));
 
         assertThat(commands(flagged)).isEmpty();
-        assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
-                .contains(SyncCommandType.RECONCILE_DEVICE);
+            assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
+                    .contains(SyncCommandType.RECONCILE_DEVICE);
+    }
+
+    @Test
+    void oneReadersAcknowledgementDoesNotAdvanceTheOther() throws Exception {
+        String sideId = createDevice("Side", true, gatewayPublicId);
+        Long side = deviceRepository.findByPublicId(sideId).orElseThrow().getId();
+        createOnReader("Asha", "Shah", "V7-A", "7701", flaggedId);
+        JsonNode created = createOnReader("Bina", "Shah", "V7-B", "7702", sideId);
+
+        ackDesired(sideId);
+
+        assertThat(revision().getAppliedRevision()).isZero();
+        ReaderRevision sideCursor = readerRevisionRepository.findByDeviceId(side).orElseThrow();
+        assertThat(sideCursor.getAppliedRevision()).isEqualTo(sideCursor.getDesiredRevision()).isEqualTo(1);
+        assertThat(projection(side, created.get("id").asString()).getReaderName()).isEqualTo("Bina Shah");
+
+        ackDesired(flaggedId);
+
+        sideCursor = readerRevisionRepository.findByDeviceId(side).orElseThrow();
+        assertThat(sideCursor.getAppliedRevision()).isEqualTo(1);
+        assertThat(revision().getAppliedRevision()).isEqualTo(1);
+        assertThat(projection(side, created.get("id").asString()).getReaderName()).isEqualTo("Bina Shah");
+        assertThat(projection(side, created.get("id").asString()).getRevision()).isEqualTo(1);
     }
 
     private static String readerTime(LocalDate day, LocalTime time) {
@@ -562,6 +585,32 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         throw new AssertionError("Applied revision did not reach " + revision + ": " + cursor);
     }
 
+    private void ackDesired(String deviceId) throws Exception {
+        JsonNode page = readJson(mockMvc.perform(get("/internal/gateway/desired")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .param("deviceId", deviceId)
+                        .param("after", "0"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        JsonNode item = page.get("items").get(0);
+        String nameEx = item.get("nameEx").isNull() ? "null" : "\"" + item.get("nameEx").asString() + "\"";
+        String ack = """
+                {"deviceId":"%s","revision":%d,"deviceUserId":"%s","name":"%s","nameEx":%s,"userStatus":%d,"validFrom":"%s","validTo":"%s","faceSha256":"%s","present":true}
+                """.formatted(deviceId, item.get("revision").asLong(), item.get("deviceUserId").asString(),
+                item.get("name").asString(), nameEx, item.get("userStatus").asInt(),
+                item.get("validFrom").asString(), item.get("validTo").asString(), item.get("faceSha256").asString());
+        mockMvc.perform(post("/internal/gateway/desired/ack")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(ack))
+                .andExpect(status().isOk());
+    }
+
+    private DesiredMemberProjection projection(Long deviceId, String memberPublicId) {
+        return desiredMemberProjectionRepository.findByDeviceIdAndMemberId(
+                deviceId, memberRepository.findByPublicId(memberPublicId).orElseThrow().getId()).orElseThrow();
+    }
+
     private MemberDeviceMapping mapping(String memberPublicId) {
         return memberDeviceMappingRepository.findByDeviceIdAndMemberId(
                 flagged, memberRepository.findByPublicId(memberPublicId).orElseThrow().getId()).orElseThrow();
@@ -574,6 +623,11 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     }
 
     private JsonNode createOnReader(String firstName, String lastName, String code, String serial) throws Exception {
+        return createOnReader(firstName, lastName, code, serial, flaggedId);
+    }
+
+    private JsonNode createOnReader(
+            String firstName, String lastName, String code, String serial, String readerId) throws Exception {
         String member = """
                 {"firstName":"%s","lastName":"%s","memberCode":"%s","serialNumber":"%s"}
                 """.formatted(firstName, lastName, code, serial);
@@ -581,7 +635,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
                         .file(new MockMultipartFile("member", "member.json", MediaType.APPLICATION_JSON_VALUE,
                                 member.getBytes(StandardCharsets.UTF_8)))
                         .file(new MockMultipartFile("face", "face.jpg", MediaType.IMAGE_JPEG_VALUE, jpeg()))
-                        .param("readerId", flaggedId)
+                        .param("readerId", readerId)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isCreated())
                 .andReturn();

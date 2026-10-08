@@ -8,14 +8,19 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.DesiredProjectionService;
 import com.example.gym.device.GatewayConnectedEvent;
 import com.example.gym.device.GatewayConnectedListener;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
+import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceReviewItem;
+import com.example.gym.device.domain.DeviceReviewSnapshot;
 import com.example.gym.device.domain.PendingEnrollment;
+import com.example.gym.face.MemberFace;
 import com.example.gym.member.DeviceAuthority;
+import com.example.gym.member.Member;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.device.domain.SyncCommandType;
@@ -69,6 +74,9 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
 
     @Autowired
     private GatewayConnectedListener connected;
+
+    @Autowired
+    private DesiredProjectionService desiredProjection;
 
     private String token;
     private String gatewayToken;
@@ -592,7 +600,48 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         assertThat(deviceReaderBaselineRepository.findByDeviceId(flagged)).isEmpty();
     }
 
+    @Test
+    void twoReadersKeepBothNamesOnOneConflict() throws Exception {
+        JsonNode created = createOnReader("Asha", "Shah", "V10-TWO", "8001");
+        String memberId = created.get("id").asString();
+        Member member = memberRepository.findByPublicId(memberId).orElseThrow();
+        String sideId = createDevice("Side", true, gatewayPublicId);
+        Device side = deviceRepository.findByPublicId(sideId).orElseThrow();
+        MemberFace face = memberFaceRepository.findByMemberId(member.getId()).orElseThrow();
+        desiredProjection.write(member, side, face);
+        String onEntrance = mapping(memberId).getDeviceUserId();
+        String onSide = memberDeviceMappingRepository.findByDeviceIdAndMemberId(side.getId(), member.getId())
+                .orElseThrow().getDeviceUserId();
+        long entranceRevision = projection(flagged, memberId).getRevision();
+        long sideRevision = projection(side.getId(), memberId).getRevision();
+
+        postReaderEdit(flaggedId, onEntrance, "Left", "Customer");
+        DeviceReviewItem opened = deviceReviewItemRepository.findByMemberId(member.getId()).get(0);
+
+        postReaderEdit(sideId, onSide, "Right", "Customer");
+
+        assertThat(deviceReviewItemRepository.findByMemberId(member.getId())).singleElement()
+                .extracting(DeviceReviewItem::getPublicId, DeviceReviewItem::getBaselineName,
+                        DeviceReviewItem::getServerName)
+                .containsExactly(opened.getPublicId(), "Asha Shah", "Asha Shah");
+        assertThat(deviceReviewSnapshotRepository.findByReviewItemId(opened.getId()))
+                .extracting(DeviceReviewSnapshot::getDeviceId, DeviceReviewSnapshot::getReaderName)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(flagged, "Left"),
+                        org.assertj.core.groups.Tuple.tuple(side.getId(), "Right"));
+        assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("Asha Shah");
+        assertThat(projection(flagged, memberId).getReaderName()).isEqualTo("Asha Shah");
+        assertThat(projection(side.getId(), memberId).getReaderName()).isEqualTo("Asha Shah");
+        assertThat(projection(flagged, memberId).getRevision()).isEqualTo(entranceRevision);
+        assertThat(projection(side.getId(), memberId).getRevision()).isEqualTo(sideRevision);
+    }
+
     private void postReaderEdit(String deviceUserId, String name, String authority) throws Exception {
+        postReaderEdit(flaggedId, deviceUserId, name, authority);
+    }
+
+    private void postReaderEdit(String devicePublicId, String deviceUserId, String name, String authority)
+            throws Exception {
         String payload = """
                 {"deviceUserId":"%s","name":"%s","authority":"%s","isNew":false,"deleted":false,\
                 "deviceChangedAt":"2099-01-01T00:00:00Z"}
@@ -600,7 +649,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         String envelope = """
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
-                """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, flaggedId,
+                """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, devicePublicId,
                 UUID.randomUUID(), payload);
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)

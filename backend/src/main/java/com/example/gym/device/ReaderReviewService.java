@@ -4,18 +4,21 @@ import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceReaderBaseline;
 import com.example.gym.device.domain.DeviceReviewItem;
+import com.example.gym.device.domain.DeviceReviewSnapshot;
 import com.example.gym.device.repo.DesiredMemberProjectionRepository;
 import com.example.gym.device.repo.DeviceReaderBaselineRepository;
 import com.example.gym.device.repo.DeviceReviewItemRepository;
+import com.example.gym.device.repo.DeviceReviewSnapshotRepository;
 import java.time.Instant;
+import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
 /**
  * Compares one reader's observation with the desired record and the last reconciled baseline.
- * A difference is one review item. The member row is left as it is, and {@code emAuthority} is
- * stored on the item and not written back.
+ * A difference is one review item. A second reader joins that same item and keeps its own snapshot.
+ * The member row is left as it is, and {@code emAuthority} is stored and not written back.
  */
 @Service
 public class ReaderReviewService {
@@ -23,13 +26,16 @@ public class ReaderReviewService {
     private final DesiredMemberProjectionRepository desiredMembers;
     private final DeviceReaderBaselineRepository baselines;
     private final DeviceReviewItemRepository reviews;
+    private final DeviceReviewSnapshotRepository snapshots;
 
     public ReaderReviewService(DesiredMemberProjectionRepository desiredMembers,
                                DeviceReaderBaselineRepository baselines,
-                               DeviceReviewItemRepository reviews) {
+                               DeviceReviewItemRepository reviews,
+                               DeviceReviewSnapshotRepository snapshots) {
         this.desiredMembers = desiredMembers;
         this.baselines = baselines;
         this.reviews = reviews;
+        this.snapshots = snapshots;
     }
 
     @Transactional
@@ -69,20 +75,47 @@ public class ReaderReviewService {
             return;
         }
 
-        DeviceReviewItem item = reviews.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                .orElseGet(() -> new DeviceReviewItem(
-                        device.getTenantId(), device.getId(), desired.getMemberId(), deviceUserId));
-        item.setBaselineName(baselineName);
-        item.setBaselineNameEx(baselineNameEx);
-        item.setBaselineAuthority(storedBaselineAuthority);
-        item.setServerName(desired.getReaderName());
-        item.setServerNameEx(desired.getReaderNameEx());
-        item.setServerAuthority(desired.getAuthority());
-        item.setReaderName(cut(text(payload, "name"), 127));
-        item.setReaderNameEx(cut(text(payload, "nameEx"), 127));
-        item.setReaderAuthority(cut(text(payload, "authority"), 32));
-        item.setObservedAt(Instant.now());
-        reviews.save(item);
+        DeviceReviewItem item = conflictFor(device, deviceUserId, desired.getMemberId());
+        boolean thisReader = item.getId() == null || device.getId().equals(item.getDeviceId());
+        if (thisReader) {
+            item.setBaselineName(baselineName);
+            item.setBaselineNameEx(baselineNameEx);
+            item.setBaselineAuthority(storedBaselineAuthority);
+            item.setServerName(desired.getReaderName());
+            item.setServerNameEx(desired.getReaderNameEx());
+            item.setServerAuthority(desired.getAuthority());
+            item.setReaderName(cut(text(payload, "name"), 127));
+            item.setReaderNameEx(cut(text(payload, "nameEx"), 127));
+            item.setReaderAuthority(cut(text(payload, "authority"), 32));
+            item.setObservedAt(Instant.now());
+        }
+        item = reviews.save(item);
+        rememberSnapshot(item, device, deviceUserId, payload);
+    }
+
+    /** The first reader opens the conflict. A later reader keeps a second snapshot on that same item. */
+    private DeviceReviewItem conflictFor(Device device, String deviceUserId, Long memberId) {
+        DeviceReviewItem onThisReader = reviews.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElse(null);
+        if (onThisReader != null) {
+            return onThisReader;
+        }
+        List<DeviceReviewItem> shared = reviews.findByMemberId(memberId);
+        if (!shared.isEmpty()) {
+            return shared.get(0);
+        }
+        return new DeviceReviewItem(device.getTenantId(), device.getId(), memberId, deviceUserId);
+    }
+
+    private void rememberSnapshot(DeviceReviewItem item, Device device, String deviceUserId, JsonNode payload) {
+        DeviceReviewSnapshot snapshot = snapshots.findByReviewItemIdAndDeviceId(item.getId(), device.getId())
+                .orElseGet(() -> new DeviceReviewSnapshot(
+                        device.getTenantId(), item.getId(), device.getId(), deviceUserId));
+        snapshot.setReaderName(cut(text(payload, "name"), 127));
+        snapshot.setReaderNameEx(cut(text(payload, "nameEx"), 127));
+        snapshot.setReaderAuthority(cut(text(payload, "authority"), 32));
+        snapshot.setObservedAt(Instant.now());
+        snapshots.save(snapshot);
     }
 
     /** The reconciled record is the desired record the reader just read back. */

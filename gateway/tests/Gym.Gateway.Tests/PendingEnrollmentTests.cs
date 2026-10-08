@@ -83,6 +83,32 @@ public class PendingEnrollmentTests : IDisposable
     }
 
     [Fact]
+    public async Task Two_readers_send_both_names_and_neither_writes_the_other()
+    {
+        var left = new FakeReader();
+        var right = new FakeReader();
+        left.CreateUser(Person("1", "Left"));
+        right.CreateUser(Person("1", "Right"));
+        var leftWrites = left.Writes.ToArray();
+        var rightWrites = right.Writes.ToArray();
+        var sink = new RecordingUpload();
+        using var leftWorker = new ReaderWorker("reader-a", left, Path.Combine(_directory, "left.sqlite"));
+        using var rightWorker = new ReaderWorker("reader-b", right, Path.Combine(_directory, "right.sqlite"));
+        var leftPath = new DesiredRevisionPath("reader-a", leftWorker, left, new EmptyPull(), sink);
+        var rightPath = new DesiredRevisionPath("reader-b", rightWorker, right, new EmptyPull(), sink);
+
+        await leftPath.ObserveAsync(CancellationToken.None);
+        await rightPath.ObserveAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { "1", "1" }, sink.Ids);
+        Assert.Equal(new[] { "Left", "Right" }, sink.Names);
+        Assert.Equal(leftWrites, left.Writes);
+        Assert.Equal(rightWrites, right.Writes);
+        Assert.Equal("Left", left.GetUser("1").User!.Name);
+        Assert.Equal("Right", right.GetUser("1").User!.Name);
+    }
+
+    [Fact]
     public async Task A_short_list_uploads_nothing()
     {
         var reader = new FakeReader();
@@ -135,6 +161,8 @@ public class PendingEnrollmentTests : IDisposable
     {
         public List<string> Ids { get; } = [];
 
+        public List<string> Names { get; } = [];
+
         public bool Offline { get; set; }
 
         public Task UploadAsync(string deviceId, IReadOnlyList<ReaderUser> users, CancellationToken cancellationToken)
@@ -145,6 +173,7 @@ public class PendingEnrollmentTests : IDisposable
             }
 
             Ids.AddRange(users.Select(user => user.DeviceUserId));
+            Names.AddRange(users.Select(user => user.Name ?? ""));
             return Task.CompletedTask;
         }
     }

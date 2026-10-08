@@ -224,11 +224,13 @@ public sealed class FakeReader : IReaderAdapter
                 return ReaderCallResult.NoRecord();
             }
 
-            if (jpeg is { Length: > 0 })
+            if (jpeg is not { Length: > 0 })
             {
-                _faces[deviceUserId] = Copy(jpeg);
+                return ReaderCallResult.Success();
             }
 
+            _faces[deviceUserId] = Copy(jpeg);
+            _writes.Add("UpdateFace " + deviceUserId);
             return ReaderCallResult.Success();
         }
     }

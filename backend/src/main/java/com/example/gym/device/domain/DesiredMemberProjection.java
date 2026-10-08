@@ -55,6 +55,9 @@ public class DesiredMemberProjection extends TenantAwareEntity {
     @Column(name = "face_sha256", nullable = false, length = 64)
     private String faceSha256;
 
+    @Column(name = "observed_face_sha256", length = 64)
+    private String observedFaceSha256;
+
     protected DesiredMemberProjection() {
     }
 
@@ -166,5 +169,13 @@ public class DesiredMemberProjection extends TenantAwareEntity {
 
     public void setFaceSha256(String faceSha256) {
         this.faceSha256 = faceSha256;
+    }
+
+    public String getObservedFaceSha256() {
+        return observedFaceSha256;
+    }
+
+    public void setObservedFaceSha256(String observedFaceSha256) {
+        this.observedFaceSha256 = observedFaceSha256;
     }
 }

@@ -148,6 +148,28 @@ public class LiveReaderAdapterTests : IDisposable
         Assert.Equal(8u, device.Stored("1").stuValidEndTime.dwDay);
     }
 
+    [Fact]
+    public void Empty_update_keeps_the_photo_and_a_second_insert_is_photo_exist()
+    {
+        var device = new StructReader();
+        var writer = new DeviceReaderAdapter(device);
+        var replacement = new byte[] { 9, 8, 7, 6 };
+        Assert.True(writer.CreateUser(User("1", "Asha Shah", null)).Ok);
+        Assert.True(writer.InsertFace("1", Face).Ok);
+
+        Assert.True(writer.UpdateFace("1", []).Ok);
+        Assert.True(writer.UpdateFace("1", null).Ok);
+        Assert.Equal(Face, writer.GetFace("1").Bytes);
+
+        Assert.True(writer.UpdateFace("1", replacement).Ok);
+        Assert.Equal(replacement, writer.GetFace("1").Bytes);
+
+        var second = writer.InsertFace("1", Face);
+        Assert.False(second.Ok);
+        Assert.Equal(FakeReader.FailPhotoExist, second.FailCode);
+        Assert.Equal(replacement, writer.GetFace("1").Bytes);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))

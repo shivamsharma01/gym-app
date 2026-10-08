@@ -4,6 +4,7 @@ import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
+import com.example.gym.device.DesiredProjectionService;
 import com.example.gym.device.MemberDeviceProvisioningService;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.Gateway;
@@ -23,9 +24,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Member face photos: validate + normalise, store a new version on the faces volume, and fan the
- * change out to every device. Also serves images to staff and to the gateway, and accepts images
- * the gateway read from a device.
+ * Member face photos: validate + normalise, and store a new version on the faces volume. A reader
+ * on desired-state sync gets a face revision. Other readers still get a photo command. Also serves
+ * images to staff and to the gateway, and accepts images the gateway read from a device.
  */
 @Service
 public class MemberFaceService {
@@ -39,6 +40,7 @@ public class MemberFaceService {
     private final AuditService auditService;
     private final DeviceRepository deviceRepository;
     private final MemberDeviceMappingRepository mappingRepository;
+    private final DesiredProjectionService desiredProjection;
 
     public MemberFaceService(MemberFaceRepository faceRepository,
                              GatewayFaceUploadRepository uploadRepository,
@@ -48,7 +50,8 @@ public class MemberFaceService {
                              MemberDeviceProvisioningService provisioning,
                              AuditService auditService,
                              DeviceRepository deviceRepository,
-                             MemberDeviceMappingRepository mappingRepository) {
+                             MemberDeviceMappingRepository mappingRepository,
+                             DesiredProjectionService desiredProjection) {
         this.faceRepository = faceRepository;
         this.uploadRepository = uploadRepository;
         this.storage = storage;
@@ -58,6 +61,7 @@ public class MemberFaceService {
         this.auditService = auditService;
         this.deviceRepository = deviceRepository;
         this.mappingRepository = mappingRepository;
+        this.desiredProjection = desiredProjection;
     }
 
     /** Staff upload (React). Returns the current face (unchanged when the image is identical). */
@@ -71,6 +75,7 @@ public class MemberFaceService {
         boolean unchanged = previousSha != null && previousSha.equals(face.getSha256()) && previousVersion == face.getFaceVersion();
         if (!unchanged) {
             provisioning.pushFace(member, face, Set.of());
+            desiredProjection.publishFace(member);
         }
         return face;
     }

@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Gym.Gateway.Adapters;
 using Gym.Gateway.Execution;
 using Xunit;
@@ -290,6 +291,73 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(2, worker.AppliedRevision);
         Assert.Equal(shifted.ValidTo, reader.GetUser("1").User!.ValidTo);
         Assert.Equal(face, reader.GetFace("1").Bytes);
+    }
+
+    [Fact]
+    public void Face_replace_read_back_hash_matches_and_acks()
+    {
+        var reader = new FakeReader();
+        var replacement = new byte[] { 9, 8, 7, 6, 5 };
+        using var worker = Start(Path.Combine(_directory, "face-ok.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+
+        var next = Member("1", null) with { Revision = 2, Face = replacement };
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(next).Kind);
+        Assert.Equal(replacement, reader.GetFace("1").Bytes);
+        Assert.Equal(SHA256.HashData(replacement), SHA256.HashData(reader.GetFace("1").Bytes!));
+        Assert.Equal(2, worker.AppliedRevision);
+        Assert.Equal(new[] { 1L, 2L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
+        Assert.Equal(["CreateUser 1", "InsertFace 1", "UpdateFace 1"], reader.Writes);
+        Assert.Equal("1", reader.GetUser("1").User!.DeviceUserId);
+    }
+
+    [Fact]
+    public void Photo_exist_does_not_ack_and_leaves_the_applied_revision_behind()
+    {
+        var reader = new FakeReader();
+        var replacement = new byte[] { 9, 8, 7, 6, 5 };
+        using var worker = Start(Path.Combine(_directory, "face-exist.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+        reader.ScriptFailure(FakeReaderOperation.UpdateFace, "update failed");
+        reader.ScriptFailure(FakeReaderOperation.RemoveFace, "remove failed");
+
+        var next = Member("1", null) with { Revision = 2, Face = replacement };
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(next).Kind);
+        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
+        Assert.Equal(2, worker.Retry!.Revision);
+        Assert.Equal(FakeReader.FailPhotoExist, worker.Retry.LastError);
+        Assert.Equal(Face, reader.GetFace("1").Bytes);
+        Assert.Equal(["CreateUser 1", "InsertFace 1"], reader.Writes);
+    }
+
+    [Fact]
+    public void Empty_update_keeps_the_previous_bytes()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "face-empty.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+
+        Assert.True(reader.UpdateFace("1", []).Ok);
+        Assert.True(reader.UpdateFace("1", null).Ok);
+        Assert.Equal(Face, reader.GetFace("1").Bytes);
+        Assert.DoesNotContain(reader.Writes, line => line.StartsWith("RemoveFace", StringComparison.Ordinal));
+        Assert.Equal(["CreateUser 1", "InsertFace 1"], reader.Writes);
+    }
+
+    [Fact]
+    public void Reencoded_face_read_back_does_not_ack()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "face-reencode.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+        reader.ScriptFaceReadBack([4, 4, 4, 4]);
+
+        var next = Member("1", null) with { Revision = 2, Face = [9, 8, 7, 6, 5] };
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(next).Kind);
+        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
+        Assert.Equal("read-back mismatch", worker.Retry!.LastError);
     }
 
     public void Dispose()

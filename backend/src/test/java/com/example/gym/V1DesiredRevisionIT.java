@@ -375,6 +375,47 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         }
     }
 
+    @Test
+    void photoReplacePublishesAFaceRevisionAndReadsTheNewBytesBack() throws Exception {
+        try (Harness harness = start("photo", null)) {
+            harness.awaitReady();
+            JsonNode created = createOnReader("Asha", "Shah", "V4-FACE", "7401");
+            String publicId = created.get("id").asString();
+            awaitApplied(1);
+
+            mockMvc.perform(multipart("/api/v1/members/" + publicId + "/face")
+                            .file(new MockMultipartFile("file", "face.jpg", MediaType.IMAGE_JPEG_VALUE, jpeg(Color.BLUE)))
+                            .with(request -> {
+                                request.setMethod("PUT");
+                                return request;
+                            })
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk());
+            awaitApplied(2);
+            JsonNode report = harness.finish();
+
+            assertThat(report.get("ackCount").asInt()).isEqualTo(2);
+            assertThat(report.get("appliedLocal").asLong()).isEqualTo(2);
+            assertThat(report.get("pendingAcks").asInt()).isZero();
+            assertThat(report.get("writes")).extracting(JsonNode::asString)
+                    .containsExactly("CreateUser 1", "InsertFace 1", "UpdateFace 1");
+            JsonNode user = user(report, "1");
+            DesiredMemberProjection projection = desiredMemberProjectionRepository
+                    .findByDeviceIdAndMemberId(flagged, memberRepository.findByPublicId(publicId).orElseThrow().getId())
+                    .orElseThrow();
+            assertThat(user.get("faceSha256").asString()).isNotBlank();
+            assertThat(projection.getFaceSha256()).isEqualToIgnoringCase(user.get("faceSha256").asString());
+            assertThat(projection.getObservedFaceSha256()).isEqualToIgnoringCase(user.get("faceSha256").asString());
+            assertThat(projection.getDeviceUserId()).isEqualTo("1");
+            assertThat(projection.getRevision()).isEqualTo(2);
+            ReaderRevision cursor = revision();
+            assertThat(cursor.getAppliedRevision()).isEqualTo(cursor.getDesiredRevision()).isEqualTo(2);
+            assertThat(commands(flagged)).isEmpty();
+            assertThat(commands(other)).extracting(DeviceSyncCommand::getType).contains(SyncCommandType.UPSERT_FACE);
+            assertNotPublicId(report, publicId);
+        }
+    }
+
     private static String readerTime(LocalDate day, LocalTime time) {
         ZoneId zone = ZoneId.of("Asia/Kolkata");
         return java.time.OffsetDateTime.of(day, time, zone.getRules().getOffset(day.atTime(time)))
@@ -508,9 +549,13 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     }
 
     private static byte[] jpeg() throws Exception {
+        return jpeg(Color.RED);
+    }
+
+    private static byte[] jpeg(Color color) throws Exception {
         BufferedImage image = new BufferedImage(400, 400, BufferedImage.TYPE_INT_RGB);
         Graphics2D graphics = image.createGraphics();
-        graphics.setColor(Color.RED);
+        graphics.setColor(color);
         graphics.fillRect(0, 0, 400, 400);
         graphics.dispose();
         ByteArrayOutputStream out = new ByteArrayOutputStream();

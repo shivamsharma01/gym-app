@@ -289,18 +289,43 @@ public sealed class ReaderWorker : IDisposable
     private static WriteStep? EnsureFace(IReaderAdapter reader, DesiredMember desired)
     {
         var face = reader.GetFace(desired.DeviceUserId);
-        if (face.Ok)
+        if (face.Ok && face.Bytes is { Length: > 0 })
         {
-            return null;
+            return SameHash(face.Bytes, desired.Face) ? null : ReplaceFace(reader, desired);
         }
 
-        if (face.FailCode is not (FakeReader.FailUnknown or FakeReader.FailNoRecord))
+        if (!face.Ok && face.FailCode is not (FakeReader.FailUnknown or FakeReader.FailNoRecord))
         {
             return WriteStep.Fail(face.Error);
         }
 
+        return InsertFace(reader, desired);
+    }
+
+    private static WriteStep? ReplaceFace(IReaderAdapter reader, DesiredMember desired)
+    {
+        var updated = reader.UpdateFace(desired.DeviceUserId, desired.Face);
+        if (updated.Ok)
+        {
+            return null;
+        }
+
+        reader.RemoveFace(desired.DeviceUserId);
+        return InsertFace(reader, desired);
+    }
+
+    private static WriteStep? InsertFace(IReaderAdapter reader, DesiredMember desired)
+    {
         var inserted = reader.InsertFace(desired.DeviceUserId, desired.Face);
-        return inserted.Ok ? null : WriteStep.Fail(inserted.Error ?? inserted.FailCode);
+        if (inserted.Ok)
+        {
+            return null;
+        }
+
+        var error = inserted.FailCode == FakeReader.FailPhotoExist
+            ? FakeReader.FailPhotoExist
+            : inserted.Error ?? inserted.FailCode;
+        return WriteStep.Fail(error);
     }
 
     private static WriteStep VerifyReadBack(IReaderAdapter reader, DesiredMember desired)

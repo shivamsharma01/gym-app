@@ -17,5 +17,13 @@ public interface IReaderAdapter
 
     ReaderFaceResult GetFace(string deviceUserId);
 
+    /// <summary>First photo for a user. A second insert over a stored photo is PHOTO_EXIST.</summary>
     ReaderCallResult InsertFace(string deviceUserId, byte[]? jpeg);
+
+    /// <summary>
+    /// Replaces a stored photo. An empty image is not a delete and leaves the previous bytes.
+    /// </summary>
+    ReaderCallResult UpdateFace(string deviceUserId, byte[]? jpeg);
+
+    ReaderCallResult RemoveFace(string deviceUserId);
 }

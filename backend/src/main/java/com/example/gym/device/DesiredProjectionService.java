@@ -173,6 +173,41 @@ public class DesiredProjectionService {
         }
     }
 
+    /**
+     * Staff replace the photo for readers that already have this member. The revision keeps the
+     * same device user id and the current user record, and points at the new face. The read-back
+     * hash is recorded only when that revision is acknowledged.
+     */
+    @Transactional
+    public void publishFace(Member member) {
+        MemberFace face = faces.findByMemberId(member.getId()).orElse(null);
+        if (face == null || face.getSha256() == null || face.getSha256().isBlank()) {
+            return;
+        }
+        for (var mapping : mappings.findByMemberId(member.getId())) {
+            Device device = devices.findById(mapping.getDeviceId()).orElse(null);
+            if (device == null || !device.isProjectionEnabled()) {
+                continue;
+            }
+            DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                    .orElse(null);
+            if (row == null || face.getSha256().equalsIgnoreCase(row.getFaceSha256())) {
+                continue;
+            }
+            ReaderRevision cursor = revisions.findByDeviceId(device.getId())
+                    .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
+            long revision = cursor.bumpDesired();
+            row.setRevision(revision);
+            row.setFaceSha256(face.getSha256());
+            row.setObservedFaceSha256(null);
+            row.setDeviceUserId(mapping.getDeviceUserId());
+            projections.save(row);
+            notifyAfterCommit(device, revision);
+            FlowLog.info("device", "desired face reader={} revision={} user={}",
+                    device.getPublicId(), revision, mapping.getDeviceUserId());
+        }
+    }
+
     /** Inactive is access disallowed, not an archive. A member with no plan stays enabled, as V1 wrote them. */
     private int readerStatus(Member member) {
         if (member.getStatus() != MemberStatus.ACTIVE) {
@@ -210,6 +245,8 @@ public class DesiredProjectionService {
         if (!matches(row, ack)) {
             throw CommonExceptions.conflict("Read-back does not match the desired member");
         }
+        row.setObservedFaceSha256(ack.faceSha256());
+        projections.save(row);
         ReaderRevision cursor = revisions.findByDeviceId(device.getId())
                 .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
         if (ack.revision() > cursor.getAppliedRevision()) {

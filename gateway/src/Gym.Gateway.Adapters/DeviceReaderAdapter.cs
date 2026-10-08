@@ -2,8 +2,9 @@ namespace Gym.Gateway.Adapters;
 
 /// <summary>
 /// Calls on the gateway's existing device adapter. Creating an id that is already present does not
-/// overwrite it. Replacing a user writes the whole record, including a new name. A face that is
-/// already stored is not replaced. A user write without validity is refused.
+/// overwrite it. Replacing a user writes the whole record, including a new name. A stored photo is
+/// updated, not inserted again. An empty photo update does not delete the stored bytes. A user
+/// write without validity is refused.
 /// </summary>
 public sealed class DeviceReaderAdapter : IReaderAdapter
 {
@@ -162,6 +163,37 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
         return inserted.Ok
             ? ReaderCallResult.Success()
             : ReaderCallResult.Failed(inserted.Error ?? "face insert failed");
+    }
+
+    public ReaderCallResult UpdateFace(string deviceUserId, byte[]? jpeg)
+    {
+        if (jpeg is not { Length: > 0 })
+        {
+            return ReaderCallResult.Success();
+        }
+
+        if (!Online(out var error))
+        {
+            return ReaderCallResult.Failed(error);
+        }
+
+        var updated = _device.UpsertFace(deviceUserId, jpeg);
+        return updated.Ok
+            ? ReaderCallResult.Success()
+            : ReaderCallResult.Failed(updated.Error ?? "face update failed");
+    }
+
+    public ReaderCallResult RemoveFace(string deviceUserId)
+    {
+        if (!Online(out var error))
+        {
+            return ReaderCallResult.Failed(error);
+        }
+
+        var removed = _device.DeleteFace(deviceUserId);
+        return removed.Ok
+            ? ReaderCallResult.Success()
+            : ReaderCallResult.Failed(removed.Error ?? "face remove failed");
     }
 
     private bool Online(out string error)

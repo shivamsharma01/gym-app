@@ -34,7 +34,7 @@ public class MemberFaceController {
 
     @PutMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAuthority('MEMBER_UPDATE')")
-    @Operation(summary = "Upload/replace the member's face photo (JPEG/PNG, max 10 MB); syncs to all devices")
+    @Operation(summary = "Upload or replace the member photo. A desired-state reader gets a face revision; other readers get a photo command")
     public FaceView upload(@PathVariable String id, @RequestParam("file") MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw CommonExceptions.badRequest("Photo file is required");

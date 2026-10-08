@@ -117,7 +117,7 @@ internal static class Harness
         else
         {
             (applied, pending) = await DrainAsync(
-                socket, arguments, reader, client, () => legacy = true, applied, pending, lifetime.Token)
+                socket, arguments, reader, client, () => legacy = true, (applied, pending), lifetime.Token)
                 .ConfigureAwait(false);
         }
 
@@ -262,8 +262,7 @@ internal static class Harness
         FakeReader reader,
         DesiredStateClient client,
         Action onLegacy,
-        long applied,
-        int pending,
+        (long Applied, int Pending) cursor,
         CancellationToken cancellationToken)
     {
         var idle = arguments.Mode is "freeze" or "held" ? TimeSpan.FromSeconds(20) : TimeSpan.FromSeconds(1);
@@ -278,7 +277,7 @@ internal static class Harness
             }
             catch (OperationCanceledException)
             {
-                return (applied, pending);
+                return cursor;
             }
 
             using var worker = Start(arguments, reader);
@@ -290,14 +289,14 @@ internal static class Harness
                 throw new InvalidOperationException("Follow-up frame was not a desired revision");
             }
 
-            (applied, pending) = Snapshot(worker);
+            cursor = Snapshot(worker);
             if (AccessSettled(arguments.Mode, reader, worker))
             {
-                return (applied, pending);
+                return cursor;
             }
         }
 
-        return (applied, pending);
+        return cursor;
     }
 
     private static bool AccessSettled(string mode, FakeReader reader, ReaderWorker worker)

@@ -253,18 +253,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 _websocketLive = true;
                 _reconnectAttempt = 0;
                 _log.LogInformation("WebSocket connected");
-                if (onReconnect != null)
-                {
-                    try
-                    {
-                        await onReconnect(cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _log.LogWarning(ex, "Reconnect read-before-write failed");
-                    }
-                }
-
+                await InvokeReconnectAsync(onReconnect, cancellationToken).ConfigureAwait(false);
                 await ReplayPendingAsync(cancellationToken).ConfigureAwait(false);
                 await ReceiveLoopAsync(socket, onMessage, onDesiredRevision, cancellationToken).ConfigureAwait(false);
             }
@@ -303,6 +292,24 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             {
                 break;
             }
+        }
+    }
+
+    private async Task InvokeReconnectAsync(
+        Func<CancellationToken, Task>? onReconnect, CancellationToken cancellationToken)
+    {
+        if (onReconnect == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await onReconnect(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Reconnect read-before-write failed");
         }
     }
 

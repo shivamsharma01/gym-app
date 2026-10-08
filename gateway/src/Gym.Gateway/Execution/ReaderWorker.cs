@@ -19,6 +19,7 @@ public sealed class ReaderWorker : IDisposable
     private readonly SqliteConnection _connection;
     private const string ReaderParam = "$reader";
     private const string RevisionParam = "$revision";
+    private const string UserParam = "$user";
     private readonly object _gate = new();
     private string? _health;
 
@@ -569,7 +570,7 @@ public sealed class ReaderWorker : IDisposable
             WHERE reader_id = $reader AND device_user_id = $user
             """;
         command.Parameters.AddWithValue(ReaderParam, _readerId);
-        command.Parameters.AddWithValue("$user", deviceUserId);
+        command.Parameters.AddWithValue(UserParam, deviceUserId);
         return command.ExecuteScalar() != null;
     }
 
@@ -581,7 +582,7 @@ public sealed class ReaderWorker : IDisposable
             ON CONFLICT (reader_id, device_user_id) DO NOTHING
             """;
         command.Parameters.AddWithValue(ReaderParam, _readerId);
-        command.Parameters.AddWithValue("$user", deviceUserId);
+        command.Parameters.AddWithValue(UserParam, deviceUserId);
         command.ExecuteNonQuery();
     }
 
@@ -595,7 +596,7 @@ public sealed class ReaderWorker : IDisposable
                 WHERE reader_id = $reader AND device_user_id = $user
                 """;
             command.Parameters.AddWithValue(ReaderParam, _readerId);
-            command.Parameters.AddWithValue("$user", deviceUserId);
+            command.Parameters.AddWithValue(UserParam, deviceUserId);
             command.ExecuteNonQuery();
         }
     }
@@ -645,7 +646,7 @@ public sealed class ReaderWorker : IDisposable
                 ON CONFLICT (reader_id, device_user_id) DO NOTHING
                 """;
             owned.Parameters.AddWithValue(ReaderParam, _readerId);
-            owned.Parameters.AddWithValue("$user", deviceUserId);
+            owned.Parameters.AddWithValue(UserParam, deviceUserId);
             owned.ExecuteNonQuery();
         }
 

@@ -45,6 +45,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or WebSocketException)
             {
                 _log.LogInformation(
+                    ex,
                     "Observation for {DeviceId} user {UserId} queued; server unreachable ({Message})",
                     deviceId, user.DeviceUserId, ex.Message);
             }
@@ -74,6 +75,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or WebSocketException)
             {
                 _log.LogInformation(
+                    ex,
                     "Absence for {DeviceId} user {UserId} queued; server unreachable ({Message})",
                     deviceId, deviceUserId, ex.Message);
             }

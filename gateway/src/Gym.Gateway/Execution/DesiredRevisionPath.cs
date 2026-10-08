@@ -117,6 +117,12 @@ public sealed class DesiredRevisionPath
             var item = page.Items.FirstOrDefault(candidate => candidate.Revision == revision);
             if (item == null)
             {
+                if (page.DesiredRevision > revision)
+                {
+                    _worker.MarkAckDelivered(revision);
+                    continue;
+                }
+
                 throw new InvalidOperationException($"Pending acknowledgement {revision} is not in the desired projection");
             }
 

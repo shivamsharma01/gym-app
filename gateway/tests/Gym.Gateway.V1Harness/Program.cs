@@ -56,6 +56,11 @@ internal static class Harness
             reader.ScriptFaceReadBack([7, 7, 7, 7]);
         }
 
+        if (arguments.Mode == "held")
+        {
+            reader.ScriptReportedStatus(0);
+        }
+
         var baseline = reader.Writes.Count;
         var journalDirectory = Path.GetDirectoryName(arguments.Journal);
         if (!string.IsNullOrEmpty(journalDirectory))
@@ -111,7 +116,9 @@ internal static class Harness
         }
         else
         {
-            await DrainAsync(socket, arguments, reader, client, () => legacy = true, lifetime.Token).ConfigureAwait(false);
+            (applied, pending) = await DrainAsync(
+                socket, arguments, reader, client, () => legacy = true, applied, pending, lifetime.Token)
+                .ConfigureAwait(false);
         }
 
         return await Finish(
@@ -165,6 +172,7 @@ internal static class Harness
                 id = user.DeviceUserId,
                 name = user.Name,
                 nameEx = user.NameEx,
+                status = user.UserStatus,
                 faceHex = Convert.ToHexString(bytes).ToLowerInvariant(),
                 faceSha256 = bytes.Length == 0
                     ? ""
@@ -248,18 +256,21 @@ internal static class Harness
             || (user.NameEx != null && user.NameEx.Contains(publicId, StringComparison.Ordinal)));
     }
 
-    private static async Task DrainAsync(
+    private static async Task<(long Applied, int Pending)> DrainAsync(
         ClientWebSocket socket,
         Arguments arguments,
         FakeReader reader,
         DesiredStateClient client,
         Action onLegacy,
+        long applied,
+        int pending,
         CancellationToken cancellationToken)
     {
+        var idle = arguments.Mode is "freeze" or "held" ? TimeSpan.FromSeconds(20) : TimeSpan.FromSeconds(1);
         while (socket.State == WebSocketState.Open)
         {
             using var extra = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            extra.CancelAfter(TimeSpan.FromSeconds(1));
+            extra.CancelAfter(idle);
             string json;
             try
             {
@@ -267,7 +278,7 @@ internal static class Harness
             }
             catch (OperationCanceledException)
             {
-                return;
+                return (applied, pending);
             }
 
             using var worker = Start(arguments, reader);
@@ -278,7 +289,26 @@ internal static class Harness
                 onLegacy();
                 throw new InvalidOperationException("Follow-up frame was not a desired revision");
             }
+
+            (applied, pending) = Snapshot(worker);
+            if (AccessSettled(arguments.Mode, reader, worker))
+            {
+                return (applied, pending);
+            }
         }
+
+        return (applied, pending);
+    }
+
+    private static bool AccessSettled(string mode, FakeReader reader, ReaderWorker worker)
+    {
+        var replacements = reader.Writes.Count(line => line.StartsWith("ReplaceUser ", StringComparison.Ordinal));
+        return mode switch
+        {
+            "freeze" => replacements >= 2 && worker.AppliedRevision >= 3,
+            "held" => replacements >= 1 && worker.AppliedRevision == 1 && worker.Retry != null,
+            _ => false
+        };
     }
 
     private static ReaderWorker Start(Arguments arguments, FakeReader reader) =>

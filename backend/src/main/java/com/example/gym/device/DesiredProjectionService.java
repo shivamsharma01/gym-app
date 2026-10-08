@@ -23,6 +23,7 @@ import com.example.gym.face.FaceStorageService;
 import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.Member;
+import com.example.gym.member.MemberStatus;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -120,6 +121,57 @@ public class DesiredProjectionService {
         FlowLog.info("device", "desired member reader={} revision={} user={}",
                 device.getPublicId(), revision, deviceUserId);
         return revision;
+    }
+
+    /**
+     * Staff allow or disallow, and any other access change, for readers that already have this
+     * member. Freeze is {@code nUserStatus=1}. The mapping and {@code publicId} stay. The old
+     * disable command is not the writer for a flagged reader.
+     */
+    @Transactional
+    public void publishAccess(Member member) {
+        int status = readerStatus(member);
+        LocalDate today = LocalDate.now(READER_ZONE);
+        var window = authorization.window(member, today);
+        for (var mapping : mappings.findByMemberId(member.getId())) {
+            Device device = devices.findById(mapping.getDeviceId()).orElse(null);
+            if (device == null || !device.isProjectionEnabled()) {
+                continue;
+            }
+            DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                    .orElse(null);
+            if (row == null) {
+                continue;
+            }
+            String from = window.map(access -> at(access.validFrom(), LocalTime.MIN)).orElse(row.getValidFrom());
+            String to = window.map(access -> at(access.validTo(), LocalTime.of(23, 59, 59))).orElse(row.getValidTo());
+            if (row.getUserStatus() == status && from.equals(row.getValidFrom()) && to.equals(row.getValidTo())) {
+                continue;
+            }
+            ReaderRevision cursor = revisions.findByDeviceId(device.getId())
+                    .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
+            long revision = cursor.bumpDesired();
+            row.setRevision(revision);
+            row.setUserStatus(status);
+            row.setValidFrom(from);
+            row.setValidTo(to);
+            row.setDeviceUserId(mapping.getDeviceUserId());
+            projections.save(row);
+            notifyAfterCommit(device, revision);
+            FlowLog.info("device", "desired access reader={} revision={} user={} status={}",
+                    device.getPublicId(), revision, mapping.getDeviceUserId(), status);
+        }
+    }
+
+    /** Inactive is access disallowed, not an archive. A member with no plan stays enabled, as V1 wrote them. */
+    private int readerStatus(Member member) {
+        if (member.getStatus() != MemberStatus.ACTIVE) {
+            return 1;
+        }
+        if (authorization.window(member).isEmpty()) {
+            return USER_STATUS;
+        }
+        return authorization.desiredEnabled(member) ? USER_STATUS : 1;
     }
 
     @Transactional(readOnly = true)

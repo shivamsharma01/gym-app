@@ -115,6 +115,58 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(new[] { "CreateUser 1", "InsertFace 1" }, reader.Writes);
     }
 
+    [Fact]
+    public void Freeze_and_enable_keep_the_same_id_and_face()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "freeze.sqlite"), reader);
+        var created = Member("1", nameEx: null);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(created).Kind);
+        var face = reader.GetFace("1").Bytes;
+
+        var frozen = created with { Revision = 2, UserStatus = 1 };
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(frozen).Kind);
+        Assert.Equal(1, reader.GetUser("1").User!.UserStatus);
+        Assert.Equal("1", reader.GetUser("1").User!.DeviceUserId);
+        Assert.Equal(face, reader.GetFace("1").Bytes);
+        Assert.Equal(ValidFrom, reader.GetUser("1").User!.ValidFrom);
+        Assert.Equal(ValidTo, reader.GetUser("1").User!.ValidTo);
+
+        var enabled = created with { Revision = 3, UserStatus = 0 };
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(enabled).Kind);
+        Assert.Equal(0, reader.GetUser("1").User!.UserStatus);
+        Assert.Equal(face, reader.GetFace("1").Bytes);
+        Assert.Equal(
+            new[] { "CreateUser 1", "InsertFace 1", "ReplaceUser 1", "ReplaceUser 1" },
+            reader.Writes);
+        Assert.DoesNotContain(reader.Writes, line => line.Contains("Delete", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Status_read_back_still_enabled_does_not_ack_and_retries()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "held.sqlite"), reader);
+        var created = Member("1", nameEx: null);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(created).Kind);
+        var face = reader.GetFace("1").Bytes;
+
+        reader.ScriptReportedStatus(0);
+        var frozen = created with { Revision = 2, UserStatus = 1 };
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(frozen).Kind);
+        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision));
+        Assert.Equal(2, worker.Retry!.Revision);
+        Assert.Equal(face, reader.GetFace("1").Bytes);
+        Assert.Equal("1", reader.GetUser("1").User!.DeviceUserId);
+
+        reader.ScriptReportedStatus(null);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(frozen).Kind);
+        Assert.Equal(2, worker.AppliedRevision);
+        Assert.Equal(1, reader.GetUser("1").User!.UserStatus);
+        Assert.Equal(face, reader.GetFace("1").Bytes);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))

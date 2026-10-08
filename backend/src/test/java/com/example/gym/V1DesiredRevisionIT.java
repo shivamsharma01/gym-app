@@ -1,13 +1,16 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
+import com.example.gym.member.MemberStatus;
 import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.support.AbstractIntegrationTest;
@@ -212,6 +215,85 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         }
     }
 
+    @Test
+    void disallowThenAllowKeepsTheUserAndTheFace() throws Exception {
+        try (Harness harness = start("freeze", null)) {
+            harness.awaitReady();
+            JsonNode created = createOnReader("Asha", "Shah", "V2-FREEZE", "7201");
+            String publicId = created.get("id").asString();
+            awaitApplied(1);
+            mockMvc.perform(delete("/api/v1/members/" + publicId).header("Authorization", "Bearer " + token))
+                    .andExpect(status().isNoContent());
+            awaitApplied(2);
+            mockMvc.perform(post("/api/v1/members/" + publicId + "/reactivate")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk());
+            awaitApplied(3);
+            JsonNode report = harness.finish();
+
+            assertThat(report.get("ackCount").asInt()).isEqualTo(3);
+            assertThat(report.get("appliedLocal").asLong()).isEqualTo(3);
+            assertThat(report.get("pendingAcks").asInt()).isZero();
+            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("writes")).extracting(JsonNode::asString)
+                    .containsExactly("CreateUser 1", "InsertFace 1", "ReplaceUser 1", "ReplaceUser 1");
+            JsonNode user = user(report, "1");
+            assertThat(user.get("status").asInt()).isZero();
+            assertThat(user.get("faceSha256").asString()).isNotBlank();
+            assertThat(user.get("id").asString()).isEqualTo("1");
+            assertNotPublicId(report, publicId);
+
+            assertThat(mapping(publicId).getDeviceUserId()).isEqualTo("1");
+            assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getStatus())
+                    .isEqualTo(MemberStatus.ACTIVE);
+            ReaderRevision cursor = revision();
+            assertThat(cursor.getAppliedRevision()).isEqualTo(cursor.getDesiredRevision()).isEqualTo(3);
+            DesiredMemberProjection projection = desiredMemberProjectionRepository
+                    .findByDeviceIdAndMemberId(flagged, memberRepository.findByPublicId(publicId).orElseThrow().getId())
+                    .orElseThrow();
+            assertThat(projection.getUserStatus()).isZero();
+            assertThat(projection.getDeviceUserId()).isEqualTo("1");
+            assertThat(commands(flagged)).isEmpty();
+        }
+    }
+
+    @Test
+    void statusReadBackStillEnabledDoesNotAck() throws Exception {
+        try (Harness harness = start("held", null)) {
+            harness.awaitReady();
+            JsonNode created = createOnReader("Asha", "Shah", "V2-HELD", "7202");
+            String publicId = created.get("id").asString();
+            Long memberId = memberRepository.findByPublicId(publicId).orElseThrow().getId();
+            awaitApplied(1);
+            mockMvc.perform(delete("/api/v1/members/" + publicId).header("Authorization", "Bearer " + token))
+                    .andExpect(status().isNoContent());
+            JsonNode report = harness.finish();
+
+            assertThat(report.get("ackCount").asInt()).isEqualTo(1);
+            assertThat(report.get("appliedLocal").asLong()).isEqualTo(1);
+            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("writes")).extracting(JsonNode::asString)
+                    .containsExactly("CreateUser 1", "InsertFace 1", "ReplaceUser 1");
+            JsonNode user = user(report, "1");
+            assertThat(user.get("id").asString()).isEqualTo("1");
+            assertThat(user.get("faceSha256").asString()).isNotBlank();
+            assertNotPublicId(report, publicId);
+
+            assertThat(mapping(publicId).getDeviceUserId()).isEqualTo("1");
+            assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getStatus())
+                    .isEqualTo(MemberStatus.INACTIVE);
+            ReaderRevision cursor = revision();
+            assertThat(cursor.getAppliedRevision()).isEqualTo(1);
+            assertThat(cursor.getDesiredRevision()).isEqualTo(2);
+            DesiredMemberProjection projection = desiredMemberProjectionRepository
+                    .findByDeviceIdAndMemberId(flagged, memberId)
+                    .orElseThrow();
+            assertThat(projection.getUserStatus()).isEqualTo(1);
+            assertThat(projection.getDeviceUserId()).isEqualTo("1");
+            assertThat(commands(flagged)).isEmpty();
+        }
+    }
+
     private void assertNotPublicId(JsonNode report, String publicId) {
         assertThat(publicId).isNotBlank();
         assertThat(report.get("createdId").asString()).isNotEqualTo(publicId);
@@ -274,6 +356,19 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
 
     private ReaderRevision revision() {
         return readerRevisionRepository.findByDeviceId(flagged).orElseThrow();
+    }
+
+    private void awaitApplied(long revision) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        ReaderRevision cursor = null;
+        while (System.nanoTime() < deadline) {
+            cursor = readerRevisionRepository.findByDeviceId(flagged).orElse(null);
+            if (cursor != null && cursor.getAppliedRevision() >= revision) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Applied revision did not reach " + revision + ": " + cursor);
     }
 
     private MemberDeviceMapping mapping(String memberPublicId) {

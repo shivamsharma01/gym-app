@@ -23,6 +23,7 @@ public sealed class FakeReader : IReaderAdapter
     private readonly Queue<ReaderListResult> _listScripts = [];
     private readonly List<string> _writes = [];
     private byte[]? _scriptedFaceReadBack;
+    private int? _reportedStatus;
 
     public IReadOnlyList<string> Writes
     {
@@ -39,6 +40,15 @@ public sealed class FakeReader : IReaderAdapter
     /// The next face read of a user who already has a photo returns these bytes. Stored bytes stay
     /// as inserted, so a hash of the read-back can differ.
     /// </summary>
+    /// <summary>Get-user reports this status instead of the stored one. The stored record is unchanged.</summary>
+    public void ScriptReportedStatus(int? status)
+    {
+        lock (_gate)
+        {
+            _reportedStatus = status;
+        }
+    }
+
     public void ScriptFaceReadBack(byte[] jpeg)
     {
         lock (_gate)
@@ -109,9 +119,12 @@ public sealed class FakeReader : IReaderAdapter
                 return ReaderUserResult.Failed(error);
             }
 
-            return _users.TryGetValue(deviceUserId, out var user)
-                ? ReaderUserResult.Found(user)
-                : ReaderUserResult.NoRecord();
+            if (!_users.TryGetValue(deviceUserId, out var user))
+            {
+                return ReaderUserResult.NoRecord();
+            }
+
+            return ReaderUserResult.Found(_reportedStatus is int status ? user with { UserStatus = status } : user);
         }
     }
 
@@ -136,6 +149,21 @@ public sealed class FakeReader : IReaderAdapter
 
             _users[user.DeviceUserId] = user;
             _writes.Add("CreateUser " + user.DeviceUserId);
+            return ReaderCallResult.Success();
+        }
+    }
+
+    public ReaderCallResult ReplaceUser(ReaderUser user)
+    {
+        lock (_gate)
+        {
+            if (!_users.ContainsKey(user.DeviceUserId))
+            {
+                return ReaderCallResult.NoRecord();
+            }
+
+            _users[user.DeviceUserId] = user;
+            _writes.Add("ReplaceUser " + user.DeviceUserId);
             return ReaderCallResult.Success();
         }
     }

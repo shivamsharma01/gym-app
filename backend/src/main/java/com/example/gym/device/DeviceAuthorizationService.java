@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,17 +45,20 @@ public class DeviceAuthorizationService {
     private final MemberRepository memberRepository;
     private final MembershipRepository membershipRepository;
     private final GatewayProperties properties;
+    private final ObjectProvider<DesiredProjectionService> desiredState;
 
     public DeviceAuthorizationService(MemberDeviceMappingRepository mappingRepository,
                                       DeviceSyncService deviceSyncService,
                                       MemberRepository memberRepository,
                                       MembershipRepository membershipRepository,
-                                      GatewayProperties properties) {
+                                      GatewayProperties properties,
+                                      ObjectProvider<DesiredProjectionService> desiredState) {
         this.mappingRepository = mappingRepository;
         this.deviceSyncService = deviceSyncService;
         this.memberRepository = memberRepository;
         this.membershipRepository = membershipRepository;
         this.properties = properties;
+        this.desiredState = desiredState;
     }
 
     @Transactional(readOnly = true)
@@ -172,6 +176,7 @@ public class DeviceAuthorizationService {
         for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(member.getId())) {
             enqueue(member, mapping.getDeviceId(), mapping.getDeviceUserId(), window);
         }
+        desiredState.getObject().publishAccess(member);
     }
 
     private void enqueue(Member member, Long deviceId, String deviceUserId, Optional<AccessWindow> window) {

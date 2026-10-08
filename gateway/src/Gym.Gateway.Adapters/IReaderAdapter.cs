@@ -10,6 +10,11 @@ public interface IReaderAdapter
 
     ReaderCallResult CreateUser(ReaderUser user);
 
+    /// <summary>
+    /// Replaces the full user record for an id this member already owns. The face is left as it is.
+    /// </summary>
+    ReaderCallResult ReplaceUser(ReaderUser user);
+
     ReaderFaceResult GetFace(string deviceUserId);
 
     ReaderCallResult InsertFace(string deviceUserId, byte[]? jpeg);

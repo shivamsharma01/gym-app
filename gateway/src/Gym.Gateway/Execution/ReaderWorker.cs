@@ -246,6 +246,12 @@ public sealed class ReaderWorker : IDisposable
                 return null;
             }
 
+            if (SamePerson(existing.User!, desired))
+            {
+                var replaced = reader.ReplaceUser(Record(desired));
+                return replaced.Ok ? null : WriteStep.Fail(replaced.Error ?? replaced.FailCode);
+            }
+
             var occupied = reader.CreateUser(Record(desired));
             return occupied.FailCode == FakeReader.FailOccupied
                 ? WriteStep.Collision()
@@ -312,6 +318,13 @@ public sealed class ReaderWorker : IDisposable
         desired.Authority,
         desired.DoorNum,
         desired.TimeSectionNum);
+
+    private static bool SamePerson(ReaderUser user, DesiredMember desired)
+    {
+        return user.DeviceUserId == desired.DeviceUserId
+            && user.Name == desired.Name
+            && user.NameEx == desired.NameEx;
+    }
 
     private static bool SameUser(ReaderUser user, DesiredMember desired)
     {

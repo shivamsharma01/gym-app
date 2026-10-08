@@ -244,7 +244,7 @@ export function MemberDetailPage() {
         open={confirmDeactivate}
         onClose={() => setConfirmDeactivate(false)}
         title="Deactivate this member?"
-        description="They lose app access immediately. Mapped devices get disable commands queued (check each device Sync tab until confirmed)."
+        description="They lose app access. The member stays. A reader using desired-state sync keeps this device user and freezes it. Other readers still get a disable command."
         confirmLabel="Deactivate"
         danger
         busy={deactivate.isPending}
@@ -254,7 +254,7 @@ export function MemberDetailPage() {
         open={confirmReactivate}
         onClose={() => setConfirmReactivate(false)}
         title="Reactivate this member?"
-        description="Restores the member to ACTIVE and queues device enable/sync for mapped terminals. Check device Sync tabs for pending work."
+        description="Restores access. A reader using desired-state sync enables the same device user. The member is not created again."
         confirmLabel="Reactivate"
         busy={reactivate.isPending}
         onConfirm={() => reactivate.mutate()}

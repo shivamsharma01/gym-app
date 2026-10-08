@@ -83,6 +83,49 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
         return ReaderCallResult.Success();
     }
 
+    public ReaderCallResult ReplaceUser(ReaderUser user)
+    {
+        if (!Online(out var error))
+        {
+            return ReaderCallResult.Failed(error);
+        }
+
+        DeviceUserSnapshot? existing;
+        try
+        {
+            existing = _device.GetUser(user.DeviceUserId);
+        }
+        catch (DeviceReadException ex)
+        {
+            return ReaderCallResult.Failed(ex.Message);
+        }
+
+        if (existing == null)
+        {
+            return ReaderCallResult.NoRecord();
+        }
+
+        if (NameConflicts(existing, user))
+        {
+            return ReaderCallResult.Occupied(user.DeviceUserId);
+        }
+
+        var updated = _device.UpdateUser(new DeviceUserMutation(
+            user.DeviceUserId,
+            user.Name,
+            user.UserStatus == 0,
+            user.ValidFrom,
+            user.ValidTo,
+            user.Authority));
+        if (!updated.Ok)
+        {
+            return ReaderCallResult.Failed(updated.Error ?? "user write failed");
+        }
+
+        _written[user.DeviceUserId] = user;
+        return ReaderCallResult.Success();
+    }
+
     public ReaderFaceResult GetFace(string deviceUserId)
     {
         if (!Online(out var error))

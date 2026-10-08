@@ -37,6 +37,13 @@ public sealed class DesiredRevisionPath
         return HandleAsync(cancellationToken);
     }
 
+    private enum ItemStep
+    {
+        Continue,
+        PullAgain,
+        Stop
+    }
+
     private async Task HandleAsync(CancellationToken cancellationToken)
     {
         for (var pass = 0; pass < 5; pass++)
@@ -51,35 +58,15 @@ public sealed class DesiredRevisionPath
             var pullAgain = false;
             foreach (var item in page.Items)
             {
-                if (item.Revision <= _worker.AppliedRevision)
+                var step = await ApplyItemAsync(item, cancellationToken).ConfigureAwait(false);
+                if (step == ItemStep.Stop)
                 {
-                    continue;
+                    return;
                 }
 
-                var result = _worker.ApplyMember(item.ToMember());
-                switch (result.Kind)
+                if (step == ItemStep.PullAgain)
                 {
-                    case MemberApplyKind.Occupied:
-                        var occupiedId = result.Detail;
-                        if (string.IsNullOrWhiteSpace(occupiedId))
-                        {
-                            throw new InvalidOperationException("Occupied result has no device user id");
-                        }
-
-                        await _client.ReportOccupiedAsync(_deviceId, item.Revision, occupiedId, cancellationToken)
-                            .ConfigureAwait(false);
-                        pullAgain = true;
-                        break;
-                    case MemberApplyKind.Applied:
-                    case MemberApplyKind.AlreadyApplied:
-                        await DeliverPendingAcksAsync(cancellationToken).ConfigureAwait(false);
-                        break;
-                    default:
-                        return;
-                }
-
-                if (pullAgain)
-                {
+                    pullAgain = true;
                     break;
                 }
             }
@@ -93,19 +80,48 @@ public sealed class DesiredRevisionPath
         throw new InvalidOperationException("Desired revision did not settle");
     }
 
+    private async Task<ItemStep> ApplyItemAsync(DesiredPullItem item, CancellationToken cancellationToken)
+    {
+        if (item.Revision <= _worker.AppliedRevision)
+        {
+            return ItemStep.Continue;
+        }
+
+        var result = _worker.ApplyMember(item.ToMember());
+        switch (result.Kind)
+        {
+            case MemberApplyKind.Occupied:
+                var occupiedId = result.Detail;
+                if (string.IsNullOrWhiteSpace(occupiedId))
+                {
+                    throw new InvalidOperationException("Occupied result has no device user id");
+                }
+
+                await _client.ReportOccupiedAsync(_deviceId, item.Revision, occupiedId, cancellationToken)
+                    .ConfigureAwait(false);
+                return ItemStep.PullAgain;
+            case MemberApplyKind.Applied:
+            case MemberApplyKind.AlreadyApplied:
+                await DeliverPendingAcksAsync(cancellationToken).ConfigureAwait(false);
+                return ItemStep.Continue;
+            default:
+                return ItemStep.Stop;
+        }
+    }
+
     private async Task DeliverPendingAcksAsync(CancellationToken cancellationToken)
     {
-        foreach (var pending in _worker.PendingAcks.ToArray())
+        foreach (var revision in _worker.PendingAcks.Select(pending => pending.Revision).ToArray())
         {
-            var page = await _client.PullAsync(_deviceId, pending.Revision - 1, cancellationToken).ConfigureAwait(false);
-            var item = page.Items.FirstOrDefault(candidate => candidate.Revision == pending.Revision);
+            var page = await _client.PullAsync(_deviceId, revision - 1, cancellationToken).ConfigureAwait(false);
+            var item = page.Items.FirstOrDefault(candidate => candidate.Revision == revision);
             if (item == null)
             {
-                throw new InvalidOperationException($"Pending acknowledgement {pending.Revision} is not in the desired projection");
+                throw new InvalidOperationException($"Pending acknowledgement {revision} is not in the desired projection");
             }
 
             await AcknowledgeFromReaderAsync(item, cancellationToken).ConfigureAwait(false);
-            _worker.MarkAckDelivered(pending.Revision);
+            _worker.MarkAckDelivered(revision);
         }
     }
 

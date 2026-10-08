@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using Gym.Gateway.Adapters;
 using Microsoft.Data.Sqlite;
@@ -16,6 +17,8 @@ public sealed class ReaderWorker : IDisposable
     private readonly Func<DateTimeOffset> _clock;
     private readonly TimeSpan _retryDelay;
     private readonly SqliteConnection _connection;
+    private const string ReaderParam = "$reader";
+    private const string RevisionParam = "$revision";
     private readonly object _gate = new();
     private string? _health;
 
@@ -64,7 +67,7 @@ public sealed class ReaderWorker : IDisposable
             {
                 using var command = _connection.CreateCommand();
                 command.CommandText = "SELECT revision FROM applied_revision WHERE reader_id = $reader";
-                command.Parameters.AddWithValue("$reader", _readerId);
+                command.Parameters.AddWithValue(ReaderParam, _readerId);
                 var value = command.ExecuteScalar();
                 return value is long revision ? revision : 0;
             }
@@ -82,7 +85,7 @@ public sealed class ReaderWorker : IDisposable
                     SELECT revision, attempt_count, next_attempt, last_error
                     FROM retry_state WHERE reader_id = $reader
                     """;
-                command.Parameters.AddWithValue("$reader", _readerId);
+                command.Parameters.AddWithValue(ReaderParam, _readerId);
                 using var row = command.ExecuteReader();
                 if (!row.Read())
                 {
@@ -92,7 +95,7 @@ public sealed class ReaderWorker : IDisposable
                 return new RetryState(
                     row.GetInt64(0),
                     row.GetInt32(1),
-                    DateTimeOffset.Parse(row.GetString(2)),
+                    DateTimeOffset.Parse(row.GetString(2), CultureInfo.InvariantCulture),
                     row.GetString(3));
             }
         }
@@ -109,7 +112,7 @@ public sealed class ReaderWorker : IDisposable
                     SELECT reader_id, revision FROM revision_ack
                     WHERE reader_id = $reader ORDER BY revision
                     """;
-                command.Parameters.AddWithValue("$reader", _readerId);
+                command.Parameters.AddWithValue(ReaderParam, _readerId);
                 using var row = command.ExecuteReader();
                 var acks = new List<RevisionAck>();
                 while (row.Read())
@@ -187,21 +190,22 @@ public sealed class ReaderWorker : IDisposable
             throw new ArgumentException("The desired member has no face.", nameof(desired));
         }
 
-        string? occupiedId = null;
+        WriteStep? written = null;
         var outcome = Apply(desired.Revision, reader =>
         {
             var step = WriteAndReadBack(reader, desired);
-            if (step.Occupied)
-            {
-                occupiedId = desired.DeviceUserId;
-            }
-
+            written = step;
             return step.Verification;
         });
-        if (occupiedId != null)
+        return ToMemberResult(outcome, written, desired.DeviceUserId);
+    }
+
+    private MemberApplyResult ToMemberResult(ApplyOutcome outcome, WriteStep? written, string deviceUserId)
+    {
+        if (written is { Occupied: true })
         {
             ClearRetry();
-            return new MemberApplyResult(MemberApplyKind.Occupied, occupiedId);
+            return new MemberApplyResult(MemberApplyKind.Occupied, deviceUserId);
         }
 
         var kind = outcome switch
@@ -217,47 +221,72 @@ public sealed class ReaderWorker : IDisposable
 
     private static WriteStep WriteAndReadBack(IReaderAdapter reader, DesiredMember desired)
     {
+        var user = EnsureUser(reader, desired);
+        if (user != null)
+        {
+            return user.Value;
+        }
+
+        var face = EnsureFace(reader, desired);
+        if (face != null)
+        {
+            return face.Value;
+        }
+
+        return VerifyReadBack(reader, desired);
+    }
+
+    private static WriteStep? EnsureUser(IReaderAdapter reader, DesiredMember desired)
+    {
         var existing = reader.GetUser(desired.DeviceUserId);
         if (existing.Ok)
         {
-            if (!SameUser(existing.User!, desired))
+            if (SameUser(existing.User!, desired))
             {
-                var occupied = reader.CreateUser(Record(desired));
-                return occupied.FailCode == FakeReader.FailOccupied
-                    ? WriteStep.Collision()
-                    : WriteStep.Fail(occupied.Error ?? occupied.FailCode);
+                return null;
             }
+
+            var occupied = reader.CreateUser(Record(desired));
+            return occupied.FailCode == FakeReader.FailOccupied
+                ? WriteStep.Collision()
+                : WriteStep.Fail(occupied.Error ?? occupied.FailCode);
         }
-        else if (existing.FailCode == FakeReader.FailNoRecord)
+
+        if (existing.FailCode == FakeReader.FailNoRecord)
         {
             var created = reader.CreateUser(Record(desired));
-            if (!created.Ok)
+            if (created.Ok)
             {
-                return created.FailCode == FakeReader.FailOccupied
-                    ? WriteStep.Collision()
-                    : WriteStep.Fail(created.Error);
+                return null;
             }
-        }
-        else
-        {
-            return WriteStep.Fail(existing.Error);
+
+            return created.FailCode == FakeReader.FailOccupied
+                ? WriteStep.Collision()
+                : WriteStep.Fail(created.Error);
         }
 
+        return WriteStep.Fail(existing.Error);
+    }
+
+    private static WriteStep? EnsureFace(IReaderAdapter reader, DesiredMember desired)
+    {
         var face = reader.GetFace(desired.DeviceUserId);
-        if (!face.Ok)
+        if (face.Ok)
         {
-            if (face.FailCode is not (FakeReader.FailUnknown or FakeReader.FailNoRecord))
-            {
-                return WriteStep.Fail(face.Error);
-            }
-
-            var inserted = reader.InsertFace(desired.DeviceUserId, desired.Face);
-            if (!inserted.Ok)
-            {
-                return WriteStep.Fail(inserted.Error ?? inserted.FailCode);
-            }
+            return null;
         }
 
+        if (face.FailCode is not (FakeReader.FailUnknown or FakeReader.FailNoRecord))
+        {
+            return WriteStep.Fail(face.Error);
+        }
+
+        var inserted = reader.InsertFace(desired.DeviceUserId, desired.Face);
+        return inserted.Ok ? null : WriteStep.Fail(inserted.Error ?? inserted.FailCode);
+    }
+
+    private static WriteStep VerifyReadBack(IReaderAdapter reader, DesiredMember desired)
+    {
         var readUser = reader.GetUser(desired.DeviceUserId);
         var readFace = reader.GetFace(desired.DeviceUserId);
         if (!readUser.Ok || readUser.User == null || !readFace.Ok || readFace.Bytes == null)
@@ -308,7 +337,7 @@ public sealed class ReaderWorker : IDisposable
         {
             using var command = _connection.CreateCommand();
             command.CommandText = "DELETE FROM retry_state WHERE reader_id = $reader";
-            command.Parameters.AddWithValue("$reader", _readerId);
+            command.Parameters.AddWithValue(ReaderParam, _readerId);
             command.ExecuteNonQuery();
         }
     }
@@ -328,8 +357,8 @@ public sealed class ReaderWorker : IDisposable
         {
             using var command = _connection.CreateCommand();
             command.CommandText = "DELETE FROM revision_ack WHERE reader_id = $reader AND revision = $revision";
-            command.Parameters.AddWithValue("$reader", _readerId);
-            command.Parameters.AddWithValue("$revision", revision);
+            command.Parameters.AddWithValue(ReaderParam, _readerId);
+            command.Parameters.AddWithValue(RevisionParam, revision);
             command.ExecuteNonQuery();
         }
     }
@@ -367,7 +396,7 @@ public sealed class ReaderWorker : IDisposable
     {
         using var command = _connection.CreateCommand();
         command.CommandText = "SELECT revision FROM applied_revision WHERE reader_id = $reader";
-        command.Parameters.AddWithValue("$reader", _readerId);
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
         var value = command.ExecuteScalar();
         return value is long revision ? revision : 0;
     }
@@ -379,7 +408,7 @@ public sealed class ReaderWorker : IDisposable
             SELECT revision, attempt_count, next_attempt, last_error
             FROM retry_state WHERE reader_id = $reader
             """;
-        command.Parameters.AddWithValue("$reader", _readerId);
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
         using var row = command.ExecuteReader();
         if (!row.Read())
         {
@@ -389,7 +418,7 @@ public sealed class ReaderWorker : IDisposable
         return new RetryState(
             row.GetInt64(0),
             row.GetInt32(1),
-            DateTimeOffset.Parse(row.GetString(2)),
+            DateTimeOffset.Parse(row.GetString(2), CultureInfo.InvariantCulture),
             row.GetString(3));
     }
 
@@ -406,8 +435,8 @@ public sealed class ReaderWorker : IDisposable
                 next_attempt = excluded.next_attempt,
                 last_error = excluded.last_error
             """;
-        command.Parameters.AddWithValue("$reader", _readerId);
-        command.Parameters.AddWithValue("$revision", revision);
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
+        command.Parameters.AddWithValue(RevisionParam, revision);
         command.Parameters.AddWithValue("$attempts", previousAttempts + 1);
         command.Parameters.AddWithValue("$next", next.ToString("o"));
         command.Parameters.AddWithValue("$error", error);
@@ -425,8 +454,8 @@ public sealed class ReaderWorker : IDisposable
                 ON CONFLICT (reader_id) DO UPDATE SET revision = excluded.revision
                 WHERE excluded.revision > applied_revision.revision
                 """;
-            applied.Parameters.AddWithValue("$reader", _readerId);
-            applied.Parameters.AddWithValue("$revision", revision);
+            applied.Parameters.AddWithValue(ReaderParam, _readerId);
+            applied.Parameters.AddWithValue(RevisionParam, revision);
             applied.ExecuteNonQuery();
         }
 
@@ -437,8 +466,8 @@ public sealed class ReaderWorker : IDisposable
                 INSERT INTO revision_ack (reader_id, revision) VALUES ($reader, $revision)
                 ON CONFLICT (reader_id, revision) DO NOTHING
                 """;
-            ack.Parameters.AddWithValue("$reader", _readerId);
-            ack.Parameters.AddWithValue("$revision", revision);
+            ack.Parameters.AddWithValue(ReaderParam, _readerId);
+            ack.Parameters.AddWithValue(RevisionParam, revision);
             ack.ExecuteNonQuery();
         }
 
@@ -446,7 +475,7 @@ public sealed class ReaderWorker : IDisposable
         {
             retry.Transaction = transaction;
             retry.CommandText = "DELETE FROM retry_state WHERE reader_id = $reader";
-            retry.Parameters.AddWithValue("$reader", _readerId);
+            retry.Parameters.AddWithValue(ReaderParam, _readerId);
             retry.ExecuteNonQuery();
         }
 

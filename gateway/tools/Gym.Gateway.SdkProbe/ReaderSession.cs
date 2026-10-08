@@ -492,12 +492,7 @@ internal sealed class ReaderSession : IDisposable
                     break;
                 }
 
-                var list = new List<object>(page);
-                for (var i = 0; i < page; i++)
-                {
-                    list.Add(new NET_RECORDSET_ACCESS_CTL_CARDREC { dwSize = (uint)Marshal.SizeOf<NET_RECORDSET_ACCESS_CTL_CARDREC>() });
-                }
-
+                var list = PunchPage(page);
                 var returned = 0;
                 calls++;
                 if (NETClient.FindNextRecord(find, page, ref returned, ref list, typeof(NET_RECORDSET_ACCESS_CTL_CARDREC), ListWaitMs) < 0)
@@ -506,12 +501,7 @@ internal sealed class ReaderSession : IDisposable
                     break;
                 }
 
-                for (var i = 0; i < returned && i < list.Count; i++)
-                {
-                    var x = (NET_RECORDSET_ACCESS_CTL_CARDREC)list[i];
-                    rows.Add(new Punch(x.nRecNo, string.IsNullOrWhiteSpace(x.szUserID) ? null : x.szUserID.Trim(),
-                        Raw(x.stuTime), ToDate(x.stuTime), x.bStatus, x.emMethod.ToString(), x.nErrorCode));
-                }
+                AppendPunches(rows, list, returned);
 
                 if (returned < page)
                 {
@@ -525,6 +515,27 @@ internal sealed class ReaderSession : IDisposable
         }
 
         return new PunchQuery(rows, calls, watch.ElapsedMilliseconds, error, capped);
+    }
+
+    private static List<object> PunchPage(int page)
+    {
+        var list = new List<object>(page);
+        for (var i = 0; i < page; i++)
+        {
+            list.Add(new NET_RECORDSET_ACCESS_CTL_CARDREC { dwSize = (uint)Marshal.SizeOf<NET_RECORDSET_ACCESS_CTL_CARDREC>() });
+        }
+
+        return list;
+    }
+
+    private static void AppendPunches(List<Punch> rows, List<object> list, int returned)
+    {
+        for (var i = 0; i < returned && i < list.Count; i++)
+        {
+            var x = (NET_RECORDSET_ACCESS_CTL_CARDREC)list[i];
+            rows.Add(new Punch(x.nRecNo, string.IsNullOrWhiteSpace(x.szUserID) ? null : x.szUserID.Trim(),
+                Raw(x.stuTime), ToDate(x.stuTime), x.bStatus, x.emMethod.ToString(), x.nErrorCode));
+        }
     }
 
     public int? CountPunches(DateTime from, DateTime to)

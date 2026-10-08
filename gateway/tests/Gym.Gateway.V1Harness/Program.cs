@@ -6,15 +6,23 @@ using Gym.Gateway;
 using Gym.Gateway.Adapters;
 using Gym.Gateway.Execution;
 
-var arguments = Arguments.Parse(args);
-try
+namespace Gym.Gateway.V1Harness;
+
+internal static class Program
 {
-    return await Harness.RunAsync(arguments);
-}
-catch (Exception ex)
-{
-    Console.Error.WriteLine(ex);
-    return 1;
+    public static async Task<int> Main(string[] args)
+    {
+        var arguments = Arguments.Parse(args);
+        try
+        {
+            return await Harness.RunAsync(arguments);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            return 1;
+        }
+    }
 }
 
 internal static class Harness
@@ -62,7 +70,7 @@ internal static class Harness
 
         var receiving = ReceiveTextAsync(socket, lifetime.Token);
         Console.WriteLine("READY");
-        Console.Out.Flush();
+        await Console.Out.FlushAsync().ConfigureAwait(false);
         var noticeJson = await receiving.ConfigureAwait(false);
 
         var legacy = false;
@@ -106,7 +114,12 @@ internal static class Harness
             await DrainAsync(socket, arguments, reader, client, () => legacy = true, lifetime.Token).ConfigureAwait(false);
         }
 
-        return Finish(arguments, reader, client, baseline, applied, pending, executedAgain, legacy);
+        return await Finish(
+            arguments,
+            reader,
+            client,
+            baseline,
+            new RunOutcome(applied, pending, executedAgain, legacy)).ConfigureAwait(false);
     }
 
     private static (long Applied, int Pending) Snapshot(ReaderWorker worker) =>
@@ -133,15 +146,14 @@ internal static class Harness
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static int Finish(
+    private readonly record struct RunOutcome(long Applied, int Pending, bool ExecutedAgain, bool Legacy);
+
+    private static async Task<int> Finish(
         Arguments arguments,
         FakeReader reader,
         DesiredStateClient client,
         int baseline,
-        long applied,
-        int pending,
-        bool executedAgain,
-        bool legacy)
+        RunOutcome outcome)
     {
         var writes = reader.Writes.Skip(baseline).ToArray();
         var users = reader.ListUsers().Users.Select(user =>
@@ -166,11 +178,11 @@ internal static class Harness
             writes,
             client.PullTranscript,
             client.OccupiedIds,
-            users.Select(user => ((string?)user.id, (string?)user.name, (string?)user.nameEx)));
+            users.Select(user => (user.id, user.name, user.nameEx)));
         var acked = client.AcknowledgementPosts > 0;
         var ok = arguments.Mode switch
         {
-            "face" => !acked && applied == 0 && pending == 0 && !publicIdLeaked && !legacy,
+            "face" => !acked && outcome.Applied == 0 && outcome.Pending == 0 && !publicIdLeaked && !outcome.Legacy,
             "occupied" => acked
                 && client.OccupiedIds.Count == 1
                 && client.OccupiedIds[0] == arguments.Occupy
@@ -178,9 +190,9 @@ internal static class Harness
                 && createdId != arguments.Occupy
                 && createdId != arguments.PublicId
                 && !publicIdLeaked
-                && !executedAgain
-                && !legacy,
-            _ => acked && !publicIdLeaked && !executedAgain && !legacy
+                && !outcome.ExecutedAgain
+                && !outcome.Legacy,
+            _ => acked && !publicIdLeaked && !outcome.ExecutedAgain && !outcome.Legacy
         };
         var report = JsonSerializer.Serialize(new
         {
@@ -189,12 +201,12 @@ internal static class Harness
             ackCount = client.AcknowledgementPosts,
             publicIdLeaked,
             pullTranscript = client.PullTranscript,
-            executedAgain,
-            legacyDispatched = legacy,
+            executedAgain = outcome.ExecutedAgain,
+            legacyDispatched = outcome.Legacy,
             occupiedId = client.OccupiedIds.FirstOrDefault(),
             createdId,
-            appliedLocal = applied,
-            pendingAcks = pending,
+            appliedLocal = outcome.Applied,
+            pendingAcks = outcome.Pending,
             writes,
             users
         });
@@ -204,7 +216,7 @@ internal static class Harness
         }
 
         Console.WriteLine(report);
-        Console.Out.Flush();
+        await Console.Out.FlushAsync().ConfigureAwait(false);
         return ok ? 0 : 1;
     }
 
@@ -213,7 +225,7 @@ internal static class Harness
         IReadOnlyList<string> writes,
         string transcript,
         IReadOnlyList<string> occupiedIds,
-        IEnumerable<(string? Id, string? Name, string? NameEx)> users)
+        IEnumerable<(string Id, string? Name, string? NameEx)> users)
     {
         if (writes.Any(line => line.Contains(publicId, StringComparison.Ordinal)))
         {
@@ -274,11 +286,11 @@ internal static class Harness
 
     private static Uri WebSocketUri(string baseUrl)
     {
-        var http = new Uri(baseUrl.TrimEnd('/') + "/");
+        var http = new Uri(baseUrl);
         var builder = new UriBuilder(http)
         {
             Scheme = http.Scheme == "https" ? "wss" : "ws",
-            Path = "/gateway",
+            Path = "gateway",
             Query = ""
         };
         return builder.Uri;
@@ -297,7 +309,7 @@ internal static class Harness
                 throw new InvalidOperationException("WebSocket closed before the revision notice");
             }
 
-            message.Write(buffer, 0, result.Count);
+            await message.WriteAsync(buffer.AsMemory(0, result.Count), cancellationToken).ConfigureAwait(false);
         } while (!result.EndOfMessage);
 
         return Encoding.UTF8.GetString(message.ToArray());
@@ -318,14 +330,16 @@ internal sealed class Arguments
     public static Arguments Parse(string[] args)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        for (var i = 0; i < args.Length; i++)
+        var i = 0;
+        while (i < args.Length)
         {
             if (!args[i].StartsWith("--", StringComparison.Ordinal) || i + 1 >= args.Length)
             {
                 throw new InvalidOperationException("Expected --name value pairs");
             }
 
-            values[args[i][2..]] = args[++i];
+            values[args[i][2..]] = args[i + 1];
+            i += 2;
         }
 
         string Required(string name) =>

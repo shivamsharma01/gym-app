@@ -304,22 +304,22 @@ public sealed class GatewayWorker : BackgroundService
             return;
         }
 
-        foreach (var device in _options.Devices.Where(d => !string.IsNullOrWhiteSpace(d.DeviceId)))
+        foreach (var deviceId in _options.Devices.Select(device => device.DeviceId).Where(id => !string.IsNullOrWhiteSpace(id)))
         {
-            var reader = _readerFactory.Open(device.DeviceId, OnlineAdapter(device.DeviceId));
+            var reader = _readerFactory.Open(deviceId, OnlineAdapter(deviceId));
             if (reader == null)
             {
                 _log.LogInformation(
                     "Reader {DeviceId} has no worker; desired revisions will not be acknowledged",
-                    device.DeviceId);
+                    deviceId);
                 continue;
             }
 
-            var journal = Path.Combine(_readerJournalDirectory, JournalFile(device.DeviceId));
-            var worker = new ReaderWorker(device.DeviceId, reader, journal);
+            var journal = Path.Combine(_readerJournalDirectory, JournalFile(deviceId));
+            var worker = new ReaderWorker(deviceId, reader, journal);
             _readerWorkers.Add(worker);
-            var path = new DesiredRevisionPath(device.DeviceId, worker, reader, _desired);
-            _desiredRevisions.Attach(device.DeviceId, path.HandleAsync);
+            var path = new DesiredRevisionPath(deviceId, worker, reader, _desired);
+            _desiredRevisions.Attach(deviceId, path.HandleAsync);
         }
     }
 

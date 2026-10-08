@@ -112,7 +112,7 @@ export function DeviceNewPage() {
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" {...form.register('projectionEnabled')} />
-          This reader uses desired-state sync
+          <span>This reader uses desired-state sync</span>
         </label>
         {create.error ? <QueryError error={create.error} /> : null}
         <div className="flex gap-2">

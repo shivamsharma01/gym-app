@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using NetSDKCS;
 
 namespace Gym.Gateway.SdkProbe;
@@ -13,10 +14,14 @@ internal sealed record MutationTrial(bool WriteOk, bool? TimeChanged, string Cod
 internal sealed class GateSuite
 {
     private const string Prefix = "SYNCPOC";
+    private const string Unreadable = "(unreadable)";
+    private const string None = "(none)";
+    private const string NoResult = "no result";
     private const int MaxPhotoBytes = 120 * 1024;
     private const int Trials = 2;
     private const int Page = 50;
-    private static readonly DateTime LogStart = new(2000, 1, 1);
+    private static readonly TimeSpan MatchTimeout = TimeSpan.FromSeconds(1);
+    private static readonly DateTime LogStart = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
     private static readonly HashSet<string> NotUserChanges = new(StringComparer.Ordinal)
     {
         "ALARM_ACCESS_CTL_EVENT", "SDK_DISCONNECTED", "SDK_RECONNECTED"
@@ -235,7 +240,7 @@ internal sealed class GateSuite
         var enabled = new List<Door?> { Walk("P1 enabled 1", _a, "enabled, nUserStatus=0") };
         var freeze = Rewrite(_a, u => WithStatus(u, 1));
         var status = _s.GetUser(_a)?.nUserStatus;
-        Note("P1", $"freeze write {freeze}; nUserStatus read back {status?.ToString() ?? "(unreadable)"}");
+        Note("P1", $"freeze write {freeze}; nUserStatus read back {status?.ToString() ?? Unreadable}");
         if (status != 1)
         {
             Rewrite(_a, u => WithStatus(u, 0));
@@ -249,7 +254,7 @@ internal sealed class GateSuite
             Walk("P1 frozen 2", _a, "frozen, nUserStatus=1")
         };
         var unfreeze = Rewrite(_a, u => WithStatus(u, 0));
-        Note("P1", $"unfreeze write {unfreeze}; nUserStatus read back {_s.GetUser(_a)?.nUserStatus.ToString() ?? "(unreadable)"}");
+        Note("P1", $"unfreeze write {unfreeze}; nUserStatus read back {_s.GetUser(_a)?.nUserStatus.ToString() ?? Unreadable}");
         enabled.Add(Walk("P1 enabled 2", _a, "enabled again, nUserStatus=0"));
         Note("P1", $"enabled walks: {string.Join(", ", enabled.Select(Show))}; frozen walks: {string.Join(", ", frozen.Select(Show))}");
 
@@ -313,7 +318,7 @@ internal sealed class GateSuite
         var back = _s.GetUser(_a);
         var sent = $"{ReaderSession.Raw(NET_TIME.FromDateTime(from))} .. {ReaderSession.Raw(NET_TIME.FromDateTime(to))}";
         var stored = back == null
-            ? "(unreadable)"
+            ? Unreadable
             : $"{ReaderSession.Raw(back.Value.stuValidBeginTime)} .. {ReaderSession.Raw(back.Value.stuValidEndTime)}";
         Note("P11", $"{label}: write {write}; sent {sent}; stored {stored}{(stored == sent ? "" : " (DIFFERENT)")}");
         return write == "ok" && back != null;
@@ -327,46 +332,8 @@ internal sealed class GateSuite
         var nameSaved = new List<bool?>();
         for (var t = 1; t <= Trials; t++)
         {
-            RestoreA();
-            Thread.Sleep(1100);
-            var before = _s.GetUser(_a);
-            var faceBefore = _s.GetFace(_a).Photo != null;
-            var name = $"{Prefix} P3 {t}";
-            var write = _s.InsertUser(new NET_ACCESS_USER_INFO
-            {
-                szUserID = _a,
-                szName = name,
-                nDoors = new int[32],
-                nTimeSectionNo = new int[32],
-                nSpecialDaysSchedule = new int[128],
-                nFirstEnterDoors = new int[32]
-            });
-            var after = _s.GetUser(_a);
-            var faceAfter = _s.GetFace(_a).Photo != null;
-            if (before == null || after == null || write != "ok")
-            {
-                Note("P3", $"trial {t}: write {write}; read before {before != null}, after {after != null} -> no result");
-                emptied.Add(null);
-                nameSaved.Add(null);
-                continue;
-            }
-
-            var b = UserFields.Dump(before.Value);
-            var a = UserFields.Dump(after.Value);
-            var lost = b.Where(kv => kv.Key != "stuUpdateTime" && !UserFields.IsEmpty(kv.Value) && UserFields.IsEmpty(a.GetValueOrDefault(kv.Key) ?? ""))
-                .Select(kv => kv.Key)
-                .Order(StringComparer.Ordinal)
-                .ToList();
-            if (faceBefore && !faceAfter)
-            {
-                lost.Add("face");
-            }
-
-            var saved = ReaderName(after.Value) == name;
-            var changed = UserFields.Diff(b, a, ["stuUpdateTime"]);
-            Note("P3", $"trial {t}: name saved {saved}; face before {faceBefore}, after {faceAfter}; emptied [{string.Join(", ", lost)}]");
-            Note("P3", $"trial {t}: every field that changed: {(changed.Count == 0 ? "none" : string.Join("; ", changed))}");
-            emptied.Add(string.Join(",", lost));
+            var (lost, saved) = P3Trial(t);
+            emptied.Add(lost);
             nameSaved.Add(saved);
         }
 
@@ -392,6 +359,48 @@ internal sealed class GateSuite
                 ? $"the name was saved but omitted values were emptied in both trials: {lostBoth}"
                 : "the name sent in the partial write was not saved, in both trials");
         }
+    }
+
+    private (string? Lost, bool? Saved) P3Trial(int t)
+    {
+        RestoreA();
+        Thread.Sleep(1100);
+        var before = _s.GetUser(_a);
+        var faceBefore = _s.GetFace(_a).Photo != null;
+        var name = $"{Prefix} P3 {t}";
+        var write = _s.InsertUser(new NET_ACCESS_USER_INFO
+        {
+            szUserID = _a,
+            szName = name,
+            nDoors = new int[32],
+            nTimeSectionNo = new int[32],
+            nSpecialDaysSchedule = new int[128],
+            nFirstEnterDoors = new int[32]
+        });
+        var after = _s.GetUser(_a);
+        var faceAfter = _s.GetFace(_a).Photo != null;
+        if (before == null || after == null || write != "ok")
+        {
+            Note("P3", $"trial {t}: write {write}; read before {before != null}, after {after != null} -> no result");
+            return (null, null);
+        }
+
+        var dumpedBefore = UserFields.Dump(before.Value);
+        var dumpedAfter = UserFields.Dump(after.Value);
+        var lost = dumpedBefore.Where(kv => kv.Key != "stuUpdateTime" && !UserFields.IsEmpty(kv.Value) && UserFields.IsEmpty(dumpedAfter.GetValueOrDefault(kv.Key) ?? ""))
+            .Select(kv => kv.Key)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        if (faceBefore && !faceAfter)
+        {
+            lost.Add("face");
+        }
+
+        var saved = ReaderName(after.Value) == name;
+        var changed = UserFields.Diff(dumpedBefore, dumpedAfter, ["stuUpdateTime"]);
+        Note("P3", $"trial {t}: name saved {saved}; face before {faceBefore}, after {faceAfter}; emptied [{string.Join(", ", lost)}]");
+        Note("P3", $"trial {t}: every field that changed: {(changed.Count == 0 ? "none" : string.Join("; ", changed))}");
+        return (string.Join(",", lost), saved);
     }
 
     private sealed record Mutation(string Step, string UserId, bool FaceTime, Action Prepare, Func<string> Act);
@@ -484,9 +493,15 @@ internal sealed class GateSuite
         var ok = write == "ok";
         bool? changed = !ok || before is null or "(zero)" || after is null or "(zero)" ? null : before != after;
         var note = changed == true && string.CompareOrdinal(after, before) < 0 ? " (went BACKWARDS)" : "";
-        Note("P4", $"{m.Step} trial {trial}: write {write}; user time {userBefore ?? "(unreadable)"} -> {userAfter ?? "(unreadable)"}; "
-                   + $"photo time {faceBefore ?? "(none)"} -> {faceAfter ?? "(none)"}; judged on the {(m.FaceTime ? "photo" : "user")} time"
-                   + $" -> {(changed == null ? "no result" : changed.Value ? "changed" : "SAME")}{note}");
+        var judged = changed switch
+        {
+            null => NoResult,
+            true => "changed",
+            false => "SAME"
+        };
+        Note("P4", $"{m.Step} trial {trial}: write {write}; user time {userBefore ?? Unreadable} -> {userAfter ?? Unreadable}; "
+                   + $"photo time {faceBefore ?? None} -> {faceAfter ?? None}; judged on the {(m.FaceTime ? "photo" : "user")} time"
+                   + $" -> {judged}{note}");
         if (m.Step == "delete")
         {
             _deleteNote = $"after deleting a test user, GET {(_s.GetUser(m.UserId) == null ? "found no record" : "still returned it")}";
@@ -506,7 +521,19 @@ internal sealed class GateSuite
 
     private Verdict AlarmVerdict(string name, string? repeatedCodes)
     {
-        var v = repeatedCodes == null ? Verdict.Unknown : repeatedCodes.Length == 0 ? Verdict.NotObserved : Verdict.Observed;
+        Verdict v;
+        if (repeatedCodes == null)
+        {
+            v = Verdict.Unknown;
+        }
+        else if (repeatedCodes.Length == 0)
+        {
+            v = Verdict.NotObserved;
+        }
+        else
+        {
+            v = Verdict.Observed;
+        }
         Note("P5", $"{name}: {GateVerdicts.Label(v)}{(repeatedCodes is { Length: > 0 } ? " with " + repeatedCodes : "")}");
         return v;
     }
@@ -530,57 +557,8 @@ internal sealed class GateSuite
         var rules = new List<string?>();
         for (var t = 1; t <= Trials; t++)
         {
-            var before = _s.ListUsers(Page);
-            if (!Trusted(before))
-            {
-                Note("P2", $"trial {t}: user list unreadable before the screen create -> no result");
-                screenCreate.Add(null);
-                rules.Add(null);
-                continue;
-            }
-
-            _s.DrainAlarms();
-            var done = Ask($"  [P2 screen create {t}] On the reader screen add a new person named \"{Prefix} SCREEN {t}\". Keep the user ID the screen suggests, if it suggests one. d = done, k = skip: ", "dk");
-            if (done != 'd')
-            {
-                Note("P2", $"trial {t}: skipped");
-                screenCreate.Add(null);
-                rules.Add(null);
-                continue;
-            }
-
-            var who = Ask("  Who chose the ID? s = the screen suggested it, t = I typed it, k = not sure: ", "stk");
-            Thread.Sleep(_o.StepDelaySeconds * 1000);
-            var alarms = _s.DrainAlarms();
-            LogAlarms("P5", $"screen create {t}", alarms);
-            var after = _s.ListUsers(Page);
-            if (!Trusted(after))
-            {
-                Note("P2", $"trial {t}: user list unreadable after the screen create -> no result");
-                screenCreate.Add(null);
-                rules.Add(null);
-                continue;
-            }
-
-            var beforeIds = before.Users.Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
-            var added = after.Users.Where(u => !beforeIds.Contains(u.Id)).ToList();
-            foreach (var u in added.Where(u => (u.Name ?? "").StartsWith(Prefix, StringComparison.Ordinal) && !_cleanup.Contains(u.Id)))
-            {
-                _cleanup.Add(u.Id);
-            }
-
-            screenCreate.Add(added.Count == 1 ? Codes(alarms) : null);
-            if (added.Count != 1)
-            {
-                Note("P2", $"trial {t}: {added.Count} new users appeared [{string.Join(", ", added.Select(u => u.Id))}], expected exactly one -> no result");
-                rules.Add(null);
-                continue;
-            }
-
-            var id = added[0].Id;
-            var rule = who == 's' ? IdRule(id, beforeIds) : null;
-            var chooser = who switch { 's' => "suggested by the screen", 't' => "typed by the operator", _ => "operator not sure who chose it" };
-            Note("P2", $"trial {t}: new id {id} (name \"{added[0].Name}\"), {chooser}; fits: {rule ?? "not judged"}");
+            var (codes, rule) = P2Trial(t);
+            screenCreate.Add(codes);
             rules.Add(rule);
         }
 
@@ -597,6 +575,54 @@ internal sealed class GateSuite
         }
 
         ScreenEdits(screenCreate);
+    }
+
+    private (string? Codes, string? Rule) P2Trial(int t)
+    {
+        var before = _s.ListUsers(Page);
+        if (!Trusted(before))
+        {
+            Note("P2", $"trial {t}: user list unreadable before the screen create -> no result");
+            return (null, null);
+        }
+
+        _s.DrainAlarms();
+        var done = Ask($"  [P2 screen create {t}] On the reader screen add a new person named \"{Prefix} SCREEN {t}\". Keep the user ID the screen suggests, if it suggests one. d = done, k = skip: ", "dk");
+        if (done != 'd')
+        {
+            Note("P2", $"trial {t}: skipped");
+            return (null, null);
+        }
+
+        var who = Ask("  Who chose the ID? s = the screen suggested it, t = I typed it, k = not sure: ", "stk");
+        Thread.Sleep(_o.StepDelaySeconds * 1000);
+        var alarms = _s.DrainAlarms();
+        LogAlarms("P5", $"screen create {t}", alarms);
+        var after = _s.ListUsers(Page);
+        if (!Trusted(after))
+        {
+            Note("P2", $"trial {t}: user list unreadable after the screen create -> no result");
+            return (null, null);
+        }
+
+        var beforeIds = before.Users.Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+        var added = after.Users.Where(u => !beforeIds.Contains(u.Id)).ToList();
+        foreach (var u in added.Where(u => (u.Name ?? "").StartsWith(Prefix, StringComparison.Ordinal) && !_cleanup.Contains(u.Id)))
+        {
+            _cleanup.Add(u.Id);
+        }
+
+        if (added.Count != 1)
+        {
+            Note("P2", $"trial {t}: {added.Count} new users appeared [{string.Join(", ", added.Select(u => u.Id))}], expected exactly one -> no result");
+            return (null, null);
+        }
+
+        var id = added[0].Id;
+        var rule = who == 's' ? IdRule(id, beforeIds) : null;
+        var chooser = who switch { 's' => "suggested by the screen", 't' => "typed by the operator", _ => "operator not sure who chose it" };
+        Note("P2", $"trial {t}: new id {id} (name \"{added[0].Name}\"), {chooser}; fits: {rule ?? "not judged"}");
+        return (Codes(alarms), rule);
     }
 
     private static string IdRule(string id, HashSet<string> existing)
@@ -625,6 +651,24 @@ internal sealed class GateSuite
 
     private void ScreenEdits(List<string?> screenCreate)
     {
+        var edits = ScreenNameEdits();
+        var faces = ScreenFaceEdits();
+
+        if (_s.GetFace(_a).Photo is { } enrolled)
+        {
+            _faceOnA = true;
+            _photo ??= enrolled;
+        }
+
+        RestoreA();
+        _p5.Add(("screen create", AlarmVerdict("screen create", GateVerdicts.Repeated(screenCreate))));
+        _p5.Add(("screen edit", AlarmVerdict("screen edit", GateVerdicts.Repeated(edits))));
+        _p5.Add(("screen face", AlarmVerdict("screen face", GateVerdicts.Repeated(faces))));
+        SetP5();
+    }
+
+    private List<string?> ScreenNameEdits()
+    {
         var edits = new List<string?>();
         for (var t = 1; t <= Trials; t++)
         {
@@ -646,10 +690,15 @@ internal sealed class GateSuite
             edits.Add(nameBefore != nameAfter ? Codes(alarms) : null);
         }
 
+        return edits;
+    }
+
+    private List<string?> ScreenFaceEdits()
+    {
         var faces = new List<string?>();
         for (var t = 1; t <= Trials; t++)
         {
-            var faceBefore = _s.GetFace(_a).Photo is { } b ? Probe.Md5(b) : "(none)";
+            var faceBefore = _s.GetFace(_a).Photo is { } b ? Probe.Md5(b) : None;
             _s.DrainAlarms();
             var done = Ask($"  [P5 screen face {t}] On the reader screen open user {_a} and enrol the face again (same person). d = done, k = skip: ", "dk");
             if (done != 'd')
@@ -661,23 +710,13 @@ internal sealed class GateSuite
 
             Thread.Sleep(_o.StepDelaySeconds * 1000);
             var alarms = _s.DrainAlarms();
-            var faceAfter = _s.GetFace(_a).Photo is { } a ? Probe.Md5(a) : "(none)";
+            var faceAfter = _s.GetFace(_a).Photo is { } a ? Probe.Md5(a) : None;
             LogAlarms("P5", $"screen face {t}", alarms);
             Note("P5", $"screen face {t}: photo MD5 {faceBefore} -> {faceAfter}{(faceBefore == faceAfter ? " (no change seen, trial not counted)" : "")}");
             faces.Add(faceBefore != faceAfter ? Codes(alarms) : null);
         }
 
-        if (_s.GetFace(_a).Photo is { } enrolled)
-        {
-            _faceOnA = true;
-            _photo ??= enrolled;
-        }
-
-        RestoreA();
-        _p5.Add(("screen create", AlarmVerdict("screen create", GateVerdicts.Repeated(screenCreate))));
-        _p5.Add(("screen edit", AlarmVerdict("screen edit", GateVerdicts.Repeated(edits))));
-        _p5.Add(("screen face", AlarmVerdict("screen face", GateVerdicts.Repeated(faces))));
-        SetP5();
+        return faces;
     }
 
     private void P14()
@@ -696,31 +735,10 @@ internal sealed class GateSuite
         var updateEmpty = new List<string?>();
         for (var t = 1; t <= Trials; t++)
         {
-            _s.RemoveFace(_a);
-            var write = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, _a, _photo);
-            var first = _s.GetFace(_a);
-            var second = _s.GetFace(_a);
-            string? read = null;
-            if (write == "ok" && first.Photo != null && second.Photo != null)
-            {
-                var a = Probe.Md5(first.Photo);
-                read = a != Probe.Md5(second.Photo) ? "different between two reads"
-                    : a == sent ? "identical to what was sent"
-                    : "changed by the reader, the same on both reads";
-            }
-
-            Note("P14", $"trial {t}: INSERT {write}; sent MD5 {sent}; read 1 {Describe(first)}; read 2 {Describe(second)} -> {read ?? "no result"}");
-            fidelity.Add(read);
-
-            var over = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, _a, _photo);
-            Note("P14", $"trial {t}: INSERT while a photo exists: {over}");
-            insertOver.Add(Answer(over));
-
-            _s.RemoveFace(_a);
-            var update = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.UPDATE, _a, _photo);
-            var after = _s.GetFace(_a);
-            Note("P14", $"trial {t}: UPDATE without a photo: {update}; photo afterwards {Describe(after)}");
-            updateEmpty.Add(after.Ok && Answer(update) is { } u ? $"{u}, photo afterwards: {(after.Photo != null ? "yes" : "no")}" : null);
+            var trial = P14Trial(t, sent);
+            fidelity.Add(trial.Read);
+            insertOver.Add(trial.InsertOver);
+            updateEmpty.Add(trial.UpdateEmpty);
         }
 
         _r.Line($"  face put back on A: {PutFace(_a, _photo)}");
@@ -729,6 +747,49 @@ internal sealed class GateSuite
             ("INSERT over a photo", GateVerdicts.Repeated(insertOver)),
             ("UPDATE without a photo", GateVerdicts.Repeated(updateEmpty))
         ]);
+    }
+
+    private (string? Read, string? InsertOver, string? UpdateEmpty) P14Trial(int t, string sent)
+    {
+        _s.RemoveFace(_a);
+        var write = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, _a, _photo!);
+        var first = _s.GetFace(_a);
+        var second = _s.GetFace(_a);
+        string? read = null;
+        if (write == "ok" && first.Photo != null && second.Photo != null)
+        {
+            read = ReadFidelity(Probe.Md5(first.Photo), Probe.Md5(second.Photo), sent);
+        }
+
+        Note("P14", $"trial {t}: INSERT {write}; sent MD5 {sent}; read 1 {Describe(first)}; read 2 {Describe(second)} -> {read ?? NoResult}");
+
+        var over = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, _a, _photo!);
+        Note("P14", $"trial {t}: INSERT while a photo exists: {over}");
+
+        _s.RemoveFace(_a);
+        var update = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.UPDATE, _a, _photo!);
+        var after = _s.GetFace(_a);
+        Note("P14", $"trial {t}: UPDATE without a photo: {update}; photo afterwards {Describe(after)}");
+        string? updateAnswer = null;
+        if (after.Ok && Answer(update) is { } answered)
+        {
+            var photo = after.Photo != null ? "yes" : "no";
+            updateAnswer = $"{answered}, photo afterwards: {photo}";
+        }
+
+        return (read, Answer(over), updateAnswer);
+    }
+
+    private static string ReadFidelity(string first, string second, string sent)
+    {
+        if (first != second)
+        {
+            return "different between two reads";
+        }
+
+        return first == sent
+            ? "identical to what was sent"
+            : "changed by the reader, the same on both reads";
     }
 
     private void P15()
@@ -746,32 +807,11 @@ internal sealed class GateSuite
         var getMissing = new List<string?>();
         for (var t = 1; t <= Trials; t++)
         {
-            var created = _s.InsertUser(Baseline(_c, "C"));
-            if (created != "ok" || _s.GetUser(_c) == null)
-            {
-                Note("P15", $"trial {t}: test user C could not be created ({created}) -> no result");
-                getFace.Add(null);
-                removeFace.Add(null);
-                removeAgain.Add(null);
-                getMissing.Add(null);
-                continue;
-            }
-
-            var face = _s.GetFace(_c);
-            var faceAnswer = face.Error?.Contains(':') == true && face.FailCode == null ? null
-                : $"ok={face.Ok} failCode={face.FailCode ?? "(none)"} photo={(face.Photo != null ? "yes" : "no")} error={face.Error ?? "(none)"}";
-            var noFace = _s.RemoveFace(_c);
-            var removed = _s.RemoveUser(_c);
-            var again = removed == "ok" ? _s.RemoveUser(_c) : null;
-            var missing = _s.GetUser(_c) == null ? WithoutTiming(_s.DescribeGet(_c)) : null;
-            Note("P15", $"trial {t}: GET photo of a user without one: {faceAnswer ?? "(read threw)"}");
-            Note("P15", $"trial {t}: REMOVE photo that does not exist: {noFace}");
-            Note("P15", $"trial {t}: REMOVE user: {removed}; REMOVE the same user again: {again ?? "(not tried)"}");
-            Note("P15", $"trial {t}: GET the removed user: {missing ?? "(still returned)"}");
-            getFace.Add(faceAnswer);
-            removeFace.Add(Answer(noFace));
-            removeAgain.Add(again == null ? null : Answer(again));
-            getMissing.Add(missing);
+            var trial = P15Trial(t);
+            getFace.Add(trial.GetFace);
+            removeFace.Add(trial.RemoveFace);
+            removeAgain.Add(trial.RemoveAgain);
+            getMissing.Add(trial.GetMissing);
         }
 
         Outcomes(g, [
@@ -780,6 +820,34 @@ internal sealed class GateSuite
             ("REMOVE missing user", GateVerdicts.Repeated(removeAgain)),
             ("GET missing user", GateVerdicts.Repeated(getMissing))
         ]);
+    }
+
+    private (string? GetFace, string? RemoveFace, string? RemoveAgain, string? GetMissing) P15Trial(int t)
+    {
+        var created = _s.InsertUser(Baseline(_c, "C"));
+        if (created != "ok" || _s.GetUser(_c) == null)
+        {
+            Note("P15", $"trial {t}: test user C could not be created ({created}) -> no result");
+            return (null, null, null, null);
+        }
+
+        var face = _s.GetFace(_c);
+        string? faceAnswer = null;
+        if (!(face.Error?.Contains(':') == true && face.FailCode == null))
+        {
+            var photo = face.Photo != null ? "yes" : "no";
+            faceAnswer = $"ok={face.Ok} failCode={face.FailCode ?? None} photo={photo} error={face.Error ?? None}";
+        }
+
+        var noFace = _s.RemoveFace(_c);
+        var removed = _s.RemoveUser(_c);
+        var again = removed == "ok" ? _s.RemoveUser(_c) : null;
+        var missing = _s.GetUser(_c) == null ? WithoutTiming(_s.DescribeGet(_c)) : null;
+        Note("P15", $"trial {t}: GET photo of a user without one: {faceAnswer ?? "(read threw)"}");
+        Note("P15", $"trial {t}: REMOVE photo that does not exist: {noFace}");
+        Note("P15", $"trial {t}: REMOVE user: {removed}; REMOVE the same user again: {again ?? "(not tried)"}");
+        Note("P15", $"trial {t}: GET the removed user: {missing ?? "(still returned)"}");
+        return (faceAnswer, Answer(noFace), again == null ? null : Answer(again), missing);
     }
 
     private void P16()
@@ -839,7 +907,7 @@ internal sealed class GateSuite
             var back = _s.GetUser(_a);
             string? ext = write != "ok" || back == null ? null
                 : $"szNameEx {Stored(back.Value.szNameEx, longName)}, szName {Stored(back.Value.szName, shortName)}, bUseNameEx={back.Value.bUseNameEx}";
-            Note("P17", $"trial {t}: write 127-char szNameEx + 31-char szName ({write}) -> {ext ?? "no result"}");
+            Note("P17", $"trial {t}: write 127-char szNameEx + 31-char szName ({write}) -> {ext ?? NoResult}");
             extended.Add(ext);
 
             var newShort = $"{Prefix} PLAIN {t}";
@@ -850,9 +918,13 @@ internal sealed class GateSuite
                 return u;
             });
             var back2 = _s.GetUser(_a);
-            string? pl = write2 != "ok" || back2 == null ? null
-                : $"szName {Stored(back2.Value.szName, newShort)}, szNameEx kept {(back2.Value.szNameEx?.Trim() == longName ? "yes" : "no")}, bUseNameEx={back2.Value.bUseNameEx}";
-            Note("P17", $"trial {t}: write szName only with bUseNameEx=false ({write2}) -> {pl ?? "no result"}");
+            string? pl = null;
+            if (write2 == "ok" && back2 != null)
+            {
+                var kept = back2.Value.szNameEx?.Trim() == longName ? "yes" : "no";
+                pl = $"szName {Stored(back2.Value.szName, newShort)}, szNameEx kept {kept}, bUseNameEx={back2.Value.bUseNameEx}";
+            }
+            Note("P17", $"trial {t}: write szName only with bUseNameEx=false ({write2}) -> {pl ?? NoResult}");
             plain.Add(pl);
         }
 
@@ -876,10 +948,10 @@ internal sealed class GateSuite
         }
 
         Note("P19", $"set Administrators: {Rewrite(_a, u => { u.emAuthority = EM_ATTENDANCE_AUTHORITY.Administrators; return u; })}; "
-                    + $"read back {_s.GetUser(_a)?.emAuthority.ToString() ?? "(unreadable)"}");
+                    + $"read back {_s.GetUser(_a)?.emAuthority.ToString() ?? Unreadable}");
         var admin = new List<Door?> { MenuTry("P19 admin 1", "Administrators"), MenuTry("P19 admin 2", "Administrators") };
         Note("P19", $"set Customer: {Rewrite(_a, u => { u.emAuthority = EM_ATTENDANCE_AUTHORITY.Customer; return u; })}; "
-                    + $"read back {_s.GetUser(_a)?.emAuthority.ToString() ?? "(unreadable)"}");
+                    + $"read back {_s.GetUser(_a)?.emAuthority.ToString() ?? Unreadable}");
         var user = new List<Door?> { MenuTry("P19 user 1", "Customer"), MenuTry("P19 user 2", "Customer") };
         RestoreA();
 
@@ -1011,12 +1083,24 @@ internal sealed class GateSuite
 
         var all = back == Verdict.NotObserved ? Verdict.NotObserved : GateVerdicts.AllOf([back, events]);
         var how = _p20Unplugged ? " (at least one trial was a network unplug, not a power cycle)" : "";
-        g.Set(all, (all switch
+        g.Set(all, P20Detail(all, back) + how);
+    }
+
+    private static string P20Detail(Verdict all, Verdict back)
+    {
+        if (all == Verdict.Observed)
         {
-            Verdict.Observed => "on both trials the old login answered again and the walk's door event arrived on it",
-            Verdict.NotObserved => back == Verdict.NotObserved ? "on both trials the old login never answered again; a new login was needed" : "the old login answered, but door events stopped arriving on it",
-            _ => "trials were skipped, the drop-off could not be confirmed, or the door-event part could not be judged"
-        }) + how);
+            return "on both trials the old login answered again and the walk's door event arrived on it";
+        }
+
+        if (all != Verdict.NotObserved)
+        {
+            return "trials were skipped, the drop-off could not be confirmed, or the door-event part could not be judged";
+        }
+
+        return back == Verdict.NotObserved
+            ? "on both trials the old login never answered again; a new login was needed"
+            : "the old login answered, but door events stopped arriving on it";
     }
 
     private void P21()
@@ -1046,11 +1130,21 @@ internal sealed class GateSuite
                 _s.RemoveFace(_a);
                 var write = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, _a, padded);
                 var back = _s.GetFace(_a);
-                var stored = back.Photo == null ? "no"
-                    : Probe.Md5(back.Photo) == Probe.Md5(padded) ? "yes, byte for byte"
-                    : $"yes, as {back.Photo.Length / 1024} KB";
+                string stored;
+                if (back.Photo == null)
+                {
+                    stored = "no";
+                }
+                else if (Probe.Md5(back.Photo) == Probe.Md5(padded))
+                {
+                    stored = "yes, byte for byte";
+                }
+                else
+                {
+                    stored = $"yes, as {back.Photo.Length / 1024} KB";
+                }
                 var answer = back.Ok && Answer(write) is { } a ? $"{a}, photo stored: {stored}" : null;
-                Note("P21", $"{kb} KB trial {t}: INSERT {write}; read back {Describe(back)} -> {answer ?? "no result"}");
+                Note("P21", $"{kb} KB trial {t}: INSERT {write}; read back {Describe(back)} -> {answer ?? NoResult}");
                 answers.Add(answer);
             }
 
@@ -1092,11 +1186,11 @@ internal sealed class GateSuite
 
     private static int? EventRec(string detail)
     {
-        var m = System.Text.RegularExpressions.Regex.Match(detail, @"rec=(-?\d+)");
+        var m = Regex.Match(detail, @"rec=(-?\d+)", RegexOptions.None, MatchTimeout);
         return m.Success && int.TryParse(m.Groups[1].Value, out var n) ? n : null;
     }
 
-    private void Outcomes(GateResult g, List<(string Name, string? Value)> parts)
+    private static void Outcomes(GateResult g, List<(string Name, string? Value)> parts)
     {
         foreach (var (name, value) in parts)
         {
@@ -1116,17 +1210,23 @@ internal sealed class GateSuite
             return "ok";
         }
 
-        var m = System.Text.RegularExpressions.Regex.Match(result, @"(?:failCode=|codes=\[)([A-Za-z0-9_,]+)");
+        var m = Regex.Match(result, @"(?:failCode=|codes=\[)([A-Za-z0-9_,]+)", RegexOptions.None, MatchTimeout);
         return m.Success && m.Groups[1].Value is not ("NOERROR" or "") ? $"refused ({m.Groups[1].Value})" : null;
     }
 
     private static string WithoutTiming(string describe) =>
-        System.Text.RegularExpressions.Regex.Replace(describe, @"\s+in \d+ ms$", "");
+        Regex.Replace(describe, @"\s+in \d+ ms$", "", RegexOptions.None, MatchTimeout);
 
     private static string Stored(string? value, string sent)
     {
         var v = value?.Trim() ?? "";
-        return v == sent ? $"saved in full ({v.Length} chars)" : $"stored as {v.Length} chars{(sent.StartsWith(v, StringComparison.Ordinal) ? " (cut)" : " (different)")}";
+        if (v == sent)
+        {
+            return $"saved in full ({v.Length} chars)";
+        }
+
+        var how = sent.StartsWith(v, StringComparison.Ordinal) ? " (cut)" : " (different)";
+        return $"stored as {v.Length} chars{how}";
     }
 
     private void P9()
@@ -1160,27 +1260,7 @@ internal sealed class GateSuite
             var write = _s.WriteFace(EM_NET_ACCESS_CTL_FACE_SERVICE.INSERT, _b, _photo);
             var a = _s.GetFace(_a);
             var b = _s.GetFace(_b);
-            string? outcome;
-            if (!a.Ok || !b.Ok)
-            {
-                outcome = null;
-            }
-            else if (write == "ok")
-            {
-                outcome = (a.Photo != null, b.Photo != null) switch
-                {
-                    (true, true) => "accepted: both ids hold the photo",
-                    (true, false) => "SDK said ok, but B has no photo",
-                    (false, true) => "accepted on B, and A lost its photo",
-                    _ => "SDK said ok, but neither id has a photo"
-                };
-            }
-            else
-            {
-                var fail = FailCode(write);
-                outcome = fail is null or "NOERROR" ? null : $"refused ({fail}); A {(a.Photo != null ? "kept" : "lost")} its photo";
-            }
-
+            var outcome = P9Outcome(write, a, b);
             Note("P9", $"trial {t}: face INSERT on B: {write}; A photo {Describe(a)}; B photo {Describe(b)} -> {outcome ?? "no clear result"}");
             outcomes.Add(outcome);
         }
@@ -1189,6 +1269,34 @@ internal sealed class GateSuite
         var repeated = GateVerdicts.Repeated(outcomes);
         g.Set(repeated == null ? Verdict.Unknown : Verdict.Observed,
             repeated ?? "the two trials differed, a read failed, or the SDK error did not say why");
+    }
+
+    private static string? P9Outcome(string write, FaceRead a, FaceRead b)
+    {
+        if (!a.Ok || !b.Ok)
+        {
+            return null;
+        }
+
+        if (write == "ok")
+        {
+            return (a.Photo != null, b.Photo != null) switch
+            {
+                (true, true) => "accepted: both ids hold the photo",
+                (true, false) => "SDK said ok, but B has no photo",
+                (false, true) => "accepted on B, and A lost its photo",
+                _ => "SDK said ok, but neither id has a photo"
+            };
+        }
+
+        var fail = FailCode(write);
+        if (fail is null or "NOERROR")
+        {
+            return null;
+        }
+
+        var kept = a.Photo != null ? "kept" : "lost";
+        return $"refused ({fail}); A {kept} its photo";
     }
 
     private void P10()
@@ -1340,69 +1448,104 @@ internal sealed class GateSuite
         var trials = new List<bool?>();
         for (var t = 1; t <= Trials; t++)
         {
-            var key = Ask($"  [P6 reboot {t}] Type r, then power the reader off and on. If it cannot be rebooted, type n and unplug the reader's "
-                          + "network cable for about a minute instead (tests reconnecting only). k = skip: ", "rnk");
-            if (key == 'k')
+            var step = RebootTrial(t);
+            trials.Add(step.Result);
+            if (step.Stop)
             {
-                Note("P6", $"reboot {t}: skipped");
-                trials.Add(null);
-                _p20.Add((null, null));
-                continue;
-            }
-
-            var unplug = key == 'n';
-            if (unplug)
-            {
-                _p20Unplugged = true;
-                _r.Line("  unplug the reader's network cable now, wait about a minute, then plug it back in.");
-            }
-
-            var before = _seenPunches.Keys.ToList();
-            int? highest = before.Count == 0 ? null : before.Max();
-            var same = AwaitSdkReconnect(t);
-            if (same != true && !Reconnect())
-            {
-                trials.Add(null);
-                _p20.Add((null, null));
                 break;
             }
-
-            var mine = new List<Punch>();
-            var label = $"P6 after reboot {t}";
-            Walk(label, _a, "enabled", mine);
-            if (same == true)
-            {
-                var w = _walks.LastOrDefault(x => x.Label == label);
-                bool? events = w == null || w.Mine.Count == 0 ? null : DoorEvents(w).Count > 0;
-                Note("P20", $"reboot {t}: walk on the same login: live door event {(events == null ? "unknown (no stored punch)" : events.Value ? "arrived" : "did not arrive")}");
-                _p20.Add((true, events));
-            }
-            else
-            {
-                Note("P20", $"reboot {t}: {(same == false ? "the old login did not come back; logged in again" : "could not tell whether the reader actually restarted; logged in again")}");
-                _p20.Add((same, null));
-            }
-
-            if (unplug)
-            {
-                Note("P6", $"reboot {t}: network unplug instead of a reboot; record numbers across a power loss were not tested");
-                Remember(_s.QueryPunches(_runStart.AddMinutes(-1), Clock().AddMinutes(1)));
-                trials.Add(null);
-                continue;
-            }
-
-            bool? continues = mine.Count == 0 || highest == null ? null : mine.Max(p => p.RecNo) > highest;
-            Note("P6", $"reboot {t}: highest record number seen before {highest?.ToString() ?? "(none)"}; test user's punch after the reboot "
-                       + $"{(mine.Count == 0 ? "(none)" : string.Join(",", mine.Select(p => p.RecNo)))} -> {Show(continues)}");
-            var still = _s.QueryPunches(_runStart.AddMinutes(-1), Clock().AddMinutes(1));
-            var kept = before.Count(r => still.Rows.Any(p => p.RecNo == r));
-            var inRun = before.Count(r => _seenPunches[r].Time >= _runStart.AddMinutes(-1));
-            Note("P6", $"reboot {t}: punches from this run still listed with the same record number: {kept} of {inRun}{Error(still)}");
-            Remember(still);
-            trials.Add(continues);
         }
 
         return GateVerdicts.FromTrials(trials);
+    }
+
+    private readonly record struct RebootStep(bool? Result, bool Stop);
+
+    private RebootStep RebootTrial(int t)
+    {
+        var key = Ask($"  [P6 reboot {t}] Type r, then power the reader off and on. If it cannot be rebooted, type n and unplug the reader's "
+                      + "network cable for about a minute instead (tests reconnecting only). k = skip: ", "rnk");
+        if (key == 'k')
+        {
+            Note("P6", $"reboot {t}: skipped");
+            _p20.Add((null, null));
+            return new RebootStep(null, false);
+        }
+
+        var unplug = key == 'n';
+        if (unplug)
+        {
+            _p20Unplugged = true;
+            _r.Line("  unplug the reader's network cable now, wait about a minute, then plug it back in.");
+        }
+
+        var before = _seenPunches.Keys.ToList();
+        int? highest = before.Count == 0 ? null : before.Max();
+        var same = AwaitSdkReconnect(t);
+        if (same != true && !Reconnect())
+        {
+            _p20.Add((null, null));
+            return new RebootStep(null, true);
+        }
+
+        var mine = new List<Punch>();
+        Walk($"P6 after reboot {t}", _a, "enabled", mine);
+        NoteReconnect(t, same);
+        if (unplug)
+        {
+            Note("P6", $"reboot {t}: network unplug instead of a reboot; record numbers across a power loss were not tested");
+            Remember(_s.QueryPunches(_runStart.AddMinutes(-1), Clock().AddMinutes(1)));
+            return new RebootStep(null, false);
+        }
+
+        return new RebootStep(RecordContinuation(t, before, highest, mine), false);
+    }
+
+    private void NoteReconnect(int t, bool? same)
+    {
+        if (same == true)
+        {
+            var label = $"P6 after reboot {t}";
+            var w = _walks.LastOrDefault(x => x.Label == label);
+            bool? events = w == null || w.Mine.Count == 0 ? null : DoorEvents(w).Count > 0;
+            string eventText;
+            if (events == null)
+            {
+                eventText = "unknown (no stored punch)";
+            }
+            else if (events.Value)
+            {
+                eventText = "arrived";
+            }
+            else
+            {
+                eventText = "did not arrive";
+            }
+
+            Note("P20", $"reboot {t}: walk on the same login: live door event {eventText}");
+            _p20.Add((true, events));
+            return;
+        }
+
+        var why = same == false
+            ? "the old login did not come back; logged in again"
+            : "could not tell whether the reader actually restarted; logged in again";
+        Note("P20", $"reboot {t}: {why}");
+        _p20.Add((same, null));
+    }
+
+    private bool? RecordContinuation(int t, List<int> before, int? highest, List<Punch> mine)
+    {
+        bool? continues = mine.Count == 0 || highest == null ? null : mine.Max(p => p.RecNo) > highest;
+        var punches = mine.Count == 0 ? None : string.Join(",", mine.Select(p => p.RecNo));
+        Note("P6", $"reboot {t}: highest record number seen before {highest?.ToString() ?? None}; test user's punch after the reboot "
+                   + $"{punches} -> {Show(continues)}");
+        var still = _s.QueryPunches(_runStart.AddMinutes(-1), Clock().AddMinutes(1));
+        var kept = before.Count(r => still.Rows.Any(p => p.RecNo == r));
+        var inRun = before.Count(r => _seenPunches[r].Time >= _runStart.AddMinutes(-1));
+        Note("P6", $"reboot {t}: punches from this run still listed with the same record number: {kept} of {inRun}{Error(still)}");
+        Remember(still);
+        return continues;
     }
 
     private Verdict StorageFull()
@@ -1435,7 +1578,7 @@ internal sealed class GateSuite
             Walk($"P6 full log {t}", _a, "enabled", mine);
             var countAfter = _s.CountPunches(LogStart, Clock().AddDays(1));
             bool? continues = mine.Count == 0 || highest == null ? null : mine.Max(p => p.RecNo) > highest;
-            Note("P6", $"full log {t}: record count {countBefore?.ToString() ?? "?"} -> {countAfter?.ToString() ?? "?"}; highest record number seen before {highest?.ToString() ?? "(none)"}; "
+            Note("P6", $"full log {t}: record count {countBefore?.ToString() ?? "?"} -> {countAfter?.ToString() ?? "?"}; highest record number seen before {highest?.ToString() ?? None}; "
                        + $"new punch {(mine.Count == 0 ? "(none stored)" : string.Join(",", mine.Select(p => p.RecNo)))} -> {Show(continues)}");
             trials.Add(continues);
         }
@@ -1595,10 +1738,23 @@ internal sealed class GateSuite
         {
             _walks.Add(new WalkRecord(label, userId, before, after, punches, alarms));
         }
-        bool? granted = punches.Count == 0 ? null
-            : punches.All(p => p.Granted) ? true
-            : punches.All(p => !p.Granted) ? false
-            : null;
+        bool? granted;
+        if (punches.Count == 0)
+        {
+            granted = null;
+        }
+        else if (punches.All(p => p.Granted))
+        {
+            granted = true;
+        }
+        else if (punches.All(p => !p.Granted))
+        {
+            granted = false;
+        }
+        else
+        {
+            granted = null;
+        }
         var result = GateVerdicts.Walk(answer, granted);
         var seen = q.Error ?? (punches.Count == 0 ? "none" : string.Join(", ", punches.Select(Describe)));
         _r.Line($"  walk {label}: operator {answer}; punches for {userId}: {seen} -> {Show(result)}");
@@ -1621,7 +1777,7 @@ internal sealed class GateSuite
             if (session != null)
             {
                 _s = session;
-                _r.Line($"  logged in again; reader clock {_s.DeviceTime()?.ToString("yyyy-MM-dd HH:mm:ss") ?? "(unreadable)"}");
+                _r.Line($"  logged in again; reader clock {_s.DeviceTime()?.ToString("yyyy-MM-dd HH:mm:ss") ?? Unreadable}");
                 return true;
             }
 
@@ -1723,7 +1879,7 @@ internal sealed class GateSuite
     private static string? ReaderName(NET_ACCESS_USER_INFO user) =>
         user.bUseNameEx && !string.IsNullOrWhiteSpace(user.szNameEx) ? user.szNameEx.Trim() : user.szName?.Trim();
 
-    private string ReaderNameOf(string id) => _s.GetUser(id) is { } user ? ReaderName(user) ?? "(blank)" : "(unreadable)";
+    private string ReaderNameOf(string id) => _s.GetUser(id) is { } user ? ReaderName(user) ?? "(blank)" : Unreadable;
 
     private DateTime Today() => (_s.DeviceTime() ?? DateTime.UtcNow).Date;
 

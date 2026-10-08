@@ -83,17 +83,17 @@ public sealed class DesiredRevisionPath
             return;
         }
 
-        var fresh = observed.Users
-            .Where(user => !string.IsNullOrWhiteSpace(user.DeviceUserId) && !_worker.HasWritten(user.DeviceUserId))
+        var listed = observed.Users
+            .Where(user => !string.IsNullOrWhiteSpace(user.DeviceUserId))
             .ToList();
-        if (fresh.Count == 0)
+        if (listed.Count == 0)
         {
             return;
         }
 
         try
         {
-            await _observations.UploadAsync(_deviceId, fresh, cancellationToken).ConfigureAwait(false);
+            await _observations.UploadAsync(_deviceId, listed, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

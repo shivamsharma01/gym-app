@@ -69,6 +69,7 @@ public class DesiredProjectionService {
     private final DeviceUserIdAllocator allocator;
     private final DeviceAuthorizationService authorization;
     private final GatewaySessionRegistry sessions;
+    private final ReaderReviewService reviews;
 
     public DesiredProjectionService(DeviceRepository devices,
                                     GatewayRepository gateways,
@@ -80,7 +81,8 @@ public class DesiredProjectionService {
                                     FaceStorageService storage,
                                     DeviceUserIdAllocator allocator,
                                     DeviceAuthorizationService authorization,
-                                    GatewaySessionRegistry sessions) {
+                                    GatewaySessionRegistry sessions,
+                                    ReaderReviewService reviews) {
         this.devices = devices;
         this.gateways = gateways;
         this.mappings = mappings;
@@ -92,6 +94,7 @@ public class DesiredProjectionService {
         this.allocator = allocator;
         this.authorization = authorization;
         this.sessions = sessions;
+        this.reviews = reviews;
     }
 
     @Transactional
@@ -273,6 +276,9 @@ public class DesiredProjectionService {
         if (row.isPresentOnReader() && ack.faceSha256() != null) {
             row.setObservedFaceSha256(ack.faceSha256());
             projections.save(row);
+        }
+        if (row.isPresentOnReader()) {
+            reviews.reconcile(row);
         }
         ReaderRevision cursor = revisions.findByDeviceId(device.getId())
                 .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));

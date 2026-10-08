@@ -13,7 +13,9 @@ import com.example.gym.device.GatewayConnectedListener;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
+import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.PendingEnrollment;
+import com.example.gym.member.DeviceAuthority;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.device.domain.SyncCommandType;
@@ -532,6 +534,79 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
                 .andReturn().getResponse().getContentAsString());
         assertThat(imported.get("created").asInt()).isZero();
         assertThat(memberRepository.count()).isEqualTo(members);
+    }
+
+    @Test
+    void aReaderNameEditStaysAReviewItemAndTheMemberMatchesTheBaseline() throws Exception {
+        JsonNode created = createOnReader("Asha", "Shah", "V9-NAME", "7901");
+        String memberId = created.get("id").asString();
+        ackDesired(flaggedId);
+        long revision = revision().getDesiredRevision();
+        String allocated = mapping(memberId).getDeviceUserId();
+
+        postReaderEdit(allocated, "Asha Reader", "ADMIN");
+        postReaderEdit(allocated, "Asha Reader", "ADMIN");
+
+        var member = memberRepository.findByPublicId(memberId).orElseThrow();
+        assertThat(member.getFullName()).isEqualTo("Asha Shah");
+        assertThat(member.getDeviceAuthority()).isEqualTo(DeviceAuthority.USER);
+        DeviceReviewItem item = deviceReviewItemRepository.findByDeviceId(flagged).stream()
+                .filter(row -> allocated.equals(row.getDeviceUserId()))
+                .toList()
+                .get(0);
+        assertThat(deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, allocated)).isPresent();
+        assertThat(deviceReviewItemRepository.findByDeviceId(flagged)).singleElement()
+                .extracting(DeviceReviewItem::getDeviceUserId, DeviceReviewItem::getBaselineName,
+                        DeviceReviewItem::getServerName, DeviceReviewItem::getReaderName,
+                        DeviceReviewItem::getReaderAuthority, DeviceReviewItem::getServerAuthority)
+                .containsExactly(allocated, "Asha Shah", "Asha Shah", "Asha Reader", "ADMIN", "Customer");
+        assertThat(item.getBaselineName()).isEqualTo(member.getFullName());
+        assertThat(projection(flagged, memberId).getAuthority()).isEqualTo("Customer");
+        assertThat(projection(flagged, memberId).getRevision()).isEqualTo(revision);
+        assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(flagged, allocated)).isEmpty();
+    }
+
+    @Test
+    void aReaderEditWithoutABaselineUsesTheDesiredRecord() throws Exception {
+        JsonNode created = createOnReader("A", "", "V9-BASE", "7902");
+        String memberId = created.get("id").asString();
+        String allocated = mapping(memberId).getDeviceUserId();
+        assertThat(deviceReaderBaselineRepository.findByDeviceId(flagged)).isEmpty();
+        assertThat(projection(flagged, memberId).getReaderName()).isEqualTo("A");
+
+        postReaderEdit(allocated, "B", "Customer");
+        DeviceReviewItem first = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, allocated)
+                .orElseThrow();
+
+        postReaderEdit(allocated, "B", "Customer");
+
+        DeviceReviewItem second = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, allocated)
+                .orElseThrow();
+        assertThat(deviceReviewItemRepository.findByDeviceId(flagged)).singleElement()
+                .extracting(DeviceReviewItem::getPublicId, DeviceReviewItem::getBaselineName,
+                        DeviceReviewItem::getServerName, DeviceReviewItem::getReaderName)
+                .containsExactly(first.getPublicId(), "A", "A", "B");
+        assertThat(second.getPublicId()).isEqualTo(first.getPublicId());
+        assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("A");
+        assertThat(projection(flagged, memberId).getReaderName()).isEqualTo("A");
+        assertThat(deviceReaderBaselineRepository.findByDeviceId(flagged)).isEmpty();
+    }
+
+    private void postReaderEdit(String deviceUserId, String name, String authority) throws Exception {
+        String payload = """
+                {"deviceUserId":"%s","name":"%s","authority":"%s","isNew":false,"deleted":false,\
+                "deviceChangedAt":"2099-01-01T00:00:00Z"}
+                """.formatted(deviceUserId, name, authority);
+        String envelope = """
+                {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
+                "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
+                """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, flaggedId,
+                UUID.randomUUID(), payload);
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(envelope))
+                .andExpect(status().isOk());
     }
 
     private void postObservation(String deviceUserId, String name, boolean deleted) throws Exception {

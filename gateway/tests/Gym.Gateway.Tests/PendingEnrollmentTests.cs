@@ -7,6 +7,9 @@ namespace Gym.Gateway.Tests;
 public class PendingEnrollmentTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-v8-" + Guid.NewGuid().ToString("N"));
+    private static readonly DateTimeOffset ValidFrom = new(2026, 10, 8, 0, 0, 0, TimeSpan.FromHours(5.5));
+    private static readonly DateTimeOffset ValidTo = new(2026, 10, 8, 23, 59, 59, TimeSpan.FromHours(5.5));
+    private static readonly byte[] Face = [1, 2, 3, 4, 5];
 
     public PendingEnrollmentTests()
     {
@@ -56,6 +59,30 @@ public class PendingEnrollmentTests : IDisposable
     }
 
     [Fact]
+    public async Task A_renamed_mapped_user_is_uploaded_and_not_written_back()
+    {
+        var reader = new FakeReader();
+        var sibling = new FakeReader();
+        using var worker = new ReaderWorker("reader-a", reader, Path.Combine(_directory, "rename.sqlite"));
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(new DesiredMember(
+            1, "1", "Asha Shah", null, 0, ValidFrom, ValidTo, "Customer", 1, 1, Face)).Kind);
+        var writes = reader.Writes.ToArray();
+        var renamed = Person("1", "Asha Reader", "ADMIN");
+        reader.ScriptList(1, renamed);
+        reader.ScriptList(1, renamed);
+        var sink = new RecordingUpload();
+        var path = new DesiredRevisionPath("reader-a", worker, reader, new EmptyPull(), sink);
+
+        await path.ObserveAsync(CancellationToken.None);
+        await path.ObserveAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { "1", "1" }, sink.Ids);
+        Assert.Equal(writes, reader.Writes);
+        Assert.Empty(sibling.Writes);
+        Assert.Empty(sibling.Calls);
+    }
+
+    [Fact]
     public async Task A_short_list_uploads_nothing()
     {
         var reader = new FakeReader();
@@ -99,8 +126,10 @@ public class PendingEnrollmentTests : IDisposable
         }
     }
 
-    private static ReaderUser Person(string id, string name) =>
-        new(id, name, null, 0, null, null, "Customer", 1, 1);
+    private static ReaderUser Person(string id, string name) => Person(id, name, "Customer");
+
+    private static ReaderUser Person(string id, string name, string authority) =>
+        new(id, name, null, 0, null, null, authority, 1, 1);
 
     private sealed class RecordingUpload : IReaderObservationUpload
     {

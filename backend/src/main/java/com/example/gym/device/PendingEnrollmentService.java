@@ -25,15 +25,18 @@ public class PendingEnrollmentService {
     private final PendingEnrollmentRepository enrollments;
     private final MemberDeviceMappingRepository mappings;
     private final DesiredMemberProjectionRepository desiredMembers;
+    private final ReaderReviewService reviews;
 
     public PendingEnrollmentService(DeviceObservedUserRepository observedUsers,
                                     PendingEnrollmentRepository enrollments,
                                     MemberDeviceMappingRepository mappings,
-                                    DesiredMemberProjectionRepository desiredMembers) {
+                                    DesiredMemberProjectionRepository desiredMembers,
+                                    ReaderReviewService reviews) {
         this.observedUsers = observedUsers;
         this.enrollments = enrollments;
         this.mappings = mappings;
         this.desiredMembers = desiredMembers;
+        this.reviews = reviews;
     }
 
     @Transactional
@@ -45,11 +48,21 @@ public class PendingEnrollmentService {
         if (deviceUserId == null || deviceUserId.isBlank()) {
             return;
         }
+        saveSnapshot(device, payload, deviceUserId);
         if (serverAllocated(device.getId(), deviceUserId)) {
+            reviews.record(device, payload, deviceUserId);
             return;
         }
 
         Instant observedAt = Instant.now();
+
+        PendingEnrollment enrollment = enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElseGet(() -> new PendingEnrollment(device.getTenantId(), device.getId(), deviceUserId));
+        enrollment.setObservedAt(observedAt);
+        enrollments.save(enrollment);
+    }
+
+    private void saveSnapshot(Device device, JsonNode payload, String deviceUserId) {
         DeviceObservedUser snapshot = observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElseGet(() -> new DeviceObservedUser(device.getTenantId(), device.getId(), deviceUserId));
         snapshot.setReaderName(cut(text(payload, "name"), 127));
@@ -59,13 +72,8 @@ public class PendingEnrollmentService {
         snapshot.setValidTo(cut(text(payload, "validTo"), 40));
         snapshot.setAuthority(cut(text(payload, "authority"), 32));
         snapshot.setFaceSha256(face(text(payload, "faceSha256")));
-        snapshot.setObservedAt(observedAt);
+        snapshot.setObservedAt(Instant.now());
         observedUsers.save(snapshot);
-
-        PendingEnrollment enrollment = enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                .orElseGet(() -> new PendingEnrollment(device.getTenantId(), device.getId(), deviceUserId));
-        enrollment.setObservedAt(observedAt);
-        enrollments.save(enrollment);
     }
 
     private boolean serverAllocated(Long deviceId, String deviceUserId) {

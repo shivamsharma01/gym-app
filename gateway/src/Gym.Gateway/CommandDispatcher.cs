@@ -277,7 +277,7 @@ public sealed class CommandDispatcher
             case "ENROLL_FACE":
                 return DispatchOutcome.SyncFail("ENROLL_FACE is retired; the server sends UPSERT_FACE with the stored photo");
             case "SYNC_DEVICE_TIME":
-                return From(adapter.SynchronizeTime(DateTimeOffset.UtcNow));
+                return From(adapter.SynchronizeTime(ReaderLocalClock.Now(DateTimeOffset.UtcNow)));
             case "OPEN_DOOR":
                 return From(adapter.OpenDoor());
             case "CLOSE_DOOR":

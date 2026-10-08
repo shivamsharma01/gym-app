@@ -144,6 +144,15 @@ public class DeviceAuthorizationService {
         send(member, window(member));
     }
 
+    /**
+     * A name change publishes the full desired user on each flagged reader that already has this
+     * member. Readers that are not flagged still receive the update command from provisioning.
+     */
+    @Transactional
+    public void publishProfile(Member member) {
+        desiredState.getObject().publishAccess(member);
+    }
+
     /** Sends the current window to one device (new device user, repair). */
     @Transactional
     public void enqueueFor(Member member, Long deviceId, String deviceUserId) {

@@ -180,7 +180,9 @@ public class ReaderWorkerTests : IDisposable
 
         Assert.Equal(1, applied);
         Assert.Equal(1, pending);
-        Assert.Equal(new[] { "applied_revision", "retry_state", "revision_ack" }, TableNames(journal));
+        Assert.Equal(
+            new[] { "applied_revision", "applied_user", "retry_state", "revision_ack" },
+            TableNames(journal));
         Assert.Equal(0, CountRows(journal, "retry_state"));
     }
 

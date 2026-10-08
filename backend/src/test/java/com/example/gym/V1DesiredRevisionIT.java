@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.device.domain.DesiredMemberProjection;
@@ -28,6 +29,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.concurrent.TimeUnit;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.BeforeAll;
@@ -292,6 +297,88 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(projection.getDeviceUserId()).isEqualTo("1");
             assertThat(commands(flagged)).isEmpty();
         }
+    }
+
+    @Test
+    void nameAndDatesReplaceTheUserOnTheFlaggedReader() throws Exception {
+        try (Harness harness = start("edit", null)) {
+            harness.awaitReady();
+            JsonNode created = createOnReader("Asha", "Shah", "V3-NAME", "7301");
+            String publicId = created.get("id").asString();
+            awaitApplied(1);
+
+            String fullName = "Priya Nandini Kapoor the reader name";
+            mockMvc.perform(put("/api/v1/members/" + publicId)
+                            .header("Authorization", "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"firstName":"Priya Nandini Kapoor","lastName":"the reader name"}
+                                    """))
+                    .andExpect(status().isOk());
+            awaitApplied(2);
+
+            LocalDate start = LocalDate.now(ZoneId.of("Asia/Kolkata")).minusDays(2);
+            LocalDate end = start.plusDays(40);
+            String planId = readJson(postJson("/api/v1/plans",
+                    "{\"name\":\"Monthly\",\"price\":1000.00,\"currency\":\"INR\",\"durationDays\":30}")
+                    .andExpect(status().isCreated())
+                    .andReturn().getResponse().getContentAsString()).get("id").asString();
+            String membershipId = readJson(postJson("/api/v1/memberships",
+                    "{\"memberId\":\"" + publicId + "\",\"planId\":\"" + planId
+                            + "\",\"startDate\":\"" + start + "\",\"endDate\":\"" + end + "\"}")
+                    .andExpect(status().isCreated())
+                    .andReturn().getResponse().getContentAsString()).get("id").asString();
+            awaitApplied(3);
+
+            LocalDate later = end.plusDays(15);
+            mockMvc.perform(put("/api/v1/memberships/" + membershipId + "/dates")
+                            .header("Authorization", "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"startDate\":\"" + start + "\",\"endDate\":\"" + later + "\"}"))
+                    .andExpect(status().isOk());
+            awaitApplied(4);
+            JsonNode report = harness.finish();
+
+            assertThat(report.get("ackCount").asInt()).isEqualTo(4);
+            assertThat(report.get("appliedLocal").asLong()).isEqualTo(4);
+            assertThat(report.get("pendingAcks").asInt()).isZero();
+            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("writes")).extracting(JsonNode::asString)
+                    .containsExactly("CreateUser 1", "InsertFace 1", "ReplaceUser 1", "ReplaceUser 1", "ReplaceUser 1");
+            assertThat(report.get("writes")).extracting(JsonNode::asString)
+                    .noneMatch(line -> line.contains("SynchronizeTime"));
+            JsonNode user = user(report, "1");
+            assertThat(user.get("id").asString()).isEqualTo("1");
+            assertThat(user.get("name").asString()).isEqualTo(fullName.substring(0, 31));
+            assertThat(user.get("nameEx").asString()).isEqualTo(fullName);
+            assertThat(user.get("validFrom").asString()).isEqualTo(readerTime(start, LocalTime.MIN));
+            assertThat(user.get("validTo").asString()).isEqualTo(readerTime(later, LocalTime.of(23, 59, 59)));
+            assertThat(user.get("faceSha256").asString()).isNotBlank();
+            assertNotPublicId(report, publicId);
+
+            assertThat(mapping(publicId).getDeviceUserId()).isEqualTo("1");
+            assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getPublicId()).isEqualTo(publicId);
+            DesiredMemberProjection projection = desiredMemberProjectionRepository
+                    .findByDeviceIdAndMemberId(flagged, memberRepository.findByPublicId(publicId).orElseThrow().getId())
+                    .orElseThrow();
+            assertThat(projection.getReaderName()).isEqualTo(fullName.substring(0, 31));
+            assertThat(projection.getReaderNameEx()).isEqualTo(fullName);
+            assertThat(projection.getValidFrom()).isEqualTo(readerTime(start, LocalTime.MIN));
+            assertThat(projection.getValidTo()).isEqualTo(readerTime(later, LocalTime.of(23, 59, 59)));
+            assertThat(projection.getDeviceUserId()).isEqualTo("1");
+            assertThat(projection.getUserStatus()).isZero();
+            ReaderRevision cursor = revision();
+            assertThat(cursor.getAppliedRevision()).isEqualTo(cursor.getDesiredRevision()).isEqualTo(4);
+            assertThat(commands(flagged)).isEmpty();
+            assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
+                    .contains(SyncCommandType.UPDATE_USER, SyncCommandType.UPDATE_VALIDITY);
+        }
+    }
+
+    private static String readerTime(LocalDate day, LocalTime time) {
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        return java.time.OffsetDateTime.of(day, time, zone.getRules().getOffset(day.atTime(time)))
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX"));
     }
 
     private void assertNotPublicId(JsonNode report, String publicId) {

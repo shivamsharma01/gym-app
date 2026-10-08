@@ -124,13 +124,17 @@ public class DesiredProjectionService {
     }
 
     /**
-     * Staff allow or disallow, and any other access change, for readers that already have this
-     * member. Freeze is {@code nUserStatus=1}. The mapping and {@code publicId} stay. The old
-     * disable command is not the writer for a flagged reader.
+     * Staff change the name, the membership dates, or access, for readers that already have this
+     * member. The revision is the whole user: {@code szName}, {@code szNameEx}, status, and
+     * reader-local validity. The end of the local day is 23:59:59. The mapping and {@code publicId}
+     * stay. A partial name or date command is not the writer for a flagged reader.
      */
     @Transactional
     public void publishAccess(Member member) {
         int status = readerStatus(member);
+        String fullName = member.getFullName();
+        String name = szName(fullName);
+        String nameEx = szNameEx(fullName);
         LocalDate today = LocalDate.now(READER_ZONE);
         var window = authorization.window(member, today);
         for (var mapping : mappings.findByMemberId(member.getId())) {
@@ -145,20 +149,26 @@ public class DesiredProjectionService {
             }
             String from = window.map(access -> at(access.validFrom(), LocalTime.MIN)).orElse(row.getValidFrom());
             String to = window.map(access -> at(access.validTo(), LocalTime.of(23, 59, 59))).orElse(row.getValidTo());
-            if (row.getUserStatus() == status && from.equals(row.getValidFrom()) && to.equals(row.getValidTo())) {
+            if (row.getUserStatus() == status
+                    && from.equals(row.getValidFrom())
+                    && to.equals(row.getValidTo())
+                    && name.equals(row.getReaderName())
+                    && sameNameEx(nameEx, row.getReaderNameEx())) {
                 continue;
             }
             ReaderRevision cursor = revisions.findByDeviceId(device.getId())
                     .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
             long revision = cursor.bumpDesired();
             row.setRevision(revision);
+            row.setReaderName(name);
+            row.setReaderNameEx(nameEx);
             row.setUserStatus(status);
             row.setValidFrom(from);
             row.setValidTo(to);
             row.setDeviceUserId(mapping.getDeviceUserId());
             projections.save(row);
             notifyAfterCommit(device, revision);
-            FlowLog.info("device", "desired access reader={} revision={} user={} status={}",
+            FlowLog.info("device", "desired member reader={} revision={} user={} status={}",
                     device.getPublicId(), revision, mapping.getDeviceUserId(), status);
         }
     }

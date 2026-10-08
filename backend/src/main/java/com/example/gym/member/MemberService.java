@@ -141,6 +141,9 @@ public class MemberService {
         if (nameChanged || authorityChanged) {
             provisioning.pushProfile(saved, Set.of());
         }
+        if (nameChanged) {
+            deviceAuthorizationService.publishProfile(saved);
+        }
         FlowLog.info("member", "updated id={} nameChanged={} serialChanged={}", saved.getPublicId(),
                 nameChanged, serialChanged);
         Map<String, Object> details = new LinkedHashMap<>();

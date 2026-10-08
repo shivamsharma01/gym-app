@@ -823,8 +823,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             return DeviceCommandResult.Fail(err);
         }
 
-        var local = utcNow.UtcDateTime;
-        var ok = NETClient.SetupDeviceTime(_loginId, NET_TIME.FromDateTime(local));
+        var ok = NETClient.SetupDeviceTime(_loginId, DeviceClock(utcNow));
         return ok ? DeviceCommandResult.Success() : DeviceCommandResult.Fail(SdkError("SetupDeviceTime failed"));
     }
 
@@ -1006,18 +1005,19 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(mutation.Name)
-            && !string.Equals(DeviceName(existing), Fit(mutation.Name, NameMax), StringComparison.Ordinal))
+        var desiredName = string.IsNullOrWhiteSpace(mutation.NameEx) ? mutation.Name : mutation.NameEx;
+        if (!string.IsNullOrWhiteSpace(desiredName)
+            && !string.Equals(DeviceName(existing), Fit(desiredName, NameMax), StringComparison.Ordinal))
         {
             return false;
         }
 
-        if (mutation.ValidFrom.HasValue && NetTimeOrNull(existing.stuValidBeginTime)?.Date != mutation.ValidFrom.Value.UtcDateTime.Date)
+        if (mutation.ValidFrom.HasValue && !SameLocalDate(existing.stuValidBeginTime, mutation.ValidFrom.Value))
         {
             return false;
         }
 
-        if (mutation.ValidTo.HasValue && NetTimeOrNull(existing.stuValidEndTime)?.Date != mutation.ValidTo.Value.UtcDateTime.Date)
+        if (mutation.ValidTo.HasValue && !SameLocalDate(existing.stuValidEndTime, mutation.ValidTo.Value))
         {
             return false;
         }
@@ -1027,7 +1027,13 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     internal static NET_ACCESS_USER_INFO ApplyMutation(NET_ACCESS_USER_INFO user, DeviceUserMutation mutation)
     {
-        if (!string.IsNullOrWhiteSpace(mutation.Name))
+        if (!string.IsNullOrWhiteSpace(mutation.NameEx))
+        {
+            user.szName = Fit(string.IsNullOrWhiteSpace(mutation.Name) ? mutation.NameEx : mutation.Name, ShortNameMax);
+            user.szNameEx = Fit(mutation.NameEx, NameMax);
+            user.bUseNameEx = true;
+        }
+        else if (!string.IsNullOrWhiteSpace(mutation.Name))
         {
             user = WithName(user, mutation.Name);
         }
@@ -1046,22 +1052,30 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
         if (mutation.ValidFrom.HasValue)
         {
-            user.stuValidBeginTime = NET_TIME.FromDateTime(mutation.ValidFrom.Value.UtcDateTime);
+            user.stuValidBeginTime = NET_TIME.FromDateTime(ReaderLocalClock.Wall(mutation.ValidFrom.Value));
         }
 
         if (mutation.ValidTo.HasValue)
         {
-            user.stuValidEndTime = NET_TIME.FromDateTime(EndOfDay(mutation.ValidTo.Value));
+            user.stuValidEndTime = NET_TIME.FromDateTime(ReaderLocalClock.EndOfDay(mutation.ValidTo.Value));
         }
 
         return user;
     }
 
     /// <summary>The earliest date these readers use; a validity on this day only grants no entry today.</summary>
-    internal static readonly DateTime NoAccessDay = new(2018, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    internal static readonly DateTime NoAccessDay = new(2018, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
 
-    /// <summary>The device compares against a time of day: the end date must stay valid until 23:59:59.</summary>
-    private static DateTime EndOfDay(DateTimeOffset date) => date.UtcDateTime.Date.AddDays(1).AddSeconds(-1);
+    /// <summary>The reader clock to send. Wall time in India, not the UTC instant.</summary>
+    internal static NET_TIME DeviceClock(DateTimeOffset instant) =>
+        NET_TIME.FromDateTime(ReaderLocalClock.Wall(instant));
+
+    /// <summary>The device compares against a time of day: the end date must stay valid until 23:59:59 reader-local.</summary>
+    private static bool SameLocalDate(NET_TIME stored, DateTimeOffset desired)
+    {
+        var read = ReaderValidity(stored);
+        return read?.DateTime.Date == ReaderLocalClock.Wall(desired).Date;
+    }
 
     private static string MapAuthority(EM_ATTENDANCE_AUTHORITY authority) =>
         authority switch
@@ -1078,6 +1092,45 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     internal static string? DeviceName(NET_ACCESS_USER_INFO user) =>
         user.bUseNameEx && !string.IsNullOrWhiteSpace(user.szNameEx) ? NullIfEmpty(user.szNameEx) : NullIfEmpty(user.szName);
 
+    /// <summary>The long name when it does not already fit in szName. A short name stores the same text in both fields.</summary>
+    internal static string? StoredNameEx(NET_ACCESS_USER_INFO user)
+    {
+        if (!user.bUseNameEx)
+        {
+            return null;
+        }
+
+        var extended = NullIfEmpty(user.szNameEx);
+        var shortName = NullIfEmpty(user.szName);
+        return extended == null || string.Equals(extended, shortName, StringComparison.Ordinal) ? null : extended;
+    }
+
+    /// <summary>A validity field read back on the reader clock, or null when the reader left it zero.</summary>
+    internal static DateTimeOffset? ReaderValidity(NET_TIME time)
+    {
+        if (time.dwYear == 0 || time.dwMonth == 0 || time.dwDay == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var wall = new DateTime(
+                (int)time.dwYear,
+                (int)time.dwMonth,
+                (int)time.dwDay,
+                (int)time.dwHour,
+                (int)time.dwMinute,
+                (int)time.dwSecond,
+                DateTimeKind.Unspecified);
+            return ReaderLocalClock.At(wall);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
     internal static NET_ACCESS_USER_INFO WithName(NET_ACCESS_USER_INFO user, string name)
     {
         user.szName = Fit(name, ShortNameMax);
@@ -1093,9 +1146,11 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             user.szUserID.Trim(),
             DeviceName(user),
             Frozen: user.nUserStatus != 0,
-            ValidFrom: NetTimeOrNull(user.stuValidBeginTime),
-            ValidTo: NetTimeOrNull(user.stuValidEndTime),
-            Authority: MapAuthority(user.emAuthority));
+            ValidFrom: ReaderValidity(user.stuValidBeginTime),
+            ValidTo: ReaderValidity(user.stuValidEndTime),
+            Authority: MapAuthority(user.emAuthority),
+            NameEx: StoredNameEx(user),
+            ShortName: NullIfEmpty(user.szName));
 
     internal static NET_ACCESS_USER_INFO BuildUser(DeviceUserMutation mutation, bool freeze)
     {
@@ -1114,14 +1169,24 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             nSpecialDaysSchedule = new int[128],
             nFirstEnterDoors = new int[32]
         };
-        user = WithName(user, string.IsNullOrWhiteSpace(mutation.Name) ? mutation.DeviceUserId : mutation.Name);
+        if (!string.IsNullOrWhiteSpace(mutation.NameEx))
+        {
+            user.szName = Fit(string.IsNullOrWhiteSpace(mutation.Name) ? mutation.NameEx : mutation.Name, ShortNameMax);
+            user.szNameEx = Fit(mutation.NameEx, NameMax);
+            user.bUseNameEx = true;
+        }
+        else
+        {
+            user = WithName(user, string.IsNullOrWhiteSpace(mutation.Name) ? mutation.DeviceUserId : mutation.Name);
+        }
+
         user.nDoors[0] = 0;
         user.nTimeSectionNo[0] = 0;
         // A zeroed validity shows as 0000-00-00 or NaN on the reader. Without dates the user gets a window that
         // ended long ago: no entry until a membership sends real dates.
-        var from = mutation.ValidFrom ?? new DateTimeOffset(NoAccessDay);
-        user.stuValidBeginTime = NET_TIME.FromDateTime(from.UtcDateTime);
-        user.stuValidEndTime = NET_TIME.FromDateTime(EndOfDay(mutation.ValidTo ?? from));
+        var from = mutation.ValidFrom ?? new DateTimeOffset(NoAccessDay, ReaderLocalClock.Offset);
+        user.stuValidBeginTime = NET_TIME.FromDateTime(ReaderLocalClock.Wall(from));
+        user.stuValidEndTime = NET_TIME.FromDateTime(ReaderLocalClock.EndOfDay(mutation.ValidTo ?? from));
         return user;
     }
 

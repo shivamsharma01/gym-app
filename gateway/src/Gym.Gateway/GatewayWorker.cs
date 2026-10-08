@@ -240,6 +240,9 @@ public sealed class GatewayWorker : BackgroundService
         }
     }
 
+    internal Task<bool> SyncReaderClockAsync(string deviceId, IDeviceAdapter adapter, CancellationToken cancellationToken) =>
+        SyncClockAsync(deviceId, adapter, cancellationToken);
+
     private async Task<bool> SyncClockAsync(string deviceId, IDeviceAdapter adapter, CancellationToken stoppingToken)
     {
         if (adapter.GetHealth().ConnectionState != TimedDeviceAdapter.OnlineState)
@@ -251,7 +254,7 @@ public sealed class GatewayWorker : BackgroundService
             .ConfigureAwait(false);
         try
         {
-            var result = adapter.SynchronizeTime(DateTimeOffset.UtcNow);
+            var result = adapter.SynchronizeTime(ReaderLocalClock.Now(DateTimeOffset.UtcNow));
             if (result.Ok)
             {
                 _log.LogInformation("Reader {DeviceId}: clock set to gateway time", deviceId);

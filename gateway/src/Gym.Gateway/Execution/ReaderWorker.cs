@@ -131,7 +131,7 @@ public sealed class ReaderWorker : IDisposable
         _health = state;
     }
 
-    public ApplyOutcome Apply(long revision, Func<IReaderAdapter, Verification> verify)
+    public ApplyOutcome Apply(long revision, Func<IReaderAdapter, Verification> verify, string? deviceUserId = null)
     {
         if (revision <= 0)
         {
@@ -173,7 +173,7 @@ public sealed class ReaderWorker : IDisposable
                 return ApplyOutcome.Failed;
             }
 
-            CommitVerified(revision);
+            CommitVerified(revision, deviceUserId);
             return ApplyOutcome.Verified;
         }
     }
@@ -185,6 +185,11 @@ public sealed class ReaderWorker : IDisposable
     public MemberApplyResult ApplyMember(DesiredMember desired)
     {
         ArgumentNullException.ThrowIfNull(desired);
+        if (desired.ValidFrom is null || desired.ValidTo is null)
+        {
+            return new MemberApplyResult(MemberApplyKind.Failed, null);
+        }
+
         if (desired.Face is not { Length: > 0 })
         {
             throw new ArgumentException("The desired member has no face.", nameof(desired));
@@ -196,7 +201,7 @@ public sealed class ReaderWorker : IDisposable
             var step = WriteAndReadBack(reader, desired);
             written = step;
             return step.Verification;
-        });
+        }, desired.DeviceUserId);
         return ToMemberResult(outcome, written, desired.DeviceUserId);
     }
 
@@ -219,7 +224,7 @@ public sealed class ReaderWorker : IDisposable
         return new MemberApplyResult(kind, null);
     }
 
-    private static WriteStep WriteAndReadBack(IReaderAdapter reader, DesiredMember desired)
+    private WriteStep WriteAndReadBack(IReaderAdapter reader, DesiredMember desired)
     {
         var user = EnsureUser(reader, desired);
         if (user != null)
@@ -236,7 +241,7 @@ public sealed class ReaderWorker : IDisposable
         return VerifyReadBack(reader, desired);
     }
 
-    private static WriteStep? EnsureUser(IReaderAdapter reader, DesiredMember desired)
+    private WriteStep? EnsureUser(IReaderAdapter reader, DesiredMember desired)
     {
         var existing = reader.GetUser(desired.DeviceUserId);
         if (existing.Ok)
@@ -246,10 +251,16 @@ public sealed class ReaderWorker : IDisposable
                 return null;
             }
 
-            if (SamePerson(existing.User!, desired))
+            if (SamePerson(existing.User!, desired) || Owns(desired.DeviceUserId))
             {
                 var replaced = reader.ReplaceUser(Record(desired));
-                return replaced.Ok ? null : WriteStep.Fail(replaced.Error ?? replaced.FailCode);
+                if (replaced.Ok)
+                {
+                    Remember(desired.DeviceUserId);
+                    return null;
+                }
+
+                return WriteStep.Fail(replaced.Error ?? replaced.FailCode);
             }
 
             var occupied = reader.CreateUser(Record(desired));
@@ -263,6 +274,7 @@ public sealed class ReaderWorker : IDisposable
             var created = reader.CreateUser(Record(desired));
             if (created.Ok)
             {
+                Remember(desired.DeviceUserId);
                 return null;
             }
 
@@ -401,6 +413,11 @@ public sealed class ReaderWorker : IDisposable
                 next_attempt TEXT NOT NULL,
                 last_error TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS applied_user (
+                reader_id TEXT NOT NULL,
+                device_user_id TEXT NOT NULL,
+                PRIMARY KEY (reader_id, device_user_id)
+            );
             """;
         command.ExecuteNonQuery();
     }
@@ -456,7 +473,31 @@ public sealed class ReaderWorker : IDisposable
         command.ExecuteNonQuery();
     }
 
-    private void CommitVerified(long revision)
+    private bool Owns(string deviceUserId)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = """
+            SELECT 1 FROM applied_user
+            WHERE reader_id = $reader AND device_user_id = $user
+            """;
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
+        command.Parameters.AddWithValue("$user", deviceUserId);
+        return command.ExecuteScalar() != null;
+    }
+
+    private void Remember(string deviceUserId)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO applied_user (reader_id, device_user_id) VALUES ($reader, $user)
+            ON CONFLICT (reader_id, device_user_id) DO NOTHING
+            """;
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
+        command.Parameters.AddWithValue("$user", deviceUserId);
+        command.ExecuteNonQuery();
+    }
+
+    private void CommitVerified(long revision, string? deviceUserId)
     {
         using var transaction = _connection.BeginTransaction();
         using (var applied = _connection.CreateCommand())
@@ -490,6 +531,19 @@ public sealed class ReaderWorker : IDisposable
             retry.CommandText = "DELETE FROM retry_state WHERE reader_id = $reader";
             retry.Parameters.AddWithValue(ReaderParam, _readerId);
             retry.ExecuteNonQuery();
+        }
+
+        if (!string.IsNullOrEmpty(deviceUserId))
+        {
+            using var owned = _connection.CreateCommand();
+            owned.Transaction = transaction;
+            owned.CommandText = """
+                INSERT INTO applied_user (reader_id, device_user_id) VALUES ($reader, $user)
+                ON CONFLICT (reader_id, device_user_id) DO NOTHING
+                """;
+            owned.Parameters.AddWithValue(ReaderParam, _readerId);
+            owned.Parameters.AddWithValue("$user", deviceUserId);
+            owned.ExecuteNonQuery();
         }
 
         transaction.Commit();

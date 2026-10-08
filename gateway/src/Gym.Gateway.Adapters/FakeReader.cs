@@ -24,6 +24,9 @@ public sealed class FakeReader : IReaderAdapter
     private readonly List<string> _writes = [];
     private byte[]? _scriptedFaceReadBack;
     private int? _reportedStatus;
+    private bool _reportValidity;
+    private DateTimeOffset? _reportedFrom;
+    private DateTimeOffset? _reportedTo;
 
     public IReadOnlyList<string> Writes
     {
@@ -46,6 +49,25 @@ public sealed class FakeReader : IReaderAdapter
         lock (_gate)
         {
             _reportedStatus = status;
+        }
+    }
+
+    /// <summary>Get-user reports these dates instead of the stored ones. The stored record is unchanged.</summary>
+    public void ScriptReportedValidity(DateTimeOffset from, DateTimeOffset to)
+    {
+        lock (_gate)
+        {
+            _reportValidity = true;
+            _reportedFrom = from;
+            _reportedTo = to;
+        }
+    }
+
+    public void ClearReportedValidity()
+    {
+        lock (_gate)
+        {
+            _reportValidity = false;
         }
     }
 
@@ -124,7 +146,7 @@ public sealed class FakeReader : IReaderAdapter
                 return ReaderUserResult.NoRecord();
             }
 
-            return ReaderUserResult.Found(_reportedStatus is int status ? user with { UserStatus = status } : user);
+            return ReaderUserResult.Found(Reported(user));
         }
     }
 
@@ -147,7 +169,7 @@ public sealed class FakeReader : IReaderAdapter
                 return ReaderCallResult.Occupied(user.DeviceUserId);
             }
 
-            _users[user.DeviceUserId] = user;
+            _users[user.DeviceUserId] = Stored(user);
             _writes.Add("CreateUser " + user.DeviceUserId);
             return ReaderCallResult.Success();
         }
@@ -162,7 +184,7 @@ public sealed class FakeReader : IReaderAdapter
                 return ReaderCallResult.NoRecord();
             }
 
-            _users[user.DeviceUserId] = user;
+            _users[user.DeviceUserId] = Stored(user);
             _writes.Add("ReplaceUser " + user.DeviceUserId);
             return ReaderCallResult.Success();
         }
@@ -280,6 +302,27 @@ public sealed class FakeReader : IReaderAdapter
             return ReaderPunchResult.Found(matched);
         }
     }
+
+    private ReaderUser Reported(ReaderUser user)
+    {
+        if (_reportedStatus is int status)
+        {
+            user = user with { UserStatus = status };
+        }
+
+        if (_reportValidity)
+        {
+            user = user with { ValidFrom = _reportedFrom, ValidTo = _reportedTo };
+        }
+
+        return user;
+    }
+
+    /// <summary>A user write that omits either date stores neither, matching a partial insert on the reader.</summary>
+    private static ReaderUser Stored(ReaderUser user) =>
+        user.ValidFrom is null || user.ValidTo is null
+            ? user with { ValidFrom = null, ValidTo = null }
+            : user;
 
     private bool TakeFailure(FakeReaderOperation operation, out string error)
     {

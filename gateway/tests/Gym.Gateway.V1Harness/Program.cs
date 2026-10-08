@@ -173,6 +173,8 @@ internal static class Harness
                 name = user.Name,
                 nameEx = user.NameEx,
                 status = user.UserStatus,
+                validFrom = user.ValidFrom is DateTimeOffset from ? ReaderLocalTime.Format(from) : null,
+                validTo = user.ValidTo is DateTimeOffset to ? ReaderLocalTime.Format(to) : null,
                 faceHex = Convert.ToHexString(bytes).ToLowerInvariant(),
                 faceSha256 = bytes.Length == 0
                     ? ""
@@ -265,7 +267,7 @@ internal static class Harness
         (long Applied, int Pending) cursor,
         CancellationToken cancellationToken)
     {
-        var idle = arguments.Mode is "freeze" or "held" ? TimeSpan.FromSeconds(20) : TimeSpan.FromSeconds(1);
+        var idle = arguments.Mode is "freeze" or "held" or "edit" ? TimeSpan.FromSeconds(20) : TimeSpan.FromSeconds(1);
         while (socket.State == WebSocketState.Open)
         {
             using var extra = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -306,6 +308,7 @@ internal static class Harness
         {
             "freeze" => replacements >= 2 && worker.AppliedRevision >= 3,
             "held" => replacements >= 1 && worker.AppliedRevision == 1 && worker.Retry != null,
+            "edit" => replacements >= 3 && worker.AppliedRevision >= 4,
             _ => false
         };
     }

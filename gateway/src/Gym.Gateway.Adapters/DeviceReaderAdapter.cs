@@ -1,8 +1,9 @@
 namespace Gym.Gateway.Adapters;
 
 /// <summary>
-/// V1 calls on the gateway's existing device adapter. An id that is already present is occupied and
-/// is not overwritten. A face that is already stored is not replaced.
+/// Calls on the gateway's existing device adapter. Creating an id that is already present does not
+/// overwrite it. Replacing a user writes the whole record, including a new name. A face that is
+/// already stored is not replaced. A user write without validity is refused.
 /// </summary>
 public sealed class DeviceReaderAdapter : IReaderAdapter
 {
@@ -45,6 +46,11 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
 
     public ReaderCallResult CreateUser(ReaderUser user)
     {
+        if (user.ValidFrom is null || user.ValidTo is null)
+        {
+            return ReaderCallResult.Failed("validity is required");
+        }
+
         if (!Online(out var error))
         {
             return ReaderCallResult.Failed(error);
@@ -67,13 +73,7 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
                 : ReaderCallResult.Failed("existing user was not overwritten");
         }
 
-        var created = _device.CreateUser(new DeviceUserMutation(
-            user.DeviceUserId,
-            user.Name,
-            user.UserStatus == 0,
-            user.ValidFrom,
-            user.ValidTo,
-            user.Authority));
+        var created = _device.CreateUser(Mutation(user));
         if (!created.Ok)
         {
             return ReaderCallResult.Failed(created.Error ?? "create failed");
@@ -85,6 +85,11 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
 
     public ReaderCallResult ReplaceUser(ReaderUser user)
     {
+        if (user.ValidFrom is null || user.ValidTo is null)
+        {
+            return ReaderCallResult.Failed("validity is required");
+        }
+
         if (!Online(out var error))
         {
             return ReaderCallResult.Failed(error);
@@ -105,18 +110,7 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
             return ReaderCallResult.NoRecord();
         }
 
-        if (NameConflicts(existing, user))
-        {
-            return ReaderCallResult.Occupied(user.DeviceUserId);
-        }
-
-        var updated = _device.UpdateUser(new DeviceUserMutation(
-            user.DeviceUserId,
-            user.Name,
-            user.UserStatus == 0,
-            user.ValidFrom,
-            user.ValidTo,
-            user.Authority));
+        var updated = _device.UpdateUser(Mutation(user));
         if (!updated.Ok)
         {
             return ReaderCallResult.Failed(updated.Error ?? "user write failed");
@@ -187,32 +181,14 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
 
     private static bool Agrees(DeviceUserSnapshot live, ReaderUser written)
     {
-        if (!string.Equals(live.DeviceUserId, written.DeviceUserId, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        if (written.NameEx != null)
-        {
-            return false;
-        }
-
-        if (!string.Equals(live.Name, written.Name, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        if ((live.Frozen ? 1 : 0) != written.UserStatus)
-        {
-            return false;
-        }
-
-        if (live.ValidFrom != written.ValidFrom || live.ValidTo != written.ValidTo)
-        {
-            return false;
-        }
-
-        return AuthorityAgrees(live.Authority, written.Authority);
+        var read = Map(live);
+        return read.DeviceUserId == written.DeviceUserId
+            && read.Name == written.Name
+            && read.NameEx == written.NameEx
+            && read.UserStatus == written.UserStatus
+            && read.ValidFrom == written.ValidFrom
+            && read.ValidTo == written.ValidTo
+            && AuthorityAgrees(live.Authority, written.Authority);
     }
 
     private static bool AuthorityAgrees(string? live, string? written)
@@ -226,6 +202,15 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
             && (string.IsNullOrWhiteSpace(live) || string.Equals(live, "USER", StringComparison.OrdinalIgnoreCase));
     }
 
+    private static DeviceUserMutation Mutation(ReaderUser user) => new(
+        user.DeviceUserId,
+        user.Name,
+        user.UserStatus == 0,
+        user.ValidFrom,
+        user.ValidTo,
+        user.Authority,
+        user.NameEx);
+
     private static bool NameConflicts(DeviceUserSnapshot live, ReaderUser user)
     {
         if (string.IsNullOrEmpty(live.Name))
@@ -237,14 +222,36 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
             && !string.Equals(live.Name, user.NameEx, StringComparison.Ordinal);
     }
 
-    private static ReaderUser Map(DeviceUserSnapshot user) => new(
-        user.DeviceUserId,
-        user.Name,
-        null,
-        user.Frozen ? 1 : 0,
-        user.ValidFrom,
-        user.ValidTo,
-        string.IsNullOrWhiteSpace(user.Authority) ? "Customer" : user.Authority,
-        1,
-        1);
+    private static ReaderUser Map(DeviceUserSnapshot user)
+    {
+        var name = string.IsNullOrWhiteSpace(user.ShortName) ? user.Name : user.ShortName;
+        var nameEx = string.IsNullOrWhiteSpace(user.NameEx) ? null : user.NameEx;
+        if (string.Equals(nameEx, name, StringComparison.Ordinal))
+        {
+            nameEx = null;
+        }
+
+        return new ReaderUser(
+            user.DeviceUserId,
+            name,
+            nameEx,
+            user.Frozen ? 1 : 0,
+            user.ValidFrom,
+            user.ValidTo,
+            ReaderAuthority(user.Authority),
+            1,
+            1);
+    }
+
+    private static string ReaderAuthority(string? live)
+    {
+        if (string.IsNullOrWhiteSpace(live)
+            || live.Equals("USER", StringComparison.OrdinalIgnoreCase)
+            || live.Equals("Customer", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Customer";
+        }
+
+        return live;
+    }
 }

@@ -7,7 +7,11 @@ namespace Gym.Gateway.Execution;
 /// </summary>
 public interface IReaderObservationUpload
 {
-    Task UploadAsync(string deviceId, IReadOnlyList<ReaderUser> users, CancellationToken cancellationToken);
+    Task UploadAsync(
+        string deviceId,
+        IReadOnlyList<ReaderUser> users,
+        IReadOnlyDictionary<string, string> faceHashes,
+        CancellationToken cancellationToken);
 
     /// <summary>A mapped id missing from a trusted list. This does not remove anyone.</summary>
     Task UploadAbsencesAsync(string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken);

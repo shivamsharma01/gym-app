@@ -1,3 +1,4 @@
+using Gym.Gateway;
 using Gym.Gateway.Adapters;
 using Gym.Gateway.Execution;
 using Xunit;
@@ -176,6 +177,33 @@ public class PendingEnrollmentTests : IDisposable
     }
 
     [Fact]
+    public async Task The_same_face_on_two_ids_is_uploaded_twice()
+    {
+        var reader = new FakeReader();
+        var sibling = new FakeReader();
+        var face = new byte[] { 9, 9, 9, 9 };
+        reader.CreateUser(Person("11", "Left"));
+        reader.CreateUser(Person("12", "Right"));
+        reader.InsertFace("11", face);
+        reader.InsertFace("12", face);
+        var writes = reader.Writes.ToArray();
+        var sink = new RecordingUpload();
+        using var worker = new ReaderWorker("reader-a", reader, Path.Combine(_directory, "same-face.sqlite"));
+        var path = new DesiredRevisionPath("reader-a", worker, reader, new EmptyPull(), sink);
+
+        await path.ObserveAsync(CancellationToken.None);
+        await path.ObserveAsync(CancellationToken.None);
+        await path.ObserveAsync(CancellationToken.None);
+
+        var hash = FaceHash.Sha256Hex(face);
+        Assert.Equal(new[] { "11", "12", "11", "12", "11", "12" }, sink.Ids);
+        Assert.Equal(Enumerable.Repeat(hash, 6), sink.FaceHashes);
+        Assert.Equal(writes, reader.Writes);
+        Assert.Empty(sibling.Writes);
+        Assert.Empty(sibling.Calls);
+    }
+
+    [Fact]
     public async Task A_short_list_uploads_nothing()
     {
         var reader = new FakeReader();
@@ -232,9 +260,15 @@ public class PendingEnrollmentTests : IDisposable
 
         public List<string> AbsentIds { get; } = [];
 
+        public List<string> FaceHashes { get; } = [];
+
         public bool Offline { get; set; }
 
-        public Task UploadAsync(string deviceId, IReadOnlyList<ReaderUser> users, CancellationToken cancellationToken)
+        public Task UploadAsync(
+            string deviceId,
+            IReadOnlyList<ReaderUser> users,
+            IReadOnlyDictionary<string, string> faceHashes,
+            CancellationToken cancellationToken)
         {
             if (Offline)
             {
@@ -243,6 +277,8 @@ public class PendingEnrollmentTests : IDisposable
 
             Ids.AddRange(users.Select(user => user.DeviceUserId));
             Names.AddRange(users.Select(user => user.Name ?? ""));
+            FaceHashes.AddRange(users.Select(user =>
+                faceHashes.TryGetValue(user.DeviceUserId, out var hash) ? hash : ""));
             return Task.CompletedTask;
         }
 

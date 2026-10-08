@@ -15,6 +15,7 @@ import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.Device;
+import com.example.gym.device.domain.DeviceObservedUser;
 import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.DeviceReviewSnapshot;
 import com.example.gym.device.domain.PendingEnrollment;
@@ -730,6 +731,59 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         assertThat(deviceSyncCommandRepository.findAll().stream()
                 .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
                 .count()).isEqualTo(removes);
+    }
+
+    @Test
+    void theSameFaceOnTwoIdsStaysTwoObservations() throws Exception {
+        JsonNode created = createOnReader("Asha", "Shah", "V13-FACE", "8301");
+        long members = memberRepository.count();
+        String memberId = created.get("id").asString();
+        Member member = memberRepository.findByPublicId(memberId).orElseThrow();
+        String hash = memberFaceRepository.findByMemberId(member.getId()).orElseThrow().getSha256();
+        String onEntrance = mapping(memberId).getDeviceUserId();
+
+        postFace("11", "Left", hash);
+        postFace("12", "Right", hash);
+        String leftId = deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(flagged, "11")
+                .orElseThrow().getPublicId();
+        String rightId = deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(flagged, "12")
+                .orElseThrow().getPublicId();
+
+        postFace("11", "Left", hash);
+        postFace("12", "Right", hash);
+        postFace("11", "Left", hash);
+        postFace("12", "Right", hash);
+
+        assertThat(memberRepository.count()).isEqualTo(members);
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(flagged, "11")).isEmpty();
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(flagged, "12")).isEmpty();
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(flagged, member.getId())
+                .orElseThrow().getDeviceUserId()).isEqualTo(onEntrance);
+        assertThat(pendingEnrollmentRepository.findByDeviceId(flagged))
+                .extracting(PendingEnrollment::getDeviceUserId)
+                .containsExactlyInAnyOrder("11", "12");
+        assertThat(deviceObservedUserRepository.findByDeviceId(flagged))
+                .extracting(DeviceObservedUser::getPublicId, DeviceObservedUser::getDeviceUserId,
+                        DeviceObservedUser::getFaceSha256)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(leftId, "11", hash),
+                        org.assertj.core.groups.Tuple.tuple(rightId, "12", hash));
+    }
+
+    private void postFace(String deviceUserId, String name, String faceSha256) throws Exception {
+        String payload = """
+                {"deviceUserId":"%s","name":"%s","faceSha256":"%s","isNew":true,"deleted":false}
+                """.formatted(deviceUserId, name, faceSha256);
+        String envelope = """
+                {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
+                "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
+                """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, flaggedId,
+                UUID.randomUUID(), payload);
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(envelope))
+                .andExpect(status().isOk());
     }
 
     private void postRoster(String devicePublicId, int announcedTotal, String users) throws Exception {

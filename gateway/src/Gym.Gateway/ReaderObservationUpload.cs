@@ -22,7 +22,11 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         _log = log;
     }
 
-    public async Task UploadAsync(string deviceId, IReadOnlyList<ReaderUser> users, CancellationToken cancellationToken)
+    public async Task UploadAsync(
+        string deviceId,
+        IReadOnlyList<ReaderUser> users,
+        IReadOnlyDictionary<string, string> faceHashes,
+        CancellationToken cancellationToken)
     {
         foreach (var user in users)
         {
@@ -35,6 +39,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                 validFrom = user.ValidFrom?.ToString("o"),
                 validTo = user.ValidTo?.ToString("o"),
                 authority = user.Authority,
+                faceSha256 = faceHashes.TryGetValue(user.DeviceUserId, out var hash) ? hash : null,
                 isNew = true,
                 deleted = false
             }, deviceId);

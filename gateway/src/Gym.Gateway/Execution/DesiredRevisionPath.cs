@@ -93,7 +93,8 @@ public sealed class DesiredRevisionPath
 
         try
         {
-            await _observations.UploadAsync(_deviceId, listed, cancellationToken).ConfigureAwait(false);
+            await _observations.UploadAsync(_deviceId, listed, FaceHashes(listed), cancellationToken)
+                .ConfigureAwait(false);
             await UploadAbsencesAsync(listed, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -104,6 +105,22 @@ public sealed class DesiredRevisionPath
         {
             // The person stays on this reader. Nothing is copied to another reader.
         }
+    }
+
+    /// <summary>One hash per id. Equal hashes stay separate observations.</summary>
+    private Dictionary<string, string> FaceHashes(IReadOnlyList<ReaderUser> listed)
+    {
+        var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var user in listed)
+        {
+            var face = _reader.GetFace(user.DeviceUserId);
+            if (face.Ok && face.Bytes is { Length: > 0 })
+            {
+                hashes[user.DeviceUserId] = FaceHash.Sha256Hex(face.Bytes);
+            }
+        }
+
+        return hashes;
     }
 
     /// <summary>

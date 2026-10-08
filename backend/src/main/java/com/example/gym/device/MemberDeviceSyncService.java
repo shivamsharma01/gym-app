@@ -33,19 +33,42 @@ public class MemberDeviceSyncService {
     private final DeviceRepository deviceRepository;
     private final DeviceSyncCommandRepository commandRepository;
     private final MemberDeviceProvisioningService provisioning;
+    private final DesiredProjectionService desired;
 
     public MemberDeviceSyncService(MemberService memberService,
                                    MemberFaceRepository faceRepository,
                                    MemberDeviceMappingRepository mappingRepository,
                                    DeviceRepository deviceRepository,
                                    DeviceSyncCommandRepository commandRepository,
-                                   MemberDeviceProvisioningService provisioning) {
+                                   MemberDeviceProvisioningService provisioning,
+                                   DesiredProjectionService desired) {
         this.memberService = memberService;
         this.faceRepository = faceRepository;
         this.mappingRepository = mappingRepository;
         this.deviceRepository = deviceRepository;
         this.commandRepository = commandRepository;
         this.provisioning = provisioning;
+        this.desired = desired;
+    }
+
+    /**
+     * Removes the member from this reader only. The member stays. A flagged reader gets a desired
+     * absence. An unflagged reader gets one remove command. No other reader is written.
+     */
+    @Transactional
+    public void removeFromReader(String memberPublicId, String devicePublicId, Long tenantId) {
+        Member member = memberService.getByPublicId(memberPublicId, tenantId);
+        Device device = deviceRepository.findByPublicId(devicePublicId)
+                .orElseThrow(() -> CommonExceptions.notFound("Device"));
+        TenantGuard.check(device.getTenantId(), tenantId, "Device");
+        if (mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId()).isEmpty()) {
+            return;
+        }
+        if (device.isProjectionEnabled()) {
+            desired.publishRemoval(member, device);
+            return;
+        }
+        provisioning.removeFromDevice(member, device);
     }
 
     @Transactional(readOnly = true)

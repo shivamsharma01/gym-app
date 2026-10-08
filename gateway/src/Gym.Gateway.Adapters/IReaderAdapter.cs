@@ -26,4 +26,7 @@ public interface IReaderAdapter
     ReaderCallResult UpdateFace(string deviceUserId, byte[]? jpeg);
 
     ReaderCallResult RemoveFace(string deviceUserId);
+
+    /// <summary>Removes the device user. Removing an id that is already gone succeeds.</summary>
+    ReaderCallResult RemoveUser(string deviceUserId);
 }

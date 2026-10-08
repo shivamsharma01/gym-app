@@ -25,6 +25,22 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
 
         try
         {
+            if (_device is TrueFaceDeviceAdapter reader)
+            {
+                var read = reader.ReadUser(deviceUserId);
+                if (read.Lookup != TrueFaceDeviceAdapter.UserLookup.Found || read.User == null)
+                {
+                    if (read.Lookup == TrueFaceDeviceAdapter.UserLookup.Missing)
+                    {
+                        _written.Remove(deviceUserId);
+                    }
+
+                    return FromLookup(read.Lookup);
+                }
+
+                return Found(deviceUserId, read.User);
+            }
+
             var live = _device.GetUser(deviceUserId);
             if (live == null)
             {
@@ -32,12 +48,7 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
                 return ReaderUserResult.NoRecord();
             }
 
-            if (_written.TryGetValue(deviceUserId, out var written) && Agrees(live, written))
-            {
-                return ReaderUserResult.Found(written);
-            }
-
-            return ReaderUserResult.Found(Map(live));
+            return Found(deviceUserId, live);
         }
         catch (DeviceReadException ex)
         {
@@ -194,6 +205,42 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
         return removed.Ok
             ? ReaderCallResult.Success()
             : ReaderCallResult.Failed(removed.Error ?? "face remove failed");
+    }
+
+    public ReaderCallResult RemoveUser(string deviceUserId)
+    {
+        if (!Online(out var error))
+        {
+            return ReaderCallResult.Failed(error);
+        }
+
+        var removed = _device.DeleteUser(deviceUserId);
+        if (!removed.Ok)
+        {
+            return ReaderCallResult.Failed(removed.Error ?? "user remove failed");
+        }
+
+        _written.Remove(deviceUserId);
+        return ReaderCallResult.Success();
+    }
+
+    /// <summary>NO_RECORD is a missing user. UNKNOWN, including the shared SDK error, is not.</summary>
+    internal static ReaderUserResult FromLookup(TrueFaceDeviceAdapter.UserLookup lookup) =>
+        lookup switch
+        {
+            TrueFaceDeviceAdapter.UserLookup.Missing => ReaderUserResult.NoRecord(),
+            TrueFaceDeviceAdapter.UserLookup.Unknown => ReaderUserResult.Unknown(),
+            _ => ReaderUserResult.Failed("reader did not answer")
+        };
+
+    private ReaderUserResult Found(string deviceUserId, DeviceUserSnapshot live)
+    {
+        if (_written.TryGetValue(deviceUserId, out var written) && Agrees(live, written))
+        {
+            return ReaderUserResult.Found(written);
+        }
+
+        return ReaderUserResult.Found(Map(live));
     }
 
     private bool Online(out string error)

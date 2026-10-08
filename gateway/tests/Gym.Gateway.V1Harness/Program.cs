@@ -267,7 +267,7 @@ internal static class Harness
         (long Applied, int Pending) cursor,
         CancellationToken cancellationToken)
     {
-        var idle = arguments.Mode is "freeze" or "held" or "edit" or "photo"
+        var idle = arguments.Mode is "freeze" or "held" or "edit" or "photo" or "remove"
             ? TimeSpan.FromSeconds(20)
             : TimeSpan.FromSeconds(1);
         while (socket.State == WebSocketState.Open)
@@ -307,12 +307,14 @@ internal static class Harness
     {
         var replacements = reader.Writes.Count(line => line.StartsWith("ReplaceUser ", StringComparison.Ordinal));
         var faceUpdates = reader.Writes.Count(line => line.StartsWith("UpdateFace ", StringComparison.Ordinal));
+        var removals = reader.Writes.Count(line => line.StartsWith("RemoveUser ", StringComparison.Ordinal));
         return mode switch
         {
             "freeze" => replacements >= 2 && worker.AppliedRevision >= 3,
             "held" => replacements >= 1 && worker.AppliedRevision == 1 && worker.Retry != null,
             "edit" => replacements >= 3 && worker.AppliedRevision >= 4,
             "photo" => faceUpdates >= 1 && worker.AppliedRevision >= 2,
+            "remove" => removals >= 1 && worker.AppliedRevision >= 2,
             _ => false
         };
     }

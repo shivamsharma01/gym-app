@@ -221,6 +221,27 @@ public class MemberDeviceProvisioningService {
         }
     }
 
+    /**
+     * Removes the member from one unflagged reader. Other readers are left alone, and the member
+     * is not archived. A flagged reader is not written here.
+     */
+    @Transactional
+    public void removeFromDevice(Member member, Device device) {
+        if (device.isProjectionEnabled()) {
+            return;
+        }
+        MemberDeviceMapping mapping = mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .orElse(null);
+        if (mapping == null) {
+            return;
+        }
+        deviceSyncService.enqueue(member.getTenantId(), device.getId(), member.getId(), null,
+                SyncCommandType.REMOVE_USER, Map.of("deviceUserId", mapping.getDeviceUserId()));
+        mappingRepository.delete(mapping);
+        FlowLog.info("device", "remove member={} from reader={} user={}",
+                member.getPublicId(), device.getPublicId(), mapping.getDeviceUserId());
+    }
+
     /** Removes a device user that belongs to a deleted member (e.g. a stale edit re-reported it). */
     @Transactional
     public void removeFrom(Member member, Long deviceId, String deviceUserId) {

@@ -208,6 +208,31 @@ public class DesiredProjectionService {
         }
     }
 
+    /**
+     * Staff remove this member from one flagged reader. Presence becomes false. The member stays,
+     * and no other reader is written.
+     */
+    @Transactional
+    public void publishRemoval(Member member, Device device) {
+        if (!device.isProjectionEnabled()) {
+            return;
+        }
+        DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .orElse(null);
+        if (row == null || !row.isPresentOnReader()) {
+            return;
+        }
+        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
+                .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
+        long revision = cursor.bumpDesired();
+        row.setRevision(revision);
+        row.setPresentOnReader(false);
+        projections.save(row);
+        notifyAfterCommit(device, revision);
+        FlowLog.info("device", "desired absence reader={} revision={} user={}",
+                device.getPublicId(), revision, row.getDeviceUserId());
+    }
+
     /** Inactive is access disallowed, not an archive. A member with no plan stays enabled, as V1 wrote them. */
     private int readerStatus(Member member) {
         if (member.getStatus() != MemberStatus.ACTIVE) {
@@ -245,8 +270,10 @@ public class DesiredProjectionService {
         if (!matches(row, ack)) {
             throw CommonExceptions.conflict("Read-back does not match the desired member");
         }
-        row.setObservedFaceSha256(ack.faceSha256());
-        projections.save(row);
+        if (row.isPresentOnReader() && ack.faceSha256() != null) {
+            row.setObservedFaceSha256(ack.faceSha256());
+            projections.save(row);
+        }
         ReaderRevision cursor = revisions.findByDeviceId(device.getId())
                 .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
         if (ack.revision() > cursor.getAppliedRevision()) {
@@ -311,9 +338,12 @@ public class DesiredProjectionService {
     }
 
     private DesiredItem item(DesiredMemberProjection row) {
-        MemberFace face = faces.findByMemberId(row.getMemberId())
-                .orElseThrow(() -> CommonExceptions.conflict("Desired member has no face"));
-        byte[] jpeg = storage.read(face.getObjectKey());
+        String face = "";
+        if (row.isPresentOnReader()) {
+            MemberFace photo = faces.findByMemberId(row.getMemberId())
+                    .orElseThrow(() -> CommonExceptions.conflict("Desired member has no face"));
+            face = Base64.getEncoder().encodeToString(storage.read(photo.getObjectKey()));
+        }
         return new DesiredItem(
                 row.getRevision(),
                 row.getDeviceUserId(),
@@ -326,10 +356,24 @@ public class DesiredProjectionService {
                 row.getDoorNum(),
                 row.getTimeSectionNum(),
                 row.getFaceSha256(),
-                Base64.getEncoder().encodeToString(jpeg));
+                face,
+                row.isPresentOnReader());
     }
 
     private boolean matches(DesiredMemberProjection row, AcknowledgeRevision ack) {
+        if (!row.isPresentOnReader()) {
+            return Boolean.FALSE.equals(ack.present())
+                    && "NO_RECORD".equals(ack.failCode())
+                    && ack.deviceUserId().equals(row.getDeviceUserId());
+        }
+        if (Boolean.FALSE.equals(ack.present())
+                || ack.name() == null
+                || ack.userStatus() == null
+                || ack.validFrom() == null
+                || ack.validTo() == null
+                || ack.faceSha256() == null) {
+            return false;
+        }
         return ack.deviceUserId().equals(row.getDeviceUserId())
                 && ack.name().equals(row.getReaderName())
                 && sameNameEx(ack.nameEx(), row.getReaderNameEx())

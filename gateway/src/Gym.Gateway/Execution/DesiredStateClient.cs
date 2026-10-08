@@ -17,7 +17,8 @@ public sealed record DesiredPullItem(
     string Authority,
     int DoorNum,
     int TimeSectionNum,
-    byte[] Face)
+    byte[] Face,
+    bool Present)
 {
     public DesiredMember ToMember() => new(
         Revision,
@@ -51,7 +52,9 @@ public sealed record DesiredAcknowledgement(
     int UserStatus,
     string ValidFrom,
     string ValidTo,
-    string FaceSha256);
+    string FaceSha256,
+    bool Present = true,
+    string? FailCode = null);
 
 /// <summary>
 /// Pulls a desired member and posts the read-back acknowledgement or an occupied id.
@@ -121,7 +124,9 @@ public sealed class DesiredStateClient : IDesiredStateClient
             userStatus = ack.UserStatus,
             validFrom = ack.ValidFrom,
             validTo = ack.ValidTo,
-            faceSha256 = ack.FaceSha256
+            faceSha256 = ack.FaceSha256,
+            present = ack.Present,
+            failCode = ack.FailCode
         }, Json);
         using var response = await PostAsync("/internal/gateway/desired/ack", json, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -178,8 +183,15 @@ public sealed class DesiredStateClient : IDesiredStateClient
 
     private static DesiredPullItem ParseItem(JsonElement item)
     {
-        var face = item.GetProperty("faceBase64").GetString()
-            ?? throw new InvalidOperationException("Desired member has no face");
+        var present = !item.TryGetProperty("present", out var presentValue)
+            || presentValue.ValueKind != JsonValueKind.False;
+        var faceText = Optional(item, "faceBase64");
+        var face = string.IsNullOrEmpty(faceText) ? [] : Convert.FromBase64String(faceText);
+        if (present && face.Length == 0)
+        {
+            throw new InvalidOperationException("Desired member has no face");
+        }
+
         return new DesiredPullItem(
             Long(item, "revision"),
             Required(item, "deviceUserId"),
@@ -191,7 +203,8 @@ public sealed class DesiredStateClient : IDesiredStateClient
             Required(item, "authority"),
             item.GetProperty("doorNum").GetInt32(),
             item.GetProperty("timeSectionNum").GetInt32(),
-            Convert.FromBase64String(face));
+            face,
+            present);
     }
 
     private static string Required(JsonElement item, string name)

@@ -360,6 +360,62 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal("read-back mismatch", worker.Retry!.LastError);
     }
 
+    [Fact]
+    public void Remove_acks_only_when_get_user_is_no_record_and_a_second_remove_is_idempotent()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "remove-ok.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyRemoval(2, "1").Kind);
+        Assert.Equal(FakeReader.FailNoRecord, reader.GetUser("1").FailCode);
+        Assert.Equal(FakeReader.SdkErrorMissingRecord, reader.GetUser("1").SdkError);
+        Assert.Equal(2, worker.AppliedRevision);
+        Assert.Equal(new[] { 1L, 2L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
+
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyRemoval(3, "1").Kind);
+        Assert.Equal(3, worker.AppliedRevision);
+        Assert.Equal(FakeReader.FailNoRecord, reader.GetUser("1").FailCode);
+        Assert.Equal(["CreateUser 1", "InsertFace 1", "RemoveUser 1", "RemoveUser 1"], reader.Writes);
+        Assert.DoesNotContain(reader.Writes, line => line.StartsWith("ReplaceUser ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Remove_that_leaves_the_user_does_not_ack()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "remove-kept.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+        Assert.True(reader.RemoveFace("1").Ok);
+        reader.ScriptRemoveKeepsUser();
+
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyRemoval(2, "1").Kind);
+        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
+        Assert.Equal("user still present", worker.Retry!.LastError);
+        Assert.True(reader.GetUser("1").Ok);
+        Assert.Equal(FakeReader.FailUnknown, reader.GetFace("1").FailCode);
+        Assert.Equal(FakeReader.SdkErrorMissingRecord, reader.GetFace("1").SdkError);
+    }
+
+    [Fact]
+    public void Sdk_error_without_no_record_does_not_ack_absence()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "remove-unknown.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+        reader.ScriptUnknownUser();
+
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyRemoval(2, "1").Kind);
+        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
+        Assert.Equal(FakeReader.FailUnknown, worker.Retry!.LastError);
+        var read = reader.GetUser("1");
+        Assert.Equal(FakeReader.FailUnknown, read.FailCode);
+        Assert.Equal(FakeReader.SdkErrorMissingRecord, read.SdkError);
+        Assert.NotEqual(FakeReader.FailNoRecord, read.FailCode);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))

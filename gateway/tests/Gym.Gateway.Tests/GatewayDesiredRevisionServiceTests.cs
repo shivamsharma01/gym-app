@@ -173,7 +173,8 @@ public class GatewayDesiredRevisionServiceTests : IDisposable
         "Customer",
         1,
         1,
-        Face);
+        Face,
+        true);
 
     private sealed class SuppliedReaderFactory(Func<IDeviceAdapter?, IReaderAdapter?> open) : IReaderAdapterFactory
     {

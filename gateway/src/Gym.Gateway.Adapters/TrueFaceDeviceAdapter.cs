@@ -181,6 +181,17 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     public DeviceUserSnapshot? GetUser(string deviceUserId) =>
         LookUpUser(deviceUserId, out var user) == UserLookup.Found ? ToSnapshot(user) : null;
 
+    /// <summary>Missing is fail code NO_RECORD. Any other answer, including the shared SDK error, is not.</summary>
+    internal UserRead ReadUser(string deviceUserId)
+    {
+        var lookup = LookUpUser(deviceUserId, out var user);
+        return lookup == UserLookup.Found
+            ? new UserRead(lookup, ToSnapshot(user))
+            : new UserRead(lookup, null);
+    }
+
+    internal readonly record struct UserRead(UserLookup Lookup, DeviceUserSnapshot? User);
+
     public DeviceCommandResult UpsertFace(string deviceUserId, byte[] jpegBytes)
     {
         if (jpegBytes == null || jpegBytes.Length == 0)

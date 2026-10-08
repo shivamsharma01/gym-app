@@ -87,7 +87,9 @@ public sealed class DesiredRevisionPath
             return ItemStep.Continue;
         }
 
-        var result = _worker.ApplyMember(item.ToMember());
+        var result = item.Present
+            ? _worker.ApplyMember(item.ToMember())
+            : _worker.ApplyRemoval(item.Revision, item.DeviceUserId);
         switch (result.Kind)
         {
             case MemberApplyKind.Occupied:
@@ -133,6 +135,12 @@ public sealed class DesiredRevisionPath
 
     private async Task AcknowledgeFromReaderAsync(DesiredPullItem item, CancellationToken cancellationToken)
     {
+        if (!item.Present)
+        {
+            await AcknowledgeAbsenceAsync(item, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         var user = _reader.GetUser(item.DeviceUserId);
         var face = _reader.GetFace(item.DeviceUserId);
         if (!user.Ok || user.User == null || !face.Ok || face.Bytes is not { Length: > 0 })
@@ -157,5 +165,27 @@ public sealed class DesiredRevisionPath
             ReaderLocalTime.Format(read.ValidFrom.Value),
             ReaderLocalTime.Format(read.ValidTo.Value),
             hash), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task AcknowledgeAbsenceAsync(DesiredPullItem item, CancellationToken cancellationToken)
+    {
+        var user = _reader.GetUser(item.DeviceUserId);
+        if (user.FailCode != FakeReader.FailNoRecord)
+        {
+            throw new InvalidOperationException("User is not NO_RECORD; acknowledgement was not sent");
+        }
+
+        await _client.AcknowledgeAsync(new DesiredAcknowledgement(
+            _deviceId,
+            item.Revision,
+            item.DeviceUserId,
+            "",
+            null,
+            0,
+            "",
+            "",
+            "",
+            false,
+            FakeReader.FailNoRecord), cancellationToken).ConfigureAwait(false);
     }
 }

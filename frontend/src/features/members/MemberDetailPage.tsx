@@ -286,6 +286,8 @@ function faceStateLabel(row: MemberDeviceSync['devices'][number], face: MemberDe
 
 function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialNumber: string | null }) {
   const { has } = useAuth()
+  const qc = useQueryClient()
+  const [removeDevice, setRemoveDevice] = useState<MemberDeviceSync['devices'][number] | null>(null)
   const sync = useQuery({
     queryKey: ['member-device-sync', memberId],
     queryFn: () => api<MemberDeviceSync>(`/api/v1/members/${memberId}/device-sync`),
@@ -299,6 +301,15 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
     mutationFn: (deviceId: string) =>
       api(`/api/v1/members/${memberId}/device-sync/${deviceId}/read`, { method: 'POST' }),
     onSuccess: () => void sync.refetch(),
+  })
+  const remove = useMutation({
+    mutationFn: (deviceId: string) =>
+      api(`/api/v1/members/${memberId}/device-sync/${deviceId}/remove`, { method: 'POST' }),
+    onSuccess: () => {
+      setRemoveDevice(null)
+      void sync.refetch()
+      void qc.invalidateQueries({ queryKey: ['member', memberId] })
+    },
   })
   if (sync.error) return <QueryError error={sync.error} />
   const data = sync.data
@@ -378,6 +389,15 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
                       >
                         Read from device
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={remove.isPending}
+                        title="Remove this device user from this reader only"
+                        onClick={() => setRemoveDevice(row)}
+                      >
+                        Remove from reader
+                      </Button>
                     </div>
                   ) : null}
                 </div>
@@ -387,7 +407,20 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
         )}
         {retry.error instanceof ApiError ? <p className="text-sm text-danger">{retry.error.message}</p> : null}
         {read.error instanceof ApiError ? <p className="text-sm text-danger">{read.error.message}</p> : null}
+        {remove.error instanceof ApiError ? <p className="text-sm text-danger">{remove.error.message}</p> : null}
       </Card>
+      <ConfirmDialog
+        open={removeDevice != null}
+        onClose={() => setRemoveDevice(null)}
+        title={removeDevice ? `Remove from ${removeDevice.deviceName}?` : 'Remove from this reader?'}
+        description="This device user is removed from this reader only. The member stays. No other reader is changed. This is separate from deactivating the member."
+        confirmLabel="Remove from reader"
+        danger
+        busy={remove.isPending}
+        onConfirm={() => {
+          if (removeDevice) remove.mutate(removeDevice.deviceId)
+        }}
+      />
     </section>
   )
 }

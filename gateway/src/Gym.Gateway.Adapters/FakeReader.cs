@@ -23,6 +23,8 @@ public sealed class FakeReader : IReaderAdapter
     private readonly Queue<ReaderListResult> _listScripts = [];
     private readonly List<string> _writes = [];
     private byte[]? _scriptedFaceReadBack;
+    private bool _scriptUnknownUser;
+    private bool _keepUserOnRemove;
     private int? _reportedStatus;
     private bool _reportValidity;
     private DateTimeOffset? _reportedFrom;
@@ -70,6 +72,12 @@ public sealed class FakeReader : IReaderAdapter
             _reportValidity = false;
         }
     }
+
+    /// <summary>Get-user answers UNKNOWN with the shared SDK error, whether or not the id is stored.</summary>
+    public void ScriptUnknownUser() => _scriptUnknownUser = true;
+
+    /// <summary>Remove reports success and leaves the stored user in place.</summary>
+    public void ScriptRemoveKeepsUser() => _keepUserOnRemove = true;
 
     public void ScriptFaceReadBack(byte[] jpeg)
     {
@@ -139,6 +147,11 @@ public sealed class FakeReader : IReaderAdapter
             if (TakeFailure(FakeReaderOperation.GetUser, out var error))
             {
                 return ReaderUserResult.Failed(error);
+            }
+
+            if (_scriptUnknownUser)
+            {
+                return ReaderUserResult.Unknown();
             }
 
             if (!_users.TryGetValue(deviceUserId, out var user))
@@ -265,6 +278,26 @@ public sealed class FakeReader : IReaderAdapter
         }
     }
 
+    public ReaderCallResult RemoveUser(string deviceUserId)
+    {
+        lock (_gate)
+        {
+            if (TakeFailure(FakeReaderOperation.RemoveUser, out var error))
+            {
+                return ReaderCallResult.Failed(error);
+            }
+
+            if (!_keepUserOnRemove)
+            {
+                _users.Remove(deviceUserId);
+                _faces.Remove(deviceUserId);
+            }
+
+            _writes.Add("RemoveUser " + deviceUserId);
+            return ReaderCallResult.Success();
+        }
+    }
+
     public ReaderCallResult RemoveFace(string deviceUserId)
     {
         lock (_gate)
@@ -350,6 +383,7 @@ public enum FakeReaderOperation
     UpdateFace,
     InsertFace,
     RemoveFace,
+    RemoveUser,
     QueryPunches
 }
 
@@ -394,6 +428,10 @@ public sealed record ReaderUserResult(bool Ok, ReaderUser? User, string? FailCod
 
     public static ReaderUserResult NoRecord() =>
         new(false, null, FakeReader.FailNoRecord, FakeReader.SdkErrorMissingRecord, FakeReader.FailNoRecord);
+
+    /// <summary>The reader answered, and the fail code is not a missing user. The SDK error is not that result.</summary>
+    public static ReaderUserResult Unknown() =>
+        new(false, null, FakeReader.FailUnknown, FakeReader.SdkErrorMissingRecord, FakeReader.FailUnknown);
 
     public static ReaderUserResult Failed(string error) => new(false, null, null, null, error);
 }

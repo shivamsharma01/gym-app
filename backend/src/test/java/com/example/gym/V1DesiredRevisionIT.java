@@ -416,6 +416,50 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         }
     }
 
+    @Test
+    void removeFromOneReaderLeavesTheMemberAndDoesNotWriteTheOther() throws Exception {
+        try (Harness harness = start("remove", null)) {
+            harness.awaitReady();
+            JsonNode created = createOnReader("Asha", "Shah", "V5-REMOVE", "7501");
+            String publicId = created.get("id").asString();
+            awaitApplied(1);
+
+            mockMvc.perform(post("/api/v1/members/" + publicId + "/device-sync/" + flaggedId + "/remove")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isAccepted());
+            awaitApplied(2);
+            JsonNode report = harness.finish();
+
+            assertThat(report.get("ackCount").asInt()).isEqualTo(2);
+            assertThat(report.get("appliedLocal").asLong()).isEqualTo(2);
+            assertThat(report.get("users")).isEmpty();
+            assertThat(report.get("writes")).extracting(JsonNode::asString)
+                    .containsExactly("CreateUser 1", "InsertFace 1", "RemoveUser 1");
+            assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
+            DesiredMemberProjection projection = desiredMemberProjectionRepository
+                    .findByDeviceIdAndMemberId(flagged, memberRepository.findByPublicId(publicId).orElseThrow().getId())
+                    .orElseThrow();
+            assertThat(projection.isPresentOnReader()).isFalse();
+            assertThat(projection.getDeviceUserId()).isEqualTo("1");
+            ReaderRevision cursor = revision();
+            assertThat(cursor.getAppliedRevision()).isEqualTo(cursor.getDesiredRevision()).isEqualTo(2);
+            assertThat(mapping(publicId).getDeviceUserId()).isEqualTo("1");
+            assertThat(commands(flagged)).isEmpty();
+            assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
+                    .doesNotContain(SyncCommandType.REMOVE_USER);
+            assertNotPublicId(report, publicId);
+
+            mockMvc.perform(post("/api/v1/members/" + publicId + "/device-sync/" + flaggedId + "/remove")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isAccepted());
+            assertThat(revision().getDesiredRevision()).isEqualTo(2);
+            assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
+            assertThat(commands(flagged)).isEmpty();
+            assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
+                    .doesNotContain(SyncCommandType.REMOVE_USER);
+        }
+    }
+
     private static String readerTime(LocalDate day, LocalTime time) {
         ZoneId zone = ZoneId.of("Asia/Kolkata");
         return java.time.OffsetDateTime.of(day, time, zone.getRules().getOffset(day.atTime(time)))

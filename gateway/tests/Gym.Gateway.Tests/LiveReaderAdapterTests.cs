@@ -170,6 +170,35 @@ public class LiveReaderAdapterTests : IDisposable
         Assert.Equal(replacement, writer.GetFace("1").Bytes);
     }
 
+    [Fact]
+    public void Unknown_user_read_is_not_a_missing_user()
+    {
+        var unknown = DeviceReaderAdapter.FromLookup(TrueFaceDeviceAdapter.UserLookup.Unknown);
+        Assert.Equal(FakeReader.FailUnknown, unknown.FailCode);
+        Assert.Equal(FakeReader.SdkErrorMissingRecord, unknown.SdkError);
+        Assert.NotEqual(FakeReader.FailNoRecord, unknown.FailCode);
+
+        var missing = DeviceReaderAdapter.FromLookup(TrueFaceDeviceAdapter.UserLookup.Missing);
+        Assert.Equal(FakeReader.FailNoRecord, missing.FailCode);
+        Assert.Equal(FakeReader.SdkErrorMissingRecord, missing.SdkError);
+    }
+
+    [Fact]
+    public void Removing_a_user_is_no_record_and_a_second_remove_succeeds()
+    {
+        var device = new MockDeviceAdapter();
+        device.Connect(new DeviceConnectionConfig("reader", "127.0.0.1", 37777, "admin", "x"));
+        Assert.True(device.CreateUser(new DeviceUserMutation("1", "Asha Shah", true, From, To, "Customer")).Ok);
+        var writer = new DeviceReaderAdapter(device);
+
+        Assert.True(writer.RemoveUser("1").Ok);
+        var gone = writer.GetUser("1");
+        Assert.Equal(FakeReader.FailNoRecord, gone.FailCode);
+        Assert.Equal(FakeReader.SdkErrorMissingRecord, gone.SdkError);
+        Assert.True(writer.RemoveUser("1").Ok);
+        Assert.Equal(FakeReader.FailNoRecord, writer.GetUser("1").FailCode);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))

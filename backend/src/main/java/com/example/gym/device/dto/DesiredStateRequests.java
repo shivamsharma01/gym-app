@@ -15,12 +15,14 @@ public final class DesiredStateRequests {
             @NotBlank String deviceId,
             @NotNull @Positive Long revision,
             @NotBlank String deviceUserId,
-            @NotBlank String name,
+            String name,
             String nameEx,
-            @NotNull Integer userStatus,
-            @NotBlank String validFrom,
-            @NotBlank String validTo,
-            @NotBlank @Size(min = 64, max = 64) String faceSha256) {
+            Integer userStatus,
+            String validFrom,
+            String validTo,
+            @Size(max = 64) String faceSha256,
+            Boolean present,
+            String failCode) {
     }
 
     public record ReportOccupied(
@@ -41,7 +43,8 @@ public final class DesiredStateRequests {
             int doorNum,
             int timeSectionNum,
             String faceSha256,
-            String faceBase64) {
+            String faceBase64,
+            boolean present) {
     }
 
     public record DesiredPage(long desiredRevision, long appliedRevision, java.util.List<DesiredItem> items) {

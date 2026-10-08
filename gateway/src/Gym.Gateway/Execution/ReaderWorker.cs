@@ -205,6 +205,31 @@ public sealed class ReaderWorker : IDisposable
         return ToMemberResult(outcome, written, desired.DeviceUserId);
     }
 
+    /// <summary>
+    /// Removes the device user, then requires get-user to be NO_RECORD. A missing photo is not that
+    /// result, and the shared SDK error without NO_RECORD is not that result.
+    /// </summary>
+    public MemberApplyResult ApplyRemoval(long revision, string deviceUserId)
+    {
+        var outcome = Apply(revision, reader =>
+        {
+            var removed = reader.RemoveUser(deviceUserId);
+            if (!removed.Ok)
+            {
+                return new Verification(false, removed.Error ?? removed.FailCode ?? "remove failed");
+            }
+
+            var user = reader.GetUser(deviceUserId);
+            if (user.FailCode == FakeReader.FailNoRecord)
+            {
+                return new Verification(true, null);
+            }
+
+            return new Verification(false, user.Ok ? "user still present" : user.FailCode ?? user.Error ?? "not NO_RECORD");
+        });
+        return ToMemberResult(outcome, null, "");
+    }
+
     private MemberApplyResult ToMemberResult(ApplyOutcome outcome, WriteStep? written, string deviceUserId)
     {
         if (written is { Occupied: true })

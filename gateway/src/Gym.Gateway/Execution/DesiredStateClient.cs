@@ -18,7 +18,8 @@ public sealed record DesiredPullItem(
     int DoorNum,
     int TimeSectionNum,
     byte[] Face,
-    bool Present)
+    bool Present,
+    bool KeepDeviceUserId = false)
 {
     public DesiredMember ToMember() => new(
         Revision,
@@ -31,7 +32,8 @@ public sealed record DesiredPullItem(
         Authority,
         DoorNum,
         TimeSectionNum,
-        Face);
+        Face,
+        KeepDeviceUserId);
 }
 
 public interface IDesiredStateClient
@@ -204,7 +206,8 @@ public sealed class DesiredStateClient : IDesiredStateClient
             item.GetProperty("doorNum").GetInt32(),
             item.GetProperty("timeSectionNum").GetInt32(),
             face,
-            present);
+            present,
+            item.TryGetProperty("keepDeviceUserId", out var keep) && keep.ValueKind == JsonValueKind.True);
     }
 
     private static string Required(JsonElement item, string name)

@@ -103,6 +103,11 @@ public class PendingEnrollmentService {
         enrollments.save(enrollment);
     }
 
+    @Transactional(readOnly = true)
+    public DeviceObservedUser snapshot(Long deviceId, String deviceUserId) {
+        return observedUsers.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId).orElse(null);
+    }
+
     private void saveSnapshot(Device device, JsonNode payload, String deviceUserId) {
         DeviceObservedUser snapshot = observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElseGet(() -> new DeviceObservedUser(device.getTenantId(), device.getId(), deviceUserId));

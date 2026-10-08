@@ -1,0 +1,133 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { Button, Card, Input, PageHeader, Table, TableShell, THead, Th, Td, Tr } from '@/components/ui'
+import { QueryError } from '@/components/QueryError'
+import { api } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
+import type { ReviewItem } from '@/lib/types'
+
+export function ReviewPage() {
+  const { has } = useAuth()
+  const qc = useQueryClient()
+  const reviews = useQuery({
+    queryKey: ['reviews'],
+    queryFn: () => api<ReviewItem[]>('/api/v1/reviews'),
+  })
+  const decide = useMutation({
+    mutationFn: (action: { id: string; path: string; body?: unknown }) =>
+      api<ReviewItem>(`/api/v1/reviews/${action.id}/${action.path}`, {
+        method: 'POST',
+        body: JSON.stringify(action.body ?? {}),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['reviews'] })
+    },
+  })
+
+  if (reviews.error) return <QueryError error={reviews.error} />
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Review"
+        description="Server, reader, and baseline for each open difference. Nothing is linked automatically."
+      />
+      <Card padded={false}>
+        <TableShell>
+          <Table>
+            <THead>
+              <Tr>
+                <Th>Device user</Th>
+                <Th>Server</Th>
+                <Th>Reader</Th>
+                <Th>Baseline</Th>
+                <Th>Decision</Th>
+              </Tr>
+            </THead>
+            <tbody>
+              {(reviews.data ?? []).map((item) => (
+                <Tr key={item.id}>
+                  <Td className="font-mono text-xs">{item.deviceUserId}</Td>
+                  <Td>{item.serverName || '—'}</Td>
+                  <Td>{item.readerAbsent ? 'Absent' : item.readerName || '—'}</Td>
+                  <Td>{item.baselineName || '—'}</Td>
+                  <Td>
+                    {item.decision ? (
+                      <div className="space-y-1 text-sm">
+                        <div>{item.decision}</div>
+                        <div className="text-xs text-muted">
+                          {item.actor} · {item.priorState} → {item.chosenState}
+                          {item.revision != null ? ` · revision ${item.revision}` : ''}
+                        </div>
+                        {item.verificationError ? (
+                          <div className="text-xs text-danger">{item.verificationError}</div>
+                        ) : null}
+                      </div>
+                    ) : has('DEVICE_MANAGE') ? (
+                      <RowActions item={item} pending={decide.isPending} onDecide={(path, body) => decide.mutate({ id: item.id, path, body })} />
+                    ) : (
+                      '—'
+                    )}
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+        </TableShell>
+      </Card>
+    </div>
+  )
+}
+
+function RowActions({
+  item,
+  pending,
+  onDecide,
+}: {
+  item: ReviewItem
+  pending: boolean
+  onDecide: (path: string, body?: unknown) => void
+}) {
+  const [memberId, setMemberId] = useState('')
+  if (item.kind === 'ENROLLMENT') {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" size="sm" disabled={pending} onClick={() => onDecide('create')}>
+          Create member
+        </Button>
+        <Button type="button" size="sm" variant="danger" disabled={pending} onClick={() => onDecide('reject')}>
+          Reject
+        </Button>
+        <Input
+          aria-label={`Member id for ${item.deviceUserId}`}
+          value={memberId}
+          onChange={(event) => setMemberId(event.target.value)}
+          placeholder="Member id"
+          className="w-40"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pending || memberId.trim() === ''}
+          onClick={() => onDecide('link', { memberId: memberId.trim() })}
+        >
+          Link
+        </Button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button type="button" size="sm" disabled={pending} onClick={() => onDecide('accept-server')}>
+        Accept server
+      </Button>
+      <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => onDecide('restore')}>
+        Restore
+      </Button>
+      <Button type="button" size="sm" variant="danger" disabled={pending} onClick={() => onDecide('remove')}>
+        Remove from this reader
+      </Button>
+    </div>
+  )
+}

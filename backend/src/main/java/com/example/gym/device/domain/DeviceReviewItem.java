@@ -56,6 +56,27 @@ public class DeviceReviewItem extends TenantAwareEntity {
     @Column(name = "observed_at", nullable = false)
     private Instant observedAt;
 
+    @Column(name = "decision", length = 32)
+    private String decision;
+
+    @Column(name = "actor", length = 100)
+    private String actor;
+
+    @Column(name = "prior_state", length = 255)
+    private String priorState;
+
+    @Column(name = "chosen_state", length = 255)
+    private String chosenState;
+
+    @Column(name = "decision_revision")
+    private Long decisionRevision;
+
+    @Column(name = "verification_error", length = 255)
+    private String verificationError;
+
+    @Column(name = "resolved", nullable = false)
+    private boolean resolved;
+
     protected DeviceReviewItem() {
     }
 
@@ -164,5 +185,63 @@ public class DeviceReviewItem extends TenantAwareEntity {
 
     public void setObservedAt(Instant observedAt) {
         this.observedAt = observedAt;
+    }
+
+    public String getDecision() {
+        return decision;
+    }
+
+    public String getActor() {
+        return actor;
+    }
+
+    public String getPriorState() {
+        return priorState;
+    }
+
+    public String getChosenState() {
+        return chosenState;
+    }
+
+    public Long getDecisionRevision() {
+        return decisionRevision;
+    }
+
+    public String getVerificationError() {
+        return verificationError;
+    }
+
+    public boolean isResolved() {
+        return resolved;
+    }
+
+    public void decide(String decision, String actor, String priorState, String chosenState, long revision) {
+        this.decision = decision;
+        this.actor = actor;
+        this.priorState = priorState;
+        this.chosenState = chosenState;
+        this.decisionRevision = revision;
+        this.verificationError = null;
+        this.resolved = false;
+    }
+
+    public void clearDecision() {
+        this.decision = null;
+        this.actor = null;
+        this.priorState = null;
+        this.chosenState = null;
+        this.decisionRevision = null;
+        this.verificationError = null;
+        this.resolved = false;
+    }
+
+    public void noteVerificationError(String error) {
+        this.verificationError = error;
+        this.resolved = false;
+    }
+
+    public void resolve() {
+        this.resolved = true;
+        this.verificationError = null;
     }
 }

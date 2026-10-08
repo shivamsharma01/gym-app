@@ -8,6 +8,24 @@ export type PageResponse<T> = {
   last: boolean
 }
 
+export type ReviewItem = {
+  id: string
+  kind: 'REVIEW' | 'ENROLLMENT'
+  deviceId: string
+  deviceUserId: string
+  serverName: string | null
+  readerName: string | null
+  baselineName: string | null
+  readerAbsent: boolean
+  open: boolean
+  decision: string | null
+  actor: string | null
+  priorState: string | null
+  chosenState: string | null
+  revision: number | null
+  verificationError: string | null
+}
+
 export type UserSummary = {
   id: string
   username: string

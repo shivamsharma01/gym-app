@@ -16,7 +16,8 @@ public class DesiredMemberProjection extends TenantAwareEntity {
     @Column(name = "device_id", nullable = false)
     private Long deviceId;
 
-    @Column(name = "member_id", nullable = false)
+    /** Null only for a rejected enrollment: the device user is removed and no member is created. */
+    @Column(name = "member_id")
     private Long memberId;
 
     @Column(name = "revision", nullable = false)
@@ -27,6 +28,10 @@ public class DesiredMemberProjection extends TenantAwareEntity {
 
     @Column(name = "present_on_reader", nullable = false)
     private boolean presentOnReader;
+
+    /** A staff link keeps this reader id and replaces the user already stored there. */
+    @Column(name = "keep_device_user_id", nullable = false)
+    private boolean keepDeviceUserId;
 
     @Column(name = "reader_name", nullable = false, length = 31)
     private String readerName;
@@ -97,6 +102,14 @@ public class DesiredMemberProjection extends TenantAwareEntity {
 
     public void setPresentOnReader(boolean presentOnReader) {
         this.presentOnReader = presentOnReader;
+    }
+
+    public boolean isKeepDeviceUserId() {
+        return keepDeviceUserId;
+    }
+
+    public void setKeepDeviceUserId(boolean keepDeviceUserId) {
+        this.keepDeviceUserId = keepDeviceUserId;
     }
 
     public String getReaderName() {

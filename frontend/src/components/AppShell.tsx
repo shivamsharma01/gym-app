@@ -11,6 +11,7 @@ import {
   Inbox,
   KeyRound,
   LayoutDashboard,
+  ListTodo,
   LogOut,
   Menu,
   MonitorSmartphone,
@@ -48,6 +49,7 @@ const operations: NavItem[] = [
 
 const facility: NavItem[] = [
   { to: '/app/devices', label: 'Devices', icon: MonitorSmartphone, perm: 'DEVICE_VIEW' },
+  { to: '/app/review', label: 'Review', icon: ListTodo, perm: 'DEVICE_VIEW' },
   ...(FEATURES.enquiries ? [{ to: '/app/enquiries', label: 'Enquiries', icon: Inbox, perm: 'ENQUIRY_VIEW' }] : []),
   ...(FEATURES.notifications
     ? [{ to: '/app/notifications', label: 'Notifications', icon: Bell, perm: 'NOTIFICATION_SEND' }]

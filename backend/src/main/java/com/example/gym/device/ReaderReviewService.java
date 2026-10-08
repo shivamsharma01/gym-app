@@ -9,9 +9,11 @@ import com.example.gym.device.repo.DesiredMemberProjectionRepository;
 import com.example.gym.device.repo.DeviceReaderBaselineRepository;
 import com.example.gym.device.repo.DeviceReviewItemRepository;
 import com.example.gym.device.repo.DeviceReviewSnapshotRepository;
+import com.example.gym.device.repo.PendingEnrollmentRepository;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
@@ -27,15 +29,18 @@ public class ReaderReviewService {
     private final DeviceReaderBaselineRepository baselines;
     private final DeviceReviewItemRepository reviews;
     private final DeviceReviewSnapshotRepository snapshots;
+    private final PendingEnrollmentRepository enrollments;
 
     public ReaderReviewService(DesiredMemberProjectionRepository desiredMembers,
                                DeviceReaderBaselineRepository baselines,
                                DeviceReviewItemRepository reviews,
-                               DeviceReviewSnapshotRepository snapshots) {
+                               DeviceReviewSnapshotRepository snapshots,
+                               PendingEnrollmentRepository enrollments) {
         this.desiredMembers = desiredMembers;
         this.baselines = baselines;
         this.reviews = reviews;
         this.snapshots = snapshots;
+        this.enrollments = enrollments;
     }
 
     @Transactional
@@ -43,7 +48,7 @@ public class ReaderReviewService {
         DesiredMemberProjection desired = desiredMembers
                 .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElse(null);
-        if (desired == null) {
+        if (desired == null || desired.getMemberId() == null || !desired.isPresentOnReader()) {
             return;
         }
         DeviceReaderBaseline baseline = baselines
@@ -77,6 +82,9 @@ public class ReaderReviewService {
 
         DeviceReviewItem item = conflictFor(device, deviceUserId, desired.getMemberId());
         boolean thisReader = item.getId() == null || device.getId().equals(item.getDeviceId());
+        if (thisReader && item.isResolved()) {
+            item.clearDecision();
+        }
         if (thisReader) {
             item.setBaselineName(baselineName);
             item.setBaselineNameEx(baselineNameEx);
@@ -108,7 +116,10 @@ public class ReaderReviewService {
         DeviceReviewItem item = reviews.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElseGet(() -> new DeviceReviewItem(
                         device.getTenantId(), device.getId(), desired.getMemberId(), deviceUserId));
-        if (item.getId() == null) {
+        if (item.isResolved()) {
+            item.clearDecision();
+        }
+        if (item.getId() == null || item.getBaselineName() == null) {
             item.setBaselineName(desired.getReaderName());
             item.setBaselineNameEx(desired.getReaderNameEx());
             item.setBaselineAuthority(desired.getAuthority());
@@ -144,6 +155,38 @@ public class ReaderReviewService {
         snapshot.setReaderAuthority(cut(text(payload, "authority"), 32));
         snapshot.setObservedAt(Instant.now());
         snapshots.save(snapshot);
+    }
+
+    /**
+     * The gateway acknowledged this revision. The staff decision that published it is closed.
+     */
+    @Transactional
+    public void settle(Long deviceId, long revision) {
+        reviews.findByDeviceIdAndDecisionRevision(deviceId, revision).ifPresent(item -> {
+            item.resolve();
+            reviews.save(item);
+        });
+        enrollments.findByDeviceIdAndDecisionRevision(deviceId, revision).ifPresent(enrollment -> {
+            enrollment.resolve();
+            enrollments.save(enrollment);
+        });
+    }
+
+    /**
+     * Read-back did not match. The decision stays open and keeps the verification error.
+     * Commits on its own so the error survives the rejected acknowledgement.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void noteVerificationFailure(Long deviceId, long revision, String error) {
+        String stored = cut(error, 255);
+        reviews.findByDeviceIdAndDecisionRevision(deviceId, revision).ifPresent(item -> {
+            item.noteVerificationError(stored);
+            reviews.save(item);
+        });
+        enrollments.findByDeviceIdAndDecisionRevision(deviceId, revision).ifPresent(enrollment -> {
+            enrollment.noteVerificationError(stored);
+            enrollments.save(enrollment);
+        });
     }
 
     /** The reconciled record is the desired record the reader just read back. */

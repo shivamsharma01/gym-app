@@ -212,18 +212,126 @@ public class DesiredProjectionService {
     }
 
     /**
+     * Staff accepted the server record, or asked to restore it. This is the freeze/enable writer:
+     * one new revision of the current member, on this reader only. The device user id stays.
+     */
+    @Transactional
+    public long republish(Member member, Device device) {
+        if (!device.isProjectionEnabled()) {
+            throw CommonExceptions.badRequest("Reader is not flagged for desired state");
+        }
+        DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .orElseThrow(() -> CommonExceptions.conflict("Member is not on this reader"));
+        MemberDeviceMapping mapping = mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing"));
+        MemberFace face = faces.findByMemberId(member.getId())
+                .orElseThrow(() -> CommonExceptions.conflict("Member has no face"));
+        applyServer(row, member, mapping.getDeviceUserId(), face);
+        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
+                .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
+        long revision = cursor.bumpDesired();
+        row.setRevision(revision);
+        projections.save(row);
+        notifyAfterCommit(device, revision);
+        FlowLog.info("device", "desired member reader={} revision={} user={}",
+                device.getPublicId(), revision, mapping.getDeviceUserId());
+        return revision;
+    }
+
+    /**
+     * Link or create keeps the id the reader already assigned. The next integer is not used.
+     */
+    @Transactional
+    public long writeKeepingId(Member member, Device device, MemberFace face, String deviceUserId,
+                               boolean keepDeviceUserId) {
+        if (!device.isProjectionEnabled()) {
+            throw CommonExceptions.badRequest("Reader is not flagged for desired state");
+        }
+        if (device.getGatewayId() == null) {
+            throw CommonExceptions.badRequest("Reader has no gateway");
+        }
+        if (deviceUserId == null || deviceUserId.isBlank()) {
+            throw CommonExceptions.badRequest("Device user id is required");
+        }
+        if (mappings.existsByDeviceIdAndMemberId(device.getId(), member.getId())) {
+            throw CommonExceptions.conflict("Member is already mapped to this reader");
+        }
+        if (mappings.existsByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)) {
+            throw CommonExceptions.conflict("Device user id is already mapped");
+        }
+        mappings.save(new MemberDeviceMapping(
+                member.getTenantId(), member.getId(), device.getId(), deviceUserId));
+        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
+                .orElseGet(() -> revisions.save(new ReaderRevision(member.getTenantId(), device.getId())));
+        long revision = cursor.bumpDesired();
+        DesiredMemberProjection row = new DesiredMemberProjection(
+                member.getTenantId(), device.getId(), member.getId());
+        fill(row, revision, deviceUserId, member, face);
+        row.setKeepDeviceUserId(keepDeviceUserId);
+        projections.save(row);
+        notifyAfterCommit(device, revision);
+        FlowLog.info("device", "desired member reader={} revision={} user={}",
+                device.getPublicId(), revision, deviceUserId);
+        return revision;
+    }
+
+    /**
+     * Reject removes this device user and does not attach a member. The gateway's existing
+     * absence apply is the writer.
+     */
+    @Transactional
+    public long publishAbsence(Device device, String deviceUserId, String name,
+                               String validFrom, String validTo, String faceSha256) {
+        if (!device.isProjectionEnabled()) {
+            throw CommonExceptions.badRequest("Reader is not flagged for desired state");
+        }
+        if (deviceUserId == null || deviceUserId.isBlank()) {
+            throw CommonExceptions.badRequest("Device user id is required");
+        }
+        DesiredMemberProjection row = projections.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElse(null);
+        if (row != null && row.getMemberId() != null) {
+            throw CommonExceptions.conflict("Device user id belongs to a member");
+        }
+        if (row == null) {
+            row = new DesiredMemberProjection(device.getTenantId(), device.getId(), null);
+            row.setDoorNum(DOOR_NUM);
+            row.setTimeSectionNum(TIME_SECTION_NUM);
+        }
+        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
+                .orElseGet(() -> revisions.save(new ReaderRevision(device.getTenantId(), device.getId())));
+        long revision = cursor.bumpDesired();
+        LocalDate today = LocalDate.now(READER_ZONE);
+        row.setRevision(revision);
+        row.setDeviceUserId(deviceUserId);
+        row.setPresentOnReader(false);
+        row.setReaderName(name == null || name.isBlank() ? deviceUserId : szName(name));
+        row.setReaderNameEx(null);
+        row.setUserStatus(USER_STATUS);
+        row.setValidFrom(blank(validFrom) ? at(today, LocalTime.MIN) : cut(validFrom, 40));
+        row.setValidTo(blank(validTo) ? at(today, LocalTime.of(23, 59, 59)) : cut(validTo, 40));
+        row.setAuthority(AUTHORITY);
+        row.setFaceSha256(faceSha256 != null && faceSha256.length() == 64 ? faceSha256 : "0".repeat(64));
+        projections.save(row);
+        notifyAfterCommit(device, revision);
+        FlowLog.info("device", "desired absence reader={} revision={} user={}",
+                device.getPublicId(), revision, deviceUserId);
+        return revision;
+    }
+
+    /**
      * Staff remove this member from one flagged reader. Presence becomes false. The member stays,
      * and no other reader is written.
      */
     @Transactional
-    public void publishRemoval(Member member, Device device) {
+    public long publishRemoval(Member member, Device device) {
         if (!device.isProjectionEnabled()) {
-            return;
+            return 0;
         }
         DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
                 .orElse(null);
         if (row == null || !row.isPresentOnReader()) {
-            return;
+            return 0;
         }
         ReaderRevision cursor = revisions.findByDeviceId(device.getId())
                 .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
@@ -234,6 +342,7 @@ public class DesiredProjectionService {
         notifyAfterCommit(device, revision);
         FlowLog.info("device", "desired absence reader={} revision={} user={}",
                 device.getPublicId(), revision, row.getDeviceUserId());
+        return revision;
     }
 
     /** Inactive is access disallowed, not an archive. A member with no plan stays enabled, as V1 wrote them. */
@@ -271,7 +380,12 @@ public class DesiredProjectionService {
         DesiredMemberProjection row = projections.findByDeviceIdAndRevision(device.getId(), ack.revision())
                 .orElseThrow(() -> CommonExceptions.conflict("Revision is not the desired member"));
         if (!matches(row, ack)) {
-            throw CommonExceptions.conflict("Read-back does not match the desired member");
+            String error = "Read-back does not match the desired member";
+            if (ack.failCode() != null && !ack.failCode().isBlank()) {
+                error = error + ": " + ack.failCode();
+            }
+            reviews.noteVerificationFailure(device.getId(), ack.revision(), error);
+            throw CommonExceptions.conflict(error);
         }
         if (row.isPresentOnReader() && ack.faceSha256() != null) {
             row.setObservedFaceSha256(ack.faceSha256());
@@ -280,6 +394,7 @@ public class DesiredProjectionService {
         if (row.isPresentOnReader()) {
             reviews.reconcile(row);
         }
+        reviews.settle(device.getId(), ack.revision());
         ReaderRevision cursor = revisions.findByDeviceId(device.getId())
                 .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
         if (ack.revision() > cursor.getAppliedRevision()) {
@@ -320,6 +435,33 @@ public class DesiredProjectionService {
         FlowLog.info("device", "occupied id {} on reader={}; retry revision={} user={}",
                 report.deviceUserId(), device.getPublicId(), revision, nextId);
         return new RevisionNotice(device.getPublicId(), revision);
+    }
+
+    private void applyServer(DesiredMemberProjection row, Member member, String deviceUserId, MemberFace face) {
+        int status = readerStatus(member);
+        String fullName = member.getFullName();
+        LocalDate today = LocalDate.now(READER_ZONE);
+        var window = authorization.window(member, today);
+        String from = window.map(access -> at(access.validFrom(), LocalTime.MIN)).orElse(row.getValidFrom());
+        String to = window.map(access -> at(access.validTo(), LocalTime.of(23, 59, 59))).orElse(row.getValidTo());
+        row.setPresentOnReader(true);
+        row.setDeviceUserId(deviceUserId);
+        row.setReaderName(szName(fullName));
+        row.setReaderNameEx(szNameEx(fullName));
+        row.setUserStatus(status);
+        row.setValidFrom(from);
+        row.setValidTo(to);
+        row.setAuthority(AUTHORITY);
+        row.setFaceSha256(face.getSha256());
+        row.setObservedFaceSha256(null);
+    }
+
+    private static boolean blank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private static String cut(String value, int max) {
+        return value.length() <= max ? value : value.substring(0, max);
     }
 
     private void fill(DesiredMemberProjection row, long revision, String deviceUserId,
@@ -363,7 +505,8 @@ public class DesiredProjectionService {
                 row.getTimeSectionNum(),
                 row.getFaceSha256(),
                 face,
-                row.isPresentOnReader());
+                row.isPresentOnReader(),
+                row.isKeepDeviceUserId());
     }
 
     private boolean matches(DesiredMemberProjection row, AcknowledgeRevision ack) {

@@ -80,6 +80,35 @@ public class MemberCreateWorkerTests : IDisposable
     }
 
     [Fact]
+    public void Link_replaces_the_different_name_and_keeps_the_reader_id()
+    {
+        var reader = new FakeReader();
+        reader.CreateUser(new ReaderUser("12", "Door", null, 0, ValidFrom, ValidTo, "Customer", 1, 1));
+        using var worker = Start(Path.Combine(_directory, "link.sqlite"), reader);
+
+        var linked = new DesiredMember(
+            3,
+            "12",
+            "Ria Shah",
+            null,
+            0,
+            ValidFrom,
+            ValidTo,
+            "Customer",
+            1,
+            1,
+            Face,
+            true);
+        var result = worker.ApplyMember(linked);
+
+        Assert.Equal(MemberApplyKind.Applied, result.Kind);
+        Assert.Equal("12", reader.GetUser("12").User!.DeviceUserId);
+        Assert.Equal("Ria Shah", reader.GetUser("12").User!.Name);
+        Assert.Equal(new[] { "CreateUser 12", "ReplaceUser 12", "InsertFace 12" }, reader.Writes);
+        Assert.DoesNotContain(reader.Writes, write => write.Contains("CreateUser 13") || write == "CreateUser 1");
+    }
+
+    [Fact]
     public void Face_hash_mismatch_does_not_ack()
     {
         var reader = new FakeReader();

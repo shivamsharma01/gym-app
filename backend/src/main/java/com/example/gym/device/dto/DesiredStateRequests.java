@@ -44,7 +44,8 @@ public final class DesiredStateRequests {
             int timeSectionNum,
             String faceSha256,
             String faceBase64,
-            boolean present) {
+            boolean present,
+            boolean keepDeviceUserId) {
     }
 
     public record DesiredPage(long desiredRevision, long appliedRevision, java.util.List<DesiredItem> items) {

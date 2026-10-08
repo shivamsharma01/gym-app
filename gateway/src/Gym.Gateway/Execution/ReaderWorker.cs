@@ -388,7 +388,7 @@ public sealed class ReaderWorker : IDisposable
         desired.TimeSectionNum);
 
     private bool ReplacesExisting(ReaderUser user, DesiredMember desired) =>
-        SamePerson(user, desired) || Owns(desired.DeviceUserId);
+        SamePerson(user, desired) || Owns(desired.DeviceUserId) || desired.KeepDeviceUserId;
 
     private static bool SamePerson(ReaderUser user, DesiredMember desired)
     {

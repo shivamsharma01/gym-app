@@ -52,6 +52,14 @@ public class MemberService {
     }
 
     @Transactional(readOnly = true)
+    public Member getById(Long id, Long tenantId) {
+        Member member = memberRepository.findById(id)
+                .orElseThrow(() -> CommonExceptions.notFound("Member"));
+        TenantGuard.check(member.getTenantId(), tenantId, "Member");
+        return member;
+    }
+
+    @Transactional(readOnly = true)
     public Member getByPublicId(String publicId, Long tenantId) {
         Member member = memberRepository.findByPublicId(publicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Member"));

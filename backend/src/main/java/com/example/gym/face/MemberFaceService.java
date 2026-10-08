@@ -217,6 +217,14 @@ public class MemberFaceService {
     }
 
     @Transactional(readOnly = true)
+    public Optional<GatewayFaceUpload> findUnconsumedByHash(Long tenantId, String sha256) {
+        if (sha256 == null || sha256.length() != 64) {
+            return Optional.empty();
+        }
+        return uploadRepository.findFirstByTenantIdAndSha256AndConsumedFalseOrderByIdDesc(tenantId, sha256);
+    }
+
+    @Transactional(readOnly = true)
     public Optional<GatewayFaceUpload> findUpload(String publicId, Long tenantId) {
         return uploadRepository.findByPublicId(publicId)
                 .filter(u -> u.getTenantId().equals(tenantId));

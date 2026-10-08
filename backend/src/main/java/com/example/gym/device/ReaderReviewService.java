@@ -93,6 +93,34 @@ public class ReaderReviewService {
         rememberSnapshot(item, device, deviceUserId, payload);
     }
 
+    /**
+     * A mapped id missing from a trusted list. The member and every other reader stay as they are.
+     * A repeated observation updates this same item.
+     */
+    @Transactional
+    public void recordAbsence(Device device, String deviceUserId) {
+        DesiredMemberProjection desired = desiredMembers
+                .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElse(null);
+        if (desired == null || !desired.isPresentOnReader()) {
+            return;
+        }
+        DeviceReviewItem item = reviews.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElseGet(() -> new DeviceReviewItem(
+                        device.getTenantId(), device.getId(), desired.getMemberId(), deviceUserId));
+        if (item.getId() == null) {
+            item.setBaselineName(desired.getReaderName());
+            item.setBaselineNameEx(desired.getReaderNameEx());
+            item.setBaselineAuthority(desired.getAuthority());
+            item.setServerName(desired.getReaderName());
+            item.setServerNameEx(desired.getReaderNameEx());
+            item.setServerAuthority(desired.getAuthority());
+        }
+        item.setReaderAbsent(true);
+        item.setObservedAt(Instant.now());
+        reviews.save(item);
+    }
+
     /** The first reader opens the conflict. A later reader keeps a second snapshot on that same item. */
     private DeviceReviewItem conflictFor(Device device, String deviceUserId, Long memberId) {
         DeviceReviewItem onThisReader = reviews.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)

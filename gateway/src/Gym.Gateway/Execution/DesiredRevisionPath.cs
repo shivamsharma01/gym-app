@@ -94,6 +94,7 @@ public sealed class DesiredRevisionPath
         try
         {
             await _observations.UploadAsync(_deviceId, listed, cancellationToken).ConfigureAwait(false);
+            await UploadAbsencesAsync(listed, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -103,6 +104,22 @@ public sealed class DesiredRevisionPath
         {
             // The person stays on this reader. Nothing is copied to another reader.
         }
+    }
+
+    /// <summary>
+    /// Mapped ids this gateway wrote that a trusted, non-empty list no longer contains.
+    /// An empty list is not evidence that those people were removed.
+    /// </summary>
+    private async Task UploadAbsencesAsync(IReadOnlyList<ReaderUser> listed, CancellationToken cancellationToken)
+    {
+        var present = listed.Select(user => user.DeviceUserId).ToHashSet(StringComparer.Ordinal);
+        var missing = _worker.AppliedUserIds().Where(id => !present.Contains(id)).ToList();
+        if (missing.Count == 0)
+        {
+            return;
+        }
+
+        await _observations!.UploadAbsencesAsync(_deviceId, missing, cancellationToken).ConfigureAwait(false);
     }
 
     private enum ItemStep

@@ -109,6 +109,32 @@ public class PendingEnrollmentTests : IDisposable
     }
 
     [Fact]
+    public async Task A_mapped_id_missing_from_a_trusted_list_is_an_absence_and_removes_nobody()
+    {
+        var reader = new FakeReader();
+        var sibling = new FakeReader();
+        using var worker = new ReaderWorker("reader-a", reader, Path.Combine(_directory, "absent.sqlite"));
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(new DesiredMember(
+            1, "1", "Asha Shah", null, 0, ValidFrom, ValidTo, "Customer", 1, 1, Face)).Kind);
+        var writes = reader.Writes.ToArray();
+        var stillHere = Person("2", "Still Here");
+        reader.ScriptList(1, stillHere);
+        reader.ScriptList(1, stillHere);
+        var sink = new RecordingUpload();
+        var path = new DesiredRevisionPath("reader-a", worker, reader, new EmptyPull(), sink);
+
+        await path.ObserveAsync(CancellationToken.None);
+        await path.ObserveAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { "2", "2" }, sink.Ids);
+        Assert.Equal(new[] { "1", "1" }, sink.AbsentIds);
+        Assert.Equal(writes, reader.Writes);
+        Assert.Empty(sibling.Writes);
+        Assert.Empty(sibling.Calls);
+        Assert.Equal("Asha Shah", reader.GetUser("1").User!.Name);
+    }
+
+    [Fact]
     public async Task A_short_list_uploads_nothing()
     {
         var reader = new FakeReader();
@@ -163,6 +189,8 @@ public class PendingEnrollmentTests : IDisposable
 
         public List<string> Names { get; } = [];
 
+        public List<string> AbsentIds { get; } = [];
+
         public bool Offline { get; set; }
 
         public Task UploadAsync(string deviceId, IReadOnlyList<ReaderUser> users, CancellationToken cancellationToken)
@@ -174,6 +202,18 @@ public class PendingEnrollmentTests : IDisposable
 
             Ids.AddRange(users.Select(user => user.DeviceUserId));
             Names.AddRange(users.Select(user => user.Name ?? ""));
+            return Task.CompletedTask;
+        }
+
+        public Task UploadAbsencesAsync(
+            string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
+        {
+            if (Offline)
+            {
+                throw new HttpRequestException("unreachable");
+            }
+
+            AbsentIds.AddRange(deviceUserIds);
             return Task.CompletedTask;
         }
     }

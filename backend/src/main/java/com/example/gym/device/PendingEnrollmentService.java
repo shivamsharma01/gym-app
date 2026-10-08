@@ -41,11 +41,17 @@ public class PendingEnrollmentService {
 
     @Transactional
     public void observe(Device device, JsonNode payload) {
-        if (device == null || !device.isProjectionEnabled() || payload == null || bool(payload, "deleted")) {
+        if (device == null || !device.isProjectionEnabled() || payload == null) {
             return;
         }
         String deviceUserId = text(payload, "deviceUserId");
         if (deviceUserId == null || deviceUserId.isBlank()) {
+            return;
+        }
+        if (bool(payload, "deleted")) {
+            if (serverAllocated(device.getId(), deviceUserId)) {
+                reviews.recordAbsence(device, deviceUserId);
+            }
             return;
         }
         saveSnapshot(device, payload, deviceUserId);

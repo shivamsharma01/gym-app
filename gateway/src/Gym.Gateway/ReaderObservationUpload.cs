@@ -50,4 +50,33 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             }
         }
     }
+
+    public async Task UploadAbsencesAsync(
+        string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
+    {
+        foreach (var deviceUserId in deviceUserIds)
+        {
+            if (string.IsNullOrWhiteSpace(deviceUserId))
+            {
+                continue;
+            }
+
+            var envelope = GatewayEnvelope.Create(_gatewayId, ProtocolTypes.DeviceUserChanged, new
+            {
+                deviceUserId,
+                isNew = false,
+                deleted = true
+            }, deviceId);
+            try
+            {
+                await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or WebSocketException)
+            {
+                _log.LogInformation(
+                    "Absence for {DeviceId} user {UserId} queued; server unreachable ({Message})",
+                    deviceId, deviceUserId, ex.Message);
+            }
+        }
+    }
 }

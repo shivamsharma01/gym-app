@@ -50,6 +50,9 @@ public class DeviceReviewItem extends TenantAwareEntity {
     @Column(name = "reader_authority", length = 32)
     private String readerAuthority;
 
+    @Column(name = "reader_absent", nullable = false)
+    private boolean readerAbsent;
+
     @Column(name = "observed_at", nullable = false)
     private Instant observedAt;
 
@@ -145,6 +148,14 @@ public class DeviceReviewItem extends TenantAwareEntity {
 
     public void setReaderAuthority(String readerAuthority) {
         this.readerAuthority = readerAuthority;
+    }
+
+    public boolean isReaderAbsent() {
+        return readerAbsent;
+    }
+
+    public void setReaderAbsent(boolean readerAbsent) {
+        this.readerAbsent = readerAbsent;
     }
 
     public Instant getObservedAt() {

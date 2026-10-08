@@ -636,6 +636,66 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         assertThat(projection(side.getId(), memberId).getRevision()).isEqualTo(sideRevision);
     }
 
+    @Test
+    void aTrustedDisappearanceKeepsTheMemberAndOneReviewItem() throws Exception {
+        JsonNode created = createOnReader("Asha", "Shah", "V11-GONE", "8101");
+        String memberId = created.get("id").asString();
+        Member member = memberRepository.findByPublicId(memberId).orElseThrow();
+        String sideId = createDevice("Side", true, gatewayPublicId);
+        Device side = deviceRepository.findByPublicId(sideId).orElseThrow();
+        MemberFace face = memberFaceRepository.findByMemberId(member.getId()).orElseThrow();
+        desiredProjection.write(member, side, face);
+        String onEntrance = mapping(memberId).getDeviceUserId();
+        long entranceRevision = projection(flagged, memberId).getRevision();
+        long sideRevision = projection(side.getId(), memberId).getRevision();
+        long removes = deviceSyncCommandRepository.findAll().stream()
+                .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
+                .count();
+
+        postAbsence(flaggedId, onEntrance);
+        DeviceReviewItem opened = deviceReviewItemRepository
+                .findByDeviceIdAndDeviceUserId(flagged, onEntrance)
+                .orElseThrow();
+
+        postAbsence(flaggedId, onEntrance);
+
+        DeviceReviewItem again = deviceReviewItemRepository
+                .findByDeviceIdAndDeviceUserId(flagged, onEntrance)
+                .orElseThrow();
+        assertThat(again.getPublicId()).isEqualTo(opened.getPublicId());
+        assertThat(again.isReaderAbsent()).isTrue();
+        assertThat(again.getBaselineName()).isEqualTo("Asha Shah");
+        assertThat(deviceReviewItemRepository.findByMemberId(member.getId())).hasSize(1);
+        assertThat(deviceReviewItemRepository.findByDeviceId(side.getId())).isEmpty();
+        Member kept = memberRepository.findByPublicId(memberId).orElseThrow();
+        assertThat(kept.getStatus()).isEqualTo(MemberStatus.ACTIVE);
+        assertThat(kept.getFullName()).isEqualTo("Asha Shah");
+        assertThat(projection(flagged, memberId).isPresentOnReader()).isTrue();
+        assertThat(projection(flagged, memberId).getRevision()).isEqualTo(entranceRevision);
+        assertThat(projection(side.getId(), memberId).isPresentOnReader()).isTrue();
+        assertThat(projection(side.getId(), memberId).getRevision()).isEqualTo(sideRevision);
+        assertThat(projection(side.getId(), memberId).getReaderName()).isEqualTo("Asha Shah");
+        assertThat(deviceSyncCommandRepository.findAll().stream()
+                .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
+                .count()).isEqualTo(removes);
+    }
+
+    private void postAbsence(String devicePublicId, String deviceUserId) throws Exception {
+        String payload = """
+                {"deviceUserId":"%s","deleted":true,"isNew":false}
+                """.formatted(deviceUserId);
+        String envelope = """
+                {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
+                "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
+                """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, devicePublicId,
+                UUID.randomUUID(), payload);
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(envelope))
+                .andExpect(status().isOk());
+    }
+
     private void postReaderEdit(String deviceUserId, String name, String authority) throws Exception {
         postReaderEdit(flaggedId, deviceUserId, name, authority);
     }

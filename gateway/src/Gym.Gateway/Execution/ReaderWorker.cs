@@ -227,6 +227,11 @@ public sealed class ReaderWorker : IDisposable
 
             return new Verification(false, user.Ok ? "user still present" : user.FailCode ?? user.Error ?? "not NO_RECORD");
         });
+        if (outcome == ApplyOutcome.Verified)
+        {
+            Forget(deviceUserId);
+        }
+
         return ToMemberResult(outcome, null, "");
     }
 
@@ -534,6 +539,28 @@ public sealed class ReaderWorker : IDisposable
         }
     }
 
+    public IReadOnlyList<string> AppliedUserIds()
+    {
+        lock (_gate)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT device_user_id FROM applied_user
+                WHERE reader_id = $reader
+                ORDER BY device_user_id
+                """;
+            command.Parameters.AddWithValue(ReaderParam, _readerId);
+            using var row = command.ExecuteReader();
+            var ids = new List<string>();
+            while (row.Read())
+            {
+                ids.Add(row.GetString(0));
+            }
+
+            return ids;
+        }
+    }
+
     private bool Owns(string deviceUserId)
     {
         using var command = _connection.CreateCommand();
@@ -556,6 +583,21 @@ public sealed class ReaderWorker : IDisposable
         command.Parameters.AddWithValue(ReaderParam, _readerId);
         command.Parameters.AddWithValue("$user", deviceUserId);
         command.ExecuteNonQuery();
+    }
+
+    private void Forget(string deviceUserId)
+    {
+        lock (_gate)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                DELETE FROM applied_user
+                WHERE reader_id = $reader AND device_user_id = $user
+                """;
+            command.Parameters.AddWithValue(ReaderParam, _readerId);
+            command.Parameters.AddWithValue("$user", deviceUserId);
+            command.ExecuteNonQuery();
+        }
     }
 
     private void CommitVerified(long revision, string? deviceUserId)

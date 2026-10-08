@@ -135,6 +135,47 @@ public class PendingEnrollmentTests : IDisposable
     }
 
     [Fact]
+    public async Task A_bad_list_emits_nothing_and_the_next_trusted_list_still_does()
+    {
+        var reader = new FakeReader();
+        var sibling = new FakeReader();
+        using var worker = new ReaderWorker("reader-a", reader, Path.Combine(_directory, "bad-list.sqlite"));
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(new DesiredMember(
+            1, "1", "Asha Shah", null, 0, ValidFrom, ValidTo, "Customer", 1, 1, Face)).Kind);
+        var writes = reader.Writes.ToArray();
+        var stillHere = Person("2", "Still Here");
+        reader.ScriptList(1, stillHere);
+        reader.ScriptList(2, stillHere);
+        reader.ScriptList(0);
+        reader.ScriptList(1, stillHere, Person("3", "Extra"));
+        reader.ScriptList(1, stillHere);
+        var sink = new RecordingUpload();
+        var path = new DesiredRevisionPath("reader-a", worker, reader, new EmptyPull(), sink);
+
+        await path.ObserveAsync(CancellationToken.None);
+        Assert.Equal(new[] { "1" }, sink.AbsentIds);
+
+        await path.ObserveAsync(CancellationToken.None);
+        Assert.Equal(new[] { "1" }, sink.AbsentIds);
+        Assert.Equal(new[] { "2" }, sink.Ids);
+
+        await path.ObserveAsync(CancellationToken.None);
+        Assert.Equal(new[] { "1" }, sink.AbsentIds);
+        Assert.Equal(new[] { "2" }, sink.Ids);
+
+        await path.ObserveAsync(CancellationToken.None);
+        Assert.Equal(new[] { "1" }, sink.AbsentIds);
+        Assert.Equal(new[] { "2" }, sink.Ids);
+
+        await path.ObserveAsync(CancellationToken.None);
+        Assert.Equal(new[] { "1", "1" }, sink.AbsentIds);
+        Assert.Equal(new[] { "2", "2" }, sink.Ids);
+        Assert.Equal(writes, reader.Writes);
+        Assert.Empty(sibling.Writes);
+        Assert.Empty(sibling.Calls);
+    }
+
+    [Fact]
     public async Task A_short_list_uploads_nothing()
     {
         var reader = new FakeReader();

@@ -680,6 +680,72 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
                 .count()).isEqualTo(removes);
     }
 
+    @Test
+    void aBadListCreatesNoDisappearanceAndTheNextTrustedListStillDoes() throws Exception {
+        JsonNode created = createOnReader("Asha", "Shah", "V12-BAD", "8201");
+        String memberId = created.get("id").asString();
+        String onEntrance = mapping(memberId).getDeviceUserId();
+        long revision = projection(flagged, memberId).getRevision();
+        long removes = deviceSyncCommandRepository.findAll().stream()
+                .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
+                .count();
+
+        postRoster(flaggedId, 1, "[{\"deviceUserId\":\"9\",\"name\":\"Still Here\",\"deleted\":false}]");
+        DeviceReviewItem opened = deviceReviewItemRepository
+                .findByDeviceIdAndDeviceUserId(flagged, onEntrance)
+                .orElseThrow();
+        assertThat(opened.isReaderAbsent()).isTrue();
+
+        postRoster(flaggedId, 2, "[{\"deviceUserId\":\"8\",\"name\":\"Short\",\"deleted\":false}]");
+        assertThat(deviceReviewItemRepository.findByDeviceId(flagged)).singleElement()
+                .extracting(DeviceReviewItem::getPublicId)
+                .isEqualTo(opened.getPublicId());
+        assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(flagged, "8")).isEmpty();
+        assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
+
+        postRoster(flaggedId, 0, "[]");
+        assertThat(deviceReviewItemRepository.findByDeviceId(flagged)).singleElement()
+                .extracting(DeviceReviewItem::getPublicId)
+                .isEqualTo(opened.getPublicId());
+        assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
+
+        postRoster(flaggedId, 1,
+                "[{\"deviceUserId\":\"8\",\"name\":\"A\",\"deleted\":false},{\"deviceUserId\":\"10\",\"name\":\"B\",\"deleted\":false}]");
+        assertThat(deviceReviewItemRepository.findByDeviceId(flagged)).singleElement()
+                .extracting(DeviceReviewItem::getPublicId)
+                .isEqualTo(opened.getPublicId());
+        assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(flagged, "10")).isEmpty();
+        assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("Asha Shah");
+
+        postRoster(flaggedId, 1, "[{\"deviceUserId\":\"9\",\"name\":\"Still Here\",\"deleted\":false}]");
+
+        DeviceReviewItem again = deviceReviewItemRepository
+                .findByDeviceIdAndDeviceUserId(flagged, onEntrance)
+                .orElseThrow();
+        assertThat(again.getPublicId()).isEqualTo(opened.getPublicId());
+        assertThat(again.isReaderAbsent()).isTrue();
+        assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
+        assertThat(projection(flagged, memberId).isPresentOnReader()).isTrue();
+        assertThat(projection(flagged, memberId).getRevision()).isEqualTo(revision);
+        assertThat(deviceSyncCommandRepository.findAll().stream()
+                .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
+                .count()).isEqualTo(removes);
+    }
+
+    private void postRoster(String devicePublicId, int announcedTotal, String users) throws Exception {
+        String payload = "{\"announcedTotal\":%d,\"users\":%s}".formatted(announcedTotal, users);
+        String envelope = """
+                {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
+                "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
+                """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, devicePublicId,
+                UUID.randomUUID(), payload);
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(envelope))
+                .andExpect(status().isOk());
+    }
+
     private void postAbsence(String devicePublicId, String deviceUserId) throws Exception {
         String payload = """
                 {"deviceUserId":"%s","deleted":true,"isNew":false}

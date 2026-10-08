@@ -9,7 +9,9 @@ import com.example.gym.device.repo.DeviceObservedUserRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.PendingEnrollmentRepository;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
@@ -44,6 +46,39 @@ public class PendingEnrollmentService {
         if (device == null || !device.isProjectionEnabled() || payload == null) {
             return;
         }
+        JsonNode users = payload.get("users");
+        if (users != null && users.isArray()) {
+            observeSet(device, payload, users);
+            return;
+        }
+        observeOne(device, payload);
+    }
+
+    /**
+     * A short, empty, or mismatched list is not a disappearance and does not change the member.
+     * A trusted list records a mapped id that is missing from it.
+     */
+    private void observeSet(Device device, JsonNode payload, JsonNode users) {
+        int announced = payload.path("announcedTotal").asInt(-1);
+        if (users.isEmpty() || announced != users.size()) {
+            return;
+        }
+        Set<String> present = new HashSet<>();
+        for (JsonNode user : users) {
+            observeOne(device, user);
+            String deviceUserId = text(user, "deviceUserId");
+            if (deviceUserId != null) {
+                present.add(deviceUserId);
+            }
+        }
+        for (DesiredMemberProjection desired : desiredMembers.findByDeviceId(device.getId())) {
+            if (desired.isPresentOnReader() && !present.contains(desired.getDeviceUserId())) {
+                reviews.recordAbsence(device, desired.getDeviceUserId());
+            }
+        }
+    }
+
+    private void observeOne(Device device, JsonNode payload) {
         String deviceUserId = text(payload, "deviceUserId");
         if (deviceUserId == null || deviceUserId.isBlank()) {
             return;

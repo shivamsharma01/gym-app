@@ -39,6 +39,26 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
             """)
     List<String> findPendingDeviceUserIds(@org.springframework.data.repository.query.Param("tenantId") Long tenantId);
 
+    /**
+     * Every id this reader holds or may soon hold: mapped, being moved to, on the last roster,
+     * on an unacknowledged projection, or reported occupied. These are locking reads, so a caller
+     * holding the reader lock sees ids committed by the previous holder.
+     */
+    @org.springframework.data.jpa.repository.Query(value = """
+            (SELECT device_user_id FROM member_device_mapping WHERE device_id = :deviceId FOR SHARE)
+            UNION ALL
+            (SELECT pending_device_user_id FROM member_device_mapping
+              WHERE device_id = :deviceId AND pending_device_user_id IS NOT NULL FOR SHARE)
+            UNION ALL
+            (SELECT device_user_id FROM device_user_snapshot WHERE device_id = :deviceId FOR SHARE)
+            UNION ALL
+            (SELECT device_user_id FROM desired_member WHERE device_id = :deviceId AND revision > :applied FOR SHARE)
+            UNION ALL
+            (SELECT device_user_id FROM reader_blocked_user WHERE device_id = :deviceId FOR SHARE)
+            """, nativeQuery = true)
+    List<String> findTakenDeviceUserIds(@org.springframework.data.repository.query.Param("deviceId") Long deviceId,
+                                        @org.springframework.data.repository.query.Param("applied") long applied);
+
     boolean existsByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
     boolean existsByDeviceIdAndMemberId(Long deviceId, Long memberId);

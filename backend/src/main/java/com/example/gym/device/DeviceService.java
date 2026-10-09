@@ -10,12 +10,14 @@ import com.example.gym.device.domain.DeviceRole;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.domain.MemberDeviceMapping;
+import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.device.dto.DeviceRequests.CreateDevice;
 import com.example.gym.device.dto.DeviceRequests.UpdateDevice;
 import com.example.gym.device.repo.AttendanceSyncCursorRepository;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
+import com.example.gym.device.repo.ReaderRevisionRepository;
 import com.example.gym.device.domain.AttendanceSyncCursor;
 import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.Member;
@@ -43,17 +45,20 @@ public class DeviceService {
     private final DeviceSyncService deviceSyncService;
     private final AttendanceSyncCursorRepository cursorRepository;
     private final AuditService auditService;
+    private final ReaderRevisionRepository revisions;
 
     public DeviceService(DeviceRepository deviceRepository,
                          GatewayService gatewayService,
                          DeviceSyncService deviceSyncService,
                          AttendanceSyncCursorRepository cursorRepository,
-                         AuditService auditService) {
+                         AuditService auditService,
+                         ReaderRevisionRepository revisions) {
         this.deviceRepository = deviceRepository;
         this.gatewayService = gatewayService;
         this.deviceSyncService = deviceSyncService;
         this.cursorRepository = cursorRepository;
         this.auditService = auditService;
+        this.revisions = revisions;
     }
 
     @Transactional(readOnly = true)
@@ -79,6 +84,7 @@ public class DeviceService {
         device.setSerialNumber(request.serialNumber());
         device.setGatewayId(resolveGatewayId(request.gatewayId(), tenantId));
         Device saved = deviceRepository.save(device);
+        revisions.save(new ReaderRevision(tenantId, saved.getId()));
         FlowLog.info("device", "created id={} name={} role={}", saved.getPublicId(), saved.getName(), saved.getRole());
         auditService.record(AuditActions.DEVICE_CREATED, AuditActions.RESULT_SUCCESS,
                 "Device", saved.getPublicId(), Map.of("name", saved.getName(), "role", saved.getRole().name()));

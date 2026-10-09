@@ -480,7 +480,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Prerequisites.** V1, V7.
 
-**Backend.** Create no longer takes a reader id. It allocates per reader in one transaction. A reader added later gets the existing active members through the same desired path; no copy is made from another reader. Do not add a constructor parameter beyond the Sonar limit; extend the existing create service instead.
+**Backend.** Create no longer takes a reader id. It allocates per reader in one transaction, taking each reader's revision lock in ascending device id order so two fan-outs cannot deadlock. A reader added later gets the existing active members through the same desired path; no copy is made from another reader. Do not add a constructor parameter beyond the Sonar limit; extend the existing create service instead.
 
 **Gateway.** No change. Each reader worker applies its own revision.
 
@@ -572,7 +572,9 @@ These are not defined tightly enough to pretend they are already specified.
 
 | Gap | Where it stands |
 | --- | --- |
-| Device-id allocator | The architecture left the exact allocator open. This plan defines highest-known-plus-one decimal ids, plus no-overwrite retry. A live race against the screen was not run. |
+| Device-id allocator | The architecture left the exact allocator open. This plan defines highest-known-plus-one decimal ids, plus no-overwrite retry. Server-side writers of one reader (allocation, revision bump, acknowledgement, occupied retry) take that reader's `reader_revision` row lock, and the allocator reads taken ids with locking reads. `ReaderConcurrencyIT` covers concurrent creates, renames, acknowledgements, and an occupied retry on one reader on the test database. A live race against the reader's own screen enrollment was not run. |
+| Cross-reader lock order | An operation that touches several readers (a member change on every mapped reader, the bootstrap report) takes the reader locks in ascending device id order, then rereads the projection row and mapping under the lock. Before this, renames of two members mapped in opposite reader order failed with a MySQL deadlock. `ReaderConcurrencyIT.renamesOfMembersMappedInOppositeReaderOrderDoNotDeadlockOrLoseUpdates` runs 10 concurrent rename rounds per member across two readers and checks every final name and a gap-free revision count on both readers. |
+| Rename against an older acknowledgement | An acknowledgement takes the reader lock first and rereads the revision under it. An acknowledgement of a revision that a rename has since replaced is refused with 409 "Revision is not the desired member" and leaves the applied revision unchanged; it never moves applied backward. A repeated acknowledgement of the current revision returns 200 each time. `aRenameRacingAnAckOfTheOlderRevisionNeverLosesOrRegressesState` races the two freely; `anAckBlockedBehindARenameOfTheSameRowIsRefusedAsSuperseded` forces the acknowledgement to wait behind the rename. Without the reread, that test got a generic concurrent-modification 409 instead. A review decision whose revision is superseded by a later revision of the same row is still never settled; that predates this work. |
 | `publicId` as `szUserID` | Not supported here. UUID form was never written to this reader, and the face user-id type is a 32-character buffer. |
 | Which readers receive a new member | Every reader of the gym (V18). The create flow still asks for one reader until V18 is built. |
 | Who may approve review items, and whether an enrollment expires | Gym admin and staff decide review items (V17). A pending person on a reader does not expire. The gateway enrollment token expires after 24 hours. |
@@ -603,7 +605,7 @@ F1's credential tests, F2, F3, and V1 through V17 were accepted on the fake read
 
 ## G. Remaining gates
 
-The slice checks through V17 are recorded as done on the fake reader and test database in each slice above. What remains:
+The slice checks through V17 are recorded as done on the fake reader and test database in each slice above. On 9 October 2026, before V18, `ReaderConcurrencyIT` (7 tests) passed in 5 repeated runs with no deadlock, then `mvn clean verify` passed (33 unit, 159 integration) and the gateway suite passed (129). This is test-database evidence only. What remains:
 
 1. Section E, on a physical reader, before that reader is treated as validated.
 2. The remaining choices in [open-questions.md](open-questions.md): the safety-scan interval, door and time-section values other than 1, and SDK reconnect as a guarantee.

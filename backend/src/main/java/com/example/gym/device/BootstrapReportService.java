@@ -16,6 +16,7 @@ import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,7 +64,9 @@ public class BootstrapReportService {
     @Transactional
     public BootstrapReport build(Long tenantId) {
         String runId = UUID.randomUUID().toString();
-        List<Device> readers = devices.findByTenantId(tenantId);
+        List<Device> readers = devices.findByTenantId(tenantId).stream()
+                .sorted(Comparator.comparing(Device::getId))
+                .toList();
         List<Member> people = members.findByTenantIdAndStatus(tenantId, MemberStatus.ACTIVE);
         List<Row> rows = new ArrayList<>();
         for (Device reader : readers) {

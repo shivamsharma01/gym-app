@@ -18,7 +18,6 @@ import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.GatewayRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.ReaderBlockedUserRepository;
-import com.example.gym.device.repo.ReaderRevisionRepository;
 import com.example.gym.face.FaceStorageService;
 import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceRepository;
@@ -30,6 +29,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.data.domain.PageRequest;
@@ -61,7 +61,7 @@ public class DesiredProjectionService {
     private final DeviceRepository devices;
     private final GatewayRepository gateways;
     private final MemberDeviceMappingRepository mappings;
-    private final ReaderRevisionRepository revisions;
+    private final ReaderRevisions revisions;
     private final DesiredMemberProjectionRepository projections;
     private final ReaderBlockedUserRepository blocked;
     private final MemberFaceRepository faces;
@@ -75,7 +75,7 @@ public class DesiredProjectionService {
     public DesiredProjectionService(DeviceRepository devices,
                                     GatewayRepository gateways,
                                     MemberDeviceMappingRepository mappings,
-                                    ReaderRevisionRepository revisions,
+                                    ReaderRevisions revisions,
                                     DesiredMemberProjectionRepository projections,
                                     ReaderBlockedUserRepository blocked,
                                     MemberFaceRepository faces,
@@ -132,13 +132,11 @@ public class DesiredProjectionService {
         if (mappings.existsByDeviceIdAndMemberId(device.getId(), member.getId())) {
             throw CommonExceptions.conflict("Member is already mapped to this reader");
         }
-        String deviceUserId = allocator.allocate(device.getId());
+        ReaderRevision cursor = revisions.lock(member.getTenantId(), device.getId());
+        String deviceUserId = allocator.allocate(cursor);
         MemberDeviceMapping saved = mappings.save(new MemberDeviceMapping(
                 member.getTenantId(), member.getId(), device.getId(), deviceUserId));
         attendance.linkEarlierEvents(saved);
-
-        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                .orElseGet(() -> revisions.save(new ReaderRevision(member.getTenantId(), device.getId())));
         long revision = cursor.bumpDesired();
 
         DesiredMemberProjection row = new DesiredMemberProjection(
@@ -165,8 +163,8 @@ public class DesiredProjectionService {
         String nameEx = szNameEx(fullName);
         LocalDate today = LocalDate.now(READER_ZONE);
         var window = authorization.window(member, today);
-        for (var mapping : mappings.findByMemberId(member.getId())) {
-            Device device = devices.findById(mapping.getDeviceId()).orElse(null);
+        for (var found : inReaderOrder(member)) {
+            Device device = devices.findById(found.getDeviceId()).orElse(null);
             if (device == null || device.getGatewayId() == null) {
                 continue;
             }
@@ -175,6 +173,9 @@ public class DesiredProjectionService {
             if (row == null) {
                 continue;
             }
+            ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+            revisions.reload(row);
+            MemberDeviceMapping mapping = revisions.reload(found);
             String from = window.map(access -> at(access.validFrom(), LocalTime.MIN)).orElse(row.getValidFrom());
             String to = window.map(access -> at(access.validTo(), LocalTime.of(23, 59, 59))).orElse(row.getValidTo());
             if (row.getUserStatus() == status
@@ -184,8 +185,6 @@ public class DesiredProjectionService {
                     && sameNameEx(nameEx, row.getReaderNameEx())) {
                 continue;
             }
-            ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                    .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
             long revision = cursor.bumpDesired();
             row.setRevision(revision);
             row.setReaderName(name);
@@ -212,22 +211,23 @@ public class DesiredProjectionService {
         if (face == null || face.getSha256() == null || face.getSha256().isBlank()) {
             return;
         }
-        for (var mapping : mappings.findByMemberId(member.getId())) {
-            Device device = devices.findById(mapping.getDeviceId()).orElse(null);
+        for (var found : inReaderOrder(member)) {
+            Device device = devices.findById(found.getDeviceId()).orElse(null);
             if (device == null || device.getGatewayId() == null) {
                 continue;
             }
             DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
                     .orElse(null);
-            if (row == null || !row.isPresentOnReader()) {
+            if (row == null) {
                 continue;
             }
+            ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+            revisions.reload(row);
+            MemberDeviceMapping mapping = revisions.reload(found);
             boolean sameFace = face.getSha256().equalsIgnoreCase(row.getFaceSha256()) && row.isFacePresent();
-            if (sameFace) {
+            if (!row.isPresentOnReader() || sameFace) {
                 continue;
             }
-            ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                    .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
             long revision = cursor.bumpDesired();
             row.setRevision(revision);
             row.setFacePresent(true);
@@ -247,18 +247,21 @@ public class DesiredProjectionService {
      */
     @Transactional
     public void publishFaceCleared(Member member) {
-        for (var mapping : mappings.findByMemberId(member.getId())) {
+        for (var mapping : inReaderOrder(member)) {
             Device device = devices.findById(mapping.getDeviceId()).orElse(null);
             if (device == null || device.getGatewayId() == null) {
                 continue;
             }
             DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
                     .orElse(null);
-            if (row == null || !row.isPresentOnReader() || !row.isFacePresent()) {
+            if (row == null) {
                 continue;
             }
-            ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                    .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
+            ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+            revisions.reload(row);
+            if (!row.isPresentOnReader() || !row.isFacePresent()) {
+                continue;
+            }
             long revision = cursor.bumpDesired();
             row.setRevision(revision);
             row.setFacePresent(false);
@@ -276,14 +279,15 @@ public class DesiredProjectionService {
      */
     @Transactional
     public long republish(Member member, Device device) {
-        DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
-                .orElseThrow(() -> CommonExceptions.conflict("Member is not on this reader"));
-        MemberDeviceMapping mapping = mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
-                .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing"));
+        ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+        DesiredMemberProjection row = revisions.reload(
+                projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                        .orElseThrow(() -> CommonExceptions.conflict("Member is not on this reader")));
+        MemberDeviceMapping mapping = revisions.reload(
+                mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                        .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing")));
         MemberFace face = faces.findByMemberId(member.getId()).orElse(null);
         applyServer(row, member, mapping.getDeviceUserId(), face);
-        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
         long revision = cursor.bumpDesired();
         row.setRevision(revision);
         projections.save(row);
@@ -305,6 +309,7 @@ public class DesiredProjectionService {
         if (deviceUserId == null || deviceUserId.isBlank()) {
             throw CommonExceptions.badRequest("Device user id is required");
         }
+        ReaderRevision cursor = revisions.lock(member.getTenantId(), device.getId());
         if (mappings.existsByDeviceIdAndMemberId(device.getId(), member.getId())) {
             throw CommonExceptions.conflict("Member is already mapped to this reader");
         }
@@ -314,8 +319,6 @@ public class DesiredProjectionService {
         MemberDeviceMapping saved = mappings.save(new MemberDeviceMapping(
                 member.getTenantId(), member.getId(), device.getId(), deviceUserId));
         attendance.linkEarlierEvents(saved);
-        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                .orElseGet(() -> revisions.save(new ReaderRevision(member.getTenantId(), device.getId())));
         long revision = cursor.bumpDesired();
         DesiredMemberProjection row = new DesiredMemberProjection(
                 member.getTenantId(), device.getId(), member.getId());
@@ -338,7 +341,9 @@ public class DesiredProjectionService {
         if (deviceUserId == null || deviceUserId.isBlank()) {
             throw CommonExceptions.badRequest("Device user id is required");
         }
+        ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
         DesiredMemberProjection row = projections.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .map(revisions::reload)
                 .orElse(null);
         if (row != null && row.getMemberId() != null) {
             throw CommonExceptions.conflict("Device user id belongs to a member");
@@ -348,8 +353,6 @@ public class DesiredProjectionService {
             row.setDoorNum(DOOR_NUM);
             row.setTimeSectionNum(TIME_SECTION_NUM);
         }
-        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                .orElseGet(() -> revisions.save(new ReaderRevision(device.getTenantId(), device.getId())));
         long revision = cursor.bumpDesired();
         LocalDate today = LocalDate.now(READER_ZONE);
         row.setRevision(revision);
@@ -377,11 +380,14 @@ public class DesiredProjectionService {
     public long publishRemoval(Member member, Device device) {
         DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
                 .orElse(null);
-        if (row == null || !row.isPresentOnReader()) {
+        if (row == null) {
             return 0;
         }
-        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
+        ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+        revisions.reload(row);
+        if (!row.isPresentOnReader()) {
+            return 0;
+        }
         long revision = cursor.bumpDesired();
         row.setRevision(revision);
         row.setPresentOnReader(false);
@@ -409,7 +415,7 @@ public class DesiredProjectionService {
             throw CommonExceptions.badRequest("after must be zero or greater");
         }
         Device device = ownedReader(gateway, devicePublicId);
-        ReaderRevision cursor = revisions.findByDeviceId(device.getId()).orElse(null);
+        ReaderRevision cursor = revisions.find(device.getId()).orElse(null);
         long desired = cursor == null ? 0 : cursor.getDesiredRevision();
         long applied = cursor == null ? 0 : cursor.getAppliedRevision();
         int page = Math.min(Math.max(limit, 1), PAGE_LIMIT);
@@ -424,8 +430,8 @@ public class DesiredProjectionService {
     @Transactional
     public RevisionNotice acknowledge(Gateway gateway, AcknowledgeRevision ack) {
         Device device = ownedReader(gateway, ack.deviceId());
-        DesiredMemberProjection row = projections.findByDeviceIdAndRevision(device.getId(), ack.revision())
-                .orElseThrow(() -> CommonExceptions.conflict("Revision is not the desired member"));
+        ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+        DesiredMemberProjection row = currentAt(device, ack.revision());
         if (!matches(row, ack)) {
             String error = "Read-back does not match the desired member";
             if (ack.failCode() != null && !ack.failCode().isBlank()) {
@@ -443,11 +449,8 @@ public class DesiredProjectionService {
             reviews.reconcile(row);
         }
         reviews.settle(device.getId(), ack.revision());
-        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
         if (ack.revision() > cursor.getAppliedRevision()) {
             cursor.setAppliedRevision(ack.revision());
-            revisions.save(cursor);
         }
         return new RevisionNotice(device.getPublicId(), cursor.getAppliedRevision());
     }
@@ -459,22 +462,20 @@ public class DesiredProjectionService {
     @Transactional
     public RevisionNotice occupied(Gateway gateway, ReportOccupied report) {
         Device device = ownedReader(gateway, report.deviceId());
-        DesiredMemberProjection row = projections.findByDeviceIdAndRevision(device.getId(), report.revision())
-                .orElseThrow(() -> CommonExceptions.conflict("Revision is not the desired member"));
+        ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+        DesiredMemberProjection row = currentAt(device, report.revision());
         if (!report.deviceUserId().equals(row.getDeviceUserId())) {
             throw CommonExceptions.conflict("Occupied id is not the desired id");
         }
         if (!blocked.existsByDeviceIdAndDeviceUserId(device.getId(), report.deviceUserId())) {
             blocked.save(new ReaderBlockedUser(device.getTenantId(), device.getId(), report.deviceUserId()));
         }
-        String nextId = allocator.allocate(device.getId());
-        MemberDeviceMapping mapping = mappings.findByDeviceIdAndMemberId(device.getId(), row.getMemberId())
-                .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing"));
+        String nextId = allocator.allocate(cursor);
+        MemberDeviceMapping mapping = revisions.reload(
+                mappings.findByDeviceIdAndMemberId(device.getId(), row.getMemberId())
+                        .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing")));
         mapping.setDeviceUserId(nextId);
         mappings.save(mapping);
-
-        ReaderRevision cursor = revisions.findByDeviceId(device.getId())
-                .orElseThrow(() -> CommonExceptions.conflict("Reader has no revision"));
         long revision = cursor.bumpDesired();
         row.setRevision(revision);
         row.setDeviceUserId(nextId);
@@ -483,6 +484,28 @@ public class DesiredProjectionService {
         FlowLog.info("device", "occupied id {} on reader={}; retry revision={} user={}",
                 report.deviceUserId(), device.getPublicId(), revision, nextId);
         return new RevisionNotice(device.getPublicId(), revision);
+    }
+
+    /** One reader at a time, lowest device id first, so two multi-reader writers cannot deadlock. */
+    private List<MemberDeviceMapping> inReaderOrder(Member member) {
+        return mappings.findByMemberId(member.getId()).stream()
+                .sorted(Comparator.comparing(MemberDeviceMapping::getDeviceId))
+                .toList();
+    }
+
+    /**
+     * The row that still carries this revision. Call with the reader locked. A later revision of
+     * the same row means this one was superseded and is no longer the desired member.
+     */
+    private DesiredMemberProjection currentAt(Device device, long revision) {
+        DesiredMemberProjection row = projections.findByDeviceIdAndRevision(device.getId(), revision)
+                .map(revisions::reload)
+                .filter(found -> found.getRevision() == revision)
+                .orElse(null);
+        if (row == null) {
+            throw CommonExceptions.conflict("Revision is not the desired member");
+        }
+        return row;
     }
 
     private void applyServer(DesiredMemberProjection row, Member member, String deviceUserId, MemberFace face) {

@@ -74,6 +74,11 @@ public abstract class AbstractIntegrationTest {
 
     protected static final String DEFAULT_PASSWORD = "Password123!";
 
+    /** Server-wide views such as InnoDB lock waits need a privilege the application user lacks. */
+    protected static java.sql.Connection rootConnection() throws java.sql.SQLException {
+        return java.sql.DriverManager.getConnection(MYSQL.getJdbcUrl(), "root", MYSQL.getPassword());
+    }
+
     @Autowired
     protected MockMvc mockMvc;
 

@@ -69,6 +69,11 @@ public class DeviceReconciliationService {
 
     @Transactional
     public void applyDeviceUserSnapshot(Device device, JsonNode payload) {
+        if (device.isProjectionEnabled()) {
+            FlowLog.info("reconcile", "device={} follows desired revisions; the user list is not applied here",
+                    device.getPublicId());
+            return;
+        }
         if (payload != null && payload.path("usersUnchanged").asBoolean(false)) {
             FlowLog.info("reconcile", "device={} user list unchanged since the last full comparison (checksum matched)",
                     device.getPublicId());

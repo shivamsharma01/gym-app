@@ -17,6 +17,14 @@ public sealed class CommandDispatcher
         "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", "DISABLE_USER", "ENABLE_USER", "UPDATE_VALIDITY"
     };
 
+    /// <summary>Member writes the desired-state worker owns. Door, clock, and attendance stay.</summary>
+    private static readonly HashSet<string> MemberWrites = new(StringComparer.Ordinal)
+    {
+        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", "DISABLE_USER", "ENABLE_USER",
+        "UPDATE_VALIDITY", "REMOVE_USER", "ENROLL_FACE", "UPSERT_FACE", "DELETE_FACE",
+        "REPORT_DEVICE_USER", "REFRESH_DEVICE_USERS", "RECONCILE_DEVICE"
+    };
+
     private readonly IReadOnlyDictionary<string, IDeviceAdapter> _adapters;
     private readonly ILogger<CommandDispatcher> _log;
     private readonly IFaceTransfer? _faces;
@@ -24,6 +32,7 @@ public sealed class CommandDispatcher
     private readonly DeviceLocks _locks;
     private readonly Func<string, string, Task<(bool Ok, string? Error)>>? _reportUser;
     private readonly ILocalMemberSync? _memberSync;
+    private HashSet<string> _desiredWriters = new(StringComparer.Ordinal);
     private static readonly TimeSpan FinishedKept = TimeSpan.FromMinutes(30);
     private readonly object _seenGate = new();
     private readonly Dictionary<string, Task<DispatchOutcome>> _running = new(StringComparer.Ordinal);
@@ -45,6 +54,24 @@ public sealed class CommandDispatcher
         _locks = locks ?? new DeviceLocks();
         _reportUser = reportUser;
         _memberSync = memberSync;
+    }
+
+    /// <summary>
+    /// These readers are written only by their desired-revision workers. A member command for one
+    /// of them is refused before timestamp-wins and before the adapter.
+    /// </summary>
+    public void MemberWritesFollowDesiredState(IEnumerable<string> deviceIds)
+    {
+        var next = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var deviceId in deviceIds)
+        {
+            if (!string.IsNullOrWhiteSpace(deviceId))
+            {
+                next.Add(deviceId);
+            }
+        }
+
+        _desiredWriters = next;
     }
 
     /// <summary>
@@ -120,6 +147,11 @@ public sealed class CommandDispatcher
 
     private async Task<DispatchOutcome> DispatchOnceAsync(GatewayEnvelope command)
     {
+        if (MemberWrites.Contains(command.Type ?? "") && _desiredWriters.Contains(command.DeviceId ?? ""))
+        {
+            return DispatchOutcome.SyncFail("desired revisions write this reader");
+        }
+
         if (string.IsNullOrWhiteSpace(command.DeviceId) || !_adapters.TryGetValue(command.DeviceId, out var adapter))
         {
             return DispatchOutcome.SyncFail("Unknown or unconfigured deviceId");

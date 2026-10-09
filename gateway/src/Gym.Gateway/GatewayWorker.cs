@@ -116,6 +116,8 @@ public sealed class GatewayWorker : BackgroundService
             _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _link, _roster, _locks,
             (deviceId, userId) => _watcher!.ReportUserAsync(deviceId, userId, stoppingToken),
             _watcher);
+        _dispatcher.MemberWritesFollowDesiredState(
+            _options.Devices.Where(device => device.ProjectionEnabled).Select(device => device.DeviceId));
         AttachReaders();
 
         var sendLoop = SendLoopAsync(_link, stoppingToken);

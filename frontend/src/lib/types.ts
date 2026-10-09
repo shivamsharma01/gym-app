@@ -273,6 +273,7 @@ export type MemberDeviceSync = {
     faceVersionSynced: number | null
     faceLastError: string | null
     openCommands: { type: string; state: string; attemptCount: number; lastError: string | null }[]
+    projectionEnabled: boolean
   }[]
 }
 

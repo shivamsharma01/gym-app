@@ -109,7 +109,8 @@ public class MemberDeviceSyncService {
                     mapping.getFaceSyncState() == null ? null : mapping.getFaceSyncState().name(),
                     mapping.getFaceVersionSynced(),
                     mapping.getFaceLastError(),
-                    commands));
+                    commands,
+                    device.isProjectionEnabled()));
         }
         return new SyncStatus(faceInfo, rows);
     }
@@ -171,7 +172,8 @@ public class MemberDeviceSyncService {
             String faceSyncState,
             Integer faceVersionSynced,
             String faceLastError,
-            List<OpenCommand> openCommands) {
+            List<OpenCommand> openCommands,
+            boolean projectionEnabled) {
     }
 
     public record OpenCommand(String type, String state, int attemptCount, String lastError) {

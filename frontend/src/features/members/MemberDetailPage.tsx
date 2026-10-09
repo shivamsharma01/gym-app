@@ -313,6 +313,8 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
   })
   if (sync.error) return <QueryError error={sync.error} />
   const data = sync.data
+  const legacyDevices = (data?.devices ?? []).filter((row) => !row.projectionEnabled)
+  if (data && legacyDevices.length === 0) return null
   return (
     <section>
       <SectionTitle title="Device sync" />
@@ -333,7 +335,7 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
           </p>
         ) : (
           <div className="divide-y divide-line">
-            {data.devices.map((row) => {
+            {legacyDevices.map((row) => {
               const face = faceStateLabel(row, data.face)
               return (
                 <div key={row.deviceId} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">

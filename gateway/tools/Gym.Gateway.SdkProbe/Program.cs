@@ -31,10 +31,13 @@ if (args.Contains("--self-test"))
     changed.stuValidEndTime = NetSDKCS.NET_TIME.FromDateTime(new DateTime(2027, 6, 7, 21, 22, 23));
     Console.WriteLine(string.Join(" | ", UserFields.NonEmpty(UserFields.Dump(changed))));
     Console.WriteLine(string.Join(" | ", UserFields.Diff(UserFields.Dump(blank), UserFields.Dump(changed))));
-    return 0;
+    var ruleFailures = GateVerdicts.SelfCheck();
+    Console.WriteLine(ruleFailures.Count == 0 ? "gate verdict rules: ok" : "gate verdict rules FAILED:\n  " + string.Join("\n  ", ruleFailures));
+    return ruleFailures.Count == 0 ? 0 : 1;
 }
 
-var outDir = options.OutDir ?? Path.Combine(Environment.CurrentDirectory, "sdk-probe-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+var outPrefix = options.Gates ? "sync-gates-" : "sdk-probe-";
+var outDir = options.OutDir ?? Path.Combine(Environment.CurrentDirectory, outPrefix + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
 using var report = new Report(outDir);
 var exitCode = 0;
 try
@@ -83,12 +86,15 @@ namespace Gym.Gateway.SdkProbe
     {
         private readonly List<string> _answers = [];
 
+        private bool ReadOnly => !o.SkipRead && !o.Gates;
+
         public int Run()
         {
             r.Section("TrueFace SDK probe");
             r.Line($"Started  {DateTime.Now:yyyy-MM-dd HH:mm:ss} local, {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC, zone {TimeZoneInfo.Local.Id}");
             r.Line($"Machine  {Environment.MachineName}, write test {(o.Write ? "ON" : "off")}, field test {(o.Fields ? "ON" : "off")}, "
-                   + $"interactive {(o.Interactive ? "ON" : "off")}, read-only part {(o.SkipRead ? "skipped" : "on")}, samples {o.Samples}");
+                   + $"interactive {(o.Interactive ? "ON" : "off")}, read-only part {(ReadOnly ? "on" : "skipped")}, samples {o.Samples}, "
+                   + $"sync gates {(o.Gates ? "ON" : "off")}{(o.Gates && o.SpareReader ? " (SPARE READER)" : "")}");
 
             var gatewayRunning = Process.GetProcessesByName("Gym.Gateway").Length > 0;
             if (gatewayRunning)
@@ -138,13 +144,13 @@ namespace Gym.Gateway.SdkProbe
                     var f = new DeviceFindings(session);
                     findings.Add(f);
                     r.Line("  logged in");
-                    if (!o.SkipRead)
+                    if (ReadOnly)
                     {
                         ReadOnlySuite(f);
                     }
                 }
 
-                if (!o.SkipRead)
+                if (ReadOnly)
                 {
                     CrossReader(findings);
                 }
@@ -170,13 +176,21 @@ namespace Gym.Gateway.SdkProbe
                         {
                             new FieldSuite(o, r, writeTarget, _answers).Run();
                         }
+
+                        if (o.Gates)
+                        {
+                            new GateSuite(o, r, writeTarget.Session).Run();
+                        }
                     }
                 }
 
-                r.Section("Answers");
-                foreach (var a in _answers)
+                if (!o.Gates || _answers.Count > 0)
                 {
-                    r.Line("* " + a);
+                    r.Section("Answers");
+                    foreach (var a in _answers)
+                    {
+                        r.Line("* " + a);
+                    }
                 }
             }
             finally

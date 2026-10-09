@@ -7,12 +7,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.gateway")
 public class GatewayProperties {
 
-    /**
-     * Shared token a gateway must present during the WebSocket handshake. Empty disables the check
-     * (dev only) — production must set a strong value via the environment.
-     */
-    private String sharedToken = "";
-
     /** Minutes without a heartbeat after which a gateway is considered OFFLINE. */
     private long heartbeatTimeoutSeconds = 90;
 
@@ -43,14 +37,6 @@ public class GatewayProperties {
 
     public void setDevicesEnforceValidityDates(boolean devicesEnforceValidityDates) {
         this.devicesEnforceValidityDates = devicesEnforceValidityDates;
-    }
-
-    public String getSharedToken() {
-        return sharedToken;
-    }
-
-    public void setSharedToken(String sharedToken) {
-        this.sharedToken = sharedToken;
     }
 
     public long getHeartbeatTimeoutSeconds() {

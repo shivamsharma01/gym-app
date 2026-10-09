@@ -12,12 +12,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Moves members' devices along as memberships start and end: when the membership on the devices
- * has ended, the next one's dates are sent (enabled when that plan is in force), or the member is
- * disabled when there is none; a membership that must wait for its start day is enabled on that
- * day. Payment is not consulted. Runs hourly (only members whose window actually changed get
- * commands) and once at startup to catch up after downtime. "Today" is the server's local date,
- * so the server must run in the gym's time zone.
+ * Publishes a new desired revision when a mapped member's access window changes as memberships
+ * start and end. Payment is not consulted. Runs hourly, and once at startup. "Today" is the
+ * server's local date, so the server must run in the gym's time zone.
  */
 @Component
 @ConditionalOnProperty(prefix = "app.gateway.outbox", name = "dispatcher-enabled",
@@ -65,7 +62,7 @@ public class AccessCheckScheduler {
             this.transactions = transactions;
         }
 
-        /** Returns how many members got new access commands. */
+        /** Returns how many members had a changed window published as a desired revision. */
         public int run() {
             membershipExpiry.expireElapsed();
             int updated = 0;

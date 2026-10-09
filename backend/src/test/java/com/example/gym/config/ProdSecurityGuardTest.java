@@ -11,28 +11,35 @@ class ProdSecurityGuardTest {
     @Test
     void rejectsDevDefaultSecret() {
         var guard = new ProdSecurityGuard(
-                "dev-only-insecure-secret-change-me-0123456789-0123456789", false);
+                "dev-only-insecure-secret-change-me-0123456789-0123456789", false, "");
         assertThrows(IllegalStateException.class,
                 () -> guard.run(new DefaultApplicationArguments()));
     }
 
     @Test
     void rejectsShortSecret() {
-        var guard = new ProdSecurityGuard("too-short", false);
+        var guard = new ProdSecurityGuard("too-short", false, "");
         assertThrows(IllegalStateException.class,
                 () -> guard.run(new DefaultApplicationArguments()));
     }
 
     @Test
     void rejectsSimulatorInProd() {
-        var guard = new ProdSecurityGuard("x".repeat(48), true);
+        var guard = new ProdSecurityGuard("x".repeat(48), true, "");
+        assertThrows(IllegalStateException.class,
+                () -> guard.run(new DefaultApplicationArguments()));
+    }
+
+    @Test
+    void rejectsSharedGatewayToken() {
+        var guard = new ProdSecurityGuard("x".repeat(48), false, "legacy-shared-token");
         assertThrows(IllegalStateException.class,
                 () -> guard.run(new DefaultApplicationArguments()));
     }
 
     @Test
     void acceptsStrongSecret() {
-        var guard = new ProdSecurityGuard("x".repeat(48), false);
+        var guard = new ProdSecurityGuard("x".repeat(48), false, "  ");
         assertDoesNotThrow(() -> guard.run(new DefaultApplicationArguments()));
     }
 }

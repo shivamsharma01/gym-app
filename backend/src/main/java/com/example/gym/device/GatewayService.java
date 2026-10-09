@@ -61,6 +61,9 @@ public class GatewayService {
      */
     @Transactional
     public GatewayCreated create(String name, Long tenantId) {
+        if (gatewayRepository.existsByTenantId(tenantId)) {
+            throw CommonExceptions.conflict("This gym already has a gateway");
+        }
         String enrollment = authService.newToken();
         // Placeholder operational hash until enroll — never equals the enrollment hash.
         String placeholder = authService.hash(authService.newToken());
@@ -96,20 +99,22 @@ public class GatewayService {
     }
 
     /**
-     * Exchanges a valid enrollment token for a long-lived operational credential.
+     * Exchanges a valid enrollment token for a long-lived operational credential. The gateway is
+     * the row that stores that token's hash. {@code requestedGatewayId} is ignored when it
+     * disagrees, so a caller cannot enroll as a different gateway.
      */
     @Transactional
-    public GatewayCredentialResponse enroll(String gatewayPublicId, String enrollmentToken) {
+    public GatewayCredentialResponse enroll(String requestedGatewayId, String enrollmentToken) {
         if (!StringUtils.hasText(enrollmentToken)) {
             throw CommonExceptions.unauthorized("Invalid enrollment token");
         }
-        Gateway gateway = gatewayRepository.findByPublicId(gatewayPublicId)
-                .orElseThrow(() -> CommonExceptions.notFound("Gateway"));
-
         String enrollmentHash = authService.hash(enrollmentToken);
-        if (gateway.getEnrollmentTokenHash() == null
-                || !gateway.getEnrollmentTokenHash().equals(enrollmentHash)) {
-            throw CommonExceptions.unauthorized("Invalid enrollment token");
+        Gateway gateway = gatewayRepository.findByEnrollmentTokenHash(enrollmentHash)
+                .orElseThrow(() -> CommonExceptions.unauthorized("Invalid enrollment token"));
+        if (StringUtils.hasText(requestedGatewayId)
+                && !requestedGatewayId.equals(gateway.getPublicId())) {
+            FlowLog.info("gateway", "ignoring enrollment body gateway id; token belongs to {}",
+                    gateway.getPublicId());
         }
         if (gateway.getEnrollmentConsumedAt() != null) {
             throw CommonExceptions.conflict("Enrollment token has already been used");
@@ -191,7 +196,7 @@ public class GatewayService {
         });
     }
 
-    /** Marks gateways OFFLINE when the heartbeat has gone stale (connectivity, not device state). */
+    /** Marks the gym gateway OFFLINE when the heartbeat has gone stale (connectivity, not device state). */
     @Transactional
     public int markStaleOffline(Instant cutoff) {
         List<Gateway> stale = gatewayRepository.findByStatusAndLastHeartbeatAtBefore(

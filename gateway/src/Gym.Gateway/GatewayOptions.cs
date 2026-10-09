@@ -31,13 +31,10 @@ public sealed class GatewayOptions
 
     public List<DeviceEndpointOptions> Devices { get; set; } = [];
 
-    /// <summary>How often each device's user list is compared for local changes. Face import does not use this wait.</summary>
+    /// <summary>How often each reader is read for observations.</summary>
     public int RosterPollSeconds { get; set; } = 15;
 
-    /// <summary>How often every user's face is re-read to catch changes the device did not announce.</summary>
-    public int FaceSweepMinutes { get; set; } = 30;
-
-    /// <summary>How often the gateway logs a status summary (server link, queue, and each reader's progress).</summary>
+    /// <summary>How often the gateway logs a status summary.</summary>
     public int StatusLogSeconds { get; set; } = 60;
 
     /// <summary>Serilog level: Information (default) or Debug for per-command sync detail.</summary>

@@ -66,6 +66,8 @@ public final class AuditActions {
     public static final String RECONCILIATION_CONFLICT_RESOLVED = "RECONCILIATION_CONFLICT_RESOLVED";
     public static final String RECONCILIATION_REPAIR_ENQUEUED = "RECONCILIATION_REPAIR_ENQUEUED";
     public static final String DEVICE_USERS_IMPORTED = "DEVICE_USERS_IMPORTED";
+    public static final String REVIEW_DECIDED = "REVIEW_DECIDED";
+    public static final String ENROLLMENT_DECIDED = "ENROLLMENT_DECIDED";
 
     public static final String ENQUIRY_RECEIVED = "ENQUIRY_RECEIVED";
     public static final String ENQUIRY_UPDATED = "ENQUIRY_UPDATED";

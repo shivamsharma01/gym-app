@@ -93,6 +93,7 @@ try
     }
 
     builder.Services.AddSingleton(options);
+    builder.Services.AddSingleton<IReaderAdapterFactory, ConnectedReaderAdapterFactory>();
     builder.Services.AddSingleton(protector);
     builder.Services.AddSingleton(configStore);
     builder.Services.AddSingleton<GatewayEnrollmentClient>();

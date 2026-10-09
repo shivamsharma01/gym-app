@@ -26,6 +26,7 @@ import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -87,8 +88,8 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
 
     @Test
     void commandsWaitForAnOfflineGatewayWithoutUsingUpAttemptsAndReconnectReleasesThem() throws Exception {
-        postJson("/api/v1/members", "{\"firstName\":\"Om\",\"lastName\":\"Das\",\"memberCode\":\"9001\",\"serialNumber\":\"9001\"}")
-                .andExpect(status().isCreated());
+        deviceSyncService.enqueue(tenant.getId(), device, null, null,
+                SyncCommandType.OPEN_DOOR, Map.of("reason", "wait"));
 
         // Far more delivery rounds than the 6 allowed attempts.
         for (int i = 0; i < 10; i++) {
@@ -111,7 +112,7 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
     @Test
     void registeringAGatewayRunsTheCatchUpStep() {
         gatewayMessageService.process(envelope("REGISTER_GATEWAY", UUID.randomUUID().toString(),
-                "{\"agentVersion\":\"1\"}"));
+                "{\"agentVersion\":\"1\"}"), gatewayId);
         assertThat(deviceSyncCommandRepository.findAll())
                 .anyMatch(c -> c.getType() == SyncCommandType.RECONCILE_DEVICE && c.getDeviceId().equals(device));
     }
@@ -128,14 +129,15 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
                  "faceChanged":false,"faceRemoved":false}
                 """.formatted(Instant.now()));
 
-        assertThat(gatewayMessageService.process(message).orElseThrow()).contains("ERROR");
+        assertThat(gatewayMessageService.process(message, gatewayId).orElseThrow()).contains("ERROR");
         assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isFalse();
         assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "9100")).isEmpty();
 
         // Resent (the gateway keeps it until ACK): processed this time, then deduplicated.
-        assertThat(gatewayMessageService.process(message).orElseThrow()).contains("ACK");
-        assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "9100")).isPresent();
-        gatewayMessageService.process(message);
+        assertThat(gatewayMessageService.process(message, gatewayId).orElseThrow()).contains("ACK");
+        assertThat(memberRepository.findAll()).isEmpty();
+        assertThat(pendingEnrollmentRepository.findAll()).isNotEmpty();
+        gatewayMessageService.process(message, gatewayId);
         verify(deviceUserChangeService, times(2)).apply(any(), any());
         doCallRealMethod().when(deviceUserChangeService).apply(any(), any());
     }
@@ -194,25 +196,18 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
                 {"deviceUserId":"9300","name":"Asha Pal","frozen":false,"deviceChangedAt":"%s","isNew":true,
                  "profileChanged":true,"nameChanged":true,"frozenChanged":false,"validityChanged":false,
                  "faceChanged":false,"faceRemoved":false,"siblingsUpdated":true,"siblingDeviceIds":["%s"]}
-                """.formatted(Instant.now(), exitId)));
+                """.formatted(Instant.now(), exitId)), gatewayId);
         gatewayMessageService.process(envelope("DEVICE_USER_CHANGED", UUID.randomUUID().toString(), """
                 {"deviceUserId":"9300","name":"Asha Pal Singh","frozen":false,"deviceChangedAt":"%s","isNew":false,
                  "profileChanged":true,"nameChanged":true,"frozenChanged":false,"validityChanged":false,
                  "faceChanged":false,"faceRemoved":false,"siblingsUpdated":true,"siblingDeviceIds":["%s"]}
-                """.formatted(Instant.now(), exitId)));
+                """.formatted(Instant.now(), exitId)), gatewayId);
 
-        assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "9300")).isPresent();
-        assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(exit, "9300")).isPresent();
+        assertThat(memberRepository.findAll()).isEmpty();
+        assertThat(memberDeviceMappingRepository.findAll()).isEmpty();
         assertThat(userCommands(exit)).isEmpty();
-
-        // An older gateway without the flag: the other reader still gets the new user.
-        gatewayMessageService.process(envelope("DEVICE_USER_CHANGED", UUID.randomUUID().toString(), """
-                {"deviceUserId":"9301","name":"Ravi Jain","frozen":false,"deviceChangedAt":"%s","isNew":true,
-                 "profileChanged":true,"nameChanged":true,"frozenChanged":false,"validityChanged":false,
-                 "faceChanged":false,"faceRemoved":false}
-                """.formatted(Instant.now())));
-        assertThat(userCommands(exit)).extracting(DeviceSyncCommand::getType).contains(SyncCommandType.CREATE_USER);
         assertThat(userCommands(device)).isEmpty();
+        assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(device, "9300")).isPresent();
     }
 
     // --- helpers ---------------------------------------------------------------------------------
@@ -231,8 +226,8 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
 
     @Test
     void commandsClaimedByOneDispatcherAreSkippedByAConcurrentOne() throws Exception {
-        postJson("/api/v1/members", "{\"firstName\":\"Ira\",\"lastName\":\"Sen\",\"memberCode\":\"9002\",\"serialNumber\":\"9002\"}")
-                .andExpect(status().isCreated());
+        deviceSyncService.enqueue(tenant.getId(), device, null, null,
+                SyncCommandType.OPEN_DOOR, Map.of("reason", "claim"));
         makeAllDue();
         CountDownLatch claimed = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);

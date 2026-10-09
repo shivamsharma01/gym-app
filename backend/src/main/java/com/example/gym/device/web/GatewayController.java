@@ -37,7 +37,7 @@ public class GatewayController {
 
     @GetMapping
     @PreAuthorize("hasAuthority('DEVICE_VIEW')")
-    @Operation(summary = "List device gateways")
+    @Operation(summary = "The gym's gateway")
     public PageResponse<GatewayView> list(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {

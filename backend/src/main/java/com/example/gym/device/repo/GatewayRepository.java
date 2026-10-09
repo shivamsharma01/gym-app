@@ -21,5 +21,7 @@ public interface GatewayRepository extends JpaRepository<Gateway, Long> {
 
     Page<Gateway> findByTenantId(Long tenantId, Pageable pageable);
 
+    boolean existsByTenantId(Long tenantId);
+
     List<Gateway> findByStatusAndLastHeartbeatAtBefore(GatewayStatus status, Instant cutoff);
 }

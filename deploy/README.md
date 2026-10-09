@@ -242,7 +242,7 @@ Install details: [gateway/README.md](../gateway/README.md).
 ## 6. Local development
 
 - Backend: `SPRING_PROFILES_ACTIVE=dev` ([frontend/README.md](../frontend/README.md)).
-- Gateway without hardware: [gateway/README.md](../gateway/README.md) (Mock or the Python simulator).
+- Gateway without hardware: [gateway/README.md](../gateway/README.md) (Mock adapter).
 
 ---
 

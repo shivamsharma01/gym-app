@@ -32,12 +32,12 @@ export function DeviceNewPage() {
     resolver: zodResolver(schema),
     defaultValues: { name: '', role: 'ENTRANCE', host: '', port: '37777', model: 'TrueFace 3000', serialNumber: '', gatewayId: '' },
   })
+  const gateway = gateways.data?.content[0]
   useEffect(() => {
-    const rows = gateways.data?.content ?? []
-    if (rows.length === 1 && !form.getValues('gatewayId')) {
-      form.setValue('gatewayId', rows[0].id)
+    if (gateway && !form.getValues('gatewayId')) {
+      form.setValue('gatewayId', gateway.id)
     }
-  }, [gateways.data, form])
+  }, [gateway, form])
   const create = useMutation({
     mutationFn: (body: Form) =>
       api<Device>('/api/v1/devices', {
@@ -99,18 +99,13 @@ export function DeviceNewPage() {
         </div>
         <div>
           <Label>Gateway</Label>
-          <Select {...form.register('gatewayId')}>
-            <option value="">None yet</option>
-            {gateways.data?.content.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </Select>
+          <p className="text-sm text-muted">
+            {gateway ? gateway.name : 'Create the gym gateway before registering a reader.'}
+          </p>
         </div>
         {create.error ? <QueryError error={create.error} /> : null}
         <div className="flex gap-2">
-          <Button type="submit" disabled={create.isPending}>
+          <Button type="submit" disabled={create.isPending || !gateway}>
             Create
           </Button>
           <Button type="button" variant="outline" onClick={() => navigate(-1)}>

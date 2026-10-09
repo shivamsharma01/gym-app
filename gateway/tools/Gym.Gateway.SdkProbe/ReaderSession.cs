@@ -20,6 +20,10 @@ internal sealed record UserListResult(List<UserRow> Users, int Total, int CapNum
 
 internal sealed record AlarmSeen(DateTime AtUtc, string Type, string Detail);
 
+internal sealed record Punch(int RecNo, string? UserId, string TimeRaw, DateTime? Time, bool Granted, string Method, int ErrorCode);
+
+internal sealed record PunchQuery(List<Punch> Rows, int Calls, long Ms, string? Error, bool Capped);
+
 /// <summary>One logged-in reader. Uses NetSDK directly so raw fields (update times, MD5s) stay visible.</summary>
 internal sealed class ReaderSession : IDisposable
 {
@@ -464,6 +468,124 @@ internal sealed class ReaderSession : IDisposable
         }
     }
 
+    /// <summary>Attendance records in a reader-clock time window, optionally sorted by record number.</summary>
+    public PunchQuery QueryPunches(DateTime from, DateTime to, bool? ascending = null, int cap = 5000)
+    {
+        const int page = 100;
+        var watch = Stopwatch.StartNew();
+        var find = StartPunchFind(from, to, ascending, out var error);
+        if (find == IntPtr.Zero)
+        {
+            return new PunchQuery([], 0, watch.ElapsedMilliseconds, error, false);
+        }
+
+        var rows = new List<Punch>();
+        var calls = 0;
+        var capped = false;
+        try
+        {
+            while (true)
+            {
+                if (rows.Count >= cap)
+                {
+                    capped = true;
+                    break;
+                }
+
+                var list = PunchPage(page);
+                var returned = 0;
+                calls++;
+                if (NETClient.FindNextRecord(find, page, ref returned, ref list, typeof(NET_RECORDSET_ACCESS_CTL_CARDREC), ListWaitMs) < 0)
+                {
+                    error = "FindNextRecord failed: " + NETClient.GetLastError();
+                    break;
+                }
+
+                AppendPunches(rows, list, returned);
+
+                if (returned < page)
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            NETClient.FindRecordClose(find);
+        }
+
+        return new PunchQuery(rows, calls, watch.ElapsedMilliseconds, error, capped);
+    }
+
+    private static List<object> PunchPage(int page)
+    {
+        var list = new List<object>(page);
+        for (var i = 0; i < page; i++)
+        {
+            list.Add(new NET_RECORDSET_ACCESS_CTL_CARDREC { dwSize = (uint)Marshal.SizeOf<NET_RECORDSET_ACCESS_CTL_CARDREC>() });
+        }
+
+        return list;
+    }
+
+    private static void AppendPunches(List<Punch> rows, List<object> list, int returned)
+    {
+        for (var i = 0; i < returned && i < list.Count; i++)
+        {
+            var x = (NET_RECORDSET_ACCESS_CTL_CARDREC)list[i];
+            rows.Add(new Punch(x.nRecNo, string.IsNullOrWhiteSpace(x.szUserID) ? null : x.szUserID.Trim(),
+                Raw(x.stuTime), ToDate(x.stuTime), x.bStatus, x.emMethod.ToString(), x.nErrorCode));
+        }
+    }
+
+    public int? CountPunches(DateTime from, DateTime to)
+    {
+        var find = StartPunchFind(from, to, null, out _);
+        if (find == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            var count = 0;
+            return NETClient.QueryRecordCount(find, ref count, ListWaitMs) ? count : null;
+        }
+        finally
+        {
+            NETClient.FindRecordClose(find);
+        }
+    }
+
+    private IntPtr StartPunchFind(DateTime from, DateTime to, bool? ascending, out string? error)
+    {
+        var condition = new NET_FIND_RECORD_ACCESSCTLCARDREC_CONDITION_EX
+        {
+            dwSize = (uint)Marshal.SizeOf<NET_FIND_RECORD_ACCESSCTLCARDREC_CONDITION_EX>(),
+            bTimeEnable = true,
+            stStartTime = NET_TIME.FromDateTime(from),
+            stEndTime = NET_TIME.FromDateTime(to),
+            stuOrders = new NET_FIND_RECORD_ACCESSCTLCARDREC_ORDER[6]
+        };
+        for (var i = 0; i < condition.stuOrders.Length; i++)
+        {
+            condition.stuOrders[i].byReverse = new byte[64];
+        }
+
+        if (ascending != null)
+        {
+            condition.nOrderNum = 1;
+            condition.stuOrders[0].emField = EM_RECORD_ACCESSCTLCARDREC_ORDER_FIELD.RECNO;
+            condition.stuOrders[0].emOrderType = ascending.Value ? EM_RECORD_ORDER_TYPE.ASCENT : EM_RECORD_ORDER_TYPE.DESCENT;
+        }
+
+        var find = IntPtr.Zero;
+        var ok = NETClient.FindRecord(Login, EM_NET_RECORD_TYPE.ACCESSCTLCARDREC_EX, condition,
+            typeof(NET_FIND_RECORD_ACCESSCTLCARDREC_CONDITION_EX), ref find, ListWaitMs);
+        error = ok && find != IntPtr.Zero ? null : "FindRecord failed: " + NETClient.GetLastError();
+        return error == null ? find : IntPtr.Zero;
+    }
+
     public static UserRow ToRow(NET_ACCESS_USER_INFO u) =>
         new(u.szUserID.Trim(), string.IsNullOrWhiteSpace(u.szName) ? null : u.szName.Trim(), u.nUserStatus,
             Raw(u.stuValidBeginTime), Raw(u.stuValidEndTime), Raw(u.stuUpdateTime), ToDate(u.stuUpdateTime));
@@ -544,7 +666,8 @@ internal sealed class ReaderSession : IDisposable
         {
             case EM_ALARM_TYPE.ALARM_ACCESS_CTL_EVENT when len >= Marshal.SizeOf<NET_ALARM_ACCESS_CTL_EVENT_INFO>():
                 var access = Marshal.PtrToStructure<NET_ALARM_ACCESS_CTL_EVENT_INFO>(buf);
-                return $", user={access.szUserID} ok={access.bStatus} method={access.emOpenMethod}";
+                return $", user={access.szUserID} ok={access.bStatus} method={access.emOpenMethod} rec={access.nPunchingRecNo} "
+                       + $"err=0x{access.nErrorCode:X} time={Raw(access.stuTime)}";
             case EM_ALARM_TYPE.FACEINFO_COLLECT when len >= Marshal.SizeOf<NET_ALARM_FACEINFO_COLLECT_INFO>():
                 var collect = Marshal.PtrToStructure<NET_ALARM_FACEINFO_COLLECT_INFO>(buf);
                 return $", user={collect.szUserID}";
@@ -552,8 +675,21 @@ internal sealed class ReaderSession : IDisposable
                 var modified = Marshal.PtrToStructure<NET_ALARM_USER_MODIFIED_INFO>(buf);
                 return $", user={modified.szUser} op={modified.emOpType} userType={modified.emUserType}";
             default:
-                return "";
+                return RawHead(buf, len);
         }
+    }
+
+    private static string RawHead(IntPtr buf, uint len)
+    {
+        var n = (int)Math.Min(len, 64u);
+        if (n == 0)
+        {
+            return "";
+        }
+
+        var bytes = new byte[n];
+        Marshal.Copy(buf, bytes, 0, n);
+        return ", raw " + Convert.ToHexString(bytes) + (len > 64 ? "..." : "");
     }
 
     public void Dispose()

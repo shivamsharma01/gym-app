@@ -24,6 +24,7 @@ public enum PermissionCatalog {
     DEVICE_MANAGE("Manage devices"),
     DEVICE_SYNC("Synchronise devices"),
     DEVICE_REMOTE_CONTROL("Remote device control (doors, reboot)"),
+    REVIEW_DECIDE("Decide reader review items"),
     SECURITY_ALERT_VIEW("View security alerts"),
     USER_MANAGE("Manage admin users"),
     ROLE_MANAGE("Manage roles"),

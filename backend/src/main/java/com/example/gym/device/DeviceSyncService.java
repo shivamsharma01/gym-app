@@ -27,6 +27,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 import java.util.concurrent.ThreadLocalRandom;
@@ -49,6 +51,20 @@ import tools.jackson.databind.json.JsonMapper;
 public class DeviceSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceSyncService.class);
+
+    /** Member writes for a flagged reader belong to desired state. The outbox must not also create the user. */
+    private static final Set<SyncCommandType> PROJECTION_READER_SKIPS = EnumSet.of(
+            SyncCommandType.CREATE_USER,
+            SyncCommandType.UPDATE_USER,
+            SyncCommandType.DISABLE_USER,
+            SyncCommandType.ENABLE_USER,
+            SyncCommandType.REMOVE_USER,
+            SyncCommandType.UPDATE_VALIDITY,
+            SyncCommandType.UPDATE_ACCESS_POLICY,
+            SyncCommandType.ENROLL_FACE,
+            SyncCommandType.UPSERT_FACE,
+            SyncCommandType.DELETE_FACE,
+            SyncCommandType.REPORT_DEVICE_USER);
 
     private final DeviceSyncCommandRepository commandRepository;
     private final DeviceRepository deviceRepository;
@@ -116,6 +132,9 @@ public class DeviceSyncService {
     @Transactional
     public DeviceSyncCommand enqueue(Long tenantId, Long deviceId, Long memberId, Long membershipId,
                                      SyncCommandType type, Map<String, Object> payload) {
+        if (PROJECTION_READER_SKIPS.contains(type)) {
+            throw new IllegalArgumentException("Member state is a desired revision; " + type + " is not queued");
+        }
         if (memberId != null) {
             List<SyncCommandType> replaced = supersededBy(type);
             if (!replaced.isEmpty()) {
@@ -253,6 +272,13 @@ public class DeviceSyncService {
         int waiting = 0;
         int failed = 0;
         for (DeviceSyncCommand command : due) {
+            if (withholdProjectionReplay(command)) {
+                command.setState(SyncCommandState.CANCELLED);
+                command.setCompletedAt(Instant.now());
+                command.setLastError("Member state is a desired revision");
+                commandRepository.save(command);
+                continue;
+            }
             GatewayCommandTransport.Outcome outcome;
             try {
                 outcome = transport.dispatch(command);
@@ -336,12 +362,6 @@ public class DeviceSyncService {
             failAttempt(command, error);
         }
         commandRepository.save(command);
-        if (ok && command.getType() == SyncCommandType.CREATE_USER && command.getMemberId() != null) {
-            String deviceUserId = payloadText(command, "deviceUserId");
-            if (deviceUserId != null) {
-                events.publishEvent(new DeviceUserCreated(command.getDeviceId(), command.getMemberId(), deviceUserId));
-            }
-        }
         publishMemberSync(command);
     }
 
@@ -413,12 +433,6 @@ public class DeviceSyncService {
     public boolean hasActiveReconcile(Long deviceId) {
         return commandRepository.existsByDeviceIdAndTypeAndStateIn(
                 deviceId, SyncCommandType.RECONCILE_DEVICE, OPEN_STATES);
-    }
-
-    /** True while a command that changes the reader's user list has not finished. */
-    @Transactional(readOnly = true)
-    public boolean hasOpenRosterCommands(Long deviceId) {
-        return commandRepository.existsByDeviceIdAndTypeInAndStateIn(deviceId, ROSTER_TYPES, OPEN_STATES);
     }
 
     /** Cancels every open command for a member (e.g. the member was deleted on a device). */
@@ -637,6 +651,13 @@ public class DeviceSyncService {
         command.setNextAttemptAt(Instant.now().plus(properties.getOutbox().getOfflineRecheck()));
         FlowLog.debug("sync", "{} corr={} device={} waits: gateway offline, recheck at {}",
                 command.getType(), command.getCorrelationId(), command.getDeviceId(), command.getNextAttemptAt());
+    }
+
+    /**
+     * A member-state command is not sent to a reader. Door, clock, and attendance reconcile stay.
+     */
+    private boolean withholdProjectionReplay(DeviceSyncCommand command) {
+        return PROJECTION_READER_SKIPS.contains(command.getType());
     }
 
     /** Makes every waiting command of the gateway's devices due now (called when it connects). */

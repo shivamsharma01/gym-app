@@ -5,6 +5,7 @@ import com.example.gym.device.repo.GatewayRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
@@ -12,32 +13,21 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
- * Per-gateway authentication: operational credentials (and pending rotated credentials) are stored
- * only as SHA-256 hashes. An optional deployment-wide shared token can also be accepted for the
- * local simulator. Enrollment tokens are never accepted here — use {@link GatewayCredentialService}.
+ * Per-gateway authentication. Operational credentials (and pending rotated credentials) are stored
+ * only as SHA-256 hashes. A connection is accepted only when the presented token matches one
+ * gateway and {@code token_expires_at} is still in the future. There is no shared token and no
+ * anonymous path. Enrollment tokens are never accepted here — use {@link GatewayService#enroll}.
  * Tokens are never logged.
  */
 @Service
 public class GatewayAuthService {
 
-    public enum Kind {
-        /** Identified a specific gateway via its operational (or just-promoted) credential. */
-        GATEWAY,
-        /** Deployment shared token (or anonymous-dev) — gateway id is bound on REGISTER. */
-        SHARED
-    }
-
-    public record Outcome(Kind kind, Gateway gateway) {
-    }
-
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final GatewayRepository gatewayRepository;
-    private final GatewayProperties properties;
 
-    public GatewayAuthService(GatewayRepository gatewayRepository, GatewayProperties properties) {
+    public GatewayAuthService(GatewayRepository gatewayRepository) {
         this.gatewayRepository = gatewayRepository;
-        this.properties = properties;
     }
 
     public String newToken() {
@@ -57,40 +47,57 @@ public class GatewayAuthService {
     }
 
     /**
-     * Authenticates a presented operational credential. Matching {@code next_token_hash} promotes
-     * that hash to current (rotation confirm) within this transaction.
+     * Authenticates a presented operational credential. The gateway id is the row that owns the
+     * hash, never a value from the caller. Matching {@code next_token_hash} promotes that hash to
+     * current (rotation confirm) only when the credential has not expired. A missing expiry fails
+     * closed.
      */
     @Transactional
-    public Optional<Outcome> authenticate(String presented) {
-        if (StringUtils.hasText(presented)) {
-            String hashed = hash(presented);
-            Optional<Gateway> byHash = gatewayRepository.findByTokenHash(hashed);
-            if (byHash.isPresent()) {
-                return Optional.of(new Outcome(Kind.GATEWAY, byHash.get()));
-            }
-            Optional<Gateway> byNext = gatewayRepository.findByNextTokenHash(hashed);
-            if (byNext.isPresent()) {
-                Gateway gateway = byNext.get();
-                gateway.setTokenHash(hashed);
-                gateway.setNextTokenHash(null);
-                return Optional.of(new Outcome(Kind.GATEWAY, gatewayRepository.save(gateway)));
-            }
-            String shared = properties.getSharedToken();
-            if (StringUtils.hasText(shared) && constantTimeEquals(shared, presented)) {
-                return Optional.of(new Outcome(Kind.SHARED, null));
-            }
+    public Optional<Gateway> authenticate(String presented) {
+        if (!StringUtils.hasText(presented)) {
             return Optional.empty();
         }
-        // No token presented: allowed only when no shared token is configured (local dev).
-        if (!StringUtils.hasText(properties.getSharedToken())) {
-            return Optional.of(new Outcome(Kind.SHARED, null));
+        String hashed = hash(presented);
+        Optional<Gateway> byHash = gatewayRepository.findByTokenHash(hashed);
+        if (byHash.isPresent()) {
+            Gateway gateway = byHash.get();
+            if (!credentialCurrent(gateway)) {
+                return Optional.empty();
+            }
+            return Optional.of(gateway);
         }
-        return Optional.empty();
+        Optional<Gateway> byNext = gatewayRepository.findByNextTokenHash(hashed);
+        if (byNext.isEmpty()) {
+            return Optional.empty();
+        }
+        Gateway gateway = byNext.get();
+        if (!credentialCurrent(gateway)) {
+            return Optional.empty();
+        }
+        gateway.setTokenHash(hashed);
+        gateway.setNextTokenHash(null);
+        return Optional.of(gatewayRepository.save(gateway));
     }
 
-    private boolean constantTimeEquals(String expected, String presented) {
-        return MessageDigest.isEqual(
-                expected.getBytes(StandardCharsets.UTF_8),
-                presented.getBytes(StandardCharsets.UTF_8));
+    /**
+     * Whether a WebSocket already bound to {@code credentialHash} may stay open. HTTP still accepts
+     * the previous operational token until the replacement is used. A socket bound to that previous
+     * token is not: issuing a rotation ({@code next_token_hash} set) or passing expiry closes it.
+     * A socket bound to the replacement hash stays valid. This does not promote a rotation.
+     */
+    public boolean sessionAllows(Gateway gateway, String credentialHash) {
+        if (gateway == null || !StringUtils.hasText(credentialHash) || !credentialCurrent(gateway)) {
+            return false;
+        }
+        if (StringUtils.hasText(gateway.getNextTokenHash())) {
+            return credentialHash.equals(gateway.getNextTokenHash());
+        }
+        return credentialHash.equals(gateway.getTokenHash());
+    }
+
+    /** True only when an expiry is stored and is still strictly in the future. */
+    private boolean credentialCurrent(Gateway gateway) {
+        Instant expiresAt = gateway.getTokenExpiresAt();
+        return expiresAt != null && expiresAt.isAfter(Instant.now());
     }
 }

@@ -80,7 +80,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             {
                 Scheme = http.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws",
                 Path = "/gateway",
-                Query = "token=" + Uri.EscapeDataString(_options.Token)
+                Query = string.Empty
             };
             return builder.Uri;
         }
@@ -225,7 +225,14 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
     }
 
-    public async Task RunWebSocketAsync(Func<GatewayEnvelope, Task> onMessage, CancellationToken cancellationToken)
+    public Task RunWebSocketAsync(Func<GatewayEnvelope, Task> onMessage, CancellationToken cancellationToken) =>
+        RunWebSocketAsync(onMessage, null, null, cancellationToken);
+
+    public async Task RunWebSocketAsync(
+        Func<GatewayEnvelope, Task> onMessage,
+        Func<DesiredRevisionNotice, CancellationToken, Task>? onDesiredRevision,
+        Func<CancellationToken, Task>? onReconnect,
+        CancellationToken cancellationToken)
     {
         if (!_options.UseWebSocket)
         {
@@ -246,8 +253,9 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 _websocketLive = true;
                 _reconnectAttempt = 0;
                 _log.LogInformation("WebSocket connected");
+                await InvokeReconnectAsync(onReconnect, cancellationToken).ConfigureAwait(false);
                 await ReplayPendingAsync(cancellationToken).ConfigureAwait(false);
-                await ReceiveLoopAsync(socket, onMessage, cancellationToken).ConfigureAwait(false);
+                await ReceiveLoopAsync(socket, onMessage, onDesiredRevision, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -287,6 +295,24 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
     }
 
+    private async Task InvokeReconnectAsync(
+        Func<CancellationToken, Task>? onReconnect, CancellationToken cancellationToken)
+    {
+        if (onReconnect == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await onReconnect(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Reconnect read-before-write failed");
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         _websocketLive = false;
@@ -314,6 +340,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     private async Task ReceiveLoopAsync(
         ClientWebSocket socket,
         Func<GatewayEnvelope, Task> onMessage,
+        Func<DesiredRevisionNotice, CancellationToken, Task>? onDesiredRevision,
         CancellationToken cancellationToken)
     {
         var buffer = new byte[64 * 1024];
@@ -333,6 +360,23 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             } while (!result.EndOfMessage);
 
             var json = Encoding.UTF8.GetString(ms.ToArray());
+            try
+            {
+                if (await InboundDispatch.RouteAsync(
+                        json,
+                        _ => Task.CompletedTask,
+                        onDesiredRevision ?? ((_, _) => Task.CompletedTask),
+                        cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Desired revision failed; the WebSocket stays open");
+                continue;
+            }
+
             GatewayEnvelope? envelope;
             try
             {
@@ -442,7 +486,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
 
     private static string Redact(Uri uri)
     {
-        var builder = new UriBuilder(uri) { Query = "token=***" };
+        var builder = new UriBuilder(uri) { Query = string.Empty };
         return builder.Uri.ToString();
     }
 }

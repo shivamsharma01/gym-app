@@ -7,8 +7,8 @@ using System.Text.Json.Serialization;
 namespace Gym.Gateway.Adapters;
 
 /// <summary>
-/// Simulator-only adapter (Adapter = "Remote"): talks to a virtual device from
-/// <c>simulator/device_server.py</c> over that simulator's own HTTP protocol. It replaces
+/// Simulator-only adapter (Adapter = "Remote"): talks to a virtual device over the HTTP protocol of
+/// the removed Python device simulator. It replaces
 /// <see cref="TrueFaceDeviceAdapter"/> behind the same <see cref="IDeviceAdapter"/> contract, so the
 /// rest of the gateway (local state, change detection, outbox) is exercised as in production; the
 /// NetSDK mapping and its callbacks are not.

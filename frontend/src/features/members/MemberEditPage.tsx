@@ -63,6 +63,10 @@ export function MemberEditPage() {
   return (
     <div className="max-w-xl">
       <PageHeader title="Edit member" description={member.data?.memberCode} />
+      <p className="mb-4 text-sm text-muted">
+        Saving a name or a photo publishes a new revision for a reader using desired-state sync. Other readers
+        still get an update or a photo command.
+      </p>
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => mutation.mutate(v))}>
         <MemberFormFields form={form} />
         <MemberPhotoField value={photo} onChange={setPhoto} currentUrl={currentPhoto.url} />

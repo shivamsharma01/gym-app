@@ -1,13 +1,16 @@
 package com.example.gym.device.web;
 
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.device.DesiredProjectionService;
 import com.example.gym.device.GatewayAuthService;
-import com.example.gym.device.GatewayAuthService.Kind;
-import com.example.gym.device.GatewayAuthService.Outcome;
 import com.example.gym.device.GatewayCommandPollService;
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.GatewayService;
 import com.example.gym.device.domain.Gateway;
+import com.example.gym.device.dto.DesiredStateRequests.AcknowledgeRevision;
+import com.example.gym.device.dto.DesiredStateRequests.DesiredPage;
+import com.example.gym.device.dto.DesiredStateRequests.ReportOccupied;
+import com.example.gym.device.dto.DesiredStateRequests.RevisionNotice;
 import com.example.gym.device.dto.DeviceResponses.DeviceView;
 import com.example.gym.device.dto.GatewayCredentialResponse;
 import com.example.gym.device.dto.GatewayEnrollRequest;
@@ -27,12 +30,14 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
  * REST fallback of the gateway protocol (ingest + command poll) plus enrollment and credential
- * rotation. Authenticated with the per-gateway operational credential (or enrollment for enroll)
- * — never a user JWT.
+ * rotation. Live calls require the per-gateway operational credential. Enrollment exchanges a
+ * one-time enrollment token; the gateway id on that request is not the identity. Never a user JWT.
+ * There is no anonymous or shared-token path.
  */
 @RestController
 @RequestMapping("/internal/gateway")
@@ -43,17 +48,20 @@ public class InternalGatewayController {
     private final GatewayMessageService messageService;
     private final GatewayCommandPollService pollService;
     private final MemberFaceService faceService;
+    private final DesiredProjectionService desiredProjection;
 
     public InternalGatewayController(GatewayAuthService authService,
                                      GatewayService gatewayService,
                                      GatewayMessageService messageService,
                                      GatewayCommandPollService pollService,
-                                     MemberFaceService faceService) {
+                                     MemberFaceService faceService,
+                                     DesiredProjectionService desiredProjection) {
         this.authService = authService;
         this.gatewayService = gatewayService;
         this.messageService = messageService;
         this.pollService = pollService;
         this.faceService = faceService;
+        this.desiredProjection = desiredProjection;
     }
 
     @PostMapping(value = "/enroll", consumes = MediaType.APPLICATION_JSON_VALUE,
@@ -81,8 +89,7 @@ public class InternalGatewayController {
     public String ingest(@RequestHeader(value = "Authorization", required = false) String authorization,
                          @RequestBody String raw) {
         Gateway gateway = requireGateway(authorization);
-        String boundId = gateway == null ? null : gateway.getPublicId();
-        Optional<String> reply = messageService.process(raw, boundId);
+        Optional<String> reply = messageService.process(raw, gateway.getPublicId());
         return reply.orElse("{}");
     }
 
@@ -117,23 +124,40 @@ public class InternalGatewayController {
         return Map.of("uploadId", upload.getPublicId(), "sha256", upload.getSha256());
     }
 
-    private Gateway requireBoundGateway(String authorization) {
-        Gateway gateway = requireGateway(authorization);
-        if (gateway == null) {
-            throw CommonExceptions.unauthorized("Per-gateway credential required");
-        }
-        return gateway;
+    @GetMapping(value = "/desired", produces = MediaType.APPLICATION_JSON_VALUE)
+    public DesiredPage desired(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestParam("deviceId") String deviceId,
+            @RequestParam(value = "after", defaultValue = "0") long after,
+            @RequestParam(value = "limit", defaultValue = "20") int limit) {
+        return desiredProjection.pull(requireBoundGateway(authorization), deviceId, after, limit);
     }
 
-    /** @return the bound gateway, or null when authenticated via the deployment shared token. */
+    @PostMapping(value = "/desired/ack", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public RevisionNotice acknowledgeDesired(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @Valid @RequestBody AcknowledgeRevision ack) {
+        return desiredProjection.acknowledge(requireBoundGateway(authorization), ack);
+    }
+
+    @PostMapping(value = "/desired/occupied", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public RevisionNotice occupiedDesired(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @Valid @RequestBody ReportOccupied report) {
+        return desiredProjection.occupied(requireBoundGateway(authorization), report);
+    }
+
+    private Gateway requireBoundGateway(String authorization) {
+        return requireGateway(authorization);
+    }
+
+    /** The gateway that owns the presented operational credential. Missing or expired tokens fail. */
     private Gateway requireGateway(String authorization) {
         String token = bearer(authorization);
-        Outcome outcome = authService.authenticate(token)
-                .orElseThrow(() -> CommonExceptions.unauthorized("Invalid gateway token"));
-        if (outcome.kind() == Kind.GATEWAY) {
-            return outcome.gateway();
-        }
-        return null;
+        return authService.authenticate(token)
+                .orElseThrow(() -> CommonExceptions.unauthorized("Invalid or expired gateway token"));
     }
 
     private String bearer(String authorization) {

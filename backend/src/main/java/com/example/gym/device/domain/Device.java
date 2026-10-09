@@ -57,6 +57,10 @@ public class Device extends TenantAwareEntity {
     @Column(name = "roster_compared_at", insertable = false, updatable = false)
     private Instant rosterComparedAt;
 
+    /** A trusted list whose announced total and count were both zero. A short list clears this. */
+    @Column(name = "roster_trusted_empty", nullable = false)
+    private boolean rosterTrustedEmpty;
+
     protected Device() {
     }
 
@@ -153,5 +157,13 @@ public class Device extends TenantAwareEntity {
 
     public Instant getRosterComparedAt() {
         return rosterComparedAt;
+    }
+
+    public boolean isRosterTrustedEmpty() {
+        return rosterTrustedEmpty;
+    }
+
+    public void setRosterTrustedEmpty(boolean rosterTrustedEmpty) {
+        this.rosterTrustedEmpty = rosterTrustedEmpty;
     }
 }

@@ -8,9 +8,17 @@ import com.example.gym.device.repo.AttendanceSyncCursorRepository;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.DeviceUserSnapshotRepository;
+import com.example.gym.device.repo.DesiredMemberProjectionRepository;
+import com.example.gym.device.repo.DeviceObservedUserRepository;
+import com.example.gym.device.repo.DeviceReaderBaselineRepository;
+import com.example.gym.device.repo.DeviceReviewItemRepository;
+import com.example.gym.device.repo.DeviceReviewSnapshotRepository;
+import com.example.gym.device.repo.PendingEnrollmentRepository;
 import com.example.gym.device.repo.GatewayMessageDedupeRepository;
 import com.example.gym.device.repo.GatewayRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
+import com.example.gym.device.repo.ReaderBlockedUserRepository;
+import com.example.gym.device.repo.ReaderRevisionRepository;
 import com.example.gym.device.repo.ReconciliationConflictRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
 import com.example.gym.enquiry.EnquiryRepository;
@@ -65,6 +73,11 @@ public abstract class AbstractIntegrationTest {
     }
 
     protected static final String DEFAULT_PASSWORD = "Password123!";
+
+    /** Server-wide views such as InnoDB lock waits need a privilege the application user lacks. */
+    protected static java.sql.Connection rootConnection() throws java.sql.SQLException {
+        return java.sql.DriverManager.getConnection(MYSQL.getJdbcUrl(), "root", MYSQL.getPassword());
+    }
 
     @Autowired
     protected MockMvc mockMvc;
@@ -124,6 +137,30 @@ public abstract class AbstractIntegrationTest {
     protected DeviceUserSnapshotRepository deviceUserSnapshotRepository;
 
     @Autowired
+    protected DesiredMemberProjectionRepository desiredMemberProjectionRepository;
+
+    @Autowired
+    protected DeviceObservedUserRepository deviceObservedUserRepository;
+
+    @Autowired
+    protected PendingEnrollmentRepository pendingEnrollmentRepository;
+
+    @Autowired
+    protected DeviceReaderBaselineRepository deviceReaderBaselineRepository;
+
+    @Autowired
+    protected DeviceReviewItemRepository deviceReviewItemRepository;
+
+    @Autowired
+    protected DeviceReviewSnapshotRepository deviceReviewSnapshotRepository;
+
+    @Autowired
+    protected ReaderRevisionRepository readerRevisionRepository;
+
+    @Autowired
+    protected ReaderBlockedUserRepository readerBlockedUserRepository;
+
+    @Autowired
     protected EnquiryRepository enquiryRepository;
 
     @Autowired
@@ -161,6 +198,14 @@ public abstract class AbstractIntegrationTest {
         securityEventRepository.deleteAllInBatch();
         reconciliationConflictRepository.deleteAllInBatch();
         deviceUserSnapshotRepository.deleteAllInBatch();
+        deviceReviewSnapshotRepository.deleteAllInBatch();
+        deviceReviewItemRepository.deleteAllInBatch();
+        deviceReaderBaselineRepository.deleteAllInBatch();
+        pendingEnrollmentRepository.deleteAllInBatch();
+        deviceObservedUserRepository.deleteAllInBatch();
+        desiredMemberProjectionRepository.deleteAllInBatch();
+        readerBlockedUserRepository.deleteAllInBatch();
+        readerRevisionRepository.deleteAllInBatch();
         gatewayMessageDedupeRepository.deleteAllInBatch();
         memberDeviceMappingRepository.deleteAllInBatch();
         deviceRepository.deleteAllInBatch();

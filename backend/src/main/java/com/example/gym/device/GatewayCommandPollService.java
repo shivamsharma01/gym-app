@@ -5,6 +5,7 @@ import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.domain.SyncCommandState;
+import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.GatewayRepository;
@@ -69,6 +70,13 @@ public class GatewayCommandPollService {
             if (device == null) {
                 continue;
             }
+            if (memberState(command.getType())) {
+                command.setState(SyncCommandState.CANCELLED);
+                command.setCompletedAt(now);
+                command.setLastError("Member state is a desired revision");
+                commandRepository.save(command);
+                continue;
+            }
             command.setState(SyncCommandState.DISPATCHED);
             command.setDispatchedAt(now);
             command.setAttemptCount(command.getAttemptCount() + 1);
@@ -81,6 +89,20 @@ public class GatewayCommandPollService {
     public Gateway requireGateway(String publicId) {
         return gatewayRepository.findByPublicId(publicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Gateway"));
+    }
+
+    private static boolean memberState(SyncCommandType type) {
+        return type == SyncCommandType.CREATE_USER
+                || type == SyncCommandType.UPDATE_USER
+                || type == SyncCommandType.DISABLE_USER
+                || type == SyncCommandType.ENABLE_USER
+                || type == SyncCommandType.REMOVE_USER
+                || type == SyncCommandType.UPDATE_VALIDITY
+                || type == SyncCommandType.UPDATE_ACCESS_POLICY
+                || type == SyncCommandType.ENROLL_FACE
+                || type == SyncCommandType.UPSERT_FACE
+                || type == SyncCommandType.DELETE_FACE
+                || type == SyncCommandType.REPORT_DEVICE_USER;
     }
 
     private Map<String, Object> envelope(Gateway gateway, Device device, DeviceSyncCommand command) {

@@ -8,6 +8,45 @@ export type PageResponse<T> = {
   last: boolean
 }
 
+export type BootstrapReport = {
+  runId: string
+  rows: BootstrapRow[]
+}
+
+export type BootstrapRow = {
+  outcome: string
+  deviceId: string
+  deviceUserId: string
+  memberId: string | null
+  readerName: string | null
+  serverName: string | null
+  suggestionMemberId: string | null
+}
+
+export type ReviewItem = {
+  id: string
+  kind: 'REVIEW' | 'ENROLLMENT'
+  deviceId: string
+  deviceUserId: string
+  serverName: string | null
+  readerName: string | null
+  baselineName: string | null
+  readerAbsent: boolean
+  open: boolean
+  decision: string | null
+  actor: string | null
+  priorState: string | null
+  chosenState: string | null
+  revision: number | null
+  verificationError: string | null
+  serverValidFrom: string | null
+  serverValidTo: string | null
+  readerValidFrom: string | null
+  readerValidTo: string | null
+  baselineValidFrom: string | null
+  baselineValidTo: string | null
+}
+
 export type UserSummary = {
   id: string
   username: string

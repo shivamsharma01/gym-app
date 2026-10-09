@@ -9,8 +9,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Periodically enqueues RECONCILE_DEVICE so attendance gaps and user drift are repaired without
- * waiting for a manual Sync Now.
+ * Periodically enqueues RECONCILE_DEVICE so attendance is read without waiting for a manual request.
+ * The user list in that result is not applied as member state.
  */
 @Component
 @ConditionalOnProperty(prefix = "app.gateway.outbox", name = "dispatcher-enabled",

@@ -5,14 +5,12 @@ import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.DeviceAuthorizationService;
-import com.example.gym.device.MemberDeviceProvisioningService;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -25,17 +23,14 @@ public class MemberService {
     private final MemberRepository memberRepository;
     private final AuditService auditService;
     private final DeviceAuthorizationService deviceAuthorizationService;
-    private final MemberDeviceProvisioningService provisioning;
     private final MemberNumbers numbers;
 
     public MemberService(MemberRepository memberRepository, AuditService auditService,
                          DeviceAuthorizationService deviceAuthorizationService,
-                         MemberDeviceProvisioningService provisioning,
                          MemberNumbers numbers) {
         this.memberRepository = memberRepository;
         this.auditService = auditService;
         this.deviceAuthorizationService = deviceAuthorizationService;
-        this.provisioning = provisioning;
         this.numbers = numbers;
     }
 
@@ -52,6 +47,14 @@ public class MemberService {
     }
 
     @Transactional(readOnly = true)
+    public Member getById(Long id, Long tenantId) {
+        Member member = memberRepository.findById(id)
+                .orElseThrow(() -> CommonExceptions.notFound("Member"));
+        TenantGuard.check(member.getTenantId(), tenantId, "Member");
+        return member;
+    }
+
+    @Transactional(readOnly = true)
     public Member getByPublicId(String publicId, Long tenantId) {
         Member member = memberRepository.findByPublicId(publicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Member"));
@@ -61,6 +64,12 @@ public class MemberService {
 
     @Transactional
     public Member create(CreateMember request, Long tenantId) {
+        return saveNew(request, tenantId);
+    }
+
+    /** Persists the member without sending them to a reader. The caller provisions or projects. */
+    @Transactional
+    public Member saveNew(CreateMember request, Long tenantId) {
         String code = StringUtils.hasText(request.memberCode())
                 ? request.memberCode().trim()
                 : numbers.newMemberCode(tenantId);
@@ -85,8 +94,6 @@ public class MemberService {
             member.setDeviceAuthority(DeviceAuthority.fromString(request.deviceAuthority()));
         }
         Member saved = memberRepository.save(member);
-        provisioning.provisionMember(saved, Set.of());
-
         FlowLog.info("member", "created id={} code={} serial={}", saved.getPublicId(), saved.getMemberCode(), serial);
         auditService.record(AuditActions.MEMBER_CREATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(),
@@ -124,16 +131,12 @@ public class MemberService {
             member.setProfileChangedAt(Instant.now());
         }
         if (serialChanged) {
-            // Gateways apply the old id's removal only when it is newer than their own copy.
             member.setAccessChangedAt(member.getProfileChangedAt());
             member.setSerialNumber(newSerial);
         }
         Member saved = memberRepository.save(member);
-        if (serialChanged) {
-            provisioning.moveToSerial(saved);
-        }
-        if (nameChanged || authorityChanged) {
-            provisioning.pushProfile(saved, Set.of());
+        if (nameChanged) {
+            deviceAuthorizationService.publishProfile(saved);
         }
         FlowLog.info("member", "updated id={} nameChanged={} serialChanged={}", saved.getPublicId(),
                 nameChanged, serialChanged);
@@ -183,7 +186,6 @@ public class MemberService {
         member.setAccessChangedAt(Instant.now());
         Member saved = memberRepository.save(member);
         deviceAuthorizationService.syncMember(saved);
-        provisioning.provisionMember(saved, Set.of());
         FlowLog.info("member", "reactivated id={}", saved.getPublicId());
         auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), serialDetails(saved));
@@ -197,7 +199,6 @@ public class MemberService {
             member.setDeviceAuthority(authority);
             member.setProfileChangedAt(Instant.now());
             Member saved = memberRepository.save(member);
-            provisioning.pushProfile(saved, Set.of());
             FlowLog.info("member", "authority updated id={} authority={}", saved.getPublicId(), authority);
             Map<String, Object> details = serialDetails(saved);
             details.put("deviceAuthority", authority.name());

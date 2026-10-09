@@ -7,61 +7,41 @@ Open product decisions and remaining work after the original 0–9 roadmap.
 | Finding | Status |
 | --- | --- |
 | Live visit 2026-09-13 on serial `TW30000005250265` | Remote JPEG INSERT returned SDK success (`0x00000000`); door recognized the person |
-| Product default today | **Two-way sync**: photo from React (Take/Choose photo) or enrolment on any device; the server stores it and pushes it to every device |
-| Gateway `UPSERT_FACE` / `DELETE_FACE` | Real `OperateAccessFaceService` writes; image downloaded over REST with a sha256 check |
-| Gateway `ENROLL_FACE` | Retired (returns failure); replaced by `UPSERT_FACE` |
+| Product rule | The server stores one photo per member. A new member is published to every reader of the gym. The create flow still asks for one reader until that fan-out is built. |
+| Gateway face write | Real `OperateAccessFaceService` writes. The image is downloaded with a sha256 check. A second insert over an existing photo is not success. An empty update does not clear the photo. |
+| Guided enroll command | Not used. Face changes are part of the desired revision. |
 
 See [TrueFaceWindowsPOC/docs/GYM-VISIT-2026-09-13.md](../TrueFaceWindowsPOC/docs/GYM-VISIT-2026-09-13.md).
 
-## Two-way member and face sync
+## Member and face sync
 
-- Every member is on every device that has a gateway, with device user id = member code. Staff never type codes; the app generates them.
-- **The gateway keeps its devices in sync by itself.** It holds a local copy of every member (name, frozen, validity, face, deletion) with the time each part last changed, saved on disk (`members/` next to the gateway config, photos in `members/faces`). When a device user is added, edited or deleted (device alarm + 60 s roster check, faces on a 30 min sweep), the gateway updates its copy and writes the change to its other devices straight away, even with no internet. Example: a person enrolled on the entrance device while the server is unreachable can leave through the exit device a minute later.
-- A device that was switched off or unreachable is brought up to date on its next scan. Before writing to a device, the gateway re-reads it, so an edit on that device that hasn't been picked up yet is merged, not overwritten.
-- **Reports to the server** (`DEVICE_USER_CHANGED`) go into a queue on disk and are sent in order when the server is reachable. Photos are uploaded from the gateway's own photo store. If the server is unreachable, the queue waits and is retried on every scan. A photo the server rejects as invalid is left out so the user's other changes still sync.
-- **Commands from the server** carry the change time of what they write (`nameChangedAt`, `accessChangedAt`, `faceChangedAt`, `deletedAt`). The gateway applies them to all its devices unless its own copy is newer. In that case it skips the command and answers `skipped`; the server records this as **Sync change ignored** in the audit log. So after a long outage, the order in which queued messages arrive doesn't matter: both sides settle on the same result.
-- **Only the parts a device changed are considered** (name, access, face, deletion). A change made on one side only is always applied. When both sides changed the same part, the **later change wins**. The losing change is never applied silently: it is written to the gateway log (`Latest change wins …`) and to the member's audit log as **Sync change ignored**, with both times.
-- **Change times:** faces use the device's own time. TrueFace stores no edit time for names, access or deletions, so the gateway uses the time it noticed the change. For a device connected to the gateway that is within about a minute. For a device cut off from the gateway, it is the reconnect time, so such an edit usually wins over earlier changes. Keep Windows time sync on for the gateway PC.
-- **What a device holds for access.** A device keeps one start date, one end date, and enabled or disabled per user. The server takes them from the member's memberships (cancelled ones are ignored):
-  - The dates come from the membership running today; otherwise from the next one; otherwise from the last one, which has ended. Memberships that run back to back (or overlap) and are both paid are joined into one window, e.g. Jan 1–31 plus Feb 1–28 is sent as Jan 1–Feb 28.
-  - Enabled means: the member is active, the membership is paid (partly paid counts), and it isn't frozen. Otherwise the member is sent with the same dates but disabled.
-  - The device refuses entry outside its dates by itself. So with Jan 1–31 and Feb 5–Mar 4, nobody gets in on Feb 1–4 and no command is needed for that.
-  - A paid membership that hasn't started yet is sent enabled, because the device waits for the start date. For devices that don't check dates, set `app.gateway.devices-enforce-validity-dates=false`: the member is then sent disabled and enabled on the start day.
-  - The end date is valid until 23:59:59 on the device.
-- **Changeover between memberships.** An access check runs every hour and at server start. When the membership on the devices has ended:
-  - If there's a next membership, its dates are sent, enabled if it's paid.
-  - If there isn't, the member is disabled on the devices and keeps the old dates. The member stays active in the app and the membership shows as Expired.
+The design is [the device sync architecture](architecture/device-sync-architecture.md). Slice status is in [the execution plan](architecture/execution-plan.md).
 
-  Only members whose window actually changes get commands. Recording a payment updates the devices immediately if it affects the membership currently on them. Adding a future membership doesn't touch the devices until its turn. "Today" is the server's local date, so the server runs in the gym's time zone (`GYM_TIMEZONE`, default Asia/Kolkata). If the gateway is offline at changeover, the switch reaches the devices when it reconnects; until then they refuse entry by the old dates.
-- **Frozen / validity edited on a device** are applied as the device holds them, when only the device changed (or its change is the later one):
-  - Disabling freezes the running membership. Enabling unfreezes it (and reactivates an inactive member).
-  - Date edits change the membership(s) in the window: a new start date goes to the first, a new end date to the last. This also works on a frozen membership. If the new dates overlap another membership, they're still applied, and a **Membership overlap** conflict is opened for staff; the other membership is not changed.
-  - Payment is the one rule a device can't know about. Enabling a member whose membership is unpaid (or who has no running membership) is refused: the device is disabled again and the member's audit log says why.
-- Deleting a user on a device deletes the member from the system: the member is deactivated (payments and history are kept) and removed from every device. If the member changed on the server after the deletion, the deletion is ignored (and logged) and the member is put back on every device. A stale edit reported for a deleted member is ignored (and logged) and the user is removed again; an edit made after the deletion brings the member back everywhere. Reactivating the member in the app also puts it back on all devices.
-- Deleting a face on a device removes the photo from the server and the other devices, unless the photo was changed later elsewhere.
-- **Code clash:** if a device user is new to the gateway but uses the code of an existing member with a different name (enrolled while offline), it is not merged into that member. It becomes a separate member with a new code (re-written to every device under that code), the existing member is written back under its own code, and a **Device code clash** conflict is opened for staff. Door events recorded in between are attributed to the existing member.
-- If many users disappear from a device in one scan (more than 5 and more than 20 % of its roster, e.g. a factory reset), or the device returns an empty list, the gateway treats it as a read problem, not as deletions, and logs a warning. As a result, deleting the only user on a device is not detected.
-- Echoes are suppressed: the gateway records the version of each part it wrote to each device, and the server ignores a face identical to the stored one.
-- Users that existed on a device before the gateway first saw it are imported by reconcile, and their face is requested with `REPORT_DEVICE_USER`.
-- Photos are downloaded from a reader once and remembered by the gateway. After that a photo is read again only when the reader reports an edit for that user, or when staff ask for it:
-  - **Read from device** (member page, per device) reads that member's name, access and photo fresh. A device copy newer than the server's is applied; an older one is replaced by the server's.
-  - **Sync Now** (device page) also re-reads every photo on that reader in the background, in small batches. Only changed photos are sent. Automatic reconciles on reconnect do not do this.
-- There is no "unmap" action: a member is either on every device or deleted/deactivated.
+- One gym has one gateway and can have several readers. Each reader has its own worker.
+- `publicId` is the member. `deviceUserId` belongs to one reader. The mapping is the link. A device user id is never a member id, and it is not the member code.
+- The server publishes a desired projection and a revision for each reader. The gateway writes that projection, reads the user and the face back, and acknowledges only when they match. A stale revision does not overwrite a newer one.
+- A new member goes to every reader of the gym. The create flow still asks for one reader until that fan-out is built.
+- A person created on a reader stays a pending enrollment on that reader until staff link, create, or reject them. The reader’s id is kept. They are not copied to another reader.
+- A name, face, freeze, or disappearance that disagrees with the desired record becomes a review item. Staff decide. The decision is a new desired revision and stays open until the reader verifies it. Clocks do not pick a winner.
+- Removing someone from one reader does not deactivate the member and does not write the other readers.
+- Freeze keeps the same device user and the same face and sets the reader status to frozen. Enable sets it back. That is separate from reader-menu administration, which is the reader password.
+- A list that fails, is short, or does not match its announced count changes nothing. An explicitly trusted empty roster is the only empty list that may be seeded from server members.
+- The same face on two device user ids is two people until staff say otherwise.
+- Attendance punches are stored separately and do not change member state.
 
-### Manual two-device check (before go-live)
+Access dates sent to a reader still come from the member’s memberships: the running one, otherwise the next, otherwise the last. Back-to-back paid memberships join into one window. The end of the day on the reader is 23:59:59 in the gym’s local time (`GYM_TIMEZONE`, default Asia/Kolkata). The reader clock stays on that local time. Do not set it to UTC.
 
-1. Two TrueFace units on one gateway, both ONLINE on the Devices page.
-2. React: create a member with **Take photo** → the member page's Device sync section shows both devices reach “Photo on device”; the face opens the door on both.
-3. Device A: enrol a new user with a face → within ~1 minute device B recognises the face, and a new member (“Created from device”) appears in React with that photo.
-4. Device B: replace that user’s face → device A gets the new face and the React photo updates (source: device B).
-5. React: rename the member → both devices show the new name. Rename on a device → the other device and React show it.
-6. Device A: change a user’s validity dates, then disable it → device B follows both; React shows the new end date, then the membership as frozen. Enable it again on device A → unfrozen everywhere.
-7. Device A: delete a user’s face → device B no longer recognises the face and the React photo disappears.
-8. Device A: delete the user → the user disappears from device B and the member becomes inactive in React. Reactivate in React → it is back on both devices.
-9. **Offline:** unplug the server connection. Enrol a new user on device A → device B recognises them within a minute. Rename another user on device B → device A shows it. Reconnect → React shows both changes within a minute.
-10. **Conflict:** offline, rename a user on device A; then rename the same member in React; reconnect → the later rename is on both devices and in React, and the member's audit log shows the other as **Sync change ignored**.
-11. **Changeover:** give a member a paid membership ending yesterday and an unpaid one starting in 3 days. Within an hour (or after a server restart) both devices show the new dates with the user disabled. Record the payment → the user is enabled at once, and the door still refuses them until the start date. On the last day of a membership the door still opens.
-12. Gateway logs show no repeated `changed locally` lines for users the gateway itself wrote (no echo loop).
+### Checks still to run on a reader
+
+These are not done. The fake-reader tests for V1–V16 passed. Section E of the execution plan is the physical pass.
+
+1. Create a member with a photo on one selected reader. Read-back matches the allocated numeric id, the name, the dates, and the face. `publicId` is not the device user id.
+2. Freeze, then enable. The same user and face remain. The door follows the status on this firmware, as in the 7 October 2026 probe.
+3. Change the name and the dates. The reader stores them as sent, including 23:59:59.
+4. Replace the face. A second insert over an existing photo is not success. Read-back matches the new bytes, or the bytes the reader stored if it re-encoded them.
+5. Disconnect the gateway, change the member on the server, reconnect. The gateway reads the reader before it writes. An older revision does not undo a newer one.
+6. Enrol someone on the reader. They appear for review and are not created as a member until staff decide. The other reader is not written.
+7. Rename a mapped user on the reader. The member in the app stays as it was until staff accept a review decision, and that decision is verified on the reader.
 
 ## ACCESS events
 
@@ -71,30 +51,17 @@ Live door allow can succeed without the SDK delivering `ALARM_ACCESS_CTL_EVENT` 
 2. Polls attendance records as a fallback
 3. Accepts operator `YES` confirmation for grant/deny when neither yields evidence
 
-Gateway cutover should use the same defense in depth when wiring attendance to the backend.
+Attendance ingestion should use the same defense in depth: do not treat a missing live alarm as a missing punch. The 7 October 2026 run stored punches and received no `ALARM_ACCESS_CTL_EVENT`.
 
-## Existing users already on the devices
+## People already on a reader
 
-Reconcile imports them. The **Import device users** button is only a fallback. Face templates stay on the devices. The server stores the photo and the member row.
+A trusted roster becomes a bootstrap report. A matching mapping stays on the desired projection. A different name becomes a review item. An unlinked person becomes a pending enrollment. The same device user id for different people on two readers is a collision report; the mappings stay separate. Two members with the same name are not linked automatically.
 
-| Topic | Rule |
-|--------|------|
-| Same person on entrance and exit | One member, mapped to both devices by device user id |
-| Plan | **Fallback Membership plan for quick access**, price 0. Staff replace it |
-| End date missing | Today + 1 year, marked **end date inferred**. Never lifetime |
-| Start date missing | Today. Otherwise the device begin date |
-| Payment | Membership marked paid. No payment row |
-| Frozen or disabled on the device | Member is **Inactive**. Import does not enable them |
-| Re-run | Safe. No duplicate members |
+A trusted empty reader can be seeded with server members through the desired-state writer. The server allocates a new device user id on that reader. It does not copy ids from another reader. A short or mismatched list creates nothing.
 
-1. Both devices online and assigned to the gateway. Run **Sync Now** and wait until it finishes.
-2. If import did not happen, open the device and click **Import device users**. A second click should mostly skip.
-3. Replace each fallback plan with the real plan.
-4. Set real end dates where the membership says the end date was inferred.
-5. Leave frozen people inactive unless the gym wants them back.
-6. Fix names. The first word is the first name. The member code is usually the device user id.
-7. Confirm people who use both doors have both device mappings.
-8. Spot-check the door. Imported memberships have no payment receipt.
+Staff link, create, accept the server value, reject, restore, or remove from this reader. Link and create keep the reader’s id. Reject does not create a member. None of these actions are finished until the reader read-back is acknowledged.
+
+Face templates stay on the reader. The server stores one photo per member so a reader can be rebuilt from desired state.
 
 Members list **Source** is Manual or Device. SUPER_ADMIN CSV export has no face data.
 
@@ -106,3 +73,4 @@ Members list **Source** is Manual or Device. SUPER_ADMIN CSV export has no face 
 - Super admin acting as a gym
 - Changing plan mid-cycle (dates can be edited; the plan cannot)
 - Member profile payments omit the paid-on date
+- Publishing a new member to every reader of the gym (V18), the attendance poll (V19), and closing a staff decision that a later member change superseded (V20), in [execution-plan.md](architecture/execution-plan.md)

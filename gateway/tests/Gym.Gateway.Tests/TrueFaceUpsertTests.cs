@@ -87,19 +87,24 @@ public class TrueFaceUpsertTests
         var created = TrueFaceDeviceAdapter.BuildUser(new DeviceUserMutation("3000", "Shivam Sharma"), freeze: false);
         var snapshot = TrueFaceDeviceAdapter.ToSnapshot(created);
 
-        Assert.Equal(new DateTimeOffset(2018, 1, 1, 0, 0, 0, TimeSpan.Zero), snapshot.ValidFrom);
-        Assert.Equal(new DateTimeOffset(2018, 1, 1, 23, 59, 59, TimeSpan.Zero), snapshot.ValidTo);
+        Assert.Equal(new DateTimeOffset(2018, 1, 1, 0, 0, 0, TimeSpan.FromHours(5.5)), snapshot.ValidFrom);
+        Assert.Equal(new DateTimeOffset(2018, 1, 1, 23, 59, 59, TimeSpan.FromHours(5.5)), snapshot.ValidTo);
     }
 
     [Fact]
     public void A_user_created_with_dates_keeps_them()
     {
+        var from = new DateTimeOffset(2026, 10, 8, 0, 0, 0, TimeSpan.FromHours(5.5));
+        var to = new DateTimeOffset(2026, 10, 8, 23, 59, 59, TimeSpan.FromHours(5.5));
         var created = TrueFaceDeviceAdapter.BuildUser(new DeviceUserMutation("3001", "Asha",
-            ValidFrom: new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero),
-            ValidTo: new DateTimeOffset(2026, 12, 31, 0, 0, 0, TimeSpan.Zero)), freeze: false);
+            ValidFrom: from, ValidTo: to), freeze: false);
         var snapshot = TrueFaceDeviceAdapter.ToSnapshot(created);
 
-        Assert.Equal(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), snapshot.ValidFrom);
-        Assert.Equal(new DateTimeOffset(2026, 12, 31, 23, 59, 59, TimeSpan.Zero), snapshot.ValidTo);
+        Assert.Equal(8u, created.stuValidBeginTime.dwDay);
+        Assert.Equal(0u, created.stuValidBeginTime.dwHour);
+        Assert.Equal(8u, created.stuValidEndTime.dwDay);
+        Assert.Equal(23u, created.stuValidEndTime.dwHour);
+        Assert.Equal(from, snapshot.ValidFrom);
+        Assert.Equal(to, snapshot.ValidTo);
     }
 }

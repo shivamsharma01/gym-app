@@ -7,9 +7,8 @@
 | [product.md](product.md) | How members, readers, and review behave |
 | [device-sdk.md](device-sdk.md) | TrueFace / Dahua calls that are verified |
 | [notifications.md](notifications.md) | SMS events still waiting on the gym owner |
-| [architecture/gym-device-sync-before-poc-architecture.md](architecture/gym-device-sync-before-poc-architecture.md) | Device sync architecture |
+| [architecture/device-sync-architecture.md](architecture/device-sync-architecture.md) | Device sync architecture |
 | [architecture/execution-plan.md](architecture/execution-plan.md) | What F1–V16 implemented, and the physical checks still open |
-| [architecture/implementation-plan.md](architecture/implementation-plan.md) | How that architecture is built |
 | [architecture/open-questions.md](architecture/open-questions.md) | Product and hardware questions still open |
 | [architecture/device-poc-results.md](architecture/device-poc-results.md) | 7 October 2026 reader measurements |
 

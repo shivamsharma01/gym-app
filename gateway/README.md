@@ -33,7 +33,7 @@ Use **Reissue enrollment** in the staff UI (`POST /api/v1/gateways/{id}/enrollme
 
 ## Local simulator (no TrueFace hardware)
 
-The old Python device simulator was removed. A new one will be built for the [device sync architecture](../docs/architecture/gym-device-sync-before-poc-architecture.md). Until then the `Remote` adapter has no device server to talk to; use `TrueFace` against a real reader.
+The old Python device simulator was removed. A new one will be built for the [device sync architecture](../docs/architecture/device-sync-architecture.md). Until then the `Remote` adapter has no device server to talk to; use `TrueFace` against a real reader.
 
 ## Develop on Linux (this machine)
 

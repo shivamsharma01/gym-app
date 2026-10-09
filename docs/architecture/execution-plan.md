@@ -1,8 +1,8 @@
 # Execution plan
 
 Status: F1–F3 and V1–V16 are implemented. Their automated tests passed on the fake reader and the test database. Section E has not been run on a physical reader.
-Architecture: [gym-device-sync-before-poc-architecture.md](gym-device-sync-before-poc-architecture.md).
-Build order and open questions: [implementation-plan.md](implementation-plan.md), [open-questions.md](open-questions.md).
+Architecture: [device-sync-architecture.md](device-sync-architecture.md).
+Open questions: [open-questions.md](open-questions.md).
 Evidence: [device-poc-results.md](device-poc-results.md), reader serial `TW30000005250265`.
 
 Offline copying of an unlinked device user onto another reader is not in this release. That copy would make the gateway choose where an unidentified person exists while the server is down. It waits for an explicit product decision.
@@ -442,7 +442,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Frontend.** Staff change a reader through desired state. Reader-originated differences are on the review queue. Staff do not get an action that overwrites a reader because one clock is later.
 
-**Database.** Desired projections, review items, and pending enrollments stay. A bad release is rolled back with the previous build and a database backup.
+**Database.** Desired projections, review items, pending enrollments, and acknowledgements stay in the database. A bad release is rolled back with the previous build and a database backup. That backup is the recovery.
 
 **Tests.** Spy shows a single writer. A short scan creates no disappearance. Review rows remain until a verified decision. The member path does not call a clock-wins comparison.
 

@@ -1,7 +1,7 @@
 # Sync gates runbook (third POC)
 
 `--gates` runs checks P1–P12 from section 18 of
-[gym-device-sync-before-poc-architecture.md](../../../docs/architecture/gym-device-sync-before-poc-architecture.md),
+[device-sync-architecture.md](../../../docs/architecture/device-sync-architecture.md),
 plus P13–P21 for hardware behavior the current gateway code relies on but no earlier visit verified,
 on one TrueFace reader. Each check gets one of three verdicts:
 

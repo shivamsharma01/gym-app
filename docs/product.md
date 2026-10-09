@@ -15,7 +15,7 @@ See [TrueFaceWindowsPOC/docs/GYM-VISIT-2026-09-13.md](../TrueFaceWindowsPOC/docs
 
 ## Member and face sync
 
-The design is [the device sync architecture](architecture/gym-device-sync-before-poc-architecture.md). Slice status is in [the execution plan](architecture/execution-plan.md).
+The design is [the device sync architecture](architecture/device-sync-architecture.md). Slice status is in [the execution plan](architecture/execution-plan.md).
 
 - One gym has one gateway and can have several readers. Each reader has its own worker.
 - `publicId` is the member. `deviceUserId` belongs to one reader. The mapping is the link. A device user id is never a member id, and it is not the member code.

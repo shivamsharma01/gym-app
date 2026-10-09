@@ -1,6 +1,6 @@
 # Open questions
 
-Architecture: [gym-device-sync-before-poc-architecture.md](gym-device-sync-before-poc-architecture.md).
+Architecture: [device-sync-architecture.md](device-sync-architecture.md).
 Evidence: [device-poc-results.md](device-poc-results.md).
 Slice record: [execution-plan.md](execution-plan.md).
 

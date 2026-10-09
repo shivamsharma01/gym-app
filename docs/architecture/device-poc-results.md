@@ -2,7 +2,7 @@
 
 Source run: `sync-gates-20261007-130047` (`report.txt`, `gates.csv`).
 Harness: `gateway/tools/Gym.Gateway.SdkProbe` `--gates`.
-Questions: section 18 of [gym-device-sync-before-poc-architecture.md](gym-device-sync-before-poc-architecture.md) (P1–P12) and the extra checks P13–P21 in [GATES.md](../../gateway/tools/Gym.Gateway.SdkProbe/GATES.md).
+Questions: section 18 of [device-sync-architecture.md](device-sync-architecture.md) (P1–P12) and the extra checks P13–P21 in [GATES.md](../../gateway/tools/Gym.Gateway.SdkProbe/GATES.md).
 
 This is one gym reader, one run, two trials where the harness asks for two. A verdict here is what that run showed. It is not a firmware guarantee.
 

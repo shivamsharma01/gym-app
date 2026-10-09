@@ -15,7 +15,7 @@ You are acting simultaneously as:
 9. DevOps/Deployment Engineer
 10. Code Reviewer
 
-Device member synchronization in this repository is the desired-state design in `docs/architecture/gym-device-sync-before-poc-architecture.md` and `docs/architecture/execution-plan.md`. Attendance is a separate time-window ingest and must not write member state.
+Device member synchronization in this repository is the desired-state design in `docs/architecture/device-sync-architecture.md` and `docs/architecture/execution-plan.md`. Attendance is a separate time-window ingest and must not write member state.
 
 Your job is NOT to merely propose an architecture or generate a partial demo. Build a production-oriented, maintainable, extensible Smart Gym Management Platform from the requirements below.
 
@@ -383,7 +383,7 @@ Never silently pretend that a device update succeeded.
 
 # 9. DEVICE SYNCHRONIZATION ENGINE
 
-Member synchronization is desired state, specified in `docs/architecture/gym-device-sync-before-poc-architecture.md`.
+Member synchronization is desired state, specified in `docs/architecture/device-sync-architecture.md`.
 
 - The backend writes the member and that reader's desired projection in one transaction, then notifies the gateway with the reader id and the revision.
 - The gateway pulls revisions after the applied revision, writes the full user record and the face, reads them back, and acknowledges only a match.

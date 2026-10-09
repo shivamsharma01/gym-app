@@ -7,7 +7,7 @@ namespace Gym.Gateway.SdkProbe;
 internal sealed record MutationTrial(bool WriteOk, bool? TimeChanged, string Codes);
 
 /// <summary>
-/// Third hardware POC: the P1–P12 checks from docs/architecture/gym-device-sync-before-poc-architecture.md,
+/// Third hardware POC: the P1–P12 checks from docs/architecture/device-sync-architecture.md,
 /// run on one reader with throwaway SYNCPOC users. Each check ends OBSERVED, NOT OBSERVED or UNKNOWN by the
 /// rules in <see cref="GateVerdicts"/>; see GATES.md for the operator steps.
 /// </summary>

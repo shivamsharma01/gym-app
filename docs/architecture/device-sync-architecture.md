@@ -96,7 +96,7 @@ These designs are not part of the system. Do not reintroduce them.
 
 The system is deliberately split into three responsibility domains. A component may execute work outside its primary domain, but it must not become the authority for another domain.
 
-<img src="gym-device-sync-before-poc-architecture_assets/architecture-boundary.png" style="width:6.65in;height:1.62666in" />
+<img src="device-sync-architecture_assets/architecture-boundary.png" style="width:6.65in;height:1.62666in" />
 
 *Figure 1. Proposed production boundary*
 
@@ -170,7 +170,7 @@ The backend should model access policy separately from device administrative aut
 
 Because the reader exposes snapshots rather than durable mutation records, the server must compare three states: the last reconciled baseline, the current server desired state, and the current device observation.
 
-<img src="gym-device-sync-before-poc-architecture_assets/reconciliation-lifecycle.png" style="width:5.8in;height:2.97828in" />
+<img src="device-sync-architecture_assets/reconciliation-lifecycle.png" style="width:5.8in;height:2.97828in" />
 
 *Figure 2. Three-way reconciliation decision*
 

@@ -1,6 +1,6 @@
 Device synchronization follows:
 
-@docs/architecture/gym-device-sync-before-poc-architecture.md
+@docs/architecture/device-sync-architecture.md
 
 That architecture is the system. Slice status is in
 @docs/architecture/execution-plan.md.

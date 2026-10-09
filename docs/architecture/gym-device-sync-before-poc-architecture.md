@@ -4,10 +4,10 @@
 
 **Final architecture and implementation baseline**
 
-| **Status**                   | PROPOSED — implementation baseline; hardware POC gates remain                                                 |
+| **Status**                   | Current architecture. F1–F3 and V1–V16 automated slices are recorded in the execution plan. Physical-reader confirmation of those slices is still outstanding. |
 |------------------------------|---------------------------------------------------------------------------------------------------------------|
 | **Owner**                    | Gym Platform Engineering                                                                                      |
-| **Last updated**             | October 6, 2026                                                                                               |
+| **Last updated**             | October 9, 2026                                                                                               |
 | **Scope**                    | Member state, reader projections, offline edits, reconciliation, gateway reliability, and attendance boundary |
 | **Topology**                 | One gateway per gym; N readers; single Spring Boot service + MySQL backend                                    |
 | **Primary design principle** | One business reconciliation brain: the server. Gateway executes and transports; readers enforce locally.      |
@@ -21,7 +21,7 @@ This document is the implementation-facing outcome of reviewing the two supplied
 <thead>
 <tr class="header">
 <th><p><strong>Executive decision</strong></p>
-<p>Do not implement the existing timestamp/master-device conflict model. Replace it with a server-authoritative desired-state architecture plus three-way reconciliation for device-originated changes. The gateway may perform mechanical local execution and provisional propagation, but it must not decide business ownership of conflicting member data.</p></th>
+<p>The system is a server-authoritative desired-state architecture plus three-way reconciliation for device-originated changes. The gateway executes and transports. It must not decide business ownership of conflicting member data, and it must not copy an unlinked person onto another reader.</p></th>
 </tr>
 </thead>
 <tbody>
@@ -34,11 +34,11 @@ The final system should behave like a declarative controller rather than a peer-
 
 - **One identity:** Member identity is \`publicId\`. \`deviceUserId\` is scoped to a reader and is never used as a tenant-wide member key.
 
-- **One business brain:** The server decides canonical member state and conflict outcomes. The gateway never decides “latest wins”, “device 1 wins”, or identity merges.
+- **One business brain:** The server decides canonical member state and conflict outcomes. The gateway does not pick a winner from clocks, from which reader changed, or from a name or face match.
 
 - **Declarative convergence:** Each reader has a server-defined desired projection and an applied revision. The system reconciles to that desired state rather than replaying an unbounded history of per-member commands.
 
-- **Offline continuity:** Reader-side work continues without cloud connectivity. The gateway records observations locally and can propagate safe, mechanical changes over the gym LAN without treating them as final truth.
+- **Offline continuity:** Reader-side work continues without cloud connectivity. The gateway records observations locally and reports them when the backend is reachable. It does not copy an unlinked person onto another reader.
 
 - **No silent loss:** Reader-side creations/edits/deletes that cannot be safely resolved automatically create pending enrollment/review items.
 
@@ -50,26 +50,26 @@ These are the rules implementation should treat as architectural invariants. The
 
 | **Invariant**       | **Rule**                                                                                                                                           | **Why**                                                                      |
 |---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------|
-| Identity            | \`publicId\` is the member identity; \`(deviceId, deviceUserId)\` identifies a device-side user record.                                            | Prevents the current serial/device-ID collision problem.                     |
+| Identity            | \`publicId\` is the member identity; \`(deviceId, deviceUserId)\` identifies a device-side user record.                                            | A device user id is local to one reader and is not unique across readers.    |
 | Canonical truth     | Server owns canonical business state; readers hold projections.                                                                                    | Eliminates competing business brains.                                        |
 | Reader edits        | Reader changes are observations/change requests, not automatic truth.                                                                              | The SDK exposes snapshots, not mutation history or reliable revisions.       |
 | Conflict resolution | Use baseline + server desired + current device observation. Never use clock timestamps to pick a winner.                                           | No reliable user-level revision/change ID exists on the reader API.          |
 | Full logical write  | Every user update writes the full logical user record; face is written through the verified face path as a separate operation.                     | The SDK may zero fields omitted from writes.                                 |
 | Freeze vs removal   | Freeze/disable keeps the user record; removal deletes the device record. They are different operations.                                            | Matches device semantics and preserves server history.                       |
 | Device deletion     | A device-side deletion never deletes the server member automatically.                                                                              | A device can erase a projection without proving business deletion.           |
-| Final convergence   | When all required components are connected and review decisions are resolved, every reader must be semantically equal to the server desired state. | Provides the production invariant without requiring byte-for-byte SDK state. |
+| Final convergence   | When a reader is connected and its review decisions are resolved, that reader matches the desired projection the server published for it. | A reader is not required to hold every member. Which readers receive a member is an open product choice; the implemented create flow is one chosen reader. |
 | No permanent master | There is no permanent master reader. Bootstrap is a reconciliation phase, not a peer hierarchy.                                                    | Avoids single-device authority and simplifies N-reader scaling.              |
 | No blind replay     | On reconnect, observe reader state before applying potentially stale desired commands.                                                             | Prevents overwriting offline device changes before the server sees them.     |
 
-# 3. What was wrong with the existing approaches
+# 3. Rejected designs
 
-The supplied approaches contain useful implementation observations, but several design choices should be discarded rather than patched.
+These designs are not part of the system. Do not reintroduce them.
 
 | **Existing approach**                       | **Assessment**                                                                                                         | **Final decision**                                                                         |
 |---------------------------------------------|------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| Master device + copy master roster          | Useful for a controlled migration, unsafe as a general source of truth.                                                | Replace with bootstrap reconciliation; no permanent master.                                |
+| Master device + copy master roster          | Unsafe as a source of truth. One reader must not define the others.                                                    | Bootstrap reconciliation; no permanent master.                                             |
 | Latest timestamp wins                       | Cannot be trusted because device timestamps/revisions are not sufficient and gateway/server/device clocks can diverge. | Reject. Use three-way reconciliation.                                                      |
-| Gateway fan-out + backend fan-out           | Duplicates writes and creates loop-prevention complexity.                                                              | Reject as the steady-state architecture. Server publishes desired state; gateway executes. |
+| Two member writers for one reader           | Duplicate writes fight and need loop prevention.                                                                       | The server publishes desired state. That reader's worker is the only member writer.        |
 | \`updatedByGateway\` boolean                | Solves one feedback-loop symptom but is not a versioning or consistency model.                                         | Do not use as the core sync primitive. Rework around revisions and observations.           |
 | Device user ID == member serial             | Unsafe when different readers independently allocate IDs.                                                              | Reject. Keep device-local mapping.                                                         |
 | Full roster every 15 seconds                | Expensive and unnecessary as the primary mechanism.                                                                    | Use alarms + targeted reads where possible + coalesced safety scans.                       |
@@ -145,7 +145,7 @@ The backend should model access policy separately from device administrative aut
 | **Business concept**  | **Canonical meaning**                                                              | **Reader projection**                                                               |
 |-----------------------|------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|
 | Member identity       | \`publicId\`                                                                       | Local \`szUserID\` chosen for that reader via mapping.                              |
-| Device role           | USER or ADMIN                                                                      | SDK authority field. ADMIN permits device-management operations; USER does not.     |
+| Device administration | Reader-menu access is the reader password.                                         | Do not project `emAuthority=Administrators` as menu permission. Access freeze is `nUserStatus`, not this field. |
 | Access allowed        | Explicit admin allow/disallow flag.                                                | \`nUserStatus\`: 0 enabled, 1 frozen, subject to POC verification.                  |
 | Membership validity   | Paid/current plan period.                                                          | Device valid-begin / valid-end fields.                                              |
 | Effective door access | \`accessAllowed == true\` AND membership currently active AND member not archived. | Device must be provisioned so that its local enforcement reflects this combination. |
@@ -193,33 +193,33 @@ Offline enrollment is supported without turning the gateway into a second busine
 
 2\. **Local snapshot:**Gateway reads the full current user record and face and stores a durable local observation/journal entry.
 
-3\. **Optional local propagation:**If the backend is unavailable, gateway may mechanically provision the new provisional person to other readers so the gym can continue operating. This is a technical propagation decision, not acceptance of member identity.
+3\. **Stay on that reader:**The person remains a pending enrollment on the reader where they were created. The gateway does not copy them to another reader and does not create a canonical member.
 
-4\. **ID collision on sibling:**If the same deviceUserId is already occupied on a target reader, allocate a different free device-local ID on that target and persist the mapping. Never overwrite the existing user.
+4\. **Occupied id:**If a later desired write would use an id that already belongs to someone else on that reader, the gateway reports the collision and does not overwrite the existing user. It does not invent a replacement id.
 
 5\. **Reconnect:**Gateway sends the enrollment observation to the backend.
 
-6\. **Review:**Backend creates a pending enrollment. Admin can create a new member, link to an existing member, or reject/remove it. Candidate matches may be suggested using name/face/evidence, but never auto-merged.
+6\. **Review:**Backend creates a pending enrollment. Staff can create a new member, link to an existing member, or reject it. A name match on another reader is a suggestion only. Names, ids, and face hashes never merge members automatically.
 
-7\. **Canonicalize:**Server allocates or confirms per-reader device IDs, generates the desired projection for every reader, and increments reader revisions.
+7\. **Decision:**An approved decision becomes a desired revision for the reader it applies to. Link and create keep that reader's device user id. The decision stays open until that reader verifies it.
 
-8\. **Convergence:**Gateway applies and verifies the canonical projection across all readers.
+8\. **Verify:**The gateway applies that revision, reads the user and face back, and acknowledges only a match.
 
 # 9. Device edits, admin promotions, and conflicts
 
-The gym owner may legitimately edit a user or promote a user to ADMIN directly on a reader. The server therefore cannot treat all reader-side changes as malicious or invalid; it must treat them as controlled, reviewable observations.
+The gym owner may edit a user on a reader. Reader-menu administration is the reader password, not a projected `emAuthority` value. The server treats reader-side changes as reviewable observations.
 
 | **Scenario**                                         | **What system does**                                                                                                                | **What it must not do**                                                                   |
 |------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
 | Name/validity/access edit on one reader              | Detect via snapshot diff, report to server, create review if it conflicts with canonical desired state.                             | Do not silently discard or choose by timestamp.                                           |
-| ADMIN promotion on reader                            | Report observed authority change; place in review if baseline/server differ; admin can approve.                                     | Do not invent cryptographic proof of who made the change if the device cannot provide it. |
-| Different edits on two readers while gateway offline | Do not fan-out one over the other if both diverged from the same baseline. Preserve both observations and create one conflict item. | Do not pick Device 1, Device 2, or latest clock as winner.                                |
+| Authority field change on reader                     | Report the observation. Do not treat `emAuthority` as menu permission or as a change to other readers.                              | Do not invent cryptographic proof of who made the change if the device cannot provide it. |
+| Different edits on two readers while gateway offline | Preserve both observations and create one review item.                                                                 | Do not copy either edit onto the other reader, and do not pick a winner from the clock.   |
 | Same result independently on two readers             | Accept as converged after comparison; audit evidence.                                                                               | Do not require manual review for identical resulting state unless policy requires it.     |
 | Reader-side deletion                                 | Record device deletion/drift; keep canonical member. Admin may restore or approve global deprovisioning.                            | Do not delete the backend member because a projection disappeared.                        |
 
 # 10. Desired-state propagation and command execution
 
-Per-member command queues should no longer be the primary consistency model. The server should expose a versioned desired projection that the gateway can pull in bounded chunks.
+Member state for a reader is a versioned desired projection. The gateway pulls revisions after the applied revision, in bounded chunks.
 
 1\. **Canonical write:**A React/server change is committed to canonical member/membership state.
 
@@ -258,7 +258,7 @@ The gateway should move from multiple JSON-based stores to a small SQLite journa
 | **Local record**       | **Purpose**                                                                             | **Retention**                                       |
 |------------------------|-----------------------------------------------------------------------------------------|-----------------------------------------------------|
 | Reader snapshot        | Last normalized reader observation for diff detection and offline local reconciliation. | Current + recent history needed for audit; bounded. |
-| Desired applied cursor | Highest verified server revision per reader.                                            | Until reader is rebuilt/migrated; compact.          |
+| Desired applied cursor | Highest verified server revision per reader.                                            | Until the reader is replaced; compact.              |
 | Outbound event journal | Attendance, enrollment, observation and audit events awaiting cloud delivery.           | Until ACKed, then bounded retention.                |
 | Provisional enrollment | Offline device-created users awaiting server review.                                    | Until resolved; then bounded audit copy.            |
 | Attendance cursor      | Last safely processed reader attendance position/window.                                | Until data is confirmed server-side, then bounded.  |
@@ -293,12 +293,12 @@ The earlier “master device” model is not the right long-term architecture. F
 
 | **Bootstrap case**                                   | **Treatment**                                                                                                                |
 |------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| Readers empty; server has members                    | Server desired projection seeds all readers.                                                                                 |
+| One reader has a trusted empty roster; server has members | Seed that reader from server members through its desired-state writer and its own id allocator. A failed, short, or count-mismatched list seeds nothing. |
 | Reader + server member with existing mapping         | Compare current reader snapshot against server desired state; apply or review based on three-way/baseline availability.      |
 | Reader has unlinked person                           | Create Pending Device Enrollment. Suggest identity matches, but do not auto-link.                                            |
 | Two readers have same device ID but different people | Treat as separate device-local identities; create/retain per-reader mappings and surface the collision.                      |
 | Two readers have same person but different IDs       | Evidence-based suggestion may link them; admin confirms. Preserve each local device ID until canonical projection is chosen. |
-| Existing data quality is too ambiguous               | Do not overwrite. Quarantine to a bootstrap review queue and provide a migration report.                                     |
+| Existing data quality is too ambiguous               | Do not overwrite. Keep a bootstrap review item. Do not guess an identity.                                                    |
 
 <table>
 <colgroup>
@@ -337,7 +337,7 @@ Attendance is intentionally isolated from member synchronization. The reader sto
 
 - **Face data is sensitive.** Store encrypted at rest, never write face bytes to logs, and restrict administrative access.
 
-- **Device ADMIN is an explicit permission.** The server can accept reader-originated ADMIN changes through the review process, but the system must not claim to know which human pressed the device buttons unless the hardware provides auditable identity.
+- **Reader-menu administration is the reader password.** Do not project `emAuthority=Administrators` as that permission. The system must not claim to know which human pressed the device buttons unless the hardware provides auditable identity.
 
 - **Replay protection.** Every inbound/outbound business message must be idempotent or revision-scoped.
 
@@ -376,7 +376,7 @@ The current system is also a single-VPS/single-Spring-instance deployment. Gatew
 
 # 18. Production POC / hardware verification gates
 
-These items remain intentionally unverified. They are the only remaining hardware/SDK facts that should block specific implementation claims.
+The evidence record for these questions is [device-poc-results.md](device-poc-results.md), run `sync-gates-20261007-130047` on serial `TW30000005250265`. Where this table still says UNKNOWN, that is the pre-run mark. Use the results document, and do not treat a single run as a firmware guarantee. Section E of the execution plan is a separate confirmation and has not been run.
 
 | **ID** | **POC question**                                                                                   | **Why it matters**                                                                          | **Status**       |
 |--------|----------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|------------------|
@@ -388,23 +388,23 @@ These items remain intentionally unverified. They are the only remaining hardwar
 | P6     | Does \`nRecNo\` remain monotonic/persistent across reboot, storage full, and time windows?         | Determines attendance cursor design.                                                        | UNKNOWN          |
 | P7     | Can attendance be queried strictly after \`recNo\` or only by time window?                         | Determines backfill algorithm.                                                              | UNKNOWN          |
 | P8     | What is reader attendance retention?                                                               | Defines maximum outage recovery guarantee.                                                  | UNKNOWN          |
-| P9     | What happens when the same face is created under two device user IDs?                              | Needed for offline provisional propagation and migration.                                   | UNKNOWN          |
+| P9     | What happens when the same face is created under two device user IDs?                              | Equal face bytes must not merge two people.                                                 | See the POC record |
 | P10    | What are safe roster sizes and concurrent SDK-operation limits?                                    | Determines scan cadence/concurrency.                                                        | UNKNOWN          |
 | P11    | Exact validity boundary behavior and timezone handling on device.                                  | Prevents membership start/end-day bugs.                                                     | UNKNOWN          |
 | P12    | Reader replacement/factory reset signals or reliable empty-state detection.                        | Improves automatic projection repair.                                                       | UNKNOWN          |
 
 # 19. Implementation sequence
 
-| **Milestone**                           | **Deliverable**                                                                             | **Exit criteria**                                                                          |
-|-----------------------------------------|---------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| M0 — POC                                | Hardware verification harness covering P1-P12.                                              | Results recorded; launch-blocking unknowns closed.                                         |
-| M1 — Canonical model                    | Member/device mapping, desired projection, observed snapshot, review queue, revision model. | DB invariants + service tests pass; no device IDs used as member identity.                 |
-| M2 — Gateway persistence                | SQLite journal, per-reader worker, snapshots, cursors, bounded retry.                       | Gateway restart/network-outage tests preserve state and do not duplicate business effects. |
-| M3 — Desired-state sync                 | Server projection API + gateway pull/apply/verify/ack.                                      | Server-only changes converge on N readers; stale revisions cannot roll back state.         |
-| M4 — Offline reader changes             | Device observation ingestion, local mechanical propagation, pending enrollment/review.      | Offline create/edit/admin/delete scenarios converge without silent discard.                |
-| M5 — Bootstrap migration                | Existing-gym mapping/review tooling; no master dependency.                                  | Ambiguous identities visible; known mappings converge automatically.                       |
-| M6 — Attendance (optional but isolated) | Durable event buffer, cursor/backfill, unique event identity, reports.                      | POC proves retention/cursor semantics; attendance never blocks member sync.                |
-| M7 — Cutover                            | Disable duplicate fan-out/timestamp merge path; retain rollback switch temporarily.         | Shadow parity demonstrated; no unresolved P0/P1 correctness defects.                       |
+The slice-by-slice record is [execution-plan.md](execution-plan.md). F1–F3 and V1–V16 passed their automated tests on the fake reader. Physical confirmation of user create, face read-back, freeze and enable, validity, face replace, and reconnect is still outstanding.
+
+| **Work** | **Deliverable** | **Exit criteria** |
+| --- | --- | --- |
+| Hardware evidence | Probe covering the section 18 questions, plus the later checks in the probe runbook. | Results recorded in [device-poc-results.md](device-poc-results.md). Unknowns stay unknown. |
+| Authenticated channel | One gateway per gym. Identity comes from the credential. | Anonymous access is refused. |
+| Desired state | Projection, revision, pull, apply, read-back, ack. One worker per reader. SQLite journal. | Stale revisions do not apply. A restart does not apply a verified revision twice. |
+| Observations and review | Reader creates, edits, and trusted disappearances become enrollments or review items. | No silent member merge. No copy of an unlinked person onto another reader. |
+| Bootstrap | One trusted roster becomes a report. A trusted empty reader can be seeded from server members. A short list seeds nothing. | Known mappings stay. Ambiguous people stay unresolved. |
+| Attendance | Time-window poll, append-only rows, separate from member revisions. | Does not write member state. Record-number survival across reboot or a full log is still unproven. |
 
 # 20. Test strategy
 
@@ -414,13 +414,13 @@ The acceptance suite should test state transitions rather than individual method
 |-----------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
 | Server creates member online                                    | Server canonical + all reader desired projections updated; gateway converges and verifies.                                                         |
 | Server edits member while gateway offline                       | Desired revision persists; reconnect observes device first, then applies/reviews based on three-way state.                                         |
-| Reader 1 creates member offline                                 | Gateway stores provisional enrollment; reader remains operational; on reconnect backend creates review item; final approval converges all readers. |
-| Reader 1 edits; Reader 2 unchanged offline                      | Gateway may provisionally propagate the mechanical change; backend later records/accepts or resolves through review.                               |
+| Reader 1 creates member offline                                 | Gateway stores the observation; the person stays on that reader; on reconnect the backend creates a pending enrollment. Approval becomes a desired revision. Other readers are not written by the observation. |
+| Reader 1 edits; Reader 2 unchanged offline                      | The edit is an observation. The backend records it for review. Reader 2 is not overwritten from Reader 1.                                          |
 | Reader 1 and Reader 2 both edit same member differently offline | No winner chosen automatically; both observations retained; one conflict review item.                                                              |
 | Reader deletes user                                             | Backend member remains; review shows device missing; admin can restore or approve deprovisioning.                                                  |
 | Server disables member                                          | Desired projection keeps user and freezes it; verify door-block POC before declaring access secure.                                                |
 | Server removes from all readers                                 | Desired presence becomes false on every reader; canonical member remains archived/retained.                                                        |
-| Device promotes user to ADMIN offline                           | Observation becomes review; admin can approve; server then projects ADMIN to all readers.                                                          |
+| Reader authority field changes                                  | Observation is stored for review. It does not change other readers and is not treated as menu permission.                                        |
 | Gateway restarts with pending work                              | SQLite state resumes; no duplicate final side effects.                                                                                             |
 | Reader goes offline                                             | Other readers continue; pending projection retries only for failed reader.                                                                         |
 | Backend receives duplicate event                                | Idempotent handling; no duplicate member/enrollment/attendance effect.                                                                             |
@@ -436,29 +436,29 @@ The review queue is not an exception-handling drawer hidden from the product. It
 
 - **Evidence:** Source device, observed time, last reconciled revision, mapping, alarm/scan trigger, and whether other readers agree.
 
-- **Actions:** Accept server, accept device snapshot, link to existing member, create new member, restore to reader, remove from all readers, or reject provisional enrollment.
+- **Actions:** Accept the server value, link to an existing member, create a new member, restore to this reader, remove from this reader, or reject. Link and create keep that reader's device user id. Removing from one reader does not deactivate the member and does not write other readers. The decision stays pending until that reader verifies it.
 
 - **Suggested matches:** Show ranked candidates based on evidence (name, face, mapping, other fields). Never auto-merge identity.
 
 - **Audit:** Record decision, actor, prior state, chosen state and resulting server/device revisions.
 
-# 22. What should be deleted or retired from the current design
+# 22. Rules that are not part of this architecture
 
-- **Permanent master-device behaviour.** Keep only a bootstrap/migration procedure where needed.
+- **No permanent master reader.** Bootstrap compares each reader with server desired state. It does not copy one reader's roster onto another.
 
-- **Timestamp-based conflict winner logic.** Remove from device sync business rules.
+- **No timestamp winner.** Baseline, desired state, and the current observation decide. Clocks do not.
 
-- **Device-ID-as-serial fallback.** Remove from all identity resolution paths.
+- **No device-id-as-member-identity.** `deviceUserId` stays local to one reader.
 
-- **Gateway direct business fan-out as a primary path.** Replace with local mechanical propagation only for offline continuity; server becomes canonical after reconnect.
+- **No copy of an observation onto another reader.** A change on one reader is reported. Other readers change only when the backend publishes a desired revision for them.
 
-- **\`updatedByGateway\` as correctness mechanism.** It may remain temporarily for migration compatibility, but it must not be the new consistency model.
+- **No echo flag as the consistency model.** Applied revisions and read-back are the record of what the gateway wrote.
 
-- **15-second full-roster polling as a default.** Replace with event-triggered/coalesced/safety reconciliation.
+- **No 15-second full-roster poll as the way changes are detected.** Use alarms as triggers, plus a benchmarked safety scan.
 
-- **Unbounded heartbeat durability.** Move health to telemetry/state, not replayable business outbox.
+- **No durable heartbeat journal.** Health is telemetry. The SQLite journal keeps business observations, applied revisions, pending acknowledgements, and retry metadata.
 
-- **Anonymous gateway connection fallback.** Delete immediately; credential is mandatory.
+- **No anonymous gateway connection.** The credential is mandatory.
 
 # 23. Open items that are not architectural blockers
 
@@ -521,7 +521,7 @@ The key mental model is: “server desired state + reader observed state + last 
 
 # Appendix C. Technology choices that still hold
 
-These choices come from the Phase 0 stack note (2026-09-10). Rules in that note that contradict this document are not carried forward: a per-member command outbox is not the consistency model, the server does store one face JPEG, and remote face write is not blocked by default.
+These choices come from the Phase 0 stack note (2026-09-10). Member sync in this document is desired revisions with read-back. The server stores one face JPEG per member. Remote face write is part of that revision.
 
 | **Choice** | **Rule** |
 |------------|----------|

@@ -75,7 +75,7 @@ The same offset holds for every later walk, including the denied ones. The harne
 
 What the run does not show is a broken attendance clock. The punches line up with the walks once 5 h 30 min is added. Membership dates in P11 were also sent and stored as reader-local wall times (`2026-10-07 23:59:59` for end of day), and the door obeyed those dates. The device clock used for validity is local. The punch timestamp is UTC.
 
-The current gateway assumption that the reader runs in UTC (migration assessment C17) does not match this reader. This run did not call `SynchronizeTime`, so it did not move the clock. A later sync that sets the reader to UTC would be a different device state from the one measured here.
+An assumption that this reader runs in UTC does not match this run. This run did not call `SynchronizeTime`, so it did not move the clock. A later sync that sets the reader to UTC would be a different device state from the one measured here.
 
 ## P1 — freeze blocks the door
 
@@ -136,7 +136,7 @@ P21 is OBSERVED, with a narrower meaning than "the reader stores what you sent."
 
 ## P9 — one face, two user ids
 
-OBSERVED. INSERT of A's photo onto B succeeded twice. Both users read back 44 KB and the same MD5. The reader did not reject the duplicate. B was then removed. Offline enrollment and migration cannot assume the device keeps faces unique.
+OBSERVED. INSERT of A's photo onto B succeeded twice. Both users read back 44 KB and the same MD5. The reader did not reject the duplicate. B was then removed. Enrollment must not assume the device keeps faces unique.
 
 ## P2 — screen ids
 
@@ -248,7 +248,7 @@ Closed without a trial. The operator confirmed this reader cannot be factory-res
 
 ## What this closes for the sync design
 
-These are readings of this run, for the decisions in the architecture doc and the migration assessment. They are not a second verdict layered on top of the harness.
+These are readings of this run, for the decisions in the architecture doc. They are not a second verdict layered on top of the harness.
 
 | Decision | Reading |
 | --- | --- |

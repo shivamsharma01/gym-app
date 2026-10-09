@@ -1,11 +1,11 @@
-This repository is being migrated to the architecture documented at:
+Device synchronization follows:
 
 @docs/architecture/gym-device-sync-before-poc-architecture.md
 
-This architecture is authoritative.
+That architecture is the system. Slice status is in
+@docs/architecture/execution-plan.md.
 
-Do not preserve existing synchronization behaviour merely because
-the current implementation already does it.
+Do not add a second member-sync design beside desired state.
 
 Do not introduce a second conflict-resolution brain in the gateway.
 
@@ -112,15 +112,15 @@ Do not encode these as invariants until the POC records an answer:
 The POC harness is `gateway/tools/Gym.Gateway.SdkProbe --gates`
 (see its GATES.md).
 
-## Retired; do not reintroduce
+## Designs that are not this system
 
-- Permanent master device and "copy master roster".
-- Timestamp / latest-wins conflict logic.
-- Device-ID-as-serial fallback.
-- Gateway and backend both fanning out writes.
-- `updatedByGateway` as the consistency mechanism.
-- 15-second full-roster polling as the change-detection method.
-- Heartbeats persisted as replayable business events.
-- Per-member command outbox as the consistency model.
-- iAS as a runtime dependency or second source of truth.
-- A Java/JNA gateway.
+- One reader is not a master whose roster is copied onto the others.
+- Clocks do not pick a winner. Baseline, desired state, and the observation do.
+- `deviceUserId` is not a member id and is not allocated by treating a serial as the id.
+- An observation on one reader is not written onto the other readers by the gateway.
+- An echo marker is not the record of a successful write. Read-back is.
+- A 15-second full-roster poll is not the change-detection rule.
+- Heartbeats are telemetry, not replayable business events.
+- Member consistency is the desired revision for that reader.
+- iAS is not a runtime dependency and is not a second source of truth.
+- The gateway is not a Java/JNA process.

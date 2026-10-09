@@ -59,8 +59,8 @@ disable blocks the door until POC P1 says so.
   changes canonical state.
 - Pending enrollments: admin creates, links or rejects. Suggest matches by
   evidence; never auto-merge identity.
-- Bootstrap has no master reader. Ambiguous identities go to a review
-  queue with a migration report; never guess.
+- Bootstrap has no master reader. Ambiguous identities go to the review
+  queue. Never guess a match.
 
 ## Desired-state publishing
 
@@ -70,7 +70,8 @@ disable blocks the door until POC P1 says so.
   after its applied revision in bounded pages.
 - A newer revision supersedes older ones; stale revisions can never roll
   back state. Duplicate commands and events are no-ops.
-- Not a per-member command outbox and not dual fan-out with the gateway.
+- Member changes are desired revisions for one reader. The gateway does
+  not fan an observation out to other readers.
 
 ## Gateway trust
 

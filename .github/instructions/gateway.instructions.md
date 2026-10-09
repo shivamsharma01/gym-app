@@ -8,7 +8,7 @@ It may:
 - connect to devices
 - read device state
 - persist observations
-- execute backend commands
+- apply desired revisions
 - retry
 - reconnect
 - buffer attendance
@@ -91,21 +91,22 @@ only changed or unresolved items upstream. Read faces only when needed.
 
 - A reader-created user keeps its reader `szUserID`. Store a durable
   observation with the full record and face, then report it on reconnect
-  as a provisional enrollment.
-- While offline, the gateway may mechanically copy the provisional person
-  to sibling readers for continuity. That is not identity acceptance.
-- If the id is taken on a sibling, allocate a different free local id and
-  persist the mapping. Never overwrite an existing user.
-- Reader-side edits, ADMIN promotions and deletions are reported as
+  as a pending enrollment. Do not create a member. Do not copy that
+  person onto another reader.
+- An occupied device user id is reported. Do not overwrite the user who
+  already has it, and do not invent a replacement id in the gateway.
+- Reader-side edits, administration changes, and deletions are
   observations. If two readers changed the same member differently from
-  the same baseline, keep both and do not fan one over the other.
+  the same baseline, keep both. Do not write one reader's values onto
+  the other.
 
 ## Attendance
 
-- Query by bounded time window. Use an after-record-number query only if
-  the POC proves it works (the SDK find condition has no such field).
-- `(deviceId, recNo)` is a candidate idempotency key until P6 proves
-  persistence; dedupe defensively.
+- Query by a bounded time window. Do not query for records after a
+  record number. The 7 October 2026 run did not show that query.
+- Idempotency is device id, record number, and the stored timestamp.
+  Record number alone is not the key: survival across reboot or a full
+  log is unproven.
 - Keep the raw device user id even when no mapping exists.
 - Attendance ingestion must never hold up member reconciliation.
 

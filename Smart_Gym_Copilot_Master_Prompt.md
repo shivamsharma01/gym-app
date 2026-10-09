@@ -15,6 +15,8 @@ You are acting simultaneously as:
 9. DevOps/Deployment Engineer
 10. Code Reviewer
 
+Device member synchronization in this repository is the desired-state design in `docs/architecture/gym-device-sync-before-poc-architecture.md` and `docs/architecture/execution-plan.md`. Attendance is a separate time-window ingest and must not write member state.
+
 Your job is NOT to merely propose an architecture or generate a partial demo. Build a production-oriented, maintainable, extensible Smart Gym Management Platform from the requirements below.
 
 Work as an autonomous senior engineer. Inspect the repository before making changes. Create a clear implementation plan, then implement it in the repository. Do not stop at pseudocode, TODO lists, mock screens, or architecture diagrams.
@@ -296,17 +298,15 @@ Member/membership changes
         ↓
 Spring Boot evaluates access policy
         ↓
-Device synchronization command created
+Desired revision published for that reader
         ↓
-Device Gateway receives command
+Device Gateway pulls the revision
         ↓
-Gateway updates TrueFace device
+Gateway writes the reader and reads it back
         ↓
-device acknowledges
+Verified revision is acknowledged
         ↓
-gateway records synchronization status
-        ↓
-application shows device sync state
+application shows whether that reader matches the desired revision
 
 These two flows must not be tightly coupled.
 
@@ -331,11 +331,9 @@ The application's database must be the authoritative business source of truth fo
 
 iAS is NOT the new source of truth.
 
-Treat iAS as legacy/optional compatibility only.
+Do not design a system where iAS and this application both modify device authorization.
 
-Do not design a system where both iAS and this application independently modify device authorization.
-
-Provide an optional future integration boundary for legacy iAS migration, but do not make iAS a runtime dependency.
+iAS is not a runtime dependency and is not a source of member or device state.
 
 ---
 
@@ -385,113 +383,30 @@ Never silently pretend that a device update succeeded.
 
 # 9. DEVICE SYNCHRONIZATION ENGINE
 
-Implement a robust command/outbox-based synchronization architecture.
+Member synchronization is desired state, specified in `docs/architecture/gym-device-sync-before-poc-architecture.md`.
 
-Example commands:
+- The backend writes the member and that reader's desired projection in one transaction, then notifies the gateway with the reader id and the revision.
+- The gateway pulls revisions after the applied revision, writes the full user record and the face, reads them back, and acknowledges only a match.
+- A failed or incomplete read-back is retried. It is not success.
+- A stale revision is ignored.
+- Reader-originated differences become review items. Staff decisions become new revisions.
+- One worker per reader. Durable retry state lives in the gateway SQLite journal.
+- Door open and close are reader controls. They are not member identity.
+- Do not clear the reader log as part of member sync.
 
-- CREATE_USER
-- UPDATE_USER
-- DISABLE_USER
-- ENABLE_USER
-- REMOVE_USER
-- UPDATE_VALIDITY
-- UPDATE_ACCESS_POLICY
-- ENROLL_FACE
-- DELETE_FACE
-- SYNC_DEVICE_TIME
-- OPEN_DOOR
-- CLOSE_DOOR
-- REFRESH_DEVICE_USERS
-- RECONCILE_DEVICE
-- CLEAR_DEVICE_LOGS (admin-only and strongly protected)
-
-Each command must have:
-
-- UUID command ID
-- tenant ID
-- device ID
-- member ID if applicable
-- command type
-- payload
-- created timestamp
-- attempt count
-- next retry timestamp
-- state
-- last error
-- correlation ID
-- acknowledged timestamp
-- completed timestamp
-
-States:
-
-PENDING
-DISPATCHED
-ACKNOWLEDGED
-SUCCEEDED
-RETRYING
-FAILED
-DEAD_LETTER
-CANCELLED
-
-Use transactional creation of a business change + synchronization work item where appropriate.
-
-Do not use fire-and-forget threads from REST controllers.
-
-Use a reliable persistence-backed job/outbox mechanism.
-
-Implement:
-
-- retries with exponential backoff
-- jitter
-- maximum attempts
-- dead-letter state
-- idempotency
-- correlation IDs
-- structured logs
-- reconciliation
-- manual retry
-- manual sync
-- device resync
-- visible sync status
+Show pending, failed, and offline clearly. Never present an unverified write as applied.
 
 ---
 
-# 10. ATTENDANCE SYNCHRONIZATION
+# 10. ATTENDANCE
 
-Use a hybrid strategy:
+Attendance is separate from member desired state. It must not write members.
 
-1. Real-time events when the SDK/device provides them.
-2. Reconciliation/query of device records after:
-   - gateway restart
-   - device reconnect
-   - gateway reconnect
-   - detected event gap
-   - scheduled interval
-   - manual admin request
+Poll the reader log by a bounded time window. Do not query for records after a record number. Do not ingest punches from `ALARM_ACCESS_CTL_EVENT`; the 7 October 2026 run stored punches and received none of those alarms. Treat the stored punch time as UTC. Leave the reader clock on India local time.
 
-Because the device can hold a large number of attendance/log records, do not rely solely on real-time callbacks.
+Store punches append-only. Idempotency is the device id, the record number, and the stored timestamp. Record number alone is not the key. A failed query is an error, not an empty log. The poll must not block the member worker.
 
-Maintain a synchronization watermark per device.
-
-When reconnecting:
-
-- determine the last known synchronized point
-- query appropriate device records
-- normalize them
-- deduplicate them
-- persist missing events
-- advance watermark
-- expose synchronization health
-
-Never duplicate attendance when a real-time event and reconciliation later report the same physical event.
-
-Use a stable device event ID when the SDK provides one.
-
-If not available, build a conservative deterministic event fingerprint from available fields such as:
-
-device + user + timestamp + direction/method + record sequence/device record identifier
-
-Do not claim perfect deduplication when the device API does not expose a stable identifier.
+Keep the raw device user id when no mapping exists. Do not rewrite older rows' member ids.
 
 ---
 
@@ -518,11 +433,11 @@ Build the system to tolerate temporary communication failure.
 
 When the internet/backend is unavailable:
 
-- device should continue to operate according to its own configured local authorization capabilities
-- gateway should reconnect automatically
-- queued synchronization commands should be retried
-- attendance records should be reconciled after recovery
-- UI should transparently show stale/unsynced state
+- the reader continues local enforcement of the projection it already holds
+- the gateway reconnects, observes the reader, and then applies desired revisions
+- observations and pending acknowledgements survive in the SQLite journal
+- attendance records are ingested after recovery, separately from member state
+- the UI shows a reader that has not verified the latest revision
 
 Do not fabricate an online authorization model that requires the server to answer every face scan unless the hardware/SDK actually supports that design.
 
@@ -775,7 +690,7 @@ Prefer:
 - strategy pattern where rules vary
 - adapter pattern for SDKs
 - factory pattern for device adapter selection
-- outbox pattern for reliable synchronization
+- durable desired-revision journal on the gateway (SQLite), not a second member-sync design
 - state pattern where device/sync lifecycle benefits from it
 - specification/query object pattern for complex searching
 - observer/event-driven patterns where appropriate
@@ -911,7 +826,7 @@ Members page:
 - last visit
 - attendance frequency
 - payment state
-- device sync state
+- whether each reader's applied revision matches desired state
 - tags
 
 Member profile should include:
@@ -937,7 +852,7 @@ Provide quick actions:
 - Cancel membership
 - Record payment
 - Enroll face
-- Resync device
+- Publish the member's desired revision again if a reader has not verified it
 - View attendance
 - Send message
 - View audit history
@@ -976,8 +891,8 @@ Current membership:
 Renew:
 → preserve old membership history
 → create/update current membership according to business rules
-→ create device synchronization command
-→ show device sync result.
+→ publish a desired revision for each reader that should hold this member
+→ show the revision as applied only after read-back.
 
 ---
 
@@ -1050,8 +965,8 @@ Provide “Things that need attention”:
 
 - 8 memberships expire in 3 days
 - 5 members inactive for 14+ days
-- Device B has 3 failed synchronization commands
-- Device A has not reconciled since 10:20 AM
+- Reader B has a desired revision that has not verified
+- Reader A has not completed its last observation
 
 Make these actionable.
 
@@ -2201,7 +2116,7 @@ PHASE 3
 Device domain
 Device Gateway contract
 Gateway simulator
-Synchronization/outbox
+Desired-state sync
 Device health
 
 PHASE 4

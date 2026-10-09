@@ -1,11 +1,11 @@
 # Execution plan
 
-Status: revised implementation sequence. No application code is authorized by this document.
-Approved architecture: [gym-device-sync-before-poc-architecture.md](gym-device-sync-before-poc-architecture.md).
-Approved migration plan: [migration-plan.md](migration-plan.md).
+Status: F1–F3 and V1–V16 are implemented. Their automated tests passed on the fake reader and the test database. Section E has not been run on a physical reader.
+Architecture: [gym-device-sync-before-poc-architecture.md](gym-device-sync-before-poc-architecture.md).
+Build order and open questions: [implementation-plan.md](implementation-plan.md), [open-questions.md](open-questions.md).
 Evidence: [device-poc-results.md](device-poc-results.md), reader serial `TW30000005250265`.
 
-This sequence replaces the earlier V1–V17 order. The migration plan's M1–M8 milestones stay the management view. Offline copying of an unlinked device user onto another reader is not in this release. The architecture allows that copy as an optional continuity step. Doing it would make the gateway choose where an unidentified person exists while the server is down. It waits for an explicit product decision.
+Offline copying of an unlinked device user onto another reader is not in this release. That copy would make the gateway choose where an unidentified person exists while the server is down. It waits for an explicit product decision.
 
 ## Rules
 
@@ -15,7 +15,7 @@ This sequence replaces the earlier V1–V17 order. The migration plan's M1–M8 
 - Revisions and the baseline order changes. Timestamps do not.
 - Desired state is verified on the reader before it is acknowledged.
 - A stale revision does not move a reader backward.
-- A flagged reader has one member writer.
+- Each reader has one member writer: its desired-state worker.
 - Unverified hardware stays out: live door events as attendance, queries after a record number, SDK auto-reconnect as a rule, in-place factory reset, `emAuthority` as menu permission, and record-number survival across power loss or a full log.
 
 ## How a server-created deviceUserId is chosen
@@ -38,7 +38,7 @@ The screen fills the smallest free integer (P2). Highest-known-plus-one stays aw
 
 ### F1 — Authenticated channel
 
-A gym has one gateway. Its connection requires that gateway's credential. The gateway id comes from the credential. Expired tokens fail. The gym's gateway cannot speak for another gym's reader. Anonymous access is removed, with no flag to turn it back on. This is M1. No desired-state message exists until this is true.
+A gym has one gateway. Its connection requires that gateway's credential. The gateway id comes from the credential. Expired tokens fail. The gym's gateway cannot speak for another gym's reader. A connection without that credential is refused. No desired-state message exists until this is true.
 
 ### F2 — Fake reader
 
@@ -76,7 +76,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Adapter.** Fake reader keeps the face across the user write.
 
-**Frontend.** The existing disallow control publishes the revision for a flagged reader.
+**Frontend.** The existing disallow control publishes a desired revision for that reader.
 
 **Database.** Frozen flag distinct from archived. Desired projection carries the status.
 
@@ -86,7 +86,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Reader status matches the server flag. Face and member id are unchanged.
 
-**Coexistence.** Old disable-by-delete must not run. One writer.
+**Member writer.** The desired-state worker is the only component that changes this reader's user record.
 
 **Done.** Tests green on the fake reader.
 
@@ -102,7 +102,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Adapter.** If a test bypasses the guard, the fake reader zeros validity, matching P3. The real path does not send that payload.
 
-**Frontend.** Member edit on a flagged reader publishes a revision.
+**Frontend.** Member edit publishes a desired revision for that reader.
 
 **Database.** No new tables.
 
@@ -112,7 +112,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Read-back equals the desired name and validity. `SynchronizeTime` is not called.
 
-**Coexistence.** Same single-writer rule.
+**Member writer.** The desired-state worker is the only component that changes this reader's user record.
 
 **Done.** Tests green.
 
@@ -138,7 +138,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Get-face returns the new bytes only after ack.
 
-**Coexistence.** Old `UPSERT_FACE` does not run for this reader.
+**Member writer.** Face bytes are written only as part of the desired revision for this reader.
 
 **Done.** Three tests green.
 
@@ -164,7 +164,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Verified absence on A only.
 
-**Coexistence.** Delete-member-everywhere does not run.
+**Member writer.** Removal is a desired absence on this reader. The member stays, and no other reader is written.
 
 **Done.** Tests green.
 
@@ -190,7 +190,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Call order and stale-revision tests green.
 
-**Coexistence.** The old outbox does not replay commands for this reader on that reconnect.
+**Member writer.** Reconnect applies the current desired revisions for this reader after the observation. A stale revision is not applied.
 
 **Done.** Tests green, including one restart.
 
@@ -216,7 +216,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** B's applied revision matches its desired revision first.
 
-**Coexistence.** The old single watcher loop is not the executor for these flagged readers.
+**Member writer.** Each reader has its own worker. One reader's failure does not write the other reader.
 
 **Done.** Test green.
 
@@ -242,7 +242,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** The stored id equals the reader's id. The sibling adapter's write count stays zero.
 
-**Coexistence.** `createFromDevice`, `importUsers`, `AlignReaders`, and `FanOutAsync` do not run.
+**Member writer.** The observation is stored. No member is created, and no other reader is written.
 
 **Done.** Tests green.
 
@@ -268,7 +268,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** The member row matches the baseline.
 
-**Coexistence.** `DeviceUserChangeService.apply` and timestamp merge do not consume the observation.
+**Member writer.** The observation becomes a review item. The member row is not changed from the reader clock.
 
 **Done.** Tests green.
 
@@ -294,7 +294,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Both values still present. No adapter write from one reader to the other.
 
-**Coexistence.** Fan-out and latest-wins do not run.
+**Member writer.** Neither reader is overwritten from the other.
 
 **Done.** Tests green.
 
@@ -320,7 +320,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** No remove command is sent to any reader by this scan.
 
-**Coexistence.** `applyDeletion` and `DetectDeletions` do not run.
+**Member writer.** The absence is a review item. The member stays, and no reader is told to delete anyone because of this scan.
 
 **Done.** Tests green.
 
@@ -346,7 +346,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Zero review items from the bad scans.
 
-**Coexistence.** The current deletion detector does not see the list.
+**Member writer.** An untrusted list creates no desired absence and no member change.
 
 **Done.** Tests green.
 
@@ -372,7 +372,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Two device ids remain. Member count is unchanged by the hash match.
 
-**Coexistence.** Face-hash auto-link does not run.
+**Member writer.** Equal face bytes do not create a mapping or a member.
 
 **Done.** Tests green.
 
@@ -398,7 +398,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Reader, member, and mapping match the choice, and an audit row exists.
 
-**Coexistence.** The old DISMISS/REMOVE conflict actions do not close these items.
+**Member writer.** The decision becomes a desired revision. The review item stays open until that revision is verified and acknowledged.
 
 **Done.** Action tests green, and one action is exercised through the UI test.
 
@@ -424,39 +424,37 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Known mappings converge. Ambiguous people stay unresolved. No device id changes.
 
-**Coexistence.** `POST /devices/{id}/import-users` is not called.
+**Member writer.** The report classifies the roster. It does not create members by joining device user ids across readers, and it does not copy one reader's people onto another.
 
 **Done.** Tests green.
 
 ### V16 — One writer
 
-**Behavior.** The flag makes the new worker the only member writer for that reader. Flag off is the rollback and does not delete review rows. Dropping the old outbox is a later release, after every live reader is flagged and V15 left no unresolved identity.
+**Behavior.** Each reader has one member writer: the desired-state worker for that reader. Member create, update, freeze, enable, face change, and removal are desired revisions. A bad or short scan does not remove mapped users. A review item stays until the corresponding device change is verified and acknowledged.
 
-**Prerequisites.** V1 through V15 for that reader.
+**Prerequisites.** V1 through V15.
 
-**Backend.** Flag checked on dispatch and on ingest.
+**Backend.** Member changes publish desired revisions. A roster ingest stores observations and review or enrollment rows. It does not pick a winner by clock, and a short list does not delete a member.
 
-**Gateway.** Spy fails the test if the old dispatcher and the new worker both call the adapter.
+**Gateway.** The reader worker is the only caller that writes member records on that reader. A spy fails the test if another component writes the same adapter during a member change.
 
 **Adapter.** The spy.
 
-**Frontend.** Old sync panel hidden for a flagged reader.
+**Frontend.** Staff change a reader through desired state. Reader-originated differences are on the review queue. Staff do not get an action that overwrites a reader because one clock is later.
 
-**Database.** `device_sync_command` is not dropped in the release that flips the flag.
+**Database.** Desired projections, review items, and pending enrollments stay. A bad release is rolled back with the previous build and a database backup.
 
-**Tests.** Spy. Flag off does not delete review rows. A call to timestamp-wins fails the build for the flagged path.
+**Tests.** Spy shows a single writer. A short scan creates no disappearance. Review rows remain until a verified decision. The member path does not call a clock-wins comparison.
 
-**Failure scenarios.** Flag on during a bad scan: V12 still holds, and the old deletion detector does not run as a fallback.
+**Failure scenarios.** A bad scan while the worker is active: V12 still holds. No member is removed on this reader or any other because the list was short.
 
-**Acceptance criteria.** One writer. Unflagged readers still use the old path.
+**Acceptance criteria.** One writer per reader.
 
-**Coexistence.** This slice is that rule.
-
-**Done.** Spy test green. The gym reader stays unflagged until section E.
+**Done.** Spy test green. Section E has not been run.
 
 ### Deferred — attendance
 
-Not on the critical path. After V1 through V15 are stable, a later slice can poll one time window, store punches append-only, treat `stuTime` as UTC, and key rows by device id plus record number plus stored timestamp. It must not ingest `ALARM_ACCESS_CTL_EVENT`, must not query after a record number, and must not block the member worker. That work is M7. It is not scheduled here.
+Not on the critical path. A later slice can poll one time window, store punches append-only, treat `stuTime` as UTC, and key rows by device id plus record number plus stored timestamp. It must not ingest `ALARM_ACCESS_CTL_EVENT`, must not query after a record number, and must not block the member worker or write member state. It is not scheduled here.
 
 ### Deferred — offline copy to another reader
 
@@ -502,7 +500,7 @@ Not in this release. An unlinked person remains on the originating reader throug
 
 **Acceptance criteria.** After success, the fake reader has exactly the allocated id, the full user fields, and the face bytes. The mapping points `publicId` at that id. Applied revision equals desired revision. The member is not looked up by device id.
 
-**Coexistence.** The old outbox must not also create this user. The test reader is flagged. Other readers may stay on the old path.
+**Member writer.** The desired-state worker creates this user. No other component writes the same reader for this member.
 
 **Done.** The tests are green on F2, and the adapter log shows one user create and one face insert for the successful revision.
 
@@ -517,7 +515,7 @@ These are not defined tightly enough to pretend they are already specified.
 | Which readers receive a new member | V1 is one reader chosen at create time. The long-term rule (every reader, by branch, or per member) is still a product choice. |
 | Who may approve review items, and whether an enrollment expires | Not specified. V14 cannot invent a role or an SLA. |
 | Safety-scan interval | Not benchmarked. The only measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds, and do not schedule from an unmeasured larger roster. |
-| Offline copy to a second reader | In the architecture as optional continuity. Excluded from this release on purpose. |
+| Offline copy to a second reader | Not part of this architecture. Whether a later release should copy an unlinked person during an outage is still an open product decision. |
 | Create without a face | V1's proof includes a face. A member with no photo is not specified as success for V1. |
 | Door and time-section fields beyond the probe's create | V1 sends the same `nDoorNum=1` and `nTimeSectionNum=1` the probe used. Other schedules are not verified. |
 | SDK reconnect | One power cycle reconnected and one did not. V6 re-reads and pulls. It does not depend on the old login surviving. |
@@ -526,7 +524,7 @@ These are not defined tightly enough to pretend they are already specified.
 
 ## E. Physical-reader confirmation
 
-Required once, on a reader, before that reader is flagged in V16. The fake adapter is not a substitute for this pass.
+Required once, on a reader, before that reader is treated as validated for live member sync. The fake adapter is not a substitute. This pass has not been run as a confirmation of F1–V16.
 
 - V1 create: the allocated numeric id, full user read-back, and face read-back.
 - V2 freeze and enable.
@@ -534,24 +532,16 @@ Required once, on a reader, before that reader is flagged in V16. The fake adapt
 - V4 face replace and `PHOTO_EXIST`.
 - V6 reconnect read-before-write.
 
-V8 through V15 do not need a new hardware experiment. Do not factory-reset this unit and do not fill its log to test them.
+The 7 October 2026 probe measured related SDK behavior on serial `TW30000005250265`. That run is evidence for the design. It is not this confirmation pass. V8 through V15 do not need a new hardware experiment. Do not factory-reset this unit and do not fill its log to test them.
 
 ## F. Fake reader only
 
-F1's credential tests, F2, F3, and V1 through V16 can be implemented and accepted on the fake reader and the test database. No physical reader is required to write or merge those slices.
+F1's credential tests, F2, F3, and V1 through V16 were accepted on the fake reader and the test database. That acceptance does not close section E.
 
-## G. Manual review gates
+## G. Remaining gates
 
-Before any application code:
+The slice checks through V16 are recorded as done on the fake reader in each slice above. What remains:
 
-1. This execution plan, including the device-id rule and the exclusion of offline cross-reader copy.
-
-Before the next slice during implementation:
-
-2. After F1, before any desired-state message is added.
-3. After F3, before V1, confirming the SQLite journal still contains no business decision.
-4. After V1 is green on the fake reader, before V2.
-5. After V8, confirming a sibling reader received no write during an outage.
-6. After V14, before V15 uses a roster shaped like the gym.
-7. After the section E hardware pass, before V16 flags the gym reader.
-8. Before the later release that drops the old outbox.
+1. Section E, on a physical reader, before that reader is treated as validated.
+2. The open product decisions in [open-questions.md](open-questions.md), including which readers receive a new member and whether an unlinked person may be copied to another reader during an outage. Neither is decided here.
+3. The deferred attendance slice, which must not become a second member writer.

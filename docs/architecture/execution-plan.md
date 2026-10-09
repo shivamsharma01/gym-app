@@ -1,6 +1,6 @@
 # Execution plan
 
-Status: F1–F3 and V1–V17 are implemented. Their automated tests passed on the fake reader and the test database. V18 and V19 are not built. Section E has not been run on a physical reader.
+Status: F1–F3 and V1–V17 are implemented. Their automated tests passed on the fake reader and the test database. V18, V19, and V20 are not built. Section E has not been run on a physical reader.
 Architecture: [device-sync-architecture.md](device-sync-architecture.md).
 Open questions: [open-questions.md](open-questions.md).
 Evidence: [device-poc-results.md](device-poc-results.md), reader serial `TW30000005250265`.
@@ -518,6 +518,28 @@ Specified in full in section C. This is the first vertical slice.
 
 **Done.** Tests green on the fake reader. Record-number survival across a reboot or full log stays open (Section D).
 
+### V20 — A superseded staff decision still closes
+
+**Behavior.** A review item or pending enrollment that a staff decision put into applying state closes once the reader confirms a later revision of the same user. Today it closes only when the gateway acknowledges the exact decision revision. If a member change (for example a rename) publishes a newer revision of that user before the gateway applies the decision, the decision revision is never acknowledged: the gateway refuses it as superseded. The item then stays in applying state forever, even though the reader converges.
+
+**Prerequisites.** V14, V17.
+
+**Backend.** When an acknowledgement of revision R on a reader passes read-back, close every open decision on that reader for the same `deviceUserId` whose decision revision is at or below R. This runs inside the acknowledgement's reader lock. A decision for another device user id, or on another reader, is untouched. A failed read-back of the newer revision records the verification error on the superseded decision too, and leaves it open. A stale acknowledgement that is refused as superseded closes nothing. The decision audit row is unchanged; closing writes no new decision row.
+
+**Gateway.** No change.
+
+**Adapter.** No change.
+
+**Frontend.** No change. The item leaves the open list when it closes.
+
+**Database.** No new table. Settling may need a lookup by reader and device user id among open decisions.
+
+**Tests.** Decide a review item, rename the member before the acknowledgement, and acknowledge the newer revision: the item closes and applied equals the newer revision. The same for a linked pending enrollment. An acknowledgement of the old decision revision is refused and leaves the item applying. A failed read-back of the newer revision leaves the item open with the error. An open decision for another device user id, or on another reader, stays open. A repeated acknowledgement does not change the closed item.
+
+**Acceptance criteria.** No decision stays in applying state after the reader has confirmed a revision that replaced it.
+
+**Done.** Not built.
+
 ### Deferred — offline copy to another reader
 
 Not in this release. An unlinked person remains on the originating reader through an outage and is reconciled when the server is back (V8). Copying that person to a sibling reader requires a later product decision. Until then the gateway has no such path.
@@ -574,7 +596,7 @@ These are not defined tightly enough to pretend they are already specified.
 | --- | --- |
 | Device-id allocator | The architecture left the exact allocator open. This plan defines highest-known-plus-one decimal ids, plus no-overwrite retry. Server-side writers of one reader (allocation, revision bump, acknowledgement, occupied retry) take that reader's `reader_revision` row lock, and the allocator reads taken ids with locking reads. `ReaderConcurrencyIT` covers concurrent creates, renames, acknowledgements, and an occupied retry on one reader on the test database. A live race against the reader's own screen enrollment was not run. |
 | Cross-reader lock order | An operation that touches several readers (a member change on every mapped reader, the bootstrap report) takes the reader locks in ascending device id order, then rereads the projection row and mapping under the lock. Before this, renames of two members mapped in opposite reader order failed with a MySQL deadlock. `ReaderConcurrencyIT.renamesOfMembersMappedInOppositeReaderOrderDoNotDeadlockOrLoseUpdates` runs 10 concurrent rename rounds per member across two readers and checks every final name and a gap-free revision count on both readers. |
-| Rename against an older acknowledgement | An acknowledgement takes the reader lock first and rereads the revision under it. An acknowledgement of a revision that a rename has since replaced is refused with 409 "Revision is not the desired member" and leaves the applied revision unchanged; it never moves applied backward. A repeated acknowledgement of the current revision returns 200 each time. `aRenameRacingAnAckOfTheOlderRevisionNeverLosesOrRegressesState` races the two freely; `anAckBlockedBehindARenameOfTheSameRowIsRefusedAsSuperseded` forces the acknowledgement to wait behind the rename. Without the reread, that test got a generic concurrent-modification 409 instead. A review decision whose revision is superseded by a later revision of the same row is still never settled; that predates this work. |
+| Rename against an older acknowledgement | An acknowledgement takes the reader lock first and rereads the revision under it. An acknowledgement of a revision that a rename has since replaced is refused with 409 "Revision is not the desired member" and leaves the applied revision unchanged; it never moves applied backward. A repeated acknowledgement of the current revision returns 200 each time. `aRenameRacingAnAckOfTheOlderRevisionNeverLosesOrRegressesState` races the two freely; `anAckBlockedBehindARenameOfTheSameRowIsRefusedAsSuperseded` forces the acknowledgement to wait behind the rename. Without the reread, that test got a generic concurrent-modification 409 instead. A review decision whose revision is superseded by a later revision of the same row is still never settled; that predates this work and is tracked as V20. |
 | `publicId` as `szUserID` | Not supported here. UUID form was never written to this reader, and the face user-id type is a 32-character buffer. |
 | Which readers receive a new member | Every reader of the gym (V18). The create flow still asks for one reader until V18 is built. |
 | Who may approve review items, and whether an enrollment expires | Gym admin and staff decide review items (V17). A pending person on a reader does not expire. The gateway enrollment token expires after 24 hours. |
@@ -610,3 +632,4 @@ The slice checks through V17 are recorded as done on the fake reader and test da
 1. Section E, on a physical reader, before that reader is treated as validated.
 2. The remaining choices in [open-questions.md](open-questions.md): the safety-scan interval, door and time-section values other than 1, and SDK reconnect as a guarantee.
 3. V18 every-reader create, then V19 attendance poll.
+4. V20 superseded staff decisions close.

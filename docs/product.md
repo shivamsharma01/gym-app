@@ -73,4 +73,4 @@ Members list **Source** is Manual or Device. SUPER_ADMIN CSV export has no face 
 - Super admin acting as a gym
 - Changing plan mid-cycle (dates can be edited; the plan cannot)
 - Member profile payments omit the paid-on date
-- Publishing a new member to every reader of the gym (V18), and the attendance poll (V19), in [execution-plan.md](architecture/execution-plan.md)
+- Publishing a new member to every reader of the gym (V18), the attendance poll (V19), and closing a staff decision that a later member change superseded (V20), in [execution-plan.md](architecture/execution-plan.md)

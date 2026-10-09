@@ -50,6 +50,24 @@ public class DeviceReviewItem extends TenantAwareEntity {
     @Column(name = "reader_authority", length = 32)
     private String readerAuthority;
 
+    @Column(name = "baseline_valid_from", length = 40)
+    private String baselineValidFrom;
+
+    @Column(name = "baseline_valid_to", length = 40)
+    private String baselineValidTo;
+
+    @Column(name = "server_valid_from", length = 40)
+    private String serverValidFrom;
+
+    @Column(name = "server_valid_to", length = 40)
+    private String serverValidTo;
+
+    @Column(name = "reader_valid_from", length = 40)
+    private String readerValidFrom;
+
+    @Column(name = "reader_valid_to", length = 40)
+    private String readerValidTo;
+
     @Column(name = "reader_absent", nullable = false)
     private boolean readerAbsent;
 
@@ -172,6 +190,54 @@ public class DeviceReviewItem extends TenantAwareEntity {
 
     public void setReaderAuthority(String readerAuthority) {
         this.readerAuthority = readerAuthority;
+    }
+
+    public String getBaselineValidFrom() {
+        return baselineValidFrom;
+    }
+
+    public void setBaselineValidFrom(String baselineValidFrom) {
+        this.baselineValidFrom = baselineValidFrom;
+    }
+
+    public String getBaselineValidTo() {
+        return baselineValidTo;
+    }
+
+    public void setBaselineValidTo(String baselineValidTo) {
+        this.baselineValidTo = baselineValidTo;
+    }
+
+    public String getServerValidFrom() {
+        return serverValidFrom;
+    }
+
+    public void setServerValidFrom(String serverValidFrom) {
+        this.serverValidFrom = serverValidFrom;
+    }
+
+    public String getServerValidTo() {
+        return serverValidTo;
+    }
+
+    public void setServerValidTo(String serverValidTo) {
+        this.serverValidTo = serverValidTo;
+    }
+
+    public String getReaderValidFrom() {
+        return readerValidFrom;
+    }
+
+    public void setReaderValidFrom(String readerValidFrom) {
+        this.readerValidFrom = readerValidFrom;
+    }
+
+    public String getReaderValidTo() {
+        return readerValidTo;
+    }
+
+    public void setReaderValidTo(String readerValidTo) {
+        this.readerValidTo = readerValidTo;
     }
 
     public boolean isReaderAbsent() {

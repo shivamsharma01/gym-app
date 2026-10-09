@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Gym.Gateway.Adapters;
 using Gym.Gateway.Execution;
+using Gym.Gateway;
 using Xunit;
 
 namespace Gym.Gateway.Tests;
@@ -445,6 +446,102 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.NotEqual(FakeReader.FailNoRecord, read.FailCode);
     }
 
+    [Fact]
+    public async Task Clearing_a_face_removes_it_acks_after_read_back_and_leaves_the_other_user()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "clear-face.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+        reader.CreateUser(new ReaderUser("9", "Other", null, 0, ValidFrom, ValidTo, "Customer", 1, 1));
+        reader.InsertFace("9", [9, 9, 9]);
+
+        var item = ClearItem(2);
+        var client = new RecordingDesired(item);
+        var path = new DesiredRevisionPath("reader-1", worker, reader, client);
+        await path.HandleAsync(new DesiredRevisionNotice("reader-1", 2), CancellationToken.None);
+
+        Assert.Equal(2, worker.AppliedRevision);
+        Assert.True(reader.GetUser("1").Ok);
+        Assert.Equal(FakeReader.FailUnknown, reader.GetFace("1").FailCode);
+        Assert.Equal(new byte[] { 9, 9, 9 }, reader.GetFace("9").Bytes);
+        Assert.Contains("RemoveFace 1", reader.Writes);
+        Assert.DoesNotContain(reader.Writes, write => write.StartsWith("RemoveUser") || write == "RemoveFace 9");
+        var ack = Assert.Single(client.Acknowledgements);
+        Assert.Equal("", ack.FaceSha256);
+        Assert.Equal(FakeReader.FailUnknown, ack.FailCode);
+        Assert.True(ack.Present);
+        Assert.Equal("1", ack.DeviceUserId);
+    }
+
+    [Fact]
+    public void An_already_missing_face_is_removed_again_and_the_user_stays()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "clear-missing.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+        Assert.True(reader.RemoveFace("1").Ok);
+
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Cleared(2)).Kind);
+
+        Assert.Equal(2, worker.AppliedRevision);
+        Assert.True(reader.GetUser("1").Ok);
+        Assert.Equal(FakeReader.FailUnknown, reader.GetFace("1").FailCode);
+        Assert.Equal(2, reader.Writes.Count(write => write == "RemoveFace 1"));
+    }
+
+    [Fact]
+    public void A_missing_user_is_not_created_in_order_to_clear_a_face()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "clear-absent-user.sqlite"), reader);
+
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(Cleared(1)).Kind);
+
+        Assert.Equal(0, worker.AppliedRevision);
+        Assert.Empty(reader.ListUsers().Users);
+        Assert.DoesNotContain(reader.Writes, write => write.StartsWith("CreateUser") || write.StartsWith("RemoveFace"));
+    }
+
+    [Fact]
+    public void Face_read_back_that_still_has_the_photo_is_not_acked_and_retries()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "clear-verify.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+        reader.RetainFaceOnRemove = true;
+
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(Cleared(2)).Kind);
+        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal(Face, reader.GetFace("1").Bytes);
+        Assert.Equal("face still present", worker.Retry!.LastError);
+
+        reader.RetainFaceOnRemove = false;
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Cleared(2)).Kind);
+        Assert.Equal(2, worker.AppliedRevision);
+        Assert.True(reader.GetUser("1").Ok);
+        Assert.Equal(FakeReader.FailUnknown, reader.GetFace("1").FailCode);
+    }
+
+    [Fact]
+    public void A_failed_face_remove_retries_without_removing_the_user()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "clear-retry.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+        reader.ScriptFailure(FakeReaderOperation.RemoveFace, "remove failed");
+
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(Cleared(2)).Kind);
+        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal(Face, reader.GetFace("1").Bytes);
+        Assert.Equal("remove failed", worker.Retry!.LastError);
+        Assert.True(reader.GetUser("1").Ok);
+
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Cleared(2)).Kind);
+        Assert.Equal(2, worker.AppliedRevision);
+        Assert.True(reader.GetUser("1").Ok);
+        Assert.Equal(FakeReader.FailUnknown, reader.GetFace("1").FailCode);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))
@@ -472,5 +569,45 @@ public class MemberCreateWorkerTests : IDisposable
             1,
             1,
             Face);
+    }
+
+    private static DesiredMember Cleared(long revision) =>
+        Member("1", null) with { Revision = revision, Face = [], FacePresent = false };
+
+    private static DesiredPullItem ClearItem(long revision) => new(
+        revision,
+        "1",
+        "Asha",
+        null,
+        0,
+        ReaderLocalTime.Format(ValidFrom),
+        ReaderLocalTime.Format(ValidTo),
+        "Customer",
+        1,
+        1,
+        [],
+        true,
+        false,
+        false);
+
+    private sealed class RecordingDesired(DesiredPullItem item) : IDesiredStateClient
+    {
+        public List<DesiredAcknowledgement> Acknowledgements { get; } = [];
+
+        public Task<DesiredPull> PullAsync(string deviceId, long after, CancellationToken cancellationToken)
+        {
+            var items = item.Revision > after ? new List<DesiredPullItem> { item } : [];
+            return Task.FromResult(new DesiredPull(item.Revision, after, items));
+        }
+
+        public Task AcknowledgeAsync(DesiredAcknowledgement ack, CancellationToken cancellationToken)
+        {
+            Acknowledgements.Add(ack);
+            return Task.CompletedTask;
+        }
+
+        public Task ReportOccupiedAsync(
+            string deviceId, long revision, string deviceUserId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 }

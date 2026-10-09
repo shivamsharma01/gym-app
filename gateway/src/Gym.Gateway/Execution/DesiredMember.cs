@@ -17,7 +17,8 @@ public sealed record DesiredMember(
     int DoorNum,
     int TimeSectionNum,
     byte[] Face,
-    bool KeepDeviceUserId = false);
+    bool KeepDeviceUserId = false,
+    bool FacePresent = true);
 
 public enum MemberApplyKind
 {

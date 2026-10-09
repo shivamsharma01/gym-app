@@ -26,22 +26,19 @@ const health = {
   attendanceLastEventAt: null,
 }
 
-function device(projectionEnabled: boolean) {
-  return {
-    id: 'dev-1',
-    name: 'Entrance',
-    role: 'ENTRANCE',
-    host: '10.0.0.8',
-    port: 37777,
-    model: 'TrueFace 3000',
-    serialNumber: 'SN',
-    firmware: null,
-    connectionState: 'ONLINE',
-    lastSeenAt: null,
-    gatewayAssigned: true,
-    projectionEnabled,
-    createdAt: '2026-10-09T00:00:00Z',
-  }
+const device = {
+  id: 'dev-1',
+  name: 'Entrance',
+  role: 'ENTRANCE',
+  host: '10.0.0.8',
+  port: 37777,
+  model: 'TrueFace 3000',
+  serialNumber: 'SN',
+  firmware: null,
+  connectionState: 'ONLINE',
+  lastSeenAt: null,
+  gatewayAssigned: true,
+  createdAt: '2026-10-09T00:00:00Z',
 }
 
 const member = {
@@ -59,12 +56,12 @@ const member = {
   joinedOn: '2026-10-09',
   notes: null,
   creationSource: 'MANUAL',
-  createdAt: '2026-10-09T00:00:00Z',
   coverageStatus: 'NONE',
+  createdAt: '2026-10-09T00:00:00Z',
 }
 
-test('a flagged reader hides the old sync panel', async ({ page }) => {
-  await mockStaff(page, true)
+test('a reader has attendance reconcile and no member import', async ({ page }) => {
+  await mockStaff(page)
   await page.goto('/app/devices/dev-1')
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Sync Now' })).toHaveCount(0)
@@ -72,23 +69,26 @@ test('a flagged reader hides the old sync panel', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Request attendance reconcile' })).toBeVisible()
 })
 
-test('an unflagged reader still shows the old sync panel', async ({ page }) => {
-  await mockStaff(page, false)
-  await page.goto('/app/devices/dev-1')
-  await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Sync Now' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Import device users' })).toBeVisible()
+test('a validity difference is shown for review and neither side is applied automatically', async ({ page }) => {
+  await mockStaff(page)
+  await page.goto('/app/review')
+  await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible()
+  await expect(page.getByText('2026-10-08 – 2026-11-15')).toBeVisible()
+  await expect(page.getByText('2026-10-01T00:00:00+05:30 – 2026-10-31T23:59:59+05:30')).toHaveCount(2)
+  await expect(page.getByRole('button', { name: 'Accept server' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /accept reader|use reader|reader wins/i })).toHaveCount(0)
 })
 
-test('a flagged reader hides the member sync panel', async ({ page }) => {
-  await mockStaff(page, true)
+test('a member page does not offer a clock-based device read', async ({ page }) => {
+  await mockStaff(page)
   await page.goto('/app/members/mem-1')
   await expect(page.getByRole('heading', { name: 'Asha Shah' })).toBeVisible()
-  await expect(page.getByText('Device sync')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Read from device' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Send again' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Remove from reader' })).toBeVisible()
 })
 
-async function mockStaff(page: import('@playwright/test').Page, projectionEnabled: boolean) {
+async function mockStaff(page: import('@playwright/test').Page) {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
@@ -112,7 +112,7 @@ async function mockStaff(page: import('@playwright/test').Page, projectionEnable
       return
     }
     if (path === '/api/v1/devices/dev-1' && method === 'GET') {
-      await route.fulfill({ json: device(projectionEnabled) })
+      await route.fulfill({ json: device })
       return
     }
     if (path === '/api/v1/devices/dev-1/health') {
@@ -145,7 +145,6 @@ async function mockStaff(page: import('@playwright/test').Page, projectionEnable
               faceVersionSynced: null,
               faceLastError: null,
               openCommands: [],
-              projectionEnabled,
             },
           ],
         },
@@ -166,6 +165,36 @@ async function mockStaff(page: import('@playwright/test').Page, projectionEnable
     }
     if (path === '/api/v1/members/mem-1/payments') {
       await route.fulfill({ json: [] })
+      return
+    }
+    if (path === '/api/v1/reviews' && method === 'GET') {
+      await route.fulfill({
+        json: [
+          {
+            id: 'rev-1',
+            kind: 'REVIEW',
+            deviceId: 'dev-1',
+            deviceUserId: '1',
+            serverName: 'Asha Shah',
+            readerName: 'Asha Shah',
+            baselineName: 'Asha Shah',
+            readerAbsent: false,
+            open: true,
+            decision: null,
+            actor: null,
+            priorState: null,
+            chosenState: null,
+            revision: null,
+            verificationError: null,
+            serverValidFrom: '2026-10-01T00:00:00+05:30',
+            serverValidTo: '2026-10-31T23:59:59+05:30',
+            readerValidFrom: '2026-10-08',
+            readerValidTo: '2026-11-15',
+            baselineValidFrom: '2026-10-01T00:00:00+05:30',
+            baselineValidTo: '2026-10-31T23:59:59+05:30',
+          },
+        ],
+      })
       return
     }
     await route.fulfill({ status: 404, json: {} })

@@ -37,6 +37,4 @@ public sealed class PersistedDeviceConfig
 
     /// <summary>Protected device password (never log).</summary>
     public string PasswordProtected { get; set; } = "";
-
-    public bool ProjectionEnabled { get; set; }
 }

@@ -10,6 +10,9 @@ import com.example.gym.device.DeviceAuthorizationService;
 import com.example.gym.device.DeviceAuthorizationService.AccessWindow;
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.GatewayProperties;
+import com.example.gym.device.domain.DesiredMemberProjection;
+import com.example.gym.device.domain.DeviceReaderBaseline;
+import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.member.Member;
@@ -30,7 +33,7 @@ import org.springframework.test.web.servlet.ResultActions;
 /**
  * What a member's devices hold: one window (dates + enabled) taken from the running or next
  * membership, moved along by the hourly access check. Payment does not enable or disable.
- * Device edits are applied as the device holds them.
+ * A reader edit does not change the membership. It is stored for review.
  */
 class AccessWindowIT extends AbstractIntegrationTest {
 
@@ -130,7 +133,8 @@ class AccessWindowIT extends AbstractIntegrationTest {
     void addingAFutureMembershipDoesNotTouchTheDevicesDuringTheRunningOne() throws Exception {
         String current = membership(today.minusDays(5), today.plusDays(25));
         pay(current);
-        assertThat(lastAccessCommand().getType()).isEqualTo(SyncCommandType.UPDATE_VALIDITY);
+        assertThat(accessCommandsSince(0)).isEmpty();
+        assertThat(member().getDeviceEnabled()).isTrue();
 
         long before = deviceSyncCommandRepository.count();
         membership(today.plusDays(40), today.plusDays(70));
@@ -147,14 +151,14 @@ class AccessWindowIT extends AbstractIntegrationTest {
         Member member = member();
         member.setDeviceWindow(today.minusDays(31), today.minusDays(1), true);
         memberRepository.save(member);
+        mapMember();
 
         long before = deviceSyncCommandRepository.count();
         assertThat(accessCheck.run()).isEqualTo(1);
-        DeviceSyncCommand moved = single(accessCommandsSince(before));
-        assertThat(moved.getType()).isEqualTo(SyncCommandType.UPDATE_VALIDITY);
-        assertThat(moved.getPayload()).contains("\"enabled\":true")
-                .contains("\"validFrom\":\"" + today.plusDays(3) + "\"")
-                .contains("\"validTo\":\"" + today.plusDays(33) + "\"");
+        assertThat(accessCommandsSince(before)).isEmpty();
+        assertThat(member().getDeviceValidFrom()).isEqualTo(today.plusDays(3));
+        assertThat(member().getDeviceValidTo()).isEqualTo(today.plusDays(33));
+        assertThat(member().getDeviceEnabled()).isTrue();
         assertThat(member().getAccessChangedAt()).isAfter(Instant.now().minusSeconds(60));
 
         // Running it again changes nothing.
@@ -175,12 +179,13 @@ class AccessWindowIT extends AbstractIntegrationTest {
         Member member = member();
         member.setDeviceWindow(today.minusDays(31), today.minusDays(1), true);
         memberRepository.save(member);
+        mapMember();
 
         long before = deviceSyncCommandRepository.count();
         accessCheck.run();
-        DeviceSyncCommand disable = single(accessCommandsSince(before));
-        assertThat(disable.getType()).isEqualTo(SyncCommandType.DISABLE_USER);
-        assertThat(disable.getPayload()).contains("\"validTo\":\"" + today.minusDays(1) + "\"");
+        assertThat(accessCommandsSince(before)).isEmpty();
+        assertThat(member().getDeviceEnabled()).isFalse();
+        assertThat(member().getDeviceValidTo()).isEqualTo(today.minusDays(1));
         assertThat(member().getStatus().name()).isEqualTo("ACTIVE");
     }
 
@@ -205,14 +210,22 @@ class AccessWindowIT extends AbstractIntegrationTest {
         pay(current);
         pay(next);
 
+        mapMember();
+        seedDesired(today.minusDays(5), today.plusDays(10));
         deviceUserChanged(access(false, today.minusDays(5), today.plusDays(20), false, true));
 
         Membership edited = membershipRepository.findByPublicIdAndDeletedFalse(current).orElseThrow();
-        assertThat(edited.getEndDate()).isEqualTo(today.plusDays(20));
+        assertThat(edited.getEndDate()).isEqualTo(today.plusDays(10));
+        assertThat(deviceReviewItemRepository.findAll()).singleElement()
+                .extracting(DeviceReviewItem::getDecision, DeviceReviewItem::isResolved)
+                .containsExactly(null, false);
         assertThat(membershipRepository.findByPublicIdAndDeletedFalse(next).orElseThrow().getStartDate())
                 .isEqualTo(today.plusDays(15));
-        assertThat(reconciliationConflictRepository.findAll())
-                .anyMatch(c -> c.getConflictType().name().equals("MEMBERSHIP_OVERLAP"));
+        assertThat(reconciliationConflictRepository.findAll()).isEmpty();
+        Long device = deviceRepository.findByPublicId(deviceId).orElseThrow().getId();
+        assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(device, "8001").orElseThrow()
+                .getValidTo()).contains(today.plusDays(20).toString());
+        assertThat(accessCommandsSince(0)).isEmpty();
     }
 
     @Test
@@ -221,14 +234,162 @@ class AccessWindowIT extends AbstractIntegrationTest {
         pay(current);
         postJson("/api/v1/memberships/" + current + "/freeze", null).andExpect(status().isOk());
 
+        mapMember();
+        seedDesired(today.minusDays(5), today.plusDays(25));
         deviceUserChanged(access(true, today.minusDays(5), today.plusDays(40), false, true));
 
         Membership m = membershipRepository.findByPublicIdAndDeletedFalse(current).orElseThrow();
-        assertThat(m.getEndDate()).isEqualTo(today.plusDays(40));
+        assertThat(m.getEndDate()).isEqualTo(today.plusDays(25));
+        assertThat(deviceReviewItemRepository.findAll()).singleElement()
+                .extracting(DeviceReviewItem::getDecision)
+                .isNull();
         assertThat(m.getStatus()).isEqualTo(MembershipStatus.FROZEN);
+        Long device = deviceRepository.findByPublicId(deviceId).orElseThrow().getId();
+        assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(device, "8001").orElseThrow()
+                .getValidTo()).contains(today.plusDays(40).toString());
+        assertThat(accessCommandsSince(0)).isEmpty();
+    }
+
+    @Test
+    void aStartDateOnlyDifferenceOpensAReviewAndLeavesTheMembership() throws Exception {
+        String current = membership(today.minusDays(5), today.plusDays(25));
+        mapMember();
+        seedDesired(today.minusDays(5), today.plusDays(25));
+
+        deviceUserChanged(access(false, today.minusDays(1), today.plusDays(25), false, true));
+
+        Membership stored = membershipRepository.findByPublicIdAndDeletedFalse(current).orElseThrow();
+        assertThat(stored.getStartDate()).isEqualTo(today.minusDays(5));
+        assertThat(stored.getEndDate()).isEqualTo(today.plusDays(25));
+        DeviceReviewItem item = deviceReviewItemRepository.findAll().getFirst();
+        assertThat(item.getDecision()).isNull();
+        assertThat(item.getReaderValidFrom()).contains(today.minusDays(1).toString());
+        assertThat(item.getServerValidFrom()).contains(today.minusDays(5).toString());
+        assertThat(item.getReaderValidTo()).contains(today.plusDays(25).toString());
+        assertThat(accessCommandsSince(0)).isEmpty();
+    }
+
+    @Test
+    void anEndDateOnlyDifferenceOpensAReviewAndLeavesTheMembership() throws Exception {
+        String current = membership(today.minusDays(5), today.plusDays(25));
+        mapMember();
+        seedDesired(today.minusDays(5), today.plusDays(25));
+
+        deviceUserChanged(access(false, today.minusDays(5), today.plusDays(40), false, true));
+
+        Membership stored = membershipRepository.findByPublicIdAndDeletedFalse(current).orElseThrow();
+        assertThat(stored.getStartDate()).isEqualTo(today.minusDays(5));
+        assertThat(stored.getEndDate()).isEqualTo(today.plusDays(25));
+        DeviceReviewItem item = deviceReviewItemRepository.findAll().getFirst();
+        assertThat(item.getDecision()).isNull();
+        assertThat(item.getReaderValidTo()).contains(today.plusDays(40).toString());
+        assertThat(item.getServerValidTo()).contains(today.plusDays(25).toString());
+        assertThat(item.getReaderValidFrom()).contains(today.minusDays(5).toString());
+        assertThat(accessCommandsSince(0)).isEmpty();
+    }
+
+    @Test
+    void bothValidityDatesDifferingOpenOneReviewWithoutChoosingEitherSide() throws Exception {
+        String current = membership(today.minusDays(5), today.plusDays(25));
+        mapMember();
+        seedDesired(today.minusDays(5), today.plusDays(25));
+
+        deviceUserChanged(access(false, today.plusDays(1), today.plusDays(60), false, true));
+
+        Membership stored = membershipRepository.findByPublicIdAndDeletedFalse(current).orElseThrow();
+        assertThat(stored.getStartDate()).isEqualTo(today.minusDays(5));
+        assertThat(stored.getEndDate()).isEqualTo(today.plusDays(25));
+        assertThat(deviceReviewItemRepository.findAll()).singleElement()
+                .extracting(DeviceReviewItem::getDecision, DeviceReviewItem::getReaderValidFrom,
+                        DeviceReviewItem::getReaderValidTo)
+                .containsExactly(null, today.plusDays(1).toString(), today.plusDays(60).toString());
+        assertThat(accessCommandsSince(0)).isEmpty();
+    }
+
+    @Test
+    void theSameCalendarDayDoesNotOpenAReview() throws Exception {
+        membership(today.minusDays(5), today.plusDays(25));
+        mapMember();
+        seedDesired(today.minusDays(5), today.plusDays(25));
+
+        deviceUserChanged(access(false, today.minusDays(5), today.plusDays(25), false, true));
+
+        assertThat(deviceReviewItemRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void aReaderThatStillMatchesItsBaselineIsNotOverwrittenOrReviewed() throws Exception {
+        String current = membership(today.minusDays(5), today.plusDays(25));
+        mapMember();
+        seedDesired(today.minusDays(5), today.plusDays(25));
+        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
+        DeviceReaderBaseline baseline = new DeviceReaderBaseline(device.getTenantId(), device.getId(), "8001");
+        baseline.setReaderName("Ria");
+        baseline.setReaderNameEx("Ria Sen");
+        baseline.setAuthority("Customer");
+        baseline.setValidFrom(today.plusDays(2) + "T00:00:00+05:30");
+        baseline.setValidTo(today.plusDays(40) + "T23:59:59+05:30");
+        deviceReaderBaselineRepository.save(baseline);
+
+        deviceUserChanged(access(false, today.plusDays(2), today.plusDays(40), false, true));
+
+        Membership stored = membershipRepository.findByPublicIdAndDeletedFalse(current).orElseThrow();
+        assertThat(stored.getStartDate()).isEqualTo(today.minusDays(5));
+        assertThat(stored.getEndDate()).isEqualTo(today.plusDays(25));
+        assertThat(deviceReviewItemRepository.findAll()).isEmpty();
+        assertThat(accessCommandsSince(0)).isEmpty();
+    }
+
+    @Test
+    void aZuluInstantIsComparedOnTheReaderCalendarDay() throws Exception {
+        String current = membership(today.minusDays(5), today.plusDays(25));
+        mapMember();
+        seedDesired(today.minusDays(5), today.plusDays(25));
+        String start = today.minusDays(6) + "T18:30:00Z";
+        String end = today.plusDays(25) + "T18:29:59Z";
+
+        deviceUserChanged(dated(start, end));
+
+        assertThat(deviceReviewItemRepository.findAll()).isEmpty();
+
+        deviceUserChanged(dated(today.minusDays(6) + "T18:29:59Z", end));
+
+        Membership stored = membershipRepository.findByPublicIdAndDeletedFalse(current).orElseThrow();
+        assertThat(stored.getStartDate()).isEqualTo(today.minusDays(5));
+        assertThat(stored.getEndDate()).isEqualTo(today.plusDays(25));
+        assertThat(deviceReviewItemRepository.findAll()).singleElement()
+                .extracting(DeviceReviewItem::getReaderValidFrom)
+                .isEqualTo(today.minusDays(6) + "T18:29:59Z");
+        assertThat(accessCommandsSince(0)).isEmpty();
     }
 
     // --- helpers ---------------------------------------------------------------------------------
+
+    private void seedDesired(LocalDate from, LocalDate to) {
+        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
+        Member member = member();
+        DesiredMemberProjection row = new DesiredMemberProjection(member.getTenantId(), device.getId(), member.getId());
+        row.setRevision(1);
+        row.setDeviceUserId("8001");
+        row.setPresentOnReader(true);
+        row.setReaderName("Ria");
+        row.setReaderNameEx("Ria Sen");
+        row.setUserStatus(0);
+        row.setValidFrom(from + "T00:00:00+05:30");
+        row.setValidTo(to + "T23:59:59+05:30");
+        row.setAuthority("Customer");
+        row.setDoorNum(1);
+        row.setTimeSectionNum(1);
+        row.setFaceSha256("0".repeat(64));
+        desiredMemberProjectionRepository.save(row);
+    }
+
+    private void mapMember() {
+        Long device = deviceRepository.findByPublicId(deviceId).orElseThrow().getId();
+        Member member = member();
+        memberDeviceMappingRepository.save(new com.example.gym.device.domain.MemberDeviceMapping(
+                member.getTenantId(), member.getId(), device, "8001"));
+    }
 
     private Member member() {
         return memberRepository.findById(memberDbId).orElseThrow();
@@ -272,6 +433,14 @@ class AccessWindowIT extends AbstractIntegrationTest {
                  "deviceChangedAt":"%s","isNew":false,"profileChanged":true,"nameChanged":false,
                  "frozenChanged":%s,"validityChanged":%s,"faceChanged":false,"faceRemoved":false}
                 """.formatted(frozen, from, to, Instant.now(), frozenChanged, validityChanged);
+    }
+
+    private String dated(String from, String to) {
+        return """
+                {"deviceUserId":"8001","name":"Ria Sen","frozen":false,"validFrom":"%s","validTo":"%s",
+                 "deviceChangedAt":"%s","isNew":false,"profileChanged":true,"nameChanged":false,
+                 "frozenChanged":false,"validityChanged":true,"faceChanged":false,"faceRemoved":false}
+                """.formatted(from, to, Instant.now());
     }
 
     private void deviceUserChanged(String payload) {

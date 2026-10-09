@@ -32,7 +32,6 @@ public class MemberDeviceSyncService {
     private final MemberDeviceMappingRepository mappingRepository;
     private final DeviceRepository deviceRepository;
     private final DeviceSyncCommandRepository commandRepository;
-    private final MemberDeviceProvisioningService provisioning;
     private final DesiredProjectionService desired;
 
     public MemberDeviceSyncService(MemberService memberService,
@@ -40,14 +39,12 @@ public class MemberDeviceSyncService {
                                    MemberDeviceMappingRepository mappingRepository,
                                    DeviceRepository deviceRepository,
                                    DeviceSyncCommandRepository commandRepository,
-                                   MemberDeviceProvisioningService provisioning,
                                    DesiredProjectionService desired) {
         this.memberService = memberService;
         this.faceRepository = faceRepository;
         this.mappingRepository = mappingRepository;
         this.deviceRepository = deviceRepository;
         this.commandRepository = commandRepository;
-        this.provisioning = provisioning;
         this.desired = desired;
     }
 
@@ -64,11 +61,7 @@ public class MemberDeviceSyncService {
         if (mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId()).isEmpty()) {
             return;
         }
-        if (device.isProjectionEnabled()) {
-            desired.publishRemoval(member, device);
-            return;
-        }
-        provisioning.removeFromDevice(member, device);
+        desired.publishRemoval(member, device);
     }
 
     @Transactional(readOnly = true)
@@ -109,8 +102,7 @@ public class MemberDeviceSyncService {
                     mapping.getFaceSyncState() == null ? null : mapping.getFaceSyncState().name(),
                     mapping.getFaceVersionSynced(),
                     mapping.getFaceLastError(),
-                    commands,
-                    device.isProjectionEnabled()));
+                    commands));
         }
         return new SyncStatus(faceInfo, rows);
     }
@@ -123,18 +115,9 @@ public class MemberDeviceSyncService {
                 .orElseThrow(() -> CommonExceptions.notFound("Device"));
         TenantGuard.check(device.getTenantId(), tenantId, "Device");
         if (mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId()).isEmpty()) {
-            FlowLog.info("device", "send again member={} device={}: not mapped yet, provisioning onto all devices",
-                    member.getPublicId(), device.getPublicId());
-            provisioning.provisionMember(member, Set.of());
             return;
         }
-        boolean face = faceRepository.findByMemberId(member.getId()).isPresent();
-        FlowLog.info("device", "send again member={} device={}: queueing name and access{}",
-                member.getPublicId(), device.getPublicId(), face ? " and photo" : " (no photo on file)");
-        provisioning.repushUser(member, device.getId());
-        if (face) {
-            provisioning.repushFace(member, device.getId());
-        }
+        desired.republish(member, device);
     }
 
     /**
@@ -147,9 +130,8 @@ public class MemberDeviceSyncService {
         Device device = deviceRepository.findByPublicId(devicePublicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Device"));
         TenantGuard.check(device.getTenantId(), tenantId, "Device");
-        MemberDeviceMapping mapping = mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())
+        mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())
                 .orElseThrow(() -> CommonExceptions.notFound("Member on this device"));
-        provisioning.requestDeviceReport(member, device, mapping.getDeviceUserId());
     }
 
     public record SyncStatus(FaceInfo face, List<DeviceRow> devices) {
@@ -172,8 +154,7 @@ public class MemberDeviceSyncService {
             String faceSyncState,
             Integer faceVersionSynced,
             String faceLastError,
-            List<OpenCommand> openCommands,
-            boolean projectionEnabled) {
+            List<OpenCommand> openCommands) {
     }
 
     public record OpenCommand(String type, String state, int attemptCount, String lastError) {

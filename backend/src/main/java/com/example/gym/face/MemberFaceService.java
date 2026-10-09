@@ -5,7 +5,6 @@ import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.DesiredProjectionService;
-import com.example.gym.device.MemberDeviceProvisioningService;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.repo.DeviceRepository;
@@ -18,15 +17,13 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Member face photos: validate + normalise, and store a new version on the faces volume. A reader
- * on desired-state sync gets a face revision. Other readers still get a photo command. Also serves
- * images to staff and to the gateway, and accepts images the gateway read from a device.
+ * Member face photos: validate, normalise, and store a new version. A reader that already has this
+ * member receives a face revision. Images are served to staff and to the gateway.
  */
 @Service
 public class MemberFaceService {
@@ -36,7 +33,6 @@ public class MemberFaceService {
     private final FaceStorageService storage;
     private final MemberService memberService;
     private final MemberRepository memberRepository;
-    private final MemberDeviceProvisioningService provisioning;
     private final AuditService auditService;
     private final DeviceRepository deviceRepository;
     private final MemberDeviceMappingRepository mappingRepository;
@@ -47,7 +43,6 @@ public class MemberFaceService {
                              FaceStorageService storage,
                              MemberService memberService,
                              MemberRepository memberRepository,
-                             MemberDeviceProvisioningService provisioning,
                              AuditService auditService,
                              DeviceRepository deviceRepository,
                              MemberDeviceMappingRepository mappingRepository,
@@ -57,7 +52,6 @@ public class MemberFaceService {
         this.storage = storage;
         this.memberService = memberService;
         this.memberRepository = memberRepository;
-        this.provisioning = provisioning;
         this.auditService = auditService;
         this.deviceRepository = deviceRepository;
         this.mappingRepository = mappingRepository;
@@ -74,7 +68,6 @@ public class MemberFaceService {
         MemberFace face = storeUploaded(member, raw);
         boolean unchanged = previousSha != null && previousSha.equals(face.getSha256()) && previousVersion == face.getFaceVersion();
         if (!unchanged) {
-            provisioning.pushFace(member, face, Set.of());
             desiredProjection.publishFace(member);
         }
         return face;
@@ -141,7 +134,7 @@ public class MemberFaceService {
         storage.deleteAfterCommit(face.getObjectKey());
         member.setFaceChangedAt(Instant.now());
         memberRepository.save(member);
-        provisioning.deleteFace(member);
+        desiredProjection.publishFaceCleared(member);
         FlowLog.info("face", "photo removed member={}", member.getPublicId());
         auditService.record(AuditActions.MEMBER_FACE_DELETED, AuditActions.RESULT_SUCCESS,
                 "Member", member.getPublicId(), serialDetails(member, null, null));
@@ -154,20 +147,6 @@ public class MemberFaceService {
             details.put(key, value);
         }
         return details;
-    }
-
-    /** A face was removed on a device and that change wins: drop it here and on the other devices. */
-    @Transactional
-    public void removeFromDevice(Member member, Long sourceDeviceId, Instant changedAt) {
-        MemberFace face = faceRepository.findByMemberId(member.getId()).orElse(null);
-        if (face == null) {
-            return;
-        }
-        faceRepository.delete(face);
-        storage.deleteAfterCommit(face.getObjectKey());
-        member.setFaceChangedAt(changedAt);
-        memberRepository.save(member);
-        provisioning.deleteFace(member, Set.of(sourceDeviceId));
     }
 
     /**

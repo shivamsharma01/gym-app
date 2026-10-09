@@ -203,7 +203,13 @@ public class ReviewDecisionService {
                 item.getPriorState(),
                 item.getChosenState(),
                 item.getDecisionRevision(),
-                item.getVerificationError());
+                item.getVerificationError(),
+                item.getServerValidFrom(),
+                item.getServerValidTo(),
+                item.getReaderValidFrom(),
+                item.getReaderValidTo(),
+                item.getBaselineValidFrom(),
+                item.getBaselineValidTo());
     }
 
     private ReviewItemView enrollmentView(PendingEnrollment enrollment) {
@@ -226,7 +232,13 @@ public class ReviewDecisionService {
                 enrollment.getPriorState(),
                 enrollment.getChosenState(),
                 enrollment.getDecisionRevision(),
-                enrollment.getVerificationError());
+                enrollment.getVerificationError(),
+                null,
+                null,
+                observed == null ? null : observed.getValidFrom(),
+                observed == null ? null : observed.getValidTo(),
+                null,
+                null);
     }
 
     private String devicePublicId(Long deviceId) {

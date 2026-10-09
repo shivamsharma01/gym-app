@@ -29,6 +29,12 @@ public class DeviceReviewSnapshot extends TenantAwareEntity {
     @Column(name = "reader_authority", length = 32)
     private String readerAuthority;
 
+    @Column(name = "reader_valid_from", length = 40)
+    private String readerValidFrom;
+
+    @Column(name = "reader_valid_to", length = 40)
+    private String readerValidTo;
+
     @Column(name = "observed_at", nullable = false)
     private Instant observedAt;
 
@@ -76,6 +82,22 @@ public class DeviceReviewSnapshot extends TenantAwareEntity {
 
     public void setReaderAuthority(String readerAuthority) {
         this.readerAuthority = readerAuthority;
+    }
+
+    public String getReaderValidFrom() {
+        return readerValidFrom;
+    }
+
+    public void setReaderValidFrom(String readerValidFrom) {
+        this.readerValidFrom = readerValidFrom;
+    }
+
+    public String getReaderValidTo() {
+        return readerValidTo;
+    }
+
+    public void setReaderValidTo(String readerValidTo) {
+        this.readerValidTo = readerValidTo;
     }
 
     public Instant getObservedAt() {

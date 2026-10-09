@@ -60,10 +60,6 @@ public interface DeviceSyncCommandRepository extends JpaRepository<DeviceSyncCom
             Long deviceId, com.example.gym.device.domain.SyncCommandType type,
             Collection<SyncCommandState> states);
 
-    boolean existsByDeviceIdAndTypeInAndStateIn(
-            Long deviceId, Collection<com.example.gym.device.domain.SyncCommandType> types,
-            Collection<SyncCommandState> states);
-
     List<DeviceSyncCommand> findByDeviceIdAndMemberIdAndTypeInAndStateIn(
             Long deviceId, Long memberId,
             Collection<com.example.gym.device.domain.SyncCommandType> types,

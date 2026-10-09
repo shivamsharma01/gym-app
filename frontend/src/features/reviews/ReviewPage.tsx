@@ -97,9 +97,18 @@ export function ReviewPage() {
                 return (
                   <Tr key={item.id}>
                     <Td className="font-mono text-xs">{item.deviceUserId}</Td>
-                    <Td>{item.serverName || '—'}</Td>
-                    <Td>{item.readerAbsent ? 'Absent' : item.readerName || '—'}</Td>
-                    <Td>{item.baselineName || '—'}</Td>
+                    <Td>
+                      <div>{item.serverName || '—'}</div>
+                      <Validity from={item.serverValidFrom} to={item.serverValidTo} />
+                    </Td>
+                    <Td>
+                      <div>{item.readerAbsent ? 'Absent' : item.readerName || '—'}</div>
+                      <Validity from={item.readerValidFrom} to={item.readerValidTo} />
+                    </Td>
+                    <Td>
+                      <div>{item.baselineName || '—'}</div>
+                      <Validity from={item.baselineValidFrom} to={item.baselineValidTo} />
+                    </Td>
                     <Td>{actions}</Td>
                   </Tr>
                 )
@@ -108,6 +117,15 @@ export function ReviewPage() {
           </Table>
         </TableShell>
       </Card>
+    </div>
+  )
+}
+
+function Validity({ from, to }: { from: string | null; to: string | null }) {
+  if (!from && !to) return null
+  return (
+    <div className="font-mono text-xs text-zinc-500">
+      {from ?? '…'} – {to ?? '…'}
     </div>
   )
 }

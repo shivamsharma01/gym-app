@@ -516,7 +516,7 @@ These are not defined tightly enough to pretend they are already specified.
 | Who may approve review items, and whether an enrollment expires | Not specified. V14 cannot invent a role or an SLA. |
 | Safety-scan interval | Not benchmarked. The only measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds, and do not schedule from an unmeasured larger roster. |
 | Offline copy to a second reader | Not part of this architecture. Whether a later release should copy an unlinked person during an outage is still an open product decision. |
-| Create without a face | V1's proof includes a face. A member with no photo is not specified as success for V1. |
+| Create without a face | V1's proof includes a face. A member with no photo is not specified as success for V1. Deleting a photo that was already stored is a face-clear revision on readers that already have the member. |
 | Door and time-section fields beyond the probe's create | V1 sends the same `nDoorNum=1` and `nTimeSectionNum=1` the probe used. Other schedules are not verified. |
 | SDK reconnect | One power cycle reconnected and one did not. V6 re-reads and pulls. It does not depend on the old login surviving. |
 | Attendance cursor across reboot or a full log | Unproven. Attendance is deferred, so this does not block V1. |
@@ -530,6 +530,7 @@ Required once, on a reader, before that reader is treated as validated for live 
 - V2 freeze and enable.
 - V3 dates stored as sent.
 - V4 face replace and `PHOTO_EXIST`.
+- Face removal: the user stays, the photo read is the missing-photo result (`UNKNOWN`, SDK `0x800004B5`), and a second remove of an already-missing photo succeeds.
 - V6 reconnect read-before-write.
 
 The 7 October 2026 probe measured related SDK behavior on serial `TW30000005250265`. That run is evidence for the design. It is not this confirmation pass. V8 through V15 do not need a new hardware experiment. Do not factory-reset this unit and do not fill its log to test them.

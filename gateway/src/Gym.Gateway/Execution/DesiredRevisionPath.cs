@@ -291,6 +291,12 @@ public sealed class DesiredRevisionPath
             return;
         }
 
+        if (!item.FacePresent)
+        {
+            await AcknowledgeFaceClearedAsync(item, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         var user = _reader.GetUser(item.DeviceUserId);
         var face = _reader.GetFace(item.DeviceUserId);
         if (!user.Ok || user.User == null || !face.Ok || face.Bytes is not { Length: > 0 })
@@ -315,6 +321,50 @@ public sealed class DesiredRevisionPath
             ReaderLocalTime.Format(read.ValidFrom.Value),
             ReaderLocalTime.Format(read.ValidTo.Value),
             hash), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task AcknowledgeFaceClearedAsync(DesiredPullItem item, CancellationToken cancellationToken)
+    {
+        var user = _reader.GetUser(item.DeviceUserId);
+        var face = _reader.GetFace(item.DeviceUserId);
+        if (!user.Ok || user.User == null)
+        {
+            throw new InvalidOperationException("User read-back is missing; acknowledgement was not sent");
+        }
+
+        if (face.Ok && face.Bytes is { Length: > 0 })
+        {
+            throw new InvalidOperationException("Face is still present; acknowledgement was not sent");
+        }
+
+        if (face.FailCode == FakeReader.FailNoRecord)
+        {
+            throw new InvalidOperationException("User is NO_RECORD; acknowledgement was not sent");
+        }
+
+        if (face.FailCode != FakeReader.FailUnknown)
+        {
+            throw new InvalidOperationException("Face read-back is not the missing-photo result; acknowledgement was not sent");
+        }
+
+        var read = user.User;
+        if (read.ValidFrom == null || read.ValidTo == null || string.IsNullOrWhiteSpace(read.Name))
+        {
+            throw new InvalidOperationException("Read-back user is incomplete; acknowledgement was not sent");
+        }
+
+        await _client.AcknowledgeAsync(new DesiredAcknowledgement(
+            _deviceId,
+            item.Revision,
+            read.DeviceUserId,
+            read.Name,
+            read.NameEx,
+            read.UserStatus,
+            ReaderLocalTime.Format(read.ValidFrom.Value),
+            ReaderLocalTime.Format(read.ValidTo.Value),
+            "",
+            true,
+            FakeReader.FailUnknown), cancellationToken).ConfigureAwait(false);
     }
 
     private async Task AcknowledgeAbsenceAsync(DesiredPullItem item, CancellationToken cancellationToken)

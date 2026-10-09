@@ -19,7 +19,8 @@ public sealed record DesiredPullItem(
     int TimeSectionNum,
     byte[] Face,
     bool Present,
-    bool KeepDeviceUserId = false)
+    bool KeepDeviceUserId = false,
+    bool FacePresent = true)
 {
     public DesiredMember ToMember() => new(
         Revision,
@@ -33,7 +34,8 @@ public sealed record DesiredPullItem(
         DoorNum,
         TimeSectionNum,
         Face,
-        KeepDeviceUserId);
+        KeepDeviceUserId,
+        FacePresent);
 }
 
 public interface IDesiredStateClient
@@ -187,9 +189,11 @@ public sealed class DesiredStateClient : IDesiredStateClient
     {
         var present = !item.TryGetProperty("present", out var presentValue)
             || presentValue.ValueKind != JsonValueKind.False;
+        var facePresent = !item.TryGetProperty("facePresent", out var facePresentValue)
+            || facePresentValue.ValueKind != JsonValueKind.False;
         var faceText = Optional(item, "faceBase64");
         var face = string.IsNullOrEmpty(faceText) ? [] : Convert.FromBase64String(faceText);
-        if (present && face.Length == 0)
+        if (present && facePresent && face.Length == 0)
         {
             throw new InvalidOperationException("Desired member has no face");
         }
@@ -207,7 +211,8 @@ public sealed class DesiredStateClient : IDesiredStateClient
             item.GetProperty("timeSectionNum").GetInt32(),
             face,
             present,
-            item.TryGetProperty("keepDeviceUserId", out var keep) && keep.ValueKind == JsonValueKind.True);
+            item.TryGetProperty("keepDeviceUserId", out var keep) && keep.ValueKind == JsonValueKind.True,
+            facePresent);
     }
 
     private static string Required(JsonElement item, string name)

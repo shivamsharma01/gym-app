@@ -108,8 +108,7 @@ public sealed class GatewayConfigStore
             Ip = d.Ip,
             Port = d.Port,
             Username = d.Username,
-            Password = string.IsNullOrWhiteSpace(d.PasswordProtected) ? "" : Unprotect(d.PasswordProtected),
-            ProjectionEnabled = d.ProjectionEnabled
+            Password = string.IsNullOrWhiteSpace(d.PasswordProtected) ? "" : Unprotect(d.PasswordProtected)
         }).ToList();
     }
 
@@ -134,8 +133,7 @@ public sealed class GatewayConfigStore
                 Ip = d.Ip,
                 Port = d.Port,
                 Username = d.Username,
-                PasswordProtected = string.IsNullOrWhiteSpace(d.Password) ? "" : Protect(d.Password),
-                ProjectionEnabled = d.ProjectionEnabled
+                PasswordProtected = string.IsNullOrWhiteSpace(d.Password) ? "" : Protect(d.Password)
             }).ToList()
         };
     }

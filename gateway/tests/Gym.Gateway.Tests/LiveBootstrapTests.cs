@@ -91,8 +91,7 @@ public sealed class LiveBootstrapTests : IDisposable
                     Ip = "10.0.0.8",
                     Port = 37777,
                     Username = "admin",
-                    Password = "admin",
-                    ProjectionEnabled = true
+                    Password = "admin"
                 }
             ]
         };

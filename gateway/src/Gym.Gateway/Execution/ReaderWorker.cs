@@ -191,6 +191,11 @@ public sealed class ReaderWorker : IDisposable
             return new MemberApplyResult(MemberApplyKind.Failed, null);
         }
 
+        if (!desired.FacePresent)
+        {
+            return ApplyFaceCleared(desired);
+        }
+
         if (desired.Face is not { Length: > 0 })
         {
             throw new ArgumentException("The desired member has no face.", nameof(desired));
@@ -200,6 +205,23 @@ public sealed class ReaderWorker : IDisposable
         var outcome = Apply(desired.Revision, reader =>
         {
             var step = WriteAndReadBack(reader, desired);
+            written = step;
+            return step.Verification;
+        }, desired.DeviceUserId);
+        return ToMemberResult(outcome, written, desired.DeviceUserId);
+    }
+
+    /// <summary>
+    /// Removes the face and leaves the user. A missing photo is already the desired result.
+    /// The user is not created when the reader has no record, and the revision is journaled only
+    /// after get-user still matches and get-face is the missing-photo result.
+    /// </summary>
+    private MemberApplyResult ApplyFaceCleared(DesiredMember desired)
+    {
+        WriteStep? written = null;
+        var outcome = Apply(desired.Revision, reader =>
+        {
+            var step = ClearFace(reader, desired);
             written = step;
             return step.Verification;
         }, desired.DeviceUserId);
@@ -270,6 +292,64 @@ public sealed class ReaderWorker : IDisposable
         }
 
         return VerifyReadBack(reader, desired);
+    }
+
+    private WriteStep ClearFace(IReaderAdapter reader, DesiredMember desired)
+    {
+        var existing = reader.GetUser(desired.DeviceUserId);
+        if (!existing.Ok || existing.User == null)
+        {
+            return WriteStep.Fail(existing.FailCode ?? existing.Error ?? "user missing");
+        }
+
+        if (!SameUser(existing.User, desired))
+        {
+            if (!ReplacesExisting(existing.User, desired))
+            {
+                return WriteStep.Fail("user does not match");
+            }
+
+            var replaced = reader.ReplaceUser(Record(desired));
+            if (!replaced.Ok)
+            {
+                return WriteStep.Fail(replaced.Error ?? replaced.FailCode);
+            }
+        }
+
+        var removed = reader.RemoveFace(desired.DeviceUserId);
+        if (!removed.Ok)
+        {
+            return WriteStep.Fail(removed.Error ?? removed.FailCode);
+        }
+
+        return VerifyFaceCleared(reader, desired);
+    }
+
+    private static WriteStep VerifyFaceCleared(IReaderAdapter reader, DesiredMember desired)
+    {
+        var readUser = reader.GetUser(desired.DeviceUserId);
+        var readFace = reader.GetFace(desired.DeviceUserId);
+        if (!readUser.Ok || readUser.User == null || !SameUser(readUser.User, desired))
+        {
+            return WriteStep.Fail(readUser.FailCode ?? "user read-back mismatch");
+        }
+
+        if (readFace.Ok && readFace.Bytes is { Length: > 0 })
+        {
+            return WriteStep.Fail("face still present");
+        }
+
+        if (readFace.FailCode == FakeReader.FailNoRecord)
+        {
+            return WriteStep.Fail("user missing");
+        }
+
+        if (readFace.FailCode != FakeReader.FailUnknown)
+        {
+            return WriteStep.Fail(readFace.Error ?? readFace.FailCode ?? "face read-back failed");
+        }
+
+        return WriteStep.Done();
     }
 
     private WriteStep? EnsureUser(IReaderAdapter reader, DesiredMember desired)

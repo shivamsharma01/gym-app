@@ -132,9 +132,8 @@ public class DeviceSyncService {
     @Transactional
     public DeviceSyncCommand enqueue(Long tenantId, Long deviceId, Long memberId, Long membershipId,
                                      SyncCommandType type, Map<String, Object> payload) {
-        if (PROJECTION_READER_SKIPS.contains(type) && projectionReader(deviceId)) {
-            FlowLog.info("sync", "skipped {} for projection reader {}", type, deviceId);
-            return null;
+        if (PROJECTION_READER_SKIPS.contains(type)) {
+            throw new IllegalArgumentException("Member state is a desired revision; " + type + " is not queued");
         }
         if (memberId != null) {
             List<SyncCommandType> replaced = supersededBy(type);
@@ -159,10 +158,6 @@ public class DeviceSyncService {
         auditService.record(AuditActions.DEVICE_SYNC_ENQUEUED, AuditActions.RESULT_SUCCESS,
                 "DeviceSyncCommand", saved.getPublicId(), Map.of("type", type.name()));
         return saved;
-    }
-
-    private boolean projectionReader(Long deviceId) {
-        return deviceId != null && deviceRepository.findById(deviceId).map(Device::isProjectionEnabled).orElse(false);
     }
 
     /**
@@ -280,7 +275,7 @@ public class DeviceSyncService {
             if (withholdProjectionReplay(command)) {
                 command.setState(SyncCommandState.CANCELLED);
                 command.setCompletedAt(Instant.now());
-                command.setLastError("This reader follows desired revisions");
+                command.setLastError("Member state is a desired revision");
                 commandRepository.save(command);
                 continue;
             }
@@ -367,12 +362,6 @@ public class DeviceSyncService {
             failAttempt(command, error);
         }
         commandRepository.save(command);
-        if (ok && command.getType() == SyncCommandType.CREATE_USER && command.getMemberId() != null) {
-            String deviceUserId = payloadText(command, "deviceUserId");
-            if (deviceUserId != null) {
-                events.publishEvent(new DeviceUserCreated(command.getDeviceId(), command.getMemberId(), deviceUserId));
-            }
-        }
         publishMemberSync(command);
     }
 
@@ -444,12 +433,6 @@ public class DeviceSyncService {
     public boolean hasActiveReconcile(Long deviceId) {
         return commandRepository.existsByDeviceIdAndTypeAndStateIn(
                 deviceId, SyncCommandType.RECONCILE_DEVICE, OPEN_STATES);
-    }
-
-    /** True while a command that changes the reader's user list has not finished. */
-    @Transactional(readOnly = true)
-    public boolean hasOpenRosterCommands(Long deviceId) {
-        return commandRepository.existsByDeviceIdAndTypeInAndStateIn(deviceId, ROSTER_TYPES, OPEN_STATES);
     }
 
     /** Cancels every open command for a member (e.g. the member was deleted on a device). */
@@ -671,14 +654,10 @@ public class DeviceSyncService {
     }
 
     /**
-     * A flagged reader is not given the old command on reconnect. Door and clock commands stay.
+     * A member-state command is not sent to a reader. Door, clock, and attendance reconcile stay.
      */
     private boolean withholdProjectionReplay(DeviceSyncCommand command) {
-        if (command.getType() != SyncCommandType.RECONCILE_DEVICE
-                && !PROJECTION_READER_SKIPS.contains(command.getType())) {
-            return false;
-        }
-        return projectionReader(command.getDeviceId());
+        return PROJECTION_READER_SKIPS.contains(command.getType());
     }
 
     /** Makes every waiting command of the gateway's devices due now (called when it connects). */

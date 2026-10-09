@@ -19,5 +19,11 @@ public record ReviewItemView(
         String priorState,
         String chosenState,
         Long revision,
-        String verificationError) {
+        String verificationError,
+        String serverValidFrom,
+        String serverValidTo,
+        String readerValidFrom,
+        String readerValidTo,
+        String baselineValidFrom,
+        String baselineValidTo) {
 }

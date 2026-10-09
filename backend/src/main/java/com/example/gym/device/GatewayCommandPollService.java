@@ -70,10 +70,10 @@ public class GatewayCommandPollService {
             if (device == null) {
                 continue;
             }
-            if (device.isProjectionEnabled() && withheld(command.getType())) {
+            if (memberState(command.getType())) {
                 command.setState(SyncCommandState.CANCELLED);
                 command.setCompletedAt(now);
-                command.setLastError("This reader follows desired revisions");
+                command.setLastError("Member state is a desired revision");
                 commandRepository.save(command);
                 continue;
             }
@@ -91,9 +91,8 @@ public class GatewayCommandPollService {
                 .orElseThrow(() -> CommonExceptions.notFound("Gateway"));
     }
 
-    private static boolean withheld(SyncCommandType type) {
-        return type == SyncCommandType.RECONCILE_DEVICE
-                || type == SyncCommandType.CREATE_USER
+    private static boolean memberState(SyncCommandType type) {
+        return type == SyncCommandType.CREATE_USER
                 || type == SyncCommandType.UPDATE_USER
                 || type == SyncCommandType.DISABLE_USER
                 || type == SyncCommandType.ENABLE_USER

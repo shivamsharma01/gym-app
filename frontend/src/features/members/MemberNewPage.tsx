@@ -41,7 +41,7 @@ export function MemberNewPage() {
     queryKey: ['devices', 'member-create'],
     queryFn: () => api<PageResponse<Device>>('/api/v1/devices?page=0&size=50'),
   })
-  const readers = (devices.data?.content ?? []).filter((device) => device.projectionEnabled)
+  const readers = (devices.data?.content ?? []).filter((device) => device.gatewayAssigned)
   useEffect(() => {
     if (readers.length === 1 && !readerId) {
       setReaderId(readers[0].id)

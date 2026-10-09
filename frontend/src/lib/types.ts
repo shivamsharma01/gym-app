@@ -39,6 +39,12 @@ export type ReviewItem = {
   chosenState: string | null
   revision: number | null
   verificationError: string | null
+  serverValidFrom: string | null
+  serverValidTo: string | null
+  readerValidFrom: string | null
+  readerValidTo: string | null
+  baselineValidFrom: string | null
+  baselineValidTo: string | null
 }
 
 export type UserSummary = {
@@ -166,7 +172,6 @@ export type Device = {
   connectionState: string
   lastSeenAt: string | null
   gatewayAssigned: boolean
-  projectionEnabled: boolean
   createdAt: string
 }
 
@@ -273,7 +278,6 @@ export type MemberDeviceSync = {
     faceVersionSynced: number | null
     faceLastError: string | null
     openCommands: { type: string; state: string; attemptCount: number; lastError: string | null }[]
-    projectionEnabled: boolean
   }[]
 }
 

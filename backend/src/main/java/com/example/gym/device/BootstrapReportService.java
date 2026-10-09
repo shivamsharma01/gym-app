@@ -63,9 +63,7 @@ public class BootstrapReportService {
     @Transactional
     public BootstrapReport build(Long tenantId) {
         String runId = UUID.randomUUID().toString();
-        List<Device> readers = devices.findByTenantId(tenantId).stream()
-                .filter(Device::isProjectionEnabled)
-                .toList();
+        List<Device> readers = devices.findByTenantId(tenantId);
         List<Member> people = members.findByTenantIdAndStatus(tenantId, MemberStatus.ACTIVE);
         List<Row> rows = new ArrayList<>();
         for (Device reader : readers) {
@@ -82,7 +80,7 @@ public class BootstrapReportService {
      */
     @Transactional
     public void classifyTrustedEmpty(Device reader) {
-        if (reader == null || !reader.isProjectionEnabled() || !reader.isRosterTrustedEmpty()) {
+        if (reader == null || !reader.isRosterTrustedEmpty()) {
             return;
         }
         List<Member> people = members.findByTenantIdAndStatus(reader.getTenantId(), MemberStatus.ACTIVE);

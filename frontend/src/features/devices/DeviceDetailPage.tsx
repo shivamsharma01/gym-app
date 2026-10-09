@@ -10,7 +10,7 @@ import { useAuth } from '@/lib/auth'
 import { DEVICE_MODELS } from '@/lib/catalog'
 import { cn, formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
-import type { Device, DeviceHealth, Gateway, ImportUsersResult, PageResponse, ReconciliationConflict, SecurityEvent, SyncCommand } from '@/lib/types'
+import type { Device, DeviceHealth, Gateway, PageResponse, ReconciliationConflict, SecurityEvent, SyncCommand } from '@/lib/types'
 
 export function DeviceDetailPage() {
   const { id, section } = useParams()
@@ -116,20 +116,6 @@ function Overview({ device }: { device: Device }) {
       void qc.invalidateQueries({ queryKey: ['sync-commands', device.id] })
     },
   })
-  const syncNow = useMutation({
-    mutationFn: () => api<SyncCommand>(`/api/v1/devices/${device.id}/sync-now`, { method: 'POST' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['device-health', device.id] })
-      void qc.invalidateQueries({ queryKey: ['sync-commands', device.id] })
-    },
-  })
-  const importUsers = useMutation({
-    mutationFn: () => api<ImportUsersResult>(`/api/v1/devices/${device.id}/import-users`, { method: 'POST' }),
-    onSuccess: () => {
-      void health.refetch()
-      void conflicts.refetch()
-    },
-  })
   const resolveConflict = useMutation({
     mutationFn: ({ id, action }: { id: string; action: string }) =>
       api<ReconciliationConflict>(`/api/v1/devices/${device.id}/conflicts/${id}/resolve?action=${action}`, {
@@ -193,17 +179,6 @@ function Overview({ device }: { device: Device }) {
           </Card>
         </div>
       ) : null}
-      {has('DEVICE_SYNC') && !device.projectionEnabled ? (
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={syncNow.isPending} onClick={() => syncNow.mutate()}>
-            Sync Now
-          </Button>
-          <span className="basis-full text-xs text-muted">
-            Sync Now re-reads users, attendance and every photo on this reader. Photos are read in the background
-            and only changed ones are sent.
-          </span>
-        </div>
-      ) : null}
       {has('DEVICE_SYNC') ? (
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
@@ -211,36 +186,10 @@ function Overview({ device }: { device: Device }) {
           </Button>
         </div>
       ) : null}
-      {has('DEVICE_MANAGE') && !device.projectionEnabled ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            disabled={importUsers.isPending}
-            onClick={() => importUsers.mutate()}
-          >
-            Import device users
-          </Button>
-          <span className="text-xs text-muted">
-            Creates Members from the last synced device roster (idempotent). Run Sync Now first if empty.
-          </span>
-        </div>
-      ) : null}
-      {syncNow.isSuccess ? (
-        <p className="text-sm text-ok">Queued {syncNow.data.type} · {syncNow.data.state}</p>
-      ) : null}
       {reconcile.isSuccess ? (
         <p className="text-sm text-ok">Queued {reconcile.data.type} · {reconcile.data.state}</p>
       ) : null}
-      {importUsers.isSuccess ? (
-        <p className="text-sm text-ok">
-          Import: created {importUsers.data.created}, mapped {importUsers.data.mapped}, skipped{' '}
-          {importUsers.data.skipped}, frozen→inactive {importUsers.data.inactiveFrozen}, inferred end dates{' '}
-          {importUsers.data.inferredEndDates} (saw {importUsers.data.deviceUsersSeen} device users)
-        </p>
-      ) : null}
-      {syncNow.error ? <QueryError error={syncNow.error} /> : null}
       {reconcile.error ? <QueryError error={reconcile.error} /> : null}
-      {importUsers.error ? <QueryError error={importUsers.error} /> : null}
       {conflicts.data && conflicts.data.content.length > 0 ? (
         <Card className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
@@ -257,15 +206,6 @@ function Overview({ device }: { device: Device }) {
                 </div>
                 {has('DEVICE_SYNC') ? (
                   <div className="flex gap-2">
-                    {c.conflictType === 'EXTRA_DEVICE_USER' || c.conflictType === 'AUTH_MISMATCH' ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => resolveConflict.mutate({ id: c.id, action: 'REMOVE' })}
-                      >
-                        Remove from device
-                      </Button>
-                    ) : null}
                     <Button
                       size="sm"
                       variant="ghost"

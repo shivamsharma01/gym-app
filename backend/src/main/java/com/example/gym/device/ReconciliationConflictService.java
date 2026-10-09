@@ -5,11 +5,8 @@ import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.ReconciliationConflict;
-import com.example.gym.device.domain.ReconciliationConflictType;
-import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.device.repo.ReconciliationConflictRepository;
 import com.example.gym.tenant.TenantGuard;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,21 +16,18 @@ public class ReconciliationConflictService {
 
     private final ReconciliationConflictRepository conflictRepository;
     private final DeviceService deviceService;
-    private final DeviceSyncService deviceSyncService;
     private final AuditService auditService;
 
     public ReconciliationConflictService(ReconciliationConflictRepository conflictRepository,
                                          DeviceService deviceService,
-                                         DeviceSyncService deviceSyncService,
                                          AuditService auditService) {
         this.conflictRepository = conflictRepository;
         this.deviceService = deviceService;
-        this.deviceSyncService = deviceSyncService;
         this.auditService = auditService;
     }
 
     /**
-     * @param action REMOVE — enqueue REMOVE_USER for EXTRA_DEVICE_USER; DISMISS — close without device change
+     * DISMISS closes the row. REMOVE is refused: a person leaves one reader through a review decision.
      */
     @Transactional
     public ReconciliationConflict resolve(String devicePublicId, String conflictPublicId,
@@ -47,16 +41,8 @@ public class ReconciliationConflictService {
         }
         String act = action == null ? "DISMISS" : action.toUpperCase();
         if ("REMOVE".equals(act)) {
-            if (conflict.getConflictType() != ReconciliationConflictType.EXTRA_DEVICE_USER
-                    && conflict.getConflictType() != ReconciliationConflictType.AUTH_MISMATCH) {
-                throw CommonExceptions.badRequest(
-                        "REMOVE is only valid for EXTRA_DEVICE_USER or AUTH_MISMATCH conflicts");
-            }
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("deviceUserId", conflict.getDeviceUserId());
-            deviceSyncService.enqueue(tenantId, device.getId(), null, null,
-                    SyncCommandType.REMOVE_USER, payload);
-            conflict.resolve();
+            throw CommonExceptions.badRequest(
+                    "Remove a person from one reader through a review decision");
         } else if ("DISMISS".equals(act)) {
             conflict.dismiss();
         } else {

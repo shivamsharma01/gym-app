@@ -15,6 +15,7 @@ These are product or hardware questions the architecture does not close. Do not 
 - A person created on the reader keeps that reader's device user id. The server does not rewrite it. Server-created ids use the highest-known-plus-one rule in the execution plan. A live race against the screen was not run.
 - A short or empty list is not a disappearance. This unit was not factory-reset in place.
 - Equal face bytes on two ids are two observations. They are not one member.
+- Deleting a member's face photo removes that photo from the server and from every reader that already has the member. The member and the mapping stay. A reader that does not already have the member is not given a user. Creating a member who has never had a photo is still open.
 - Gateway authentication is the credential. Anonymous access is not part of the design. F1 records that the automated tests passed.
 
 ## Still open

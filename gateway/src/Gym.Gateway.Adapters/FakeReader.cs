@@ -26,6 +26,9 @@ public sealed class FakeReader : IReaderAdapter
     private byte[]? _scriptedFaceReadBack;
     private bool _scriptUnknownUser;
     private bool _keepUserOnRemove;
+
+    /// <summary>The remove call succeeds and the stored photo stays, so read-back can fail.</summary>
+    public bool RetainFaceOnRemove { get; set; }
     private int? _reportedStatus;
     private bool _reportValidity;
     private DateTimeOffset? _reportedFrom;
@@ -329,7 +332,12 @@ public sealed class FakeReader : IReaderAdapter
                 return ReaderCallResult.Failed(error);
             }
 
-            _faces.Remove(deviceUserId);
+            if (!RetainFaceOnRemove)
+            {
+                _faces.Remove(deviceUserId);
+            }
+
+            _writes.Add("RemoveFace " + deviceUserId);
             return ReaderCallResult.Success();
         }
     }

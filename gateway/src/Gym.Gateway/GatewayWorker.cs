@@ -20,9 +20,7 @@ public sealed class GatewayWorker : BackgroundService
     private readonly Channel<OutboundMessage> _outbound = Channel.CreateUnbounded<OutboundMessage>(
         new UnboundedChannelOptions { SingleReader = true });
     private readonly DeviceLocks _locks;
-    private readonly RosterStateStore _roster = new(RosterStateStore.DefaultDirectory());
     private readonly ConcurrentDictionary<string, Channel<GatewayEnvelope>> _inbox = new(StringComparer.Ordinal);
-    private DeviceChangeWatcher? _watcher;
     private CommandDispatcher? _dispatcher;
     private readonly DesiredRevisionHub _desiredRevisions;
     private readonly IReaderAdapterFactory? _readerFactory;
@@ -76,8 +74,7 @@ public sealed class GatewayWorker : BackgroundService
             var status = adapter.Connect(new DeviceConnectionConfig(
                 device.DeviceId, device.Ip, device.Port, device.Username, device.Password,
                 _options.NativeDirectory));
-            adapter.RegisterEventListener(new ForwardingListener(
-                device.DeviceId, _outbound.Writer, (id, user) => _watcher?.Trigger(id, user)));
+            adapter.RegisterEventListener(new ForwardingListener(device.DeviceId, _outbound.Writer));
             _adapters[device.DeviceId] = adapter;
             _log.LogInformation(
                 "Device {DeviceId} adapter={Adapter} state={State} error={Error}",
@@ -100,24 +97,8 @@ public sealed class GatewayWorker : BackgroundService
             }
         }
 
-        await NoteFlaggedReadersAsync(stoppingToken).ConfigureAwait(false);
-        _watcher = new DeviceChangeWatcher(
-            _adapters,
-            _roster,
-            _locks,
-            _link,
-            PublishDeviceChangeAsync,
-            _logFactory.CreateLogger<DeviceChangeWatcher>(),
-            TimeSpan.FromMinutes(Math.Max(1, _options.FaceSweepMinutes)),
-            store: new LocalMemberStore(LocalMemberStore.DefaultDirectory()));
-        _watcher.DesiredWorkersExecute(
-            _options.Devices.Where(device => device.ProjectionEnabled).Select(device => device.DeviceId));
         _dispatcher = new CommandDispatcher(
-            _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _link, _roster, _locks,
-            (deviceId, userId) => _watcher!.ReportUserAsync(deviceId, userId, stoppingToken),
-            _watcher);
-        _dispatcher.MemberWritesFollowDesiredState(
-            _options.Devices.Where(device => device.ProjectionEnabled).Select(device => device.DeviceId));
+            _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _locks);
         AttachReaders();
 
         var sendLoop = SendLoopAsync(_link, stoppingToken);
@@ -125,7 +106,6 @@ public sealed class GatewayWorker : BackgroundService
             AcceptCommand, _desiredRevisions.HandleAsync, ReconnectReadersAsync, stoppingToken);
         var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
         var poll = PollLoopAsync(_link, stoppingToken);
-        var watch = _watcher.RunAsync(TimeSpan.FromSeconds(Math.Max(15, _options.RosterPollSeconds)), stoppingToken);
         var observe = ObserveReadersAsync(stoppingToken);
         var clock = TimeSyncLoopAsync(stoppingToken);
         var statusLog = StatusLoopAsync(stoppingToken);
@@ -137,7 +117,7 @@ public sealed class GatewayWorker : BackgroundService
             new { agentVersion = "gym-gateway-0.5" },
             null), stoppingToken).ConfigureAwait(false);
 
-        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, watch, observe, clock, statusLog, readerHealth)
+        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, observe, clock, statusLog, readerHealth)
             .ConfigureAwait(false);
     }
 
@@ -190,7 +170,7 @@ public sealed class GatewayWorker : BackgroundService
             try
             {
                 await Task.Delay(interval, stoppingToken).ConfigureAwait(false);
-                _watcher?.LogStatus(ServerLinkStatus());
+                _log.LogInformation("Gateway link={Link} readers={Count}", ServerLinkStatus(), _adapters.Count);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -204,8 +184,7 @@ public sealed class GatewayWorker : BackgroundService
     }
 
     /// <summary>
-    /// Keeps device clocks aligned (on start, then daily) so "latest change wins" compares
-    /// device and server timestamps fairly.
+    /// Sets each reader clock to India local time on start, then daily. Punch timestamps stay UTC.
     /// </summary>
     private async Task TimeSyncLoopAsync(CancellationToken stoppingToken)
     {
@@ -298,40 +277,6 @@ public sealed class GatewayWorker : BackgroundService
     }
 
     /// <summary>
-    /// A flagged reader is written by its desired-revision worker. The device list is the source of
-    /// that flag. A saved flag remains when the list cannot be read.
-    /// </summary>
-    private async Task NoteFlaggedReadersAsync(CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(_options.Token) || string.IsNullOrWhiteSpace(_options.BackendUrl))
-        {
-            return;
-        }
-
-        try
-        {
-            var client = new GatewayEnrollmentClient();
-            var remote = await client.ListDevicesAsync(_options.BackendUrl, _options.Token, cancellationToken)
-                .ConfigureAwait(false);
-            var flagged = remote.Where(device => device.ProjectionEnabled)
-                .Select(device => device.Id)
-                .ToHashSet(StringComparer.Ordinal);
-            foreach (var device in _options.Devices)
-            {
-                device.ProjectionEnabled = flagged.Contains(device.DeviceId);
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Could not read which readers follow desired revisions");
-        }
-    }
-
-    /// <summary>
     /// Binds <see cref="ReaderWorker"/> to each configured reader that has an adapter. A device
     /// with no adapter is left unwired, and a desired revision for it is not acknowledged.
     /// </summary>
@@ -364,15 +309,14 @@ public sealed class GatewayWorker : BackgroundService
             var journal = Path.Combine(_readerJournalDirectory, JournalFile(deviceId));
             var worker = new ReaderWorker(deviceId, reader, journal);
             _readerWorkers.Add(worker);
-            IReaderObservationUpload? observations = device.ProjectionEnabled
-                ? new ReaderObservationUpload(_options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>())
-                : null;
+            IReaderObservationUpload observations = new ReaderObservationUpload(
+                _options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>());
             var path = new DesiredRevisionPath(deviceId, worker, reader, _desired, observations);
             _desiredRevisions.Attach(
                 deviceId,
                 path.HandleAsync,
                 path.ReconnectAsync,
-                device.ProjectionEnabled ? ct => path.BootstrapAsync(ct) : null);
+                ct => path.BootstrapAsync(ct));
         }
     }
 
@@ -442,24 +386,6 @@ public sealed class GatewayWorker : BackgroundService
         }
 
         _readerWorkers.Clear();
-    }
-
-    /// <summary>
-    /// Device changes go straight to the durable outbox (persisted before this returns), so the
-    /// watcher can drop its own queued copy; delivery failures are retried by the outbox.
-    /// </summary>
-    private async Task PublishDeviceChangeAsync(string deviceId, object payload)
-    {
-        var envelope = GatewayEnvelope.Create(_options.Id, ProtocolTypes.DeviceUserChanged, payload, deviceId);
-        try
-        {
-            await _link.SendAsync(envelope, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
-                                       or System.Net.WebSockets.WebSocketException)
-        {
-            _log.LogInformation("Device change for {DeviceId} queued; server unreachable ({Message})", deviceId, ex.Message);
-        }
     }
 
     private async Task HandleCommandAsync(BackendLink link, CommandDispatcher dispatcher, GatewayEnvelope command)
@@ -693,20 +619,17 @@ public sealed class GatewayWorker : BackgroundService
     {
         private readonly string _deviceId;
         private readonly ChannelWriter<OutboundMessage> _writer;
-        private readonly Action<string, string?> _userChanged;
 
-        public ForwardingListener(string deviceId, ChannelWriter<OutboundMessage> writer, Action<string, string?> userChanged)
+        public ForwardingListener(string deviceId, ChannelWriter<OutboundMessage> writer)
         {
             _deviceId = deviceId;
             _writer = writer;
-            _userChanged = userChanged;
         }
 
         public void OnNormalizedEvent(NormalizedDeviceEvent evt)
         {
             if (evt.Kind == "USER_CHANGED")
             {
-                _userChanged(_deviceId, evt.DeviceUserId);
                 return;
             }
 

@@ -1,8 +1,5 @@
 package com.example.gym.device;
 
-import com.example.gym.device.domain.MemberDeviceMapping;
-import com.example.gym.device.domain.SyncCommandType;
-import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
@@ -11,9 +8,7 @@ import com.example.gym.membership.MembershipRepository;
 import com.example.gym.membership.MembershipStatus;
 import java.time.LocalDate;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import org.springframework.beans.factory.ObjectProvider;
@@ -21,8 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Decides what a member's devices hold — one validity window (from / to) plus enabled or
- * disabled — and enqueues the commands. Does not talk to hardware.
+ * Decides what a member's readers should hold — one validity window plus enabled or
+ * disabled — and publishes that as a desired revision. Does not talk to hardware.
  * <p>
  * A device holds a single window, so it is taken from the membership that has not ended yet: the
  * one running today, else the next one. Memberships that run back to back (or overlap) and are
@@ -40,21 +35,15 @@ public class DeviceAuthorizationService {
                                boolean enabled) {
     }
 
-    private final MemberDeviceMappingRepository mappingRepository;
-    private final DeviceSyncService deviceSyncService;
     private final MemberRepository memberRepository;
     private final MembershipRepository membershipRepository;
     private final GatewayProperties properties;
     private final ObjectProvider<DesiredProjectionService> desiredState;
 
-    public DeviceAuthorizationService(MemberDeviceMappingRepository mappingRepository,
-                                      DeviceSyncService deviceSyncService,
-                                      MemberRepository memberRepository,
+    public DeviceAuthorizationService(MemberRepository memberRepository,
                                       MembershipRepository membershipRepository,
                                       GatewayProperties properties,
                                       ObjectProvider<DesiredProjectionService> desiredState) {
-        this.mappingRepository = mappingRepository;
-        this.deviceSyncService = deviceSyncService;
         this.memberRepository = memberRepository;
         this.membershipRepository = membershipRepository;
         this.properties = properties;
@@ -144,36 +133,10 @@ public class DeviceAuthorizationService {
         send(member, window(member));
     }
 
-    /**
-     * A name change publishes the full desired user on each flagged reader that already has this
-     * member. Readers that are not flagged still receive the update command from provisioning.
-     */
+    /** A name change publishes the current desired user on each reader that already has this member. */
     @Transactional
     public void publishProfile(Member member) {
         desiredState.getObject().publishAccess(member);
-    }
-
-    /** Sends the current window to one device (new device user, repair). */
-    @Transactional
-    public void enqueueFor(Member member, Long deviceId, String deviceUserId) {
-        enqueue(member, deviceId, deviceUserId, window(member));
-    }
-
-    /** The command payload for the current window, e.g. to compare with what a device reports. */
-    public static Map<String, Object> windowPayload(String deviceUserId, AccessWindow window) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("deviceUserId", deviceUserId);
-        payload.put("enabled", window.enabled());
-        payload.put("validFrom", window.validFrom().toString());
-        payload.put("validTo", window.validTo().toString());
-        return payload;
-    }
-
-    static Map<String, Object> disablePayload(String deviceUserId) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("deviceUserId", deviceUserId);
-        payload.put("enabled", false);
-        return payload;
     }
 
     private void send(Member member, Optional<AccessWindow> window) {
@@ -182,22 +145,7 @@ public class DeviceAuthorizationService {
                 window.map(AccessWindow::validTo).orElse(null),
                 window.map(AccessWindow::enabled).orElse(null));
         memberRepository.save(member);
-        for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(member.getId())) {
-            enqueue(member, mapping.getDeviceId(), mapping.getDeviceUserId(), window);
-        }
         desiredState.getObject().publishAccess(member);
-    }
-
-    private void enqueue(Member member, Long deviceId, String deviceUserId, Optional<AccessWindow> window) {
-        if (window.isEmpty()) {
-            deviceSyncService.enqueue(member.getTenantId(), deviceId, member.getId(), null,
-                    SyncCommandType.DISABLE_USER, disablePayload(deviceUserId));
-            return;
-        }
-        AccessWindow w = window.get();
-        deviceSyncService.enqueue(member.getTenantId(), deviceId, member.getId(), w.first().getId(),
-                w.enabled() ? SyncCommandType.UPDATE_VALIDITY : SyncCommandType.DISABLE_USER,
-                windowPayload(deviceUserId, w));
     }
 
     private static boolean sameAsSent(Member member, Optional<AccessWindow> window) {

@@ -56,8 +56,7 @@ public partial class MainWindow : Window
                     Ip = d.Host ?? "",
                     Port = (ushort)(d.Port is > 0 and <= ushort.MaxValue ? d.Port.Value : 37777),
                     Username = "admin",
-                    Password = "",
-                    ProjectionEnabled = d.ProjectionEnabled
+                    Password = ""
                 });
             }
 
@@ -98,7 +97,6 @@ public partial class MainWindow : Window
                 {
                     existing.Name = d.Name;
                     existing.Role = d.Role;
-                    existing.ProjectionEnabled = d.ProjectionEnabled;
                     if (string.IsNullOrWhiteSpace(existing.Ip) && !string.IsNullOrWhiteSpace(d.Host))
                     {
                         existing.Ip = d.Host;
@@ -120,8 +118,7 @@ public partial class MainWindow : Window
                         Role = d.Role,
                         Ip = d.Host ?? "",
                         Port = (ushort)(d.Port is > 0 and <= ushort.MaxValue ? d.Port.Value : 37777),
-                        Username = "admin",
-                        ProjectionEnabled = d.ProjectionEnabled
+                        Username = "admin"
                     });
                 }
             }
@@ -237,8 +234,7 @@ public partial class MainWindow : Window
                     Ip = d.Ip.Trim(),
                     Port = d.Port,
                     Username = d.Username.Trim(),
-                    PasswordProtected = store.Protect(d.Password),
-                    ProjectionEnabled = d.ProjectionEnabled
+                    PasswordProtected = store.Protect(d.Password)
                 }).ToList()
             };
             store.Save(config);
@@ -270,8 +266,6 @@ public sealed class DeviceRow : INotifyPropertyChanged
     private ushort _port = 37777;
     private string _username = "admin";
     private string _password = "";
-
-    public bool ProjectionEnabled { get; set; }
 
     public string DeviceId
     {

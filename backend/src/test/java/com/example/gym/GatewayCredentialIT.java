@@ -6,19 +6,26 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.DeviceSyncService;
 import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.domain.GatewayStatus;
 import com.example.gym.device.domain.SyncCommandState;
+import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import tools.jackson.databind.JsonNode;
 
 class GatewayCredentialIT extends AbstractIntegrationTest {
+
+    @Autowired
+    private DeviceSyncService deviceSyncService;
 
     private String staffToken;
     private String gatewayId;
@@ -258,7 +265,10 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
                         .content("{\"memberId\":\"" + memberId + "\",\"planId\":\"" + planId + "\"}"))
                 .andExpect(status().isCreated());
 
-        Long foreignDevicePk = deviceRepository.findByPublicId(foreignDeviceId).orElseThrow().getId();
+        var foreignDevice = deviceRepository.findByPublicId(foreignDeviceId).orElseThrow();
+        deviceSyncService.enqueue(foreignDevice.getTenantId(), foreignDevice.getId(), null, null,
+                SyncCommandType.OPEN_DOOR, Map.of("reason", "isolation"));
+        Long foreignDevicePk = foreignDevice.getId();
         var foreignCommand = deviceSyncCommandRepository.findAll().stream()
                 .filter(command -> foreignDevicePk.equals(command.getDeviceId()))
                 .findFirst()

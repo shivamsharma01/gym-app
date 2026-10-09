@@ -11,6 +11,10 @@ import com.example.gym.device.repo.DeviceReviewItemRepository;
 import com.example.gym.device.repo.DeviceReviewSnapshotRepository;
 import com.example.gym.device.repo.PendingEnrollmentRepository;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -24,6 +28,8 @@ import tools.jackson.databind.JsonNode;
  */
 @Service
 public class ReaderReviewService {
+
+    private static final ZoneId READER_ZONE = ZoneId.of("Asia/Kolkata");
 
     private final DesiredMemberProjectionRepository desiredMembers;
     private final DeviceReaderBaselineRepository baselines;
@@ -67,16 +73,19 @@ public class ReaderReviewService {
         String readerAuthority = authority(text(payload, "authority"));
         String serverAuthority = authority(desired.getAuthority());
         String baselineAuthority = authority(storedBaselineAuthority);
+        String baselineFrom = baseline == null ? desired.getValidFrom() : baseline.getValidFrom();
+        String baselineTo = baseline == null ? desired.getValidTo() : baseline.getValidTo();
 
-        if (readerName.equals(serverName) && readerAuthority.equals(serverAuthority)) {
-            if (baseline != null
-                    && (!comparedBaseline.equals(serverName) || !baselineAuthority.equals(serverAuthority))) {
+        if (agrees(payload, readerName, readerAuthority, serverName, serverAuthority,
+                desired.getValidFrom(), desired.getValidTo())) {
+            if (baseline != null && !baselineAgrees(baseline, desired)) {
                 copyBaseline(baseline, desired);
                 baselines.save(baseline);
             }
             return;
         }
-        if (readerName.equals(comparedBaseline) && readerAuthority.equals(baselineAuthority)) {
+        if (baseline != null && agrees(payload, readerName, readerAuthority, comparedBaseline, baselineAuthority,
+                baseline.getValidFrom(), baseline.getValidTo())) {
             return;
         }
 
@@ -92,9 +101,15 @@ public class ReaderReviewService {
             item.setServerName(desired.getReaderName());
             item.setServerNameEx(desired.getReaderNameEx());
             item.setServerAuthority(desired.getAuthority());
+            item.setBaselineValidFrom(baselineFrom);
+            item.setBaselineValidTo(baselineTo);
+            item.setServerValidFrom(desired.getValidFrom());
+            item.setServerValidTo(desired.getValidTo());
             item.setReaderName(cut(text(payload, "name"), 127));
             item.setReaderNameEx(cut(text(payload, "nameEx"), 127));
             item.setReaderAuthority(cut(text(payload, "authority"), 32));
+            item.setReaderValidFrom(cut(text(payload, "validFrom"), 40));
+            item.setReaderValidTo(cut(text(payload, "validTo"), 40));
             item.setObservedAt(Instant.now());
         }
         item = reviews.save(item);
@@ -153,6 +168,8 @@ public class ReaderReviewService {
         snapshot.setReaderName(cut(text(payload, "name"), 127));
         snapshot.setReaderNameEx(cut(text(payload, "nameEx"), 127));
         snapshot.setReaderAuthority(cut(text(payload, "authority"), 32));
+        snapshot.setReaderValidFrom(cut(text(payload, "validFrom"), 40));
+        snapshot.setReaderValidTo(cut(text(payload, "validTo"), 40));
         snapshot.setObservedAt(Instant.now());
         snapshots.save(snapshot);
     }
@@ -210,6 +227,69 @@ public class ReaderReviewService {
         baseline.setValidFrom(desired.getValidFrom());
         baseline.setValidTo(desired.getValidTo());
         baseline.setAuthority(desired.getAuthority());
+    }
+
+    /**
+     * Name and authority always count. A validity value counts only when the observation includes it,
+     * and only as a calendar day, so a clock suffix on the same day is not a difference.
+     */
+    private static boolean agrees(JsonNode payload, String readerName, String readerAuthority,
+                                  String otherName, String otherAuthority, String otherFrom, String otherTo) {
+        return readerName.equals(otherName)
+                && readerAuthority.equals(otherAuthority)
+                && validityAgrees(payload, otherFrom, otherTo);
+    }
+
+    private static boolean baselineAgrees(DeviceReaderBaseline baseline, DesiredMemberProjection desired) {
+        return shown(baseline.getReaderName(), baseline.getReaderNameEx())
+                .equals(shown(desired.getReaderName(), desired.getReaderNameEx()))
+                && authority(baseline.getAuthority()).equals(authority(desired.getAuthority()))
+                && sameDay(baseline.getValidFrom(), desired.getValidFrom())
+                && sameDay(baseline.getValidTo(), desired.getValidTo());
+    }
+
+    private static boolean validityAgrees(JsonNode payload, String otherFrom, String otherTo) {
+        boolean fromReported = reported(text(payload, "validFrom"));
+        boolean toReported = reported(text(payload, "validTo"));
+        if (!fromReported && !toReported) {
+            return true;
+        }
+        if (fromReported && !sameDay(text(payload, "validFrom"), otherFrom)) {
+            return false;
+        }
+        return !toReported || sameDay(text(payload, "validTo"), otherTo);
+    }
+
+    private static boolean reported(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static boolean sameDay(String left, String right) {
+        LocalDate first = day(left);
+        LocalDate second = day(right);
+        if (first == null || second == null) {
+            return first == null && second == null;
+        }
+        return first.equals(second);
+    }
+
+    /**
+     * The reader clock is India local time. A date-only value is that calendar day. An offset
+     * instant, including Zulu, is converted to that zone before the day is taken.
+     */
+    private static LocalDate day(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String text = value.trim();
+        try {
+            if (text.length() == 10) {
+                return LocalDate.parse(text);
+            }
+            return OffsetDateTime.parse(text).atZoneSameInstant(READER_ZONE).toLocalDate();
+        } catch (DateTimeParseException ignored) {
+            return null;
+        }
     }
 
     static String shown(String name, String nameEx) {

@@ -1,0 +1,2 @@
+ALTER TABLE desired_member
+    ADD COLUMN face_present BOOLEAN NOT NULL DEFAULT TRUE;

@@ -410,7 +410,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
     private String createDevice(String name, boolean projection) throws Exception {
         return readJson(postJson("/api/v1/devices",
                 "{\"name\":\"" + name + "\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.20\",\"port\":37777,"
-                        + "\"gatewayId\":\"" + gatewayPublicId + "\",\"projectionEnabled\":" + projection + "}")
+                        + "\"gatewayId\":\"" + gatewayPublicId + "\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
     }

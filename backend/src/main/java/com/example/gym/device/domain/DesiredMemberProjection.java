@@ -57,6 +57,10 @@ public class DesiredMemberProjection extends TenantAwareEntity {
     @Column(name = "time_section_num", nullable = false)
     private int timeSectionNum;
 
+    /** False means the user stays on the reader and the face photo does not. */
+    @Column(name = "face_present", nullable = false)
+    private boolean facePresent = true;
+
     @Column(name = "face_sha256", nullable = false, length = 64)
     private String faceSha256;
 
@@ -174,6 +178,14 @@ public class DesiredMemberProjection extends TenantAwareEntity {
 
     public void setTimeSectionNum(int timeSectionNum) {
         this.timeSectionNum = timeSectionNum;
+    }
+
+    public boolean isFacePresent() {
+        return facePresent;
+    }
+
+    public void setFacePresent(boolean facePresent) {
+        this.facePresent = facePresent;
     }
 
     public String getFaceSha256() {

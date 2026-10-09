@@ -124,6 +124,4 @@ public sealed class RemoteDeviceDto
     public string? Host { get; set; }
 
     public int? Port { get; set; }
-
-    public bool ProjectionEnabled { get; set; }
 }

@@ -56,14 +56,13 @@ public final class DeviceResponses {
             String connectionState,
             Instant lastSeenAt,
             boolean gatewayAssigned,
-            boolean projectionEnabled,
             Instant createdAt) {
 
         public static DeviceView from(Device d) {
             return new DeviceView(d.getPublicId(), d.getName(), d.getRole().name(), d.getHost(),
                     d.getPort(), d.getModel(), d.getSerialNumber(), d.getFirmware(),
                     d.getConnectionState().name(), d.getLastSeenAt(), d.getGatewayId() != null,
-                    d.isProjectionEnabled(), d.getCreatedAt());
+                    d.getCreatedAt());
         }
     }
 

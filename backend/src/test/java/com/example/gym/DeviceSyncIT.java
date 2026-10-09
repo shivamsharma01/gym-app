@@ -1,6 +1,7 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -77,7 +78,6 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
-        // Every member is auto-mapped to every gateway device with deviceUserId = serialNumber.
         memberId = readJson(postJson("/api/v1/members",
                 "{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"memberCode\":\"1001\",\"serialNumber\":\"1001\"}")
                 .andExpect(status().isCreated())
@@ -90,16 +90,10 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void newMemberIsAutoMappedAndActiveMembershipEnablesAccess() throws Exception {
-        var mappings = memberDeviceMappingRepository.findAll();
-        assertThat(mappings).hasSize(1);
-        assertThat(mappings.getFirst().getDeviceUserId()).isEqualTo("1001");
-        assertThat(mappings.getFirst().getSyncState().name()).isEqualTo("PENDING");
-
-        var commands = deviceSyncCommandRepository.findAll();
-        assertThat(commands).extracting(c -> c.getType())
-                .contains(SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_VALIDITY)
-                .doesNotContain(SyncCommandType.UPSERT_FACE);
+    void newMemberIsNotPlacedOnEveryReader() throws Exception {
+        assertThat(memberDeviceMappingRepository.findAll()).isEmpty();
+        assertThat(deviceSyncCommandRepository.findAll()).extracting(c -> c.getType())
+                .doesNotContain(SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_VALIDITY, SyncCommandType.UPSERT_FACE);
 
         mockMvc.perform(get("/api/v1/devices/" + deviceId + "/health")
                         .header("Authorization", "Bearer " + token))
@@ -107,7 +101,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.deviceConnectionState").value("UNKNOWN"))
                 .andExpect(jsonPath("$.gatewayStatus").value("UNKNOWN"))
                 .andExpect(jsonPath("$.gatewaySessionOnline").value(false))
-                .andExpect(jsonPath("$.pendingCommandCount").value(greaterThanOrEqualTo(2)))
+                .andExpect(jsonPath("$.pendingCommandCount").value(greaterThanOrEqualTo(0)))
                 .andExpect(jsonPath("$.failedCommandCount").value(0))
                 .andExpect(jsonPath("$.reconciliationRequired").value(false));
 
@@ -119,9 +113,10 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     @Test
     void syncResultMarksSucceededAndDoesNotFabricateWithoutGatewayAck() throws Exception {
 
-        var create = deviceSyncCommandRepository.findAll().stream()
-                .filter(c -> c.getType() == SyncCommandType.CREATE_USER)
-                .findFirst().orElseThrow();
+        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
+        var create = deviceSyncService.enqueue(device.getTenantId(), device.getId(), null, null,
+                SyncCommandType.OPEN_DOOR, java.util.Map.of("reason", "ack"));
+        assertThat(create).isNotNull();
         assertThat(create.getState()).isEqualTo(SyncCommandState.PENDING);
 
         int dispatched = deviceSyncService.dispatchDue();
@@ -140,84 +135,32 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void skippedResultsStillMarkTheDeviceAsHoldingTheMember() {
-        var userCommands = deviceSyncCommandRepository.findAll().stream()
-                .filter(c -> c.getMemberId() != null && c.getType() != SyncCommandType.UPSERT_FACE)
-                .toList();
-        assertThat(userCommands).hasSizeGreaterThanOrEqualTo(2);
-
-        // Another device on the same gateway already got these via the gateway's local fan-out.
-        var first = userCommands.getFirst();
-        gatewayMessageService.process(envelope("SYNC_RESULT", first.getCorrelationId(),
-                "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"), gatewayId);
-        assertThat(memberDeviceMappingRepository.findAll().getFirst().getSyncState().name())
-                .as("other detail commands are still queued").isEqualTo("PENDING");
-
-        for (var command : userCommands.subList(1, userCommands.size())) {
-            gatewayMessageService.process(envelope("SYNC_RESULT", command.getCorrelationId(),
-                    "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"), gatewayId);
-        }
-        var mapping = memberDeviceMappingRepository.findAll().getFirst();
-        assertThat(mapping.getSyncState().name()).isEqualTo("SYNCED");
-
-        var face = deviceSyncService.enqueue(mapping.getTenantId(), mapping.getDeviceId(), mapping.getMemberId(),
-                null, SyncCommandType.UPSERT_FACE,
-                java.util.Map.of("deviceUserId", "1001", "faceVersion", 1, "sha256", "abc"));
-        assertThat(memberDeviceMappingRepository.findAll().getFirst().getFaceSyncState().name()).isEqualTo("PENDING");
-        gatewayMessageService.process(envelope("SYNC_RESULT", face.getCorrelationId(),
-                "{\"ok\":true,\"skipped\":true,\"reason\":\"already applied\"}"), gatewayId);
-
-        mapping = memberDeviceMappingRepository.findAll().getFirst();
-        assertThat(mapping.getFaceSyncState().name()).isEqualTo("SYNCED");
-        assertThat(mapping.getFaceVersionSynced()).isEqualTo(1);
+    void aMemberCommandIsNotQueued() {
+        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
+        var member = memberRepository.findByPublicId(memberId).orElseThrow();
+        assertThatThrownBy(() -> deviceSyncService.enqueue(device.getTenantId(), device.getId(), member.getId(), null,
+                SyncCommandType.UPSERT_FACE, java.util.Map.of("deviceUserId", "1001")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("desired revision");
+        assertThat(deviceSyncCommandRepository.findAll()).extracting(c -> c.getType())
+                .doesNotContain(SyncCommandType.UPSERT_FACE, SyncCommandType.CREATE_USER);
     }
 
     @Test
-    void membershipDeviceStateFollowsCommandsThatCarryNoMembership() {
-        for (var command : deviceSyncCommandRepository.findAll()) {
-            if (command.getMemberId() != null) {
-                gatewayMessageService.process(envelope("SYNC_RESULT", command.getCorrelationId(), "{\"ok\":true}"), gatewayId);
-            }
-        }
-        var mapping = memberDeviceMappingRepository.findAll().getFirst();
-        mapping.setSyncState(com.example.gym.membership.DeviceSyncState.FAILED);
-        memberDeviceMappingRepository.save(mapping);
-        var membership = membershipRepository.findByPublicIdAndDeletedFalse(membershipId).orElseThrow();
-        membership.setDeviceSyncState(com.example.gym.membership.DeviceSyncState.FAILED);
-        membershipRepository.save(membership);
-
-        // A later profile push (no membership on the command) brings the device back in line.
-        var update = deviceSyncService.enqueue(mapping.getTenantId(), mapping.getDeviceId(), mapping.getMemberId(),
-                null, SyncCommandType.UPDATE_USER, java.util.Map.of("deviceUserId", mapping.getDeviceUserId()));
-        assertThat(membershipRepository.findByPublicIdAndDeletedFalse(membershipId).orElseThrow().getDeviceSyncState().name())
-                .isEqualTo("PENDING");
-        gatewayMessageService.process(envelope("SYNC_RESULT", update.getCorrelationId(), "{\"ok\":true}"), gatewayId);
-
-        assertThat(membershipRepository.findByPublicIdAndDeletedFalse(membershipId).orElseThrow().getDeviceSyncState().name())
-                .isEqualTo("SYNCED");
-    }
-
-    @Test
-    void aNewerAccessCommandReplacesTheOpenOne() {
-        var mapping = memberDeviceMappingRepository.findAll().getFirst();
-        var first = deviceSyncService.enqueue(mapping.getTenantId(), mapping.getDeviceId(), mapping.getMemberId(),
-                null, SyncCommandType.DISABLE_USER, java.util.Map.of("deviceUserId", mapping.getDeviceUserId()));
-        var second = deviceSyncService.enqueue(mapping.getTenantId(), mapping.getDeviceId(), mapping.getMemberId(),
-                null, SyncCommandType.UPDATE_VALIDITY, java.util.Map.of(
-                        "deviceUserId", mapping.getDeviceUserId(), "enabled", true));
-
-        assertThat(deviceSyncCommandRepository.findById(first.getId()).orElseThrow().getState())
-                .isEqualTo(SyncCommandState.CANCELLED);
-        assertThat(deviceSyncCommandRepository.findById(second.getId()).orElseThrow().getState())
-                .isEqualTo(SyncCommandState.PENDING);
-        assertThat(deviceSyncCommandRepository.findAll().stream()
-                .filter(c -> mapping.getMemberId().equals(c.getMemberId())
-                        && c.getState() == SyncCommandState.PENDING
-                        && (c.getType() == SyncCommandType.DISABLE_USER
-                        || c.getType() == SyncCommandType.UPDATE_VALIDITY
-                        || c.getType() == SyncCommandType.ENABLE_USER))
-                .map(c -> c.getId()))
-                .containsExactly(second.getId());
+    void aMemberUpdateIsNotQueuedEither() {
+        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
+        var member = memberRepository.findByPublicId(memberId).orElseThrow();
+        assertThatThrownBy(() -> deviceSyncService.enqueue(device.getTenantId(), device.getId(), member.getId(), null,
+                SyncCommandType.UPDATE_USER, java.util.Map.of("deviceUserId", "1001")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> deviceSyncService.enqueue(device.getTenantId(), device.getId(), member.getId(), null,
+                SyncCommandType.DISABLE_USER, java.util.Map.of("deviceUserId", "1001")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> deviceSyncService.enqueue(device.getTenantId(), device.getId(), member.getId(), null,
+                SyncCommandType.UPDATE_VALIDITY, java.util.Map.of("deviceUserId", "1001", "enabled", true)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(deviceSyncCommandRepository.findAll()).extracting(c -> c.getType())
+                .doesNotContain(SyncCommandType.UPDATE_USER, SyncCommandType.DISABLE_USER, SyncCommandType.UPDATE_VALIDITY);
     }
 
     @Test
@@ -235,6 +178,10 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
     @Test
     void attendanceIngestIsIdempotentAndDeniedRaisesSecurityEvent() throws Exception {
+        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
+        var member = memberRepository.findByPublicId(memberId).orElseThrow();
+        memberDeviceMappingRepository.save(new com.example.gym.device.domain.MemberDeviceMapping(
+                device.getTenantId(), member.getId(), device.getId(), "1001"));
 
         String occurred = Instant.parse("2026-09-11T06:00:00Z").toString();
         String event = envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
@@ -267,10 +214,8 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
         postJson("/api/v1/memberships/" + membershipId + "/freeze", null)
                 .andExpect(status().isOk());
-        assertThat(deviceSyncCommandRepository.count()).isGreaterThan(before);
         assertThat(deviceSyncCommandRepository.findAll())
-                .anyMatch(c -> c.getType() == SyncCommandType.DISABLE_USER
-                        && c.getMembershipId() != null);
+                .noneMatch(c -> c.getType() == SyncCommandType.DISABLE_USER);
 
         postJson("/api/v1/devices/" + deviceId + "/door",
                 "{\"action\":\"OPEN\",\"confirmed\":false,\"reason\":\"test\"}")
@@ -285,6 +230,9 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
     @Test
     void restPollClaimsCommandsWithPerGatewayTokenAndRejectsUserJwt() throws Exception {
+        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
+        deviceSyncService.enqueue(device.getTenantId(), device.getId(), null, null,
+                SyncCommandType.OPEN_DOOR, java.util.Map.of("reason", "poll"));
 
         mockMvc.perform(get("/internal/gateway/commands")
                         .header("Authorization", "Bearer " + token))
@@ -344,50 +292,16 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void changingTheSerialMovesTheReaderOnlyAfterTheNewUserExists() throws Exception {
-        Long ashaId = memberRepository.findByPublicId(memberId).orElseThrow().getId();
+    void changingTheSerialDoesNotWriteAReader() throws Exception {
         mockMvc.perform(put("/api/v1/members/" + memberId).header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"serialNumber\":\"7\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.serialNumber").value("7"))
                 .andExpect(jsonPath("$.memberCode").value("1001"));
-
-        var mapping = memberDeviceMappingRepository.findByMemberId(ashaId).getFirst();
-        assertThat(mapping.getDeviceUserId()).isEqualTo("1001");
-        assertThat(mapping.getPendingDeviceUserId()).isEqualTo("7");
-        assertThat(memberRepository.findAll()).hasSize(1);
-
-        // A punch under the new id still credits the same member while the reader is moving.
-        gatewayMessageService.process(envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
-                "{\"deviceUserId\":\"7\",\"occurredAt\":\"2026-09-11T07:00:00Z\","
-                        + "\"method\":\"FACE\",\"granted\":true,\"recNo\":77}"), gatewayId);
-        assertThat(attendanceEventRepository.findAll()).singleElement()
-                .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(ashaId));
-
-        var create = deviceSyncCommandRepository.findAll().stream()
-                .filter(c -> c.getType() == SyncCommandType.CREATE_USER
-                        && c.getState() != SyncCommandState.CANCELLED
-                        && c.getPayload().contains("\"deviceUserId\":\"7\""))
-                .findFirst().orElseThrow();
         assertThat(deviceSyncCommandRepository.findAll())
-                .noneMatch(c -> c.getType() == SyncCommandType.REMOVE_USER);
-
-        gatewayMessageService.process(envelope("SYNC_RESULT", create.getCorrelationId(), "{\"ok\":true}"), gatewayId);
-
-        mapping = memberDeviceMappingRepository.findByMemberId(ashaId).getFirst();
-        assertThat(mapping.getDeviceUserId()).isEqualTo("7");
-        assertThat(mapping.getPendingDeviceUserId()).isNull();
-        assertThat(deviceSyncCommandRepository.findAll())
-                .anyMatch(c -> c.getType() == SyncCommandType.REMOVE_USER
-                        && c.getPayload().contains("\"deviceUserId\":\"1001\""))
-                .anyMatch(c -> c.getType() == SyncCommandType.UPDATE_VALIDITY
-                        && c.getState() == SyncCommandState.PENDING
-                        && c.getPayload().contains("\"deviceUserId\":\"7\""));
-        assertThat(auditLogRepository.findAll())
-                .anyMatch(a -> "MEMBER_DEVICE_USER_MOVED".equals(a.getAction())
-                        && a.getDetails().contains("\"serialNumber\":\"7\"")
-                        && a.getDetails().contains("\"previousDeviceUserId\":\"1001\""));
+                .noneMatch(c -> c.getType() == SyncCommandType.CREATE_USER
+                        || c.getType() == SyncCommandType.REMOVE_USER);
     }
 
     // --- helpers ---------------------------------------------------------------------------------

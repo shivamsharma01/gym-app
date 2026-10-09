@@ -297,11 +297,6 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
       api(`/api/v1/members/${memberId}/device-sync/${deviceId}/retry`, { method: 'POST' }),
     onSuccess: () => void sync.refetch(),
   })
-  const read = useMutation({
-    mutationFn: (deviceId: string) =>
-      api(`/api/v1/members/${memberId}/device-sync/${deviceId}/read`, { method: 'POST' }),
-    onSuccess: () => void sync.refetch(),
-  })
   const remove = useMutation({
     mutationFn: (deviceId: string) =>
       api(`/api/v1/members/${memberId}/device-sync/${deviceId}/remove`, { method: 'POST' }),
@@ -313,15 +308,15 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
   })
   if (sync.error) return <QueryError error={sync.error} />
   const data = sync.data
-  const legacyDevices = (data?.devices ?? []).filter((row) => !row.projectionEnabled)
-  if (data && legacyDevices.length === 0) return null
+  const rows = data?.devices ?? []
+  if (data && rows.length === 0) return null
   return (
     <section>
-      <SectionTitle title="Device sync" />
+      <SectionTitle title="Readers" />
       <Card className="space-y-4">
         <p className="text-sm text-muted">
-          Saved on the server first, then sent to every device that has a gateway. A device shows “waiting” until it
-          confirms. Members and photos added on a device come back here and go to the other devices too.
+          Each reader has its own desired revision. Send again publishes that revision for this reader only.
+          A person added on a reader stays on that reader until staff review it.
         </p>
         {!data ? (
           <Skeleton className="h-16" />
@@ -335,7 +330,7 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
           </p>
         ) : (
           <div className="divide-y divide-line">
-            {legacyDevices.map((row) => {
+            {rows.map((row) => {
               const face = faceStateLabel(row, data.face)
               return (
                 <div key={row.deviceId} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
@@ -377,19 +372,10 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
                         size="sm"
                         variant="outline"
                         disabled={retry.isPending}
-                        title="Overwrite the device with what the server has"
+                        title="Publish this member's desired revision on this reader"
                         onClick={() => retry.mutate(row.deviceId)}
                       >
                         Send again
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={read.isPending}
-                        title="Read name, access and photo fresh from the device. The newer copy wins."
-                        onClick={() => read.mutate(row.deviceId)}
-                      >
-                        Read from device
                       </Button>
                       <Button
                         size="sm"
@@ -408,7 +394,6 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
           </div>
         )}
         {retry.error instanceof ApiError ? <p className="text-sm text-danger">{retry.error.message}</p> : null}
-        {read.error instanceof ApiError ? <p className="text-sm text-danger">{read.error.message}</p> : null}
         {remove.error instanceof ApiError ? <p className="text-sm text-danger">{remove.error.message}</p> : null}
       </Card>
       <ConfirmDialog

@@ -1,11 +1,13 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.SyncCommandType;
@@ -85,7 +87,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
         assertThat(mapping.getDeviceUserId()).isNotEqualTo(publicId).isNotEqualTo("5001");
 
         assertThat(commands(flagged)).isEmpty();
-        assertThat(commands(other)).extracting(DeviceSyncCommand::getType).contains(SyncCommandType.CREATE_USER);
+        assertThat(commands(other)).isEmpty();
 
         JsonNode page = readJson(pull(gatewayToken, flaggedId, 0).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString());
@@ -165,7 +167,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body.toString()))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isConflict());
 
         JsonNode page = readJson(pull(gatewayToken, flaggedId, 0).andReturn().getResponse().getContentAsString());
         assertThat(page.get("appliedRevision").asLong()).isZero();
@@ -178,12 +180,86 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
         pull(null, flaggedId, 0).andExpect(status().isUnauthorized());
         pull(otherGatewayToken, flaggedId, 0).andExpect(status().isNotFound());
         String looseId = readJson(postJson("/api/v1/devices",
-                "{\"name\":\"Loose\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.21\",\"port\":37777,"
-                        + "\"projectionEnabled\":true}")
+                "{\"name\":\"Loose\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.21\",\"port\":37777}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
         pull(gatewayToken, looseId, 0).andExpect(status().isForbidden());
-        pull(gatewayToken, otherId, 0).andExpect(status().isNotFound());
+        pull(gatewayToken, otherId, 0).andExpect(status().isOk());
+    }
+
+    @Test
+    void deletingThePhotoClearsItOnMappedReadersAndKeepsTheMember() throws Exception {
+        JsonNode created = createOnReader("Asha", "Shah", "M-FACE", "5010", flaggedId);
+        String publicId = created.get("id").asString();
+        Long memberId = memberRepository.findByPublicId(publicId).orElseThrow().getId();
+        JsonNode otherMember = createOnReader("Bea", "Shah", "M-OTHER", "5011", otherId);
+        Long otherMemberId = memberRepository.findByPublicId(otherMember.get("id").asString()).orElseThrow().getId();
+        DesiredMemberProjection before = projection(other, otherMemberId);
+        long otherRevision = before.getRevision();
+
+        mockMvc.perform(delete("/api/v1/members/" + publicId + "/face")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/v1/members/" + publicId).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/members/" + publicId + "/face").header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+        assertThat(memberRepository.findByPublicId(publicId)).isPresent();
+        assertThat(commands(flagged)).isEmpty();
+        assertThat(commands(other)).isEmpty();
+        assertThat(desiredMemberProjectionRepository.findAll())
+                .filteredOn(row -> other.equals(row.getDeviceId()) && memberId.equals(row.getMemberId()))
+                .isEmpty();
+
+        DesiredMemberProjection unchanged = projection(other, otherMemberId);
+        assertThat(unchanged.getRevision()).isEqualTo(otherRevision);
+        assertThat(unchanged.isFacePresent()).isTrue();
+        assertThat(unchanged.isPresentOnReader()).isTrue();
+
+        DesiredMemberProjection cleared = projection(flagged, memberId);
+        assertThat(cleared.isPresentOnReader()).isTrue();
+        assertThat(cleared.isFacePresent()).isFalse();
+        assertThat(cleared.getRevision()).isEqualTo(2);
+        assertThat(mapping(publicId, flagged).getDeviceUserId()).isEqualTo(cleared.getDeviceUserId());
+
+        JsonNode item = pullItem(1);
+        assertThat(item.get("present").asBoolean()).isTrue();
+        assertThat(item.get("facePresent").asBoolean()).isFalse();
+        assertThat(item.get("faceBase64").asString()).isEmpty();
+        assertThat(item.get("faceSha256").asString()).isEmpty();
+        assertThat(item.get("deviceUserId").asString()).isEqualTo("1");
+
+        ObjectNode hashed = (ObjectNode) jsonMapper.readTree(ackBody(item, flaggedId));
+        hashed.put("faceSha256", "ab".repeat(32));
+        hashed.put("present", true);
+        mockMvc.perform(post("/internal/gateway/desired/ack")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(hashed.toString()))
+                .andExpect(status().isConflict());
+
+        ObjectNode verified = (ObjectNode) jsonMapper.readTree(ackBody(item, flaggedId));
+        verified.put("faceSha256", "");
+        verified.put("present", true);
+        verified.put("failCode", "UNKNOWN");
+        mockMvc.perform(post("/internal/gateway/desired/ack")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(verified.toString()))
+                .andExpect(status().isOk());
+
+        JsonNode page = readJson(pull(gatewayToken, flaggedId, 0).andReturn().getResponse().getContentAsString());
+        assertThat(page.get("appliedRevision").asLong()).isEqualTo(2);
+        assertThat(page.get("desiredRevision").asLong()).isEqualTo(2);
+        assertThat(projection(flagged, memberId).getObservedFaceSha256()).isNull();
+    }
+
+    private DesiredMemberProjection projection(Long deviceId, Long memberId) {
+        return desiredMemberProjectionRepository.findAll().stream()
+                .filter(row -> deviceId.equals(row.getDeviceId()) && memberId.equals(row.getMemberId()))
+                .findFirst()
+                .orElseThrow();
     }
 
     private JsonNode pullItem(long after) throws Exception {
@@ -242,7 +318,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
     private String createDevice(String name, boolean projection, String gatewayId) throws Exception {
         return readJson(postJson("/api/v1/devices",
                 "{\"name\":\"" + name + "\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.20\",\"port\":37777,"
-                        + "\"gatewayId\":\"" + gatewayId + "\",\"projectionEnabled\":" + projection + "}")
+                        + "\"gatewayId\":\"" + gatewayId + "\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
     }

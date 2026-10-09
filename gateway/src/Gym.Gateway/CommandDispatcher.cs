@@ -6,37 +6,22 @@ using Microsoft.Extensions.Logging;
 namespace Gym.Gateway;
 
 /// <summary>
-/// Maps backend outbox commands onto <see cref="IDeviceAdapter"/>. After each successful write it
-/// records what the device now holds in <see cref="RosterStateStore"/>, so the change watcher never
-/// reports the gateway's own writes back to the server as device edits.
+/// Maps door, clock, and attendance commands onto <see cref="IDeviceAdapter"/>. Member state is
+/// written only by the desired-state worker.
 /// </summary>
 public sealed class CommandDispatcher
 {
-    private const string DisableUser = "DISABLE_USER";
-    private const string EnableUser = "ENABLE_USER";
-    private const string UpsertFace = "UPSERT_FACE";
-
-    private static readonly HashSet<string> UserCommands = new(StringComparer.Ordinal)
-    {
-        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", DisableUser, EnableUser, "UPDATE_VALIDITY"
-    };
-
     /// <summary>Member writes the desired-state worker owns. Door, clock, and attendance stay.</summary>
     private static readonly HashSet<string> MemberWrites = new(StringComparer.Ordinal)
     {
-        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", DisableUser, EnableUser,
-        "UPDATE_VALIDITY", "REMOVE_USER", "ENROLL_FACE", UpsertFace, "DELETE_FACE",
-        "REPORT_DEVICE_USER", "REFRESH_DEVICE_USERS", "RECONCILE_DEVICE"
+        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", "DISABLE_USER", "ENABLE_USER",
+        "UPDATE_VALIDITY", "REMOVE_USER", "ENROLL_FACE", "UPSERT_FACE", "DELETE_FACE",
+        "REPORT_DEVICE_USER"
     };
 
     private readonly IReadOnlyDictionary<string, IDeviceAdapter> _adapters;
     private readonly ILogger<CommandDispatcher> _log;
-    private readonly IFaceTransfer? _faces;
-    private readonly RosterStateStore _roster;
     private readonly DeviceLocks _locks;
-    private readonly Func<string, string, Task<(bool Ok, string? Error)>>? _reportUser;
-    private readonly ILocalMemberSync? _memberSync;
-    private HashSet<string> _desiredWriters = new(StringComparer.Ordinal);
     private static readonly TimeSpan FinishedKept = TimeSpan.FromMinutes(30);
     private readonly object _seenGate = new();
     private readonly Dictionary<string, Task<DispatchOutcome>> _running = new(StringComparer.Ordinal);
@@ -45,30 +30,11 @@ public sealed class CommandDispatcher
     public CommandDispatcher(
         IReadOnlyDictionary<string, IDeviceAdapter> adapters,
         ILogger<CommandDispatcher> log,
-        IFaceTransfer? faces = null,
-        RosterStateStore? roster = null,
-        DeviceLocks? locks = null,
-        Func<string, string, Task<(bool Ok, string? Error)>>? reportUser = null,
-        ILocalMemberSync? memberSync = null)
+        DeviceLocks? locks = null)
     {
         _adapters = adapters;
         _log = log;
-        _faces = faces;
-        _roster = roster ?? new RosterStateStore(null);
         _locks = locks ?? new DeviceLocks();
-        _reportUser = reportUser;
-        _memberSync = memberSync;
-    }
-
-    /// <summary>
-    /// These readers are written only by their desired-revision workers. A member command for one
-    /// of them is refused before timestamp-wins and before the adapter.
-    /// </summary>
-    public void MemberWritesFollowDesiredState(IEnumerable<string> deviceIds)
-    {
-        _desiredWriters = deviceIds
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .ToHashSet(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -144,7 +110,7 @@ public sealed class CommandDispatcher
 
     private async Task<DispatchOutcome> DispatchOnceAsync(GatewayEnvelope command)
     {
-        if (MemberWrites.Contains(command.Type ?? "") && _desiredWriters.Contains(command.DeviceId ?? ""))
+        if (MemberWrites.Contains(command.Type ?? ""))
         {
             return DispatchOutcome.SyncFail("desired revisions write this reader");
         }
@@ -163,56 +129,11 @@ public sealed class CommandDispatcher
 
         try
         {
-            if (command.Type == "REPORT_DEVICE_USER")
-            {
-                var reportId = Text(command.Payload, "deviceUserId");
-                if (string.IsNullOrWhiteSpace(reportId) || _reportUser == null)
-                {
-                    return DispatchOutcome.SyncFail("REPORT_DEVICE_USER requires deviceUserId and a change watcher");
-                }
-
-                var (ok, error) = await _reportUser(command.DeviceId, reportId).ConfigureAwait(false);
-                return ok ? DispatchOutcome.SyncOk() : DispatchOutcome.SyncFail(error ?? "report failed");
-            }
-
-            byte[]? face = null;
-            if (command.Type == UpsertFace)
-            {
-                var prepared = await DownloadFaceAsync(command.Payload).ConfigureAwait(false);
-                if (prepared.Error != null)
-                {
-                    return DispatchOutcome.SyncFail(prepared.Error);
-                }
-
-                face = prepared.Bytes;
-            }
-
-            if (_memberSync != null)
-            {
-                // Timestamped member commands go through local state (latest change wins, all devices updated).
-                var synced = await _memberSync.TryApplyAsync(command, face, CancellationToken.None).ConfigureAwait(false);
-                if (synced != null)
-                {
-                    _log.LogDebug("{Type} corr={Corr} handled through local member state (latest change wins)",
-                        command.Type, command.CorrelationId);
-                    return synced;
-                }
-            }
-
             _log.LogDebug("{Type} corr={Corr} goes straight to the reader adapter", command.Type, command.CorrelationId);
 
             using (await _locks.AcquireAsync(command.DeviceId, $"server command {command.Type}").ConfigureAwait(false))
             {
-                return await Task.Run(() =>
-                {
-                    var outcome = Dispatch(adapter, command, face);
-                    if (outcome.Ok)
-                    {
-                        RecordEcho(adapter, command, face);
-                    }
-
-                    return outcome;
-                }).ConfigureAwait(false);
+                return await Task.Run(() => Dispatch(adapter, command)).ConfigureAwait(false);
             }
         }
         catch (Exception ex)
@@ -222,89 +143,16 @@ public sealed class CommandDispatcher
         }
     }
 
-    private async Task<(byte[]? Bytes, string? Error)> DownloadFaceAsync(JsonElement payload)
+    private DispatchOutcome Dispatch(IDeviceAdapter adapter, GatewayEnvelope command)
     {
-        var memberId = Text(payload, "memberId");
-        var version = Int(payload, "faceVersion");
-        var expectedSha = Text(payload, "sha256");
-        if (string.IsNullOrWhiteSpace(Text(payload, "deviceUserId")) || string.IsNullOrWhiteSpace(memberId)
-            || version is null)
+        if (MemberWrites.Contains(command.Type ?? ""))
         {
-            return (null, "UPSERT_FACE requires deviceUserId, memberId and faceVersion");
+            return DispatchOutcome.SyncFail("desired revisions write this reader");
         }
 
-        var cached = string.IsNullOrWhiteSpace(expectedSha) ? null : _memberSync?.CachedFace(expectedSha);
-        if (cached != null)
-        {
-            _log.LogDebug("Face member={Member} version={Version} already held locally; not downloaded", memberId, version);
-            return (cached, null);
-        }
-
-        if (_faces == null)
-        {
-            return (null, "Face download is not configured on this gateway");
-        }
-
-        var download = await _faces.DownloadFaceAsync(memberId, version.Value, CancellationToken.None)
-            .ConfigureAwait(false);
-        if (!download.Ok || download.Bytes == null)
-        {
-            return (null, "Face download failed: " + (download.Error ?? "no data"));
-        }
-
-        if (!string.IsNullOrWhiteSpace(expectedSha)
-            && !string.Equals(FaceHash.Sha256Hex(download.Bytes), expectedSha, StringComparison.OrdinalIgnoreCase))
-        {
-            return (null, "Face image sha256 mismatch (stale or corrupted download)");
-        }
-
-        _log.LogDebug("Downloaded face member={Member} version={Version} ({Bytes} bytes)",
-            memberId, version, download.Bytes.Length);
-        return (download.Bytes, null);
-    }
-
-    private DispatchOutcome Dispatch(IDeviceAdapter adapter, GatewayEnvelope command, byte[]? face)
-    {
         var payload = command.Payload;
-        var userId = Text(payload, "deviceUserId");
-        var mutation = new DeviceUserMutation(
-            userId ?? "",
-            Text(payload, "name"),
-            Bool(payload, "enabled"),
-            Instant(payload, "validFrom"),
-            Instant(payload, "validTo"),
-            Text(payload, "authority"));
-
         switch (command.Type)
         {
-            case "CREATE_USER":
-                return RequireUser(userId, adapter.CreateUser(mutation));
-            case "UPDATE_USER":
-            case "UPDATE_ACCESS_POLICY":
-                return RequireUser(userId, adapter.UpdateUser(mutation));
-            case DisableUser when mutation.ValidFrom.HasValue || mutation.ValidTo.HasValue:
-                return RequireUser(userId, adapter.UpdateUser(mutation with { Enabled = false }));
-            case DisableUser:
-                return RequireUser(userId, adapter.DisableUser(userId!));
-            case EnableUser when mutation.ValidFrom.HasValue || mutation.ValidTo.HasValue:
-                return RequireUser(userId, adapter.UpdateUser(mutation with { Enabled = true }));
-            case EnableUser:
-                return RequireUser(userId, adapter.EnableUser(userId!));
-            case "REMOVE_USER":
-                return RequireUser(userId, adapter.DeleteUser(userId!));
-            case "UPDATE_VALIDITY":
-                return RequireUser(userId, adapter.UpdateValidity(mutation));
-            case UpsertFace:
-            {
-                var result = adapter.UpsertFace(userId!, face!);
-                return result.Ok
-                    ? DispatchOutcome.SyncOk(new { ok = true, faceVersion = Int(payload, "faceVersion") })
-                    : DispatchOutcome.SyncFail(result.Error ?? "face write failed");
-            }
-            case "DELETE_FACE":
-                return RequireUser(userId, adapter.DeleteFace(userId!));
-            case "ENROLL_FACE":
-                return DispatchOutcome.SyncFail("ENROLL_FACE is retired; the server sends UPSERT_FACE with the stored photo");
             case "SYNC_DEVICE_TIME":
                 return From(adapter.SynchronizeTime(ReaderLocalClock.Now(DateTimeOffset.UtcNow)));
             case "OPEN_DOOR":
@@ -321,32 +169,15 @@ public sealed class CommandDispatcher
                     _log.LogInformation(
                         "Reconcile read device={DeviceId}: {Users} user(s), {Events} attendance record(s) for {From}..{To}",
                         command.DeviceId, recon.Users.Count, recon.Events.Count, fromUtc, toUtc);
-                    if (Bool(payload, "refreshFaces") == true)
-                    {
-                        _roster.RequestFaceRefresh(command.DeviceId!);
-                        _log.LogInformation(
-                            "Sync Now on {DeviceId}: every photo on this reader is read again in the background; only changed photos are sent",
-                            command.DeviceId);
-                    }
-
-                    var known = _roster.All(command.DeviceId!).Count;
-                    var complete = recon.Users.Count >= known && (_memberSync?.LastUserListTrusted(command.DeviceId!) ?? true);
-                    if (!complete)
-                    {
-                        _log.LogWarning(
-                            "Reconcile device={DeviceId}: listed {Users} of {Known} known user(s) or the last scan was incomplete; the server will not flag missing users from this list",
-                            command.DeviceId, recon.Users.Count, known);
-                    }
-
-                    var digest = complete ? RosterDigest.Compute(recon.Users) : null;
-                    var unchanged = digest != null && string.Equals(digest, Text(payload, "knownDigest"), StringComparison.Ordinal);
+                    var digest = RosterDigest.Compute(recon.Users);
+                    var unchanged = string.Equals(digest, Text(payload, "knownDigest"), StringComparison.Ordinal);
                     if (unchanged)
                     {
                         _log.LogInformation("Reconcile device={DeviceId}: user list unchanged since the server's last full comparison; not sent",
                             command.DeviceId);
                     }
 
-                    return DispatchOutcome.Reconciliation(recon, complete, digest, unchanged);
+                    return DispatchOutcome.Reconciliation(recon, rosterDigest: digest, usersUnchanged: unchanged);
                 }
 
                 _log.LogWarning("Reconcile read failed device={DeviceId}: {Error}", command.DeviceId, recon.Error);
@@ -357,51 +188,6 @@ public sealed class CommandDispatcher
                 return DispatchOutcome.SyncFail("unsupported command " + command.Type);
         }
     }
-
-    /// <summary>Remember what the device holds after our write (echo suppression).</summary>
-    private void RecordEcho(IDeviceAdapter adapter, GatewayEnvelope command, byte[]? face)
-    {
-        var deviceId = command.DeviceId!;
-        var userId = Text(command.Payload, "deviceUserId");
-        if (string.IsNullOrWhiteSpace(userId))
-        {
-            return;
-        }
-
-        try
-        {
-            if (UserCommands.Contains(command.Type))
-            {
-                var snapshot = adapter.GetUser(userId);
-                if (snapshot != null)
-                {
-                    _roster.RecordProfile(deviceId, snapshot);
-                }
-            }
-            else if (command.Type == "REMOVE_USER")
-            {
-                _roster.Remove(deviceId, userId);
-            }
-            else if (command.Type == UpsertFace && face != null)
-            {
-                // The device may re-encode the image; remember the bytes it returns, not ours.
-                var read = adapter.GetFace(userId);
-                var sha = read is { Ok: true, Photo: not null } ? FaceHash.Sha256Hex(read.Photo) : FaceHash.Sha256Hex(face);
-                _roster.RecordFace(deviceId, userId, sha);
-            }
-            else if (command.Type == "DELETE_FACE")
-            {
-                _roster.RecordFace(deviceId, userId, null);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Could not record post-write state for {Type} user={User}", command.Type, userId);
-        }
-    }
-
-    private static DispatchOutcome RequireUser(string? userId, DeviceCommandResult result) =>
-        string.IsNullOrWhiteSpace(userId) ? DispatchOutcome.SyncFail("deviceUserId required") : From(result);
 
     private static DispatchOutcome From(DeviceCommandResult result) =>
         result.Ok ? DispatchOutcome.SyncOk() : DispatchOutcome.SyncFail(result.Error ?? "command failed");

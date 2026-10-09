@@ -2,7 +2,6 @@ package com.example.gym.device;
 
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.repo.DeviceRepository;
-import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,9 +10,8 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
- * When a gateway registers: backfill member mappings onto its devices, enqueue reconcile, release
- * the commands that waited while it was offline and send them. The registration is published
- * outside a transaction, so {@code fallbackExecution} is required or Spring drops the event.
+ * When a gateway registers: queue an attendance reconcile, release waiting door and clock
+ * commands, and send them. Member state is not copied onto the readers here.
  */
 @Component
 public class GatewayConnectedListener {
@@ -23,37 +21,27 @@ public class GatewayConnectedListener {
     private final DeviceRepository deviceRepository;
     private final DeviceService deviceService;
     private final DeviceSyncService deviceSyncService;
-    private final MemberDeviceProvisioningService provisioning;
 
     public GatewayConnectedListener(DeviceRepository deviceRepository,
                                     DeviceService deviceService,
-                                    DeviceSyncService deviceSyncService,
-                                    MemberDeviceProvisioningService provisioning) {
+                                    DeviceSyncService deviceSyncService) {
         this.deviceRepository = deviceRepository;
         this.deviceService = deviceService;
         this.deviceSyncService = deviceSyncService;
-        this.provisioning = provisioning;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onGatewayConnected(GatewayConnectedEvent event) {
         try {
             List<Device> devices = deviceRepository.findByGatewayId(event.gatewayInternalId());
-            List<Device> commandReaders = new ArrayList<>();
             for (Device device : devices) {
-                if (device.isProjectionEnabled()) {
-                    continue;
-                }
-                commandReaders.add(device);
-                provisioning.provisionDevice(device);
                 deviceService.enqueueReconcileIfAbsent(device);
             }
-            int woken = deviceSyncService.wakeGateway(commandReaders.stream().map(Device::getId).toList());
+            int woken = deviceSyncService.wakeGateway(devices.stream().map(Device::getId).toList());
             int dispatched = deviceSyncService.dispatchDue();
-            log.info("Gateway {} connected: reconcile queued for {} device(s), {} waiting command(s) released, "
-                    + "dispatched {}", event.gatewayPublicId(), commandReaders.size(), woken, dispatched);
+            log.info("Gateway {} connected: attendance reconcile queued for {} reader(s), {} waiting command(s) released, "
+                    + "dispatched {}", event.gatewayPublicId(), devices.size(), woken, dispatched);
         } catch (RuntimeException ex) {
-            // The regular dispatcher and reconcile schedule still catch up; don't fail the registration.
             log.error("Post-connect sync for gateway {} failed", event.gatewayPublicId(), ex);
         }
     }

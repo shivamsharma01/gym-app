@@ -155,7 +155,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             ReaderRevision cursor = revision();
             assertThat(cursor.getAppliedRevision()).isEqualTo(cursor.getDesiredRevision()).isEqualTo(1);
             assertThat(commands(flagged)).isEmpty();
-            assertThat(commands(other)).extracting(DeviceSyncCommand::getType).contains(SyncCommandType.CREATE_USER);
+            assertThat(commands(other)).isEmpty();
             mockMvc.perform(get("/api/v1/members/" + publicId).header("Authorization", "Bearer " + token))
                     .andExpect(status().isOk());
         }
@@ -391,8 +391,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             ReaderRevision cursor = revision();
             assertThat(cursor.getAppliedRevision()).isEqualTo(cursor.getDesiredRevision()).isEqualTo(4);
             assertThat(commands(flagged)).isEmpty();
-            assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
-                    .contains(SyncCommandType.UPDATE_USER, SyncCommandType.UPDATE_VALIDITY);
+            assertThat(commands(other)).isEmpty();
         }
     }
 
@@ -432,7 +431,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             ReaderRevision cursor = revision();
             assertThat(cursor.getAppliedRevision()).isEqualTo(cursor.getDesiredRevision()).isEqualTo(2);
             assertThat(commands(flagged)).isEmpty();
-            assertThat(commands(other)).extracting(DeviceSyncCommand::getType).contains(SyncCommandType.UPSERT_FACE);
+            assertThat(commands(other)).isEmpty();
             assertNotPublicId(report, publicId);
         }
     }
@@ -488,9 +487,10 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
 
         connected.onGatewayConnected(new GatewayConnectedEvent(gateway.getPublicId(), gateway.getId()));
 
-        assertThat(commands(flagged)).isEmpty();
-            assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
-                    .contains(SyncCommandType.RECONCILE_DEVICE);
+        assertThat(commands(flagged)).extracting(DeviceSyncCommand::getType)
+                .containsExactly(SyncCommandType.RECONCILE_DEVICE);
+        assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
+                .containsExactly(SyncCommandType.RECONCILE_DEVICE);
     }
 
     @Test
@@ -537,11 +537,9 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(flagged, "7")).isEmpty();
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(flagged, allocated)).isEmpty();
 
-        JsonNode imported = readJson(mockMvc.perform(post("/api/v1/devices/" + flaggedId + "/import-users")
+        mockMvc.perform(post("/api/v1/devices/" + flaggedId + "/import-users")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString());
-        assertThat(imported.get("created").asInt()).isZero();
+                .andExpect(status().isBadRequest());
         assertThat(memberRepository.count()).isEqualTo(members);
     }
 
@@ -997,7 +995,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     private String createDevice(String name, boolean projection, String gatewayId) throws Exception {
         return readJson(postJson("/api/v1/devices",
                 "{\"name\":\"" + name + "\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.20\",\"port\":37777,"
-                        + "\"gatewayId\":\"" + gatewayId + "\",\"projectionEnabled\":" + projection + "}")
+                        + "\"gatewayId\":\"" + gatewayId + "\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
     }

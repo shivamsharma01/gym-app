@@ -123,7 +123,7 @@ public class DeviceController {
 
     @PostMapping("/{id}/import-users")
     @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
-    @Operation(summary = "Import device users into Members (idempotent; Unknown plan; no face upsert)")
+    @Operation(summary = "Rejected. A reader list does not create members.")
     public ImportUsersResult importUsers(@PathVariable String id) {
         return ImportUsersResult.from(importService.importUsers(id, SecurityUtils.currentTenantId()));
     }
@@ -144,7 +144,7 @@ public class DeviceController {
 
     @PostMapping("/{id}/conflicts/{conflictId}/resolve")
     @PreAuthorize("hasAuthority('DEVICE_SYNC')")
-    @Operation(summary = "Resolve a conflict (REMOVE_USER for extras, or dismiss)")
+    @Operation(summary = "Dismiss a conflict, or refuse a reader removal that is not a review decision")
     public ConflictView resolveConflict(
             @PathVariable String id,
             @PathVariable String conflictId,

@@ -50,7 +50,7 @@ public class PendingEnrollmentService {
 
     @Transactional
     public void observe(Device device, JsonNode payload) {
-        if (device == null || !device.isProjectionEnabled() || payload == null) {
+        if (device == null || payload == null) {
             return;
         }
         JsonNode users = payload.get("users");

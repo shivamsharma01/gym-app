@@ -23,9 +23,7 @@ public final class DeviceRequests {
             @Size(max = 80) String model,
             @Size(max = 80) String serialNumber,
             /** Optional owning gateway (public id). */
-            String gatewayId,
-            /** When true, member creates for this reader use desired state instead of the outbox. */
-            Boolean projectionEnabled) {
+            String gatewayId) {
     }
 
     public record UpdateDevice(
@@ -35,9 +33,7 @@ public final class DeviceRequests {
             @Min(1) @Max(65535) Integer port,
             @Size(max = 80) String model,
             @Size(max = 80) String serialNumber,
-            String gatewayId,
-            /** Null leaves the current flag unchanged. */
-            Boolean projectionEnabled) {
+            String gatewayId) {
     }
 
     public record CreateMapping(

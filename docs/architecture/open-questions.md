@@ -15,19 +15,21 @@ These are product or hardware questions the architecture does not close. Do not 
 - A person created on the reader keeps that reader's device user id. The server does not rewrite it. Server-created ids use the highest-known-plus-one rule in the execution plan. A live race against the screen was not run.
 - A short or empty list is not a disappearance. This unit was not factory-reset in place.
 - Equal face bytes on two ids are two observations. They are not one member.
-- Deleting a member's face photo removes that photo from the server and from every reader that already has the member. The member and the mapping stay. A reader that does not already have the member is not given a user. Creating a member who has never had a photo is still open.
+- Deleting a member's face photo removes that photo from the server and from every reader that already has the member. The member and the mapping stay. A reader that does not already have the member is not given a user.
+- A member is not created without a face photo.
+- A new member is published to every reader of the gym. The create screen still asks for one reader until that fan-out is built.
+- Gym admin and staff may decide a review item. A pending enrollment of a person on a reader does not expire. The one-time gateway enrollment token does expire (24 hours) and is consumed on use.
+- The WebSocket carries live gateway traffic. The HTTP command poll runs only while that socket is down, so a dropped socket still delivers door, clock, and reconcile commands.
+- Attendance should reach admins as soon as the punches exist, by a poll that does not repeat work while nothing has changed. The reader log is not cleared.
+- An unlinked person is not copied to another reader while the server is down. The server publishes desired state. The gateway does not resolve that conflict on its own.
 - Gateway authentication is the credential. Anonymous access is not part of the design. F1 records that the automated tests passed.
 
 ## Still open
 
-1. Which readers receive a new member: every reader of the gym, a branch, or a reader chosen per member? V1 is one reader chosen at create time.
-2. Who may approve review items and pending enrollments, and does a pending enrollment expire?
-3. Keep the authenticated HTTP poll beside the WebSocket, or use the WebSocket only? Either way the caller is the enrolled gateway.
-4. When to schedule the attendance poll. The shape is a time window and append-only rows. Record-number survival across reboot or a full log is unproven, and there is no measured retention cap. The poll must not write member state.
-5. Whether a destructive clear of the reader log is ever offered. It is not part of member sync.
-6. Whether an unlinked person may be copied to another reader while the server is unreachable. The current release does not do that.
-7. The safety-scan interval. The only roster measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds from an unmeasured larger roster.
-8. Create-without-a-face, door and time-section values other than the probe's `nDoorNum=1` and `nTimeSectionNum=1`, and SDK reconnect as a guaranteed behavior. One power cycle reconnected and one did not.
+1. The safety-scan interval. A safety scan is an occasional full read of one reader's user list, so a change made on the reader is still noticed when its alarm was missed. It is not the normal way changes are detected, and it is not the attendance poll. The only measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds from an unmeasured larger roster.
+2. Door and time-section values other than the probe's `nDoorNum=1` and `nTimeSectionNum=1`.
+3. SDK reconnect as a guaranteed behavior. One power cycle reconnected and one did not.
+4. Attendance record-number survival across reboot or a full log, and the reader's retention cap. The poll is a time window of append-only rows and must not write member state.
 
 ## Operational risks that remain
 

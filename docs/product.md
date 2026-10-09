@@ -7,7 +7,7 @@ Open product decisions and remaining work after the original 0–9 roadmap.
 | Finding | Status |
 | --- | --- |
 | Live visit 2026-09-13 on serial `TW30000005250265` | Remote JPEG INSERT returned SDK success (`0x00000000`); door recognized the person |
-| Product rule | The server stores one photo per member. A desired revision writes that photo to the reader that owns the projection. Which readers receive a new member is still an open choice; the implemented create flow is one selected reader. |
+| Product rule | The server stores one photo per member. A new member is published to every reader of the gym. The create flow still asks for one reader until that fan-out is built. |
 | Gateway face write | Real `OperateAccessFaceService` writes. The image is downloaded with a sha256 check. A second insert over an existing photo is not success. An empty update does not clear the photo. |
 | Guided enroll command | Not used. Face changes are part of the desired revision. |
 
@@ -20,7 +20,7 @@ The design is [the device sync architecture](architecture/device-sync-architectu
 - One gym has one gateway and can have several readers. Each reader has its own worker.
 - `publicId` is the member. `deviceUserId` belongs to one reader. The mapping is the link. A device user id is never a member id, and it is not the member code.
 - The server publishes a desired projection and a revision for each reader. The gateway writes that projection, reads the user and the face back, and acknowledges only when they match. A stale revision does not overwrite a newer one.
-- Which readers receive a new member is still an open product choice. The implemented create flow is one reader chosen at create time.
+- A new member goes to every reader of the gym. The create flow still asks for one reader until that fan-out is built.
 - A person created on a reader stays a pending enrollment on that reader until staff link, create, or reject them. The reader’s id is kept. They are not copied to another reader.
 - A name, face, freeze, or disappearance that disagrees with the desired record becomes a review item. Staff decide. The decision is a new desired revision and stays open until the reader verifies it. Clocks do not pick a winner.
 - Removing someone from one reader does not deactivate the member and does not write the other readers.
@@ -73,4 +73,4 @@ Members list **Source** is Manual or Device. SUPER_ADMIN CSV export has no face 
 - Super admin acting as a gym
 - Changing plan mid-cycle (dates can be edited; the plan cannot)
 - Member profile payments omit the paid-on date
-- Which readers receive a new member, who may approve a review item, and whether a pending enrollment expires ([open-questions.md](architecture/open-questions.md))
+- Publishing a new member to every reader of the gym, and letting staff decide review items ([open-questions.md](architecture/open-questions.md))

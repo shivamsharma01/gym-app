@@ -512,11 +512,11 @@ These are not defined tightly enough to pretend they are already specified.
 | --- | --- |
 | Device-id allocator | The architecture left the exact allocator open. This plan defines highest-known-plus-one decimal ids, plus no-overwrite retry. A live race against the screen was not run. |
 | `publicId` as `szUserID` | Not supported here. UUID form was never written to this reader, and the face user-id type is a 32-character buffer. |
-| Which readers receive a new member | V1 is one reader chosen at create time. The long-term rule (every reader, by branch, or per member) is still a product choice. |
-| Who may approve review items, and whether an enrollment expires | Not specified. V14 cannot invent a role or an SLA. |
-| Safety-scan interval | Not benchmarked. The only measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds, and do not schedule from an unmeasured larger roster. |
-| Offline copy to a second reader | Not part of this architecture. Whether a later release should copy an unlinked person during an outage is still an open product decision. |
-| Create without a face | V1's proof includes a face. A member with no photo is not specified as success for V1. Deleting a photo that was already stored is a face-clear revision on readers that already have the member. |
+| Which readers receive a new member | Every reader of the gym. The create flow still asks for one reader until that fan-out is built. |
+| Who may approve review items, and whether an enrollment expires | Gym admin and staff decide review items. A pending person on a reader does not expire. The gateway enrollment token expires after 24 hours. |
+| Safety-scan interval | Not chosen. A safety scan is an occasional full user-list read for a missed alarm. The only measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds. |
+| Offline copy to a second reader | Not allowed. The server publishes desired state. The gateway does not copy an unlinked person or resolve that conflict while the server is down. |
+| Create without a face | Not allowed. Deleting a photo that was already stored is a face-clear revision on readers that already have the member. |
 | Door and time-section fields beyond the probe's create | V1 sends the same `nDoorNum=1` and `nTimeSectionNum=1` the probe used. Other schedules are not verified. |
 | SDK reconnect | One power cycle reconnected and one did not. V6 re-reads and pulls. It does not depend on the old login surviving. |
 | Attendance cursor across reboot or a full log | Unproven. Attendance is deferred, so this does not block V1. |
@@ -544,5 +544,5 @@ F1's credential tests, F2, F3, and V1 through V16 were accepted on the fake read
 The slice checks through V16 are recorded as done on the fake reader in each slice above. What remains:
 
 1. Section E, on a physical reader, before that reader is treated as validated.
-2. The open product decisions in [open-questions.md](open-questions.md), including which readers receive a new member and whether an unlinked person may be copied to another reader during an outage. Neither is decided here.
-3. The deferred attendance slice, which must not become a second member writer.
+2. The remaining choices in [open-questions.md](open-questions.md): the safety-scan interval, door and time-section values other than 1, and SDK reconnect as a guarantee.
+3. Attendance as a time-window poll that reaches admins without repeating work while nothing has changed. It must not become a second member writer, and it does not clear the reader log.

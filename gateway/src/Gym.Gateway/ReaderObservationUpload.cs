@@ -57,6 +57,44 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         }
     }
 
+    public async Task UploadTrustedRosterAsync(
+        string deviceId,
+        int announcedTotal,
+        IReadOnlyList<ReaderUser> users,
+        IReadOnlyDictionary<string, string> faceHashes,
+        CancellationToken cancellationToken)
+    {
+        var people = users.Select(user => new
+        {
+            deviceUserId = user.DeviceUserId,
+            name = user.Name,
+            nameEx = user.NameEx,
+            userStatus = user.UserStatus,
+            validFrom = user.ValidFrom?.ToString("o"),
+            validTo = user.ValidTo?.ToString("o"),
+            authority = user.Authority,
+            faceSha256 = faceHashes.TryGetValue(user.DeviceUserId, out var hash) ? hash : null,
+            isNew = true,
+            deleted = false
+        }).ToArray();
+        var envelope = GatewayEnvelope.Create(_gatewayId, ProtocolTypes.DeviceUserChanged, new
+        {
+            announcedTotal,
+            users = people
+        }, deviceId);
+        try
+        {
+            await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or WebSocketException)
+        {
+            _log.LogInformation(
+                ex,
+                "Roster for {DeviceId} queued; server unreachable ({Message})",
+                deviceId, ex.Message);
+        }
+    }
+
     public async Task UploadAbsencesAsync(
         string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
     {

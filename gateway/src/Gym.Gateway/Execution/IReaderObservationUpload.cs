@@ -15,4 +15,12 @@ public interface IReaderObservationUpload
 
     /// <summary>A mapped id missing from a trusted list. This does not remove anyone.</summary>
     Task UploadAbsencesAsync(string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken);
+
+    /// <summary>A trusted empty roster. This does not copy users onto another reader.</summary>
+    Task UploadTrustedRosterAsync(
+        string deviceId,
+        int announcedTotal,
+        IReadOnlyList<ReaderUser> users,
+        IReadOnlyDictionary<string, string> faceHashes,
+        CancellationToken cancellationToken);
 }

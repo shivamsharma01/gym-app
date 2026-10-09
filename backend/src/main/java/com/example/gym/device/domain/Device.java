@@ -61,6 +61,10 @@ public class Device extends TenantAwareEntity {
     @Column(name = "projection_enabled", nullable = false)
     private boolean projectionEnabled;
 
+    /** A trusted list whose announced total and count were both zero. A short list clears this. */
+    @Column(name = "roster_trusted_empty", nullable = false)
+    private boolean rosterTrustedEmpty;
+
     protected Device() {
     }
 
@@ -165,5 +169,13 @@ public class Device extends TenantAwareEntity {
 
     public void setProjectionEnabled(boolean projectionEnabled) {
         this.projectionEnabled = projectionEnabled;
+    }
+
+    public boolean isRosterTrustedEmpty() {
+        return rosterTrustedEmpty;
+    }
+
+    public void setRosterTrustedEmpty(boolean rosterTrustedEmpty) {
+        this.rosterTrustedEmpty = rosterTrustedEmpty;
     }
 }

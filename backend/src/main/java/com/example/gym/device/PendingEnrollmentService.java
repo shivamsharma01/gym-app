@@ -6,6 +6,7 @@ import com.example.gym.device.domain.DeviceObservedUser;
 import com.example.gym.device.domain.PendingEnrollment;
 import com.example.gym.device.repo.DesiredMemberProjectionRepository;
 import com.example.gym.device.repo.DeviceObservedUserRepository;
+import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.PendingEnrollmentRepository;
 import java.time.Instant;
@@ -28,17 +29,23 @@ public class PendingEnrollmentService {
     private final MemberDeviceMappingRepository mappings;
     private final DesiredMemberProjectionRepository desiredMembers;
     private final ReaderReviewService reviews;
+    private final DeviceRepository devices;
+    private final BootstrapReportService bootstrap;
 
     public PendingEnrollmentService(DeviceObservedUserRepository observedUsers,
                                     PendingEnrollmentRepository enrollments,
                                     MemberDeviceMappingRepository mappings,
                                     DesiredMemberProjectionRepository desiredMembers,
-                                    ReaderReviewService reviews) {
+                                    ReaderReviewService reviews,
+                                    DeviceRepository devices,
+                                    BootstrapReportService bootstrap) {
         this.observedUsers = observedUsers;
         this.enrollments = enrollments;
         this.mappings = mappings;
         this.desiredMembers = desiredMembers;
         this.reviews = reviews;
+        this.devices = devices;
+        this.bootstrap = bootstrap;
     }
 
     @Transactional
@@ -60,9 +67,16 @@ public class PendingEnrollmentService {
      */
     private void observeSet(Device device, JsonNode payload, JsonNode users) {
         int announced = payload.path("announcedTotal").asInt(-1);
-        if (users.isEmpty() || announced != users.size()) {
+        if (announced != users.size()) {
+            rememberEmpty(device, false);
             return;
         }
+        if (users.isEmpty()) {
+            rememberEmpty(device, true);
+            bootstrap.classifyTrustedEmpty(device);
+            return;
+        }
+        rememberEmpty(device, false);
         Set<String> present = new HashSet<>();
         for (JsonNode user : users) {
             observeOne(device, user);
@@ -106,6 +120,11 @@ public class PendingEnrollmentService {
     @Transactional(readOnly = true)
     public DeviceObservedUser snapshot(Long deviceId, String deviceUserId) {
         return observedUsers.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId).orElse(null);
+    }
+
+    private void rememberEmpty(Device device, boolean trustedEmpty) {
+        device.setRosterTrustedEmpty(trustedEmpty);
+        devices.save(device);
     }
 
     private void saveSnapshot(Device device, JsonNode payload, String deviceUserId) {

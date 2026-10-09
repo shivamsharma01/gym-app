@@ -252,7 +252,7 @@ public class PendingEnrollmentTests : IDisposable
     private static ReaderUser Person(string id, string name, string authority) =>
         new(id, name, null, 0, null, null, authority, 1, 1);
 
-    private sealed class RecordingUpload : IReaderObservationUpload
+    internal sealed class RecordingUpload : IReaderObservationUpload
     {
         public List<string> Ids { get; } = [];
 
@@ -261,6 +261,8 @@ public class PendingEnrollmentTests : IDisposable
         public List<string> AbsentIds { get; } = [];
 
         public List<string> FaceHashes { get; } = [];
+
+        public List<int> TrustedRosterTotals { get; } = [];
 
         public bool Offline { get; set; }
 
@@ -282,6 +284,23 @@ public class PendingEnrollmentTests : IDisposable
             return Task.CompletedTask;
         }
 
+        public Task UploadTrustedRosterAsync(
+            string deviceId,
+            int announcedTotal,
+            IReadOnlyList<ReaderUser> users,
+            IReadOnlyDictionary<string, string> faceHashes,
+            CancellationToken cancellationToken)
+        {
+            if (Offline)
+            {
+                throw new HttpRequestException("unreachable");
+            }
+
+            TrustedRosterTotals.Add(announcedTotal);
+            Ids.AddRange(users.Select(user => user.DeviceUserId));
+            return Task.CompletedTask;
+        }
+
         public Task UploadAbsencesAsync(
             string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
         {
@@ -295,7 +314,7 @@ public class PendingEnrollmentTests : IDisposable
         }
     }
 
-    private sealed class EmptyPull : IDesiredStateClient
+    internal sealed class EmptyPull : IDesiredStateClient
     {
         public int Pulls { get; private set; }
 

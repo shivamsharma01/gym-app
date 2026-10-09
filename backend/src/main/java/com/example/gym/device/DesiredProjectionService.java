@@ -97,6 +97,30 @@ public class DesiredProjectionService {
         this.reviews = reviews;
     }
 
+    /**
+     * An empty flagged reader receives this server member through the existing desired-state writer.
+     * The id is allocated for this reader. Nothing is copied from another reader.
+     *
+     * @return the device user id written, or null when this reader already has the member or has no face
+     */
+    @Transactional
+    public String seedIfAbsent(Member member, Device device) {
+        if (!device.isProjectionEnabled() || device.getGatewayId() == null) {
+            return null;
+        }
+        if (mappings.existsByDeviceIdAndMemberId(device.getId(), member.getId())) {
+            return null;
+        }
+        MemberFace face = faces.findByMemberId(member.getId()).orElse(null);
+        if (face == null) {
+            return null;
+        }
+        write(member, device, face);
+        return mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .map(MemberDeviceMapping::getDeviceUserId)
+                .orElse(null);
+    }
+
     @Transactional
     public long write(Member member, Device device, MemberFace face) {
         if (!device.isProjectionEnabled()) {

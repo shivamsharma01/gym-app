@@ -58,8 +58,39 @@ public sealed class DesiredRevisionPath
             return;
         }
 
-        await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
+        if (observed.CountMatchesAnnouncedTotal && observed.Users.Count == 0)
+        {
+            await UploadTrustedEmptyAsync(observed, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
+        }
+
         await HandleAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// One trusted read, then the existing observation upload. A short list uploads nothing.
+    /// An empty trusted list is reported empty. Nothing is copied onto another reader.
+    /// </summary>
+    public async Task<bool> BootstrapAsync(CancellationToken cancellationToken)
+    {
+        var observed = _reader.ListUsers();
+        if (!observed.Ok || !observed.CountMatchesAnnouncedTotal)
+        {
+            return false;
+        }
+
+        if (observed.Users.Count == 0)
+        {
+            await UploadTrustedEmptyAsync(observed, cancellationToken).ConfigureAwait(false);
+            await HandleAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>
@@ -74,6 +105,23 @@ public sealed class DesiredRevisionPath
         }
 
         await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>A complete empty list is uploaded. It is not treated as a removal.</summary>
+    private async Task UploadTrustedEmptyAsync(ReaderListResult observed, CancellationToken cancellationToken)
+    {
+        if (_observations == null)
+        {
+            return;
+        }
+
+        await _observations.UploadTrustedRosterAsync(
+                _deviceId,
+                observed.AnnouncedTotal,
+                [],
+                new Dictionary<string, string>(),
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private async Task UploadNewPeopleAsync(ReaderListResult observed, CancellationToken cancellationToken)

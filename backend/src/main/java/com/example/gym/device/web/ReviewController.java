@@ -1,6 +1,8 @@
 package com.example.gym.device.web;
 
+import com.example.gym.device.BootstrapReportService;
 import com.example.gym.device.ReviewDecisionService;
+import com.example.gym.device.dto.BootstrapReport;
 import com.example.gym.device.dto.LinkMemberRequest;
 import com.example.gym.device.dto.ReviewItemView;
 import com.example.gym.security.SecurityUtils;
@@ -22,9 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class ReviewController {
 
     private final ReviewDecisionService decisions;
+    private final BootstrapReportService bootstrap;
 
-    public ReviewController(ReviewDecisionService decisions) {
+    public ReviewController(ReviewDecisionService decisions, BootstrapReportService bootstrap) {
         this.decisions = decisions;
+        this.bootstrap = bootstrap;
     }
 
     @GetMapping
@@ -32,6 +36,13 @@ public class ReviewController {
     @Operation(summary = "Open review items and pending enrollments")
     public List<ReviewItemView> open() {
         return decisions.open(SecurityUtils.currentTenantId());
+    }
+
+    @PostMapping("/bootstrap")
+    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
+    @Operation(summary = "Classify the trusted roster into a bootstrap report")
+    public BootstrapReport bootstrap() {
+        return bootstrap.build(SecurityUtils.currentTenantId());
     }
 
     @PostMapping("/{id}/accept-server")

@@ -370,12 +370,15 @@ public sealed class GatewayWorker : BackgroundService
                 deviceId,
                 path.HandleAsync,
                 path.ReconnectAsync,
-                device.ProjectionEnabled ? path.ObserveAsync : null);
+                device.ProjectionEnabled ? ct => path.BootstrapAsync(ct) : null);
         }
     }
 
     internal Task ReconnectReadersAsync(CancellationToken cancellationToken) =>
         _desiredRevisions.ReconnectAsync(cancellationToken);
+
+    internal Task ScanReadersAsync(CancellationToken cancellationToken) =>
+        _desiredRevisions.ObserveAsync(cancellationToken);
 
     private async Task ObserveReadersAsync(CancellationToken cancellationToken)
     {

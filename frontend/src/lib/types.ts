@@ -8,6 +8,21 @@ export type PageResponse<T> = {
   last: boolean
 }
 
+export type BootstrapReport = {
+  runId: string
+  rows: BootstrapRow[]
+}
+
+export type BootstrapRow = {
+  outcome: string
+  deviceId: string
+  deviceUserId: string
+  memberId: string | null
+  readerName: string | null
+  serverName: string | null
+  suggestionMemberId: string | null
+}
+
 export type ReviewItem = {
   id: string
   kind: 'REVIEW' | 'ENROLLMENT'

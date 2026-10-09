@@ -48,6 +48,9 @@ public class PendingEnrollment extends TenantAwareEntity {
     @Column(name = "resolved", nullable = false)
     private boolean resolved;
 
+    @Column(name = "bootstrap_run_id", length = 36)
+    private String bootstrapRunId;
+
     protected PendingEnrollment() {
     }
 
@@ -104,6 +107,17 @@ public class PendingEnrollment extends TenantAwareEntity {
 
     public boolean isResolved() {
         return resolved;
+    }
+
+    public String getBootstrapRunId() {
+        return bootstrapRunId;
+    }
+
+    public void assignBootstrapRun(String runId) {
+        if (resolved || bootstrapRunId != null || runId == null || runId.isBlank()) {
+            return;
+        }
+        this.bootstrapRunId = runId;
     }
 
     public void setReviewStatus(String reviewStatus) {

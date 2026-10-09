@@ -4,7 +4,7 @@ import { Button, Card, Input, PageHeader, Table, TableShell, THead, Th, Td, Tr }
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import type { ReviewItem } from '@/lib/types'
+import type { BootstrapReport, ReviewItem } from '@/lib/types'
 
 export function ReviewPage() {
   const { has } = useAuth()
@@ -12,6 +12,14 @@ export function ReviewPage() {
   const reviews = useQuery({
     queryKey: ['reviews'],
     queryFn: () => api<ReviewItem[]>('/api/v1/reviews'),
+  })
+  const [report, setReport] = useState<BootstrapReport | null>(null)
+  const bootstrap = useMutation({
+    mutationFn: () => api<BootstrapReport>('/api/v1/reviews/bootstrap', { method: 'POST', body: '{}' }),
+    onSuccess: (next) => {
+      setReport(next)
+      void qc.invalidateQueries({ queryKey: ['reviews'] })
+    },
   })
   const decide = useMutation({
     mutationFn: (action: { id: string; path: string; body?: unknown }) =>
@@ -31,7 +39,44 @@ export function ReviewPage() {
       <PageHeader
         title="Review"
         description="Server, reader, and baseline for each open difference. Nothing is linked automatically."
+        actions={
+          has('DEVICE_MANAGE') ? (
+            <Button type="button" disabled={bootstrap.isPending} onClick={() => bootstrap.mutate()}>
+              Bootstrap report
+            </Button>
+          ) : null
+        }
       />
+      {report ? (
+        <Card padded={false}>
+          <TableShell>
+            <Table>
+              <THead>
+                <Tr>
+                  <Th>Run</Th>
+                  <Th>Outcome</Th>
+                  <Th>Device user</Th>
+                  <Th>Reader</Th>
+                  <Th>Server</Th>
+                  <Th>Suggestion</Th>
+                </Tr>
+              </THead>
+              <tbody>
+                {report.rows.map((row) => (
+                  <Tr key={`${row.outcome}-${row.deviceId}-${row.deviceUserId}`}>
+                    <Td className="font-mono text-xs">{report.runId}</Td>
+                    <Td>{row.outcome}</Td>
+                    <Td className="font-mono text-xs">{row.deviceUserId}</Td>
+                    <Td>{row.readerName || '—'}</Td>
+                    <Td>{row.serverName || '—'}</Td>
+                    <Td className="font-mono text-xs">{row.suggestionMemberId || '—'}</Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </TableShell>
+        </Card>
+      ) : null}
       <Card padded={false}>
         <TableShell>
           <Table>

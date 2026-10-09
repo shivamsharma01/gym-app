@@ -81,3 +81,63 @@ test('accept server records the staff decision', async ({ page }) => {
   await expect(page.getByText('ACCEPT_SERVER')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Link all' })).toHaveCount(0)
 })
+
+test('bootstrap report lists the roster and does not import users', async ({ page }) => {
+  const requested: string[] = []
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url())
+    const path = url.pathname
+    const method = route.request().method()
+    requested.push(method + ' ' + path)
+    if (path === '/api/v1/auth/refresh' && method === 'POST') {
+      await route.fulfill({
+        json: { accessToken: 'token', tokenType: 'Bearer', expiresInSeconds: 900, user },
+      })
+      return
+    }
+    if (path === '/api/v1/me') {
+      await route.fulfill({ json: user })
+      return
+    }
+    if (path === '/api/v1/settings') {
+      await route.fulfill({ json: {} })
+      return
+    }
+    if (path.startsWith('/api/v1/gateways')) {
+      await route.fulfill({ json: { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 } })
+      return
+    }
+    if (path === '/api/v1/reviews' && method === 'GET') {
+      await route.fulfill({ json: [] })
+      return
+    }
+    if (path === '/api/v1/reviews/bootstrap' && method === 'POST') {
+      await route.fulfill({
+        json: {
+          runId: 'run-15',
+          rows: [
+            {
+              outcome: 'UNLINKED',
+              deviceId: 'dev-1',
+              deviceUserId: '7',
+              memberId: null,
+              readerName: 'Walk In',
+              serverName: null,
+              suggestionMemberId: null,
+            },
+          ],
+        },
+      })
+      return
+    }
+    await route.fulfill({ status: 404, json: {} })
+  })
+
+  await page.goto('/app/review')
+  await page.getByRole('button', { name: 'Bootstrap report' }).click()
+  await expect(page.getByRole('cell', { name: 'UNLINKED' })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'Walk In' })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'run-15' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Link all' })).toHaveCount(0)
+  expect(requested.some((call) => call.includes('import-users'))).toBe(false)
+})

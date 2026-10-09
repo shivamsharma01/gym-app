@@ -90,32 +90,20 @@ export function ReviewPage() {
               </Tr>
             </THead>
             <tbody>
-              {(reviews.data ?? []).map((item) => (
-                <Tr key={item.id}>
-                  <Td className="font-mono text-xs">{item.deviceUserId}</Td>
-                  <Td>{item.serverName || '—'}</Td>
-                  <Td>{item.readerAbsent ? 'Absent' : item.readerName || '—'}</Td>
-                  <Td>{item.baselineName || '—'}</Td>
-                  <Td>
-                    {item.decision ? (
-                      <div className="space-y-1 text-sm">
-                        <div>{item.decision}</div>
-                        <div className="text-xs text-muted">
-                          {item.actor} · {item.priorState} → {item.chosenState}
-                          {item.revision != null ? ` · revision ${item.revision}` : ''}
-                        </div>
-                        {item.verificationError ? (
-                          <div className="text-xs text-danger">{item.verificationError}</div>
-                        ) : null}
-                      </div>
-                    ) : has('DEVICE_MANAGE') ? (
-                      <RowActions item={item} pending={decide.isPending} onDecide={(path, body) => decide.mutate({ id: item.id, path, body })} />
-                    ) : (
-                      '—'
-                    )}
-                  </Td>
-                </Tr>
-              ))}
+              {(reviews.data ?? []).map((item) => {
+                const actions = decisionCell(item, has('DEVICE_MANAGE'), decide.isPending, (path, body) =>
+                  decide.mutate({ id: item.id, path, body }),
+                )
+                return (
+                  <Tr key={item.id}>
+                    <Td className="font-mono text-xs">{item.deviceUserId}</Td>
+                    <Td>{item.serverName || '—'}</Td>
+                    <Td>{item.readerAbsent ? 'Absent' : item.readerName || '—'}</Td>
+                    <Td>{item.baselineName || '—'}</Td>
+                    <Td>{actions}</Td>
+                  </Tr>
+                )
+              })}
             </tbody>
           </Table>
         </TableShell>
@@ -124,15 +112,39 @@ export function ReviewPage() {
   )
 }
 
+function decisionCell(
+  item: ReviewItem,
+  canManage: boolean,
+  pending: boolean,
+  onDecide: (path: string, body?: unknown) => void,
+) {
+  if (item.decision) {
+    return (
+      <div className="space-y-1 text-sm">
+        <div>{item.decision}</div>
+        <div className="text-xs text-muted">
+          {item.actor} · {item.priorState} → {item.chosenState}
+          {item.revision != null ? ` · revision ${item.revision}` : ''}
+        </div>
+        {item.verificationError ? <div className="text-xs text-danger">{item.verificationError}</div> : null}
+      </div>
+    )
+  }
+  if (canManage) {
+    return <RowActions item={item} pending={pending} onDecide={onDecide} />
+  }
+  return '—'
+}
+
 function RowActions({
   item,
   pending,
   onDecide,
-}: {
+}: Readonly<{
   item: ReviewItem
   pending: boolean
   onDecide: (path: string, body?: unknown) => void
-}) {
+}>) {
   const [memberId, setMemberId] = useState('')
   if (item.kind === 'ENROLLMENT') {
     return (

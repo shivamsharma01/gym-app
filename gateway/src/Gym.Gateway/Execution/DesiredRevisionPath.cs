@@ -159,12 +159,12 @@ public sealed class DesiredRevisionPath
     private Dictionary<string, string> FaceHashes(IReadOnlyList<ReaderUser> listed)
     {
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var user in listed)
+        foreach (var deviceUserId in listed.Select(user => user.DeviceUserId))
         {
-            var face = _reader.GetFace(user.DeviceUserId);
+            var face = _reader.GetFace(deviceUserId);
             if (face.Ok && face.Bytes is { Length: > 0 })
             {
-                hashes[user.DeviceUserId] = FaceHash.Sha256Hex(face.Bytes);
+                hashes[deviceUserId] = FaceHash.Sha256Hex(face.Bytes);
             }
         }
 

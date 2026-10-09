@@ -12,16 +12,20 @@ namespace Gym.Gateway;
 /// </summary>
 public sealed class CommandDispatcher
 {
+    private const string DisableUser = "DISABLE_USER";
+    private const string EnableUser = "ENABLE_USER";
+    private const string UpsertFace = "UPSERT_FACE";
+
     private static readonly HashSet<string> UserCommands = new(StringComparer.Ordinal)
     {
-        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", "DISABLE_USER", "ENABLE_USER", "UPDATE_VALIDITY"
+        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", DisableUser, EnableUser, "UPDATE_VALIDITY"
     };
 
     /// <summary>Member writes the desired-state worker owns. Door, clock, and attendance stay.</summary>
     private static readonly HashSet<string> MemberWrites = new(StringComparer.Ordinal)
     {
-        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", "DISABLE_USER", "ENABLE_USER",
-        "UPDATE_VALIDITY", "REMOVE_USER", "ENROLL_FACE", "UPSERT_FACE", "DELETE_FACE",
+        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", DisableUser, EnableUser,
+        "UPDATE_VALIDITY", "REMOVE_USER", "ENROLL_FACE", UpsertFace, "DELETE_FACE",
         "REPORT_DEVICE_USER", "REFRESH_DEVICE_USERS", "RECONCILE_DEVICE"
     };
 
@@ -62,16 +66,9 @@ public sealed class CommandDispatcher
     /// </summary>
     public void MemberWritesFollowDesiredState(IEnumerable<string> deviceIds)
     {
-        var next = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var deviceId in deviceIds)
-        {
-            if (!string.IsNullOrWhiteSpace(deviceId))
-            {
-                next.Add(deviceId);
-            }
-        }
-
-        _desiredWriters = next;
+        _desiredWriters = deviceIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -179,7 +176,7 @@ public sealed class CommandDispatcher
             }
 
             byte[]? face = null;
-            if (command.Type == "UPSERT_FACE")
+            if (command.Type == UpsertFace)
             {
                 var prepared = await DownloadFaceAsync(command.Payload).ConfigureAwait(false);
                 if (prepared.Error != null)
@@ -285,19 +282,19 @@ public sealed class CommandDispatcher
             case "UPDATE_USER":
             case "UPDATE_ACCESS_POLICY":
                 return RequireUser(userId, adapter.UpdateUser(mutation));
-            case "DISABLE_USER" when mutation.ValidFrom.HasValue || mutation.ValidTo.HasValue:
+            case DisableUser when mutation.ValidFrom.HasValue || mutation.ValidTo.HasValue:
                 return RequireUser(userId, adapter.UpdateUser(mutation with { Enabled = false }));
-            case "DISABLE_USER":
+            case DisableUser:
                 return RequireUser(userId, adapter.DisableUser(userId!));
-            case "ENABLE_USER" when mutation.ValidFrom.HasValue || mutation.ValidTo.HasValue:
+            case EnableUser when mutation.ValidFrom.HasValue || mutation.ValidTo.HasValue:
                 return RequireUser(userId, adapter.UpdateUser(mutation with { Enabled = true }));
-            case "ENABLE_USER":
+            case EnableUser:
                 return RequireUser(userId, adapter.EnableUser(userId!));
             case "REMOVE_USER":
                 return RequireUser(userId, adapter.DeleteUser(userId!));
             case "UPDATE_VALIDITY":
                 return RequireUser(userId, adapter.UpdateValidity(mutation));
-            case "UPSERT_FACE":
+            case UpsertFace:
             {
                 var result = adapter.UpsertFace(userId!, face!);
                 return result.Ok
@@ -385,7 +382,7 @@ public sealed class CommandDispatcher
             {
                 _roster.Remove(deviceId, userId);
             }
-            else if (command.Type == "UPSERT_FACE" && face != null)
+            else if (command.Type == UpsertFace && face != null)
             {
                 // The device may re-encode the image; remember the bytes it returns, not ours.
                 var read = adapter.GetFace(userId);

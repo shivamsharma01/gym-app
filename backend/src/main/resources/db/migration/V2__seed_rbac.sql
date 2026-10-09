@@ -21,6 +21,7 @@ VALUES
     (UUID(), 'DEVICE_MANAGE',               'Manage devices',                     NOW(6), NOW(6), 'system', 'system', 0),
     (UUID(), 'DEVICE_SYNC',                 'Synchronise devices',                NOW(6), NOW(6), 'system', 'system', 0),
     (UUID(), 'DEVICE_REMOTE_CONTROL',       'Remote device control (doors etc.)', NOW(6), NOW(6), 'system', 'system', 0),
+    (UUID(), 'REVIEW_DECIDE',               'Decide reader review items',         NOW(6), NOW(6), 'system', 'system', 0),
     (UUID(), 'SECURITY_ALERT_VIEW',         'View security alerts',               NOW(6), NOW(6), 'system', 'system', 0),
     (UUID(), 'USER_MANAGE',                 'Manage admin users',                 NOW(6), NOW(6), 'system', 'system', 0),
     (UUID(), 'ROLE_MANAGE',                 'Manage roles',                       NOW(6), NOW(6), 'system', 'system', 0),
@@ -50,7 +51,7 @@ FROM role r
     'MEMBER_VIEW', 'MEMBER_CREATE', 'MEMBER_UPDATE',
     'MEMBERSHIP_VIEW', 'MEMBERSHIP_CREATE', 'MEMBERSHIP_UPDATE',
     'PAYMENT_VIEW', 'PAYMENT_CREATE',
-    'ATTENDANCE_VIEW', 'DEVICE_VIEW', 'NOTIFICATION_SEND',
+    'ATTENDANCE_VIEW', 'DEVICE_VIEW', 'REVIEW_DECIDE', 'NOTIFICATION_SEND',
     'ENQUIRY_VIEW', 'ENQUIRY_MANAGE')
 WHERE r.name = 'STAFF';
 

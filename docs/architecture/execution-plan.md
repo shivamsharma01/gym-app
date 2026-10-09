@@ -1,6 +1,6 @@
 # Execution plan
 
-Status: F1–F3 and V1–V16 are implemented. Their automated tests passed on the fake reader and the test database. Section E has not been run on a physical reader.
+Status: F1–F3 and V1–V17 are implemented. Their automated tests passed on the fake reader and the test database. V18 and V19 are not built. Section E has not been run on a physical reader.
 Architecture: [device-sync-architecture.md](device-sync-architecture.md).
 Open questions: [open-questions.md](open-questions.md).
 Evidence: [device-poc-results.md](device-poc-results.md), reader serial `TW30000005250265`.
@@ -452,9 +452,71 @@ Specified in full in section C. This is the first vertical slice.
 
 **Done.** Spy test green. Section E has not been run.
 
-### Deferred — attendance
+### V17 — Staff decide review items
 
-Not on the critical path. A later slice can poll one time window, store punches append-only, treat `stuTime` as UTC, and key rows by device id plus record number plus stored timestamp. It must not ingest `ALARM_ACCESS_CTL_EVENT`, must not query after a record number, and must not block the member worker or write member state. It is not scheduled here.
+**Behavior.** Gym admin and staff can decide a review item or a pending enrollment: accept server, restore, remove, link, create, and reject. Staff do not gain device, gateway, or bootstrap management.
+
+**Prerequisites.** V14.
+
+**Backend.** A `REVIEW_DECIDE` permission. The decision endpoints require it. `GET /api/v1/reviews` stays on `DEVICE_VIEW`, and `POST /api/v1/reviews/bootstrap` stays on `DEVICE_MANAGE`. The decision path does not change: it still publishes a desired revision, and only the read-back acknowledgement closes the item.
+
+**Gateway.** No change.
+
+**Adapter.** No change.
+
+**Frontend.** Decision buttons appear for `REVIEW_DECIDE`. The bootstrap button still needs `DEVICE_MANAGE`.
+
+**Database.** The V2 seed adds the permission. Gym admin and super admin get it through the existing grant of every permission. Staff get it explicitly.
+
+**Tests.** The seed catalogue still matches the enum. Staff can accept the server value on a review item. Staff can link a pending enrollment to an existing member, and can create a member from a pending enrollment; each keeps the reader's `deviceUserId`, writes only that reader, and creates no duplicate member. A failed read-back leaves the enrollment open with the error and does not advance the applied revision. Each committed decision writes one `REVIEW_DECIDED` or `ENROLLMENT_DECIDED` audit row with the actor, reader, device user id, member, and revision; create also keeps its `MEMBER_CREATED` row. A refused, conflicting, or rolled-back decision writes no decision audit row. Staff get 403 on bootstrap and on device create. Report viewer gets 403 on a decision.
+
+**Acceptance criteria.** A staff decision is audited with the staff username and closes only after the acknowledgement.
+
+**Done.** Automated tests passed on the fake reader and test database: `RbacSeedIT`, the three staff tests in `V14StaffDecisionIT`, and the staff case in `e2e/review.spec.ts`. No physical-reader check applies beyond Section E.
+
+### V18 — A new member goes to every reader of the gym
+
+**Behavior.** Creating a member with a face publishes one desired user to every active reader of the gym. Each reader gets its own `deviceUserId` from the allocator, its own mapping, and its own revision. A reader that is offline converges when it returns (V6). One reader failing does not undo the member or the other readers.
+
+**Prerequisites.** V1, V7.
+
+**Backend.** Create no longer takes a reader id. It allocates per reader in one transaction. A reader added later gets the existing active members through the same desired path; no copy is made from another reader. Do not add a constructor parameter beyond the Sonar limit; extend the existing create service instead.
+
+**Gateway.** No change. Each reader worker applies its own revision.
+
+**Adapter.** No change.
+
+**Frontend.** The create form drops the reader picker. The member page shows each reader's applied or pending state.
+
+**Database.** No new table.
+
+**Tests.** Two readers: both get the user and face, with independent ids. An occupied id on one reader retries there only. An offline reader converges after reconnect. A gym with no reader still saves the member and publishes nothing.
+
+**Acceptance criteria.** Every active reader's applied revision reaches its desired revision for the new member.
+
+**Done.** Tests green on the fake reader.
+
+### V19 — Attendance poll
+
+**Behavior.** Punches reach admins soon after they happen. The gateway polls one time window per reader, starting from the last stored punch time with a small overlap. A window that returns nothing writes nothing. Rows are append-only. Attendance never writes member state and never blocks the member worker.
+
+**Prerequisites.** V16.
+
+**Backend.** An ingest endpoint stores punches idempotently on the existing `(tenant, device, fingerprint)` key and links them to a member through the mapping. An unmapped `deviceUserId` is stored without a member. The cursor moves only forward.
+
+**Gateway.** The poll runs on its own schedule beside the reader worker and shares the reader's connection lock. `stuTime` is treated as UTC. It does not ingest `ALARM_ACCESS_CTL_EVENT`, does not query after a record number, and does not clear the reader log. The poll interval is configuration, and the default is short enough for admins to see recent check-ins.
+
+**Adapter.** `QueryAttendance(fromUtc, toUtc)` on the fake reader.
+
+**Frontend.** The existing attendance list, refreshed on a short interval.
+
+**Database.** Existing attendance tables.
+
+**Tests.** A repeated window inserts no duplicate. An empty window writes nothing. A punch by an unmapped id is stored unlinked. A member write during a poll is not delayed beyond the lock. No member or mapping row changes during ingest.
+
+**Acceptance criteria.** A punch on the fake reader appears once in the attendance list.
+
+**Done.** Tests green on the fake reader. Record-number survival across a reboot or full log stays open (Section D).
 
 ### Deferred — offline copy to another reader
 
@@ -512,19 +574,19 @@ These are not defined tightly enough to pretend they are already specified.
 | --- | --- |
 | Device-id allocator | The architecture left the exact allocator open. This plan defines highest-known-plus-one decimal ids, plus no-overwrite retry. A live race against the screen was not run. |
 | `publicId` as `szUserID` | Not supported here. UUID form was never written to this reader, and the face user-id type is a 32-character buffer. |
-| Which readers receive a new member | Every reader of the gym. The create flow still asks for one reader until that fan-out is built. |
-| Who may approve review items, and whether an enrollment expires | Gym admin and staff decide review items. A pending person on a reader does not expire. The gateway enrollment token expires after 24 hours. |
+| Which readers receive a new member | Every reader of the gym (V18). The create flow still asks for one reader until V18 is built. |
+| Who may approve review items, and whether an enrollment expires | Gym admin and staff decide review items (V17). A pending person on a reader does not expire. The gateway enrollment token expires after 24 hours. |
 | Safety-scan interval | Not chosen. A safety scan is an occasional full user-list read for a missed alarm. The only measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds. |
 | Offline copy to a second reader | Not allowed. The server publishes desired state. The gateway does not copy an unlinked person or resolve that conflict while the server is down. |
 | Create without a face | Not allowed. Deleting a photo that was already stored is a face-clear revision on readers that already have the member. |
 | Door and time-section fields beyond the probe's create | V1 sends the same `nDoorNum=1` and `nTimeSectionNum=1` the probe used. Other schedules are not verified. |
 | SDK reconnect | One power cycle reconnected and one did not. V6 re-reads and pulls. It does not depend on the old login surviving. |
-| Attendance cursor across reboot or a full log | Unproven. Attendance is deferred, so this does not block V1. |
+| Attendance cursor across reboot or a full log | Unproven. V19 polls by time window, so it does not rely on record numbers. |
 | `emAuthority` | The menu asks for the reader password. V1 sends `Customer`. Authority changes are observations later, not a projection. |
 
 ## E. Physical-reader confirmation
 
-Required once, on a reader, before that reader is treated as validated for live member sync. The fake adapter is not a substitute. This pass has not been run as a confirmation of F1–V16.
+Required once, on a reader, before that reader is treated as validated for live member sync. The fake adapter is not a substitute. This pass has not been run as a confirmation of F1–V17.
 
 - V1 create: the allocated numeric id, full user read-back, and face read-back.
 - V2 freeze and enable.
@@ -537,12 +599,12 @@ The 7 October 2026 probe measured related SDK behavior on serial `TW300000052502
 
 ## F. Fake reader only
 
-F1's credential tests, F2, F3, and V1 through V16 were accepted on the fake reader and the test database. That acceptance does not close section E.
+F1's credential tests, F2, F3, and V1 through V17 were accepted on the fake reader and the test database. That acceptance does not close section E.
 
 ## G. Remaining gates
 
-The slice checks through V16 are recorded as done on the fake reader in each slice above. What remains:
+The slice checks through V17 are recorded as done on the fake reader and test database in each slice above. What remains:
 
 1. Section E, on a physical reader, before that reader is treated as validated.
 2. The remaining choices in [open-questions.md](open-questions.md): the safety-scan interval, door and time-section values other than 1, and SDK reconnect as a guarantee.
-3. Attendance as a time-window poll that reaches admins without repeating work while nothing has changed. It must not become a second member writer, and it does not clear the reader log.
+3. V18 every-reader create, then V19 attendance poll.

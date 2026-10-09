@@ -7,7 +7,17 @@ const user = {
   fullName: 'Test v1-admin',
   tenantId: 't1',
   roles: ['GYM_ADMIN'],
-  permissions: ['DEVICE_VIEW', 'DEVICE_MANAGE'],
+  permissions: ['DEVICE_VIEW', 'DEVICE_MANAGE', 'REVIEW_DECIDE'],
+}
+
+const staff = {
+  ...user,
+  id: 'u2',
+  username: 'v17-staff',
+  email: 'v17-staff@gym.local',
+  fullName: 'Test v17-staff',
+  roles: ['STAFF'],
+  permissions: ['DEVICE_VIEW', 'REVIEW_DECIDE'],
 }
 
 const openItem = {
@@ -140,4 +150,43 @@ test('bootstrap report lists the roster and does not import users', async ({ pag
   await expect(page.getByRole('cell', { name: 'run-15' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Link all' })).toHaveCount(0)
   expect(requested.some((call) => call.includes('import-users'))).toBe(false)
+})
+
+test('staff can decide a review item but cannot run bootstrap', async ({ page }) => {
+  let accepted = false
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url())
+    const path = url.pathname
+    const method = route.request().method()
+    if (path === '/api/v1/auth/refresh' && method === 'POST') {
+      await route.fulfill({
+        json: { accessToken: 'token', tokenType: 'Bearer', expiresInSeconds: 900, user: staff },
+      })
+      return
+    }
+    if (path === '/api/v1/me') {
+      await route.fulfill({ json: staff })
+      return
+    }
+    if (path === '/api/v1/settings') {
+      await route.fulfill({ json: {} })
+      return
+    }
+    if (path === '/api/v1/reviews' && method === 'GET') {
+      await route.fulfill({ json: [accepted ? { ...openItem, decision: 'ACCEPT_SERVER', actor: 'v17-staff' } : openItem] })
+      return
+    }
+    if (path === '/api/v1/reviews/review-1/accept-server' && method === 'POST') {
+      accepted = true
+      await route.fulfill({ json: { ...openItem, decision: 'ACCEPT_SERVER', actor: 'v17-staff' } })
+      return
+    }
+    await route.fulfill({ status: 404, json: {} })
+  })
+
+  await page.goto('/app/review')
+  await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Bootstrap report' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Accept server' }).click()
+  await expect(page.getByText('ACCEPT_SERVER')).toBeVisible()
 })

@@ -7,7 +7,7 @@ const user = {
   fullName: 'Test v1-admin',
   tenantId: 't1',
   roles: ['GYM_ADMIN'],
-  permissions: ['DEVICE_VIEW', 'DEVICE_MANAGE', 'DEVICE_SYNC', 'MEMBER_VIEW'],
+  permissions: ['DEVICE_VIEW', 'DEVICE_MANAGE', 'DEVICE_SYNC', 'MEMBER_VIEW', 'REVIEW_DECIDE'],
 }
 
 const health = {

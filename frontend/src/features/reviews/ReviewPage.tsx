@@ -91,7 +91,7 @@ export function ReviewPage() {
             </THead>
             <tbody>
               {(reviews.data ?? []).map((item) => {
-                const actions = decisionCell(item, has('DEVICE_MANAGE'), decide.isPending, (path, body) =>
+                const actions = decisionCell(item, has('REVIEW_DECIDE'), decide.isPending, (path, body) =>
                   decide.mutate({ id: item.id, path, body }),
                 )
                 return (

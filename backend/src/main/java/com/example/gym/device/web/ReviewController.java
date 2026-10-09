@@ -1,6 +1,7 @@
 package com.example.gym.device.web;
 
 import com.example.gym.device.BootstrapReportService;
+import com.example.gym.device.ReviewDecisionAudit;
 import com.example.gym.device.ReviewDecisionService;
 import com.example.gym.device.dto.BootstrapReport;
 import com.example.gym.device.dto.LinkMemberRequest;
@@ -25,10 +26,13 @@ public class ReviewController {
 
     private final ReviewDecisionService decisions;
     private final BootstrapReportService bootstrap;
+    private final ReviewDecisionAudit audit;
 
-    public ReviewController(ReviewDecisionService decisions, BootstrapReportService bootstrap) {
+    public ReviewController(ReviewDecisionService decisions, BootstrapReportService bootstrap,
+                            ReviewDecisionAudit audit) {
         this.decisions = decisions;
         this.bootstrap = bootstrap;
+        this.audit = audit;
     }
 
     @GetMapping
@@ -46,44 +50,44 @@ public class ReviewController {
     }
 
     @PostMapping("/{id}/accept-server")
-    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
+    @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
     @Operation(summary = "Write the server value to the reader")
     public ReviewItemView acceptServer(@PathVariable String id) {
-        return decisions.acceptServer(id, SecurityUtils.currentTenantId());
+        return audit.decided(decisions.acceptServer(id, SecurityUtils.currentTenantId()));
     }
 
     @PostMapping("/{id}/restore")
-    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
+    @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
     @Operation(summary = "Restore the server record on the reader")
     public ReviewItemView restore(@PathVariable String id) {
-        return decisions.restore(id, SecurityUtils.currentTenantId());
+        return audit.decided(decisions.restore(id, SecurityUtils.currentTenantId()));
     }
 
     @PostMapping("/{id}/remove")
-    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
+    @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
     @Operation(summary = "Remove the member from this reader")
     public ReviewItemView remove(@PathVariable String id) {
-        return decisions.remove(id, SecurityUtils.currentTenantId());
+        return audit.decided(decisions.remove(id, SecurityUtils.currentTenantId()));
     }
 
     @PostMapping("/{id}/link")
-    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
+    @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
     @Operation(summary = "Link the reader id to an existing member")
     public ReviewItemView link(@PathVariable String id, @Valid @RequestBody LinkMemberRequest request) {
-        return decisions.link(id, request.memberId(), SecurityUtils.currentTenantId());
+        return audit.decided(decisions.link(id, request.memberId(), SecurityUtils.currentTenantId()));
     }
 
     @PostMapping("/{id}/create")
-    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
+    @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
     @Operation(summary = "Create a member and keep the reader's device user id")
     public ReviewItemView create(@PathVariable String id) {
-        return decisions.create(id, SecurityUtils.currentTenantId());
+        return audit.decided(decisions.create(id, SecurityUtils.currentTenantId()));
     }
 
     @PostMapping("/{id}/reject")
-    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
+    @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
     @Operation(summary = "Reject the enrollment and remove that device user")
     public ReviewItemView reject(@PathVariable String id) {
-        return decisions.reject(id, SecurityUtils.currentTenantId());
+        return audit.decided(decisions.reject(id, SecurityUtils.currentTenantId()));
     }
 }

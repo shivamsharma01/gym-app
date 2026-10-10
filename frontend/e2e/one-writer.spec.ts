@@ -7,7 +7,7 @@ const user = {
   fullName: 'Test v1-admin',
   tenantId: 't1',
   roles: ['GYM_ADMIN'],
-  permissions: ['DEVICE_VIEW', 'DEVICE_MANAGE', 'DEVICE_SYNC', 'MEMBER_VIEW', 'REVIEW_DECIDE'],
+  permissions: ['DEVICE_VIEW', 'DEVICE_MANAGE', 'DEVICE_SYNC', 'MEMBER_VIEW', 'MEMBER_CREATE', 'MEMBERSHIP_VIEW', 'REVIEW_DECIDE'],
 }
 
 const health = {
@@ -60,6 +60,26 @@ const member = {
   createdAt: '2026-10-09T00:00:00Z',
 }
 
+const membership = {
+  id: 'ms-1',
+  planName: 'Monthly',
+  price: 1000,
+  currency: 'INR',
+  startDate: '2026-10-01',
+  endDate: '2026-10-31',
+  endDateInferred: false,
+  status: 'ACTIVE',
+  effectiveStatus: 'ACTIVE',
+  paymentStatus: 'PAID',
+  amountPaid: 1000,
+  deviceSyncState: 'NOT_SYNCED',
+  cancelledOn: null,
+  cancelReason: null,
+  createdAt: '2026-10-01T00:00:00Z',
+  discountAmount: 0,
+  netAmount: 1000,
+}
+
 test('a reader has attendance reconcile and no member import', async ({ page }) => {
   await mockStaff(page)
   await page.goto('/app/devices/dev-1')
@@ -84,11 +104,58 @@ test('a member page does not offer a clock-based device read', async ({ page }) 
   await page.goto('/app/members/mem-1')
   await expect(page.getByRole('heading', { name: 'Asha Shah' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Read from device' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Send again' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Remove from reader' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Send again' })).toHaveCount(2)
+  await expect(page.getByRole('button', { name: 'Remove from reader' })).toHaveCount(2)
 })
 
-async function mockStaff(page: import('@playwright/test').Page) {
+test('a member page shows each reader as applied or waiting and no membership sync label', async ({ page }) => {
+  await mockStaff(page)
+  await page.goto('/app/members/mem-1')
+  await expect(page.getByText('On reader')).toBeVisible()
+  await expect(page.getByText('Revision 2; reader applied 2')).toBeVisible()
+  await expect(page.getByText('Waiting for reader')).toBeVisible()
+  await expect(page.getByText('Revision 1; reader applied 0')).toBeVisible()
+  await expect(page.getByText('Monthly')).toBeVisible()
+  await expect(page.getByText(/device NOT_SYNCED/)).toHaveCount(0)
+  await expect(page.getByText(/NOT_SYNCED/)).toHaveCount(0)
+})
+
+test('creating a member sends one request with a face and no reader choice', async ({ page }) => {
+  const created: { contentType: string; body: string }[] = []
+  await mockStaff(page, created)
+  await page.goto('/app/members/new')
+  await expect(page.getByRole('heading', { name: 'New member' })).toBeVisible()
+  await expect(page.getByText('Select a reader')).toHaveCount(0)
+
+  await page.locator('input[name="firstName"]').fill('Asha')
+  await page.getByRole('button', { name: 'Save member' }).click()
+  await expect(page.getByText('A face photo is required')).toBeVisible()
+  expect(created).toHaveLength(0)
+
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 240
+    canvas.height = 240
+    canvas.getContext('2d')!.fillRect(0, 0, 240, 240)
+    return canvas.toDataURL('image/png').split(',')[1]
+  })
+  await page
+    .locator('input[type="file"][accept="image/jpeg,image/png"]')
+    .setInputFiles({ name: 'face.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') })
+  await page.getByRole('button', { name: 'Save member' }).click()
+  await expect(page).toHaveURL(/\/app\/members\/mem-1$/)
+
+  expect(created).toHaveLength(1)
+  expect(created[0].contentType).toContain('multipart/form-data')
+  expect(created[0].body).toContain('name="member"')
+  expect(created[0].body).toContain('name="face"')
+  expect(created[0].body).not.toContain('readerId')
+})
+
+async function mockStaff(
+  page: import('@playwright/test').Page,
+  created: { contentType: string; body: string }[] = [],
+) {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
@@ -123,6 +190,18 @@ async function mockStaff(page: import('@playwright/test').Page) {
       await route.fulfill({ json: { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 } })
       return
     }
+    if (path === '/api/v1/members/next-serial') {
+      await route.fulfill({ json: { serialNumber: '2' } })
+      return
+    }
+    if (path === '/api/v1/members' && method === 'POST') {
+      created.push({
+        contentType: route.request().headers()['content-type'] ?? '',
+        body: route.request().postDataBuffer()?.toString('latin1') ?? '',
+      })
+      await route.fulfill({ status: 201, json: member })
+      return
+    }
     if (path === '/api/v1/members/mem-1' && method === 'GET') {
       await route.fulfill({ json: member })
       return
@@ -137,14 +216,24 @@ async function mockStaff(page: import('@playwright/test').Page) {
               deviceName: 'Entrance',
               connectionState: 'ONLINE',
               hasGateway: true,
+              deviceUserId: '2',
+              revision: 2,
+              appliedRevision: 2,
+              applied: true,
+              present: true,
+              facePresent: true,
+            },
+            {
+              deviceId: 'dev-2',
+              deviceName: 'Exit',
+              connectionState: 'OFFLINE',
+              hasGateway: true,
               deviceUserId: '1',
-              pendingDeviceUserId: null,
-              differsFromSerial: false,
-              userSyncState: 'SYNCED',
-              faceSyncState: null,
-              faceVersionSynced: null,
-              faceLastError: null,
-              openCommands: [],
+              revision: 1,
+              appliedRevision: 0,
+              applied: false,
+              present: true,
+              facePresent: true,
             },
           ],
         },
@@ -152,7 +241,7 @@ async function mockStaff(page: import('@playwright/test').Page) {
       return
     }
     if (path === '/api/v1/members/mem-1/memberships') {
-      await route.fulfill({ json: [] })
+      await route.fulfill({ json: [membership] })
       return
     }
     if (path === '/api/v1/members/mem-1/access') {

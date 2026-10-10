@@ -2,16 +2,19 @@ package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.audit.AuditLog;
 import com.example.gym.audit.AuditLogRepository;
+import com.example.gym.device.DesiredProjectionService;
 import com.example.gym.device.domain.DesiredMemberProjection;
+import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.PendingEnrollment;
 import com.example.gym.device.domain.SyncCommandType;
+import com.example.gym.face.MemberFaceService;
+import com.example.gym.member.Member;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
@@ -19,7 +22,6 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -28,8 +30,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.test.web.servlet.MvcResult;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -37,6 +37,12 @@ import tools.jackson.databind.JsonNode;
  * only way that decision is closed. Link and create keep the reader's device user id.
  */
 class V14StaffDecisionIT extends AbstractIntegrationTest {
+
+    @Autowired
+    private DesiredProjectionService desiredProjectionService;
+
+    @Autowired
+    private MemberFaceService memberFaceService;
 
     @Autowired
     private AuditLogRepository auditLogRepository;
@@ -70,7 +76,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void acceptServerWritesTheServerValueAndAckClosesTheAudit() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V14-ACC", "9101", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "V14-ACC", "9101", flaggedId);
         String memberId = created.get("id").asString();
         String deviceUserId = mapping(memberId).getDeviceUserId();
         postReaderEdit(deviceUserId, "Left");
@@ -111,7 +117,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void aFailedReadBackLeavesTheDecisionOpenWithTheVerificationError() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V14-FAIL", "9102", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "V14-FAIL", "9102", flaggedId);
         String memberId = created.get("id").asString();
         String deviceUserId = mapping(memberId).getDeviceUserId();
         postReaderEdit(deviceUserId, "Left");
@@ -178,7 +184,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void linkKeepsTheReaderDeviceUserIdAndDoesNotCreateAMember() throws Exception {
-        JsonNode existing = createOnReader("Ria", "Shah", "V14-LINK", "9103", sideId);
+        JsonNode existing = onlyOnReader("Ria", "Shah", "V14-LINK", "9103", sideId);
         String memberId = existing.get("id").asString();
         long members = memberRepository.count();
         postFace("12", "Door", uploadFace());
@@ -247,7 +253,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void restoreRepublishesTheServerRecordOnTheSameId() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V14-RES", "9104", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "V14-RES", "9104", flaggedId);
         String memberId = created.get("id").asString();
         String deviceUserId = mapping(memberId).getDeviceUserId();
         postAbsence(deviceUserId);
@@ -276,7 +282,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void removeFromThisReaderUsesTheAbsenceWriterAndKeepsTheMember() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V14-REM", "9105", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "V14-REM", "9105", flaggedId);
         String memberId = created.get("id").asString();
         String deviceUserId = mapping(memberId).getDeviceUserId();
         postReaderEdit(deviceUserId, "Left");
@@ -313,7 +319,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void dismissAndRemoveDoNotCloseTheReviewItem() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V14-OLD", "9106", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "V14-OLD", "9106", flaggedId);
         String deviceUserId = mapping(created.get("id").asString()).getDeviceUserId();
         postReaderEdit(deviceUserId, "Left");
         DeviceReviewItem opened = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, deviceUserId)
@@ -340,7 +346,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         Long tenantId = deviceRepository.findByPublicId(flaggedId).orElseThrow().getTenantId();
         createUser(tenantId, "v17-staff", "v17-staff@gym.local", "STAFF");
         createUser(tenantId, "v17-viewer", "v17-viewer@gym.local", "REPORT_VIEWER");
-        JsonNode created = createOnReader("Asha", "Shah", "V17-ACC", "9201", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "V17-ACC", "9201", flaggedId);
         String deviceUserId = mapping(created.get("id").asString()).getDeviceUserId();
         postReaderEdit(deviceUserId, "Left");
         DeviceReviewItem opened = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, deviceUserId)
@@ -372,7 +378,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void staffLinkAPendingEnrollmentToAnExistingMemberOnThatReaderOnly() throws Exception {
-        JsonNode existing = createOnReader("Ria", "Shah", "V17-LINK", "9202", sideId);
+        JsonNode existing = onlyOnReader("Ria", "Shah", "V17-LINK", "9202", sideId);
         String memberId = existing.get("id").asString();
         Long memberPk = memberRepository.findByPublicId(memberId).orElseThrow().getId();
         Long side = deviceRepository.findByPublicId(sideId).orElseThrow().getId();
@@ -507,7 +513,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void aDecisionThatRollsBackWritesNoDecisionAudit() throws Exception {
-        String alreadyHere = createOnReader("Om", "Rao", "V17-HERE", "9203", flaggedId).get("id").asString();
+        String alreadyHere = onlyOnReader("Om", "Rao", "V17-HERE", "9203", flaggedId).get("id").asString();
         Long memberPk = memberRepository.findByPublicId(alreadyHere).orElseThrow().getId();
         long desired = readerRevisionRepository.findByDeviceId(flagged).orElseThrow().getDesiredRevision();
         postFace("23", "Door", uploadFace());
@@ -702,20 +708,13 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    private JsonNode createOnReader(
-            String firstName, String lastName, String code, String serial, String readerId) throws Exception {
-        String member = """
-                {"firstName":"%s","lastName":"%s","memberCode":"%s","serialNumber":"%s"}
-                """.formatted(firstName, lastName, code, serial);
-        MvcResult result = mockMvc.perform(multipart("/api/v1/members")
-                        .file(new MockMultipartFile("member", "member.json", MediaType.APPLICATION_JSON_VALUE,
-                                member.getBytes(StandardCharsets.UTF_8)))
-                        .file(new MockMultipartFile("face", "face.jpg", MediaType.IMAGE_JPEG_VALUE, jpeg()))
-                        .param("readerId", readerId)
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isCreated())
-                .andReturn();
-        return readJson(result.getResponse().getContentAsString());
+    /** On this one reader only, as when the other readers were added after the member was created. */
+    private JsonNode onlyOnReader(String firstName, String lastName, String code, String serial, String readerId)
+            throws Exception {
+        Device device = deviceRepository.findByPublicId(readerId).orElseThrow();
+        Member member = saveMember(device.getTenantId(), code, firstName, lastName, serial);
+        desiredProjectionService.write(member, device, memberFaceService.storeUploaded(member, faceJpeg()));
+        return jsonMapper.createObjectNode().put("id", member.getPublicId());
     }
 
     private String createDevice(String name, boolean projection) throws Exception {

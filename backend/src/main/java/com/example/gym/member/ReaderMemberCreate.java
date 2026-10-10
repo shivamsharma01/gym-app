@@ -7,13 +7,15 @@ import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceService;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
-import com.example.gym.tenant.TenantGuard;
+import java.util.Comparator;
+import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Staff create of a member who has a face, pointed at one reader. The member, the face, the
- * mapping, and the desired projection commit together. Other readers are not written.
+ * Staff create of a member who has a face. The member, the face, and one mapping and desired
+ * projection per reader of the gym commit together. Each reader allocates its own device user id.
+ * A gym with no reader still saves the member and publishes nothing.
  */
 @Service
 public class ReaderMemberCreate {
@@ -34,19 +36,23 @@ public class ReaderMemberCreate {
     }
 
     @Transactional
-    public Member create(CreateMember request, Long tenantId, String readerId, byte[] rawFace) {
+    public Member create(CreateMember request, Long tenantId, byte[] rawFace) {
         if (rawFace == null || rawFace.length == 0) {
             throw CommonExceptions.badRequest("A face photo is required");
         }
-        Device device = devices.findByPublicId(readerId)
-                .orElseThrow(() -> CommonExceptions.notFound("Reader"));
-        TenantGuard.check(device.getTenantId(), tenantId, "Reader");
-        if (device.getGatewayId() == null) {
-            throw CommonExceptions.badRequest("Reader has no gateway");
-        }
         Member saved = members.saveNew(request, tenantId);
         MemberFace face = faces.storeUploaded(saved, rawFace);
-        projections.write(saved, device, face);
+        for (Device reader : readers(tenantId)) {
+            projections.write(saved, reader, face);
+        }
         return saved;
+    }
+
+    /** Lowest device id first: each reader's revision lock is taken in that order. */
+    private List<Device> readers(Long tenantId) {
+        return devices.findByTenantId(tenantId).stream()
+                .filter(device -> device.getGatewayId() != null)
+                .sorted(Comparator.comparing(Device::getId))
+                .toList();
     }
 }

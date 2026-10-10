@@ -11,6 +11,8 @@ import com.example.gym.device.DesiredProjectionService;
 import com.example.gym.device.ReaderRevisions;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.MemberDeviceMapping;
+import com.example.gym.face.MemberFace;
+import com.example.gym.face.MemberFaceService;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
@@ -58,6 +60,9 @@ class ReaderConcurrencyIT extends AbstractIntegrationTest {
 
     @Autowired
     private TransactionTemplate transactions;
+
+    @Autowired
+    private MemberFaceService memberFaceService;
     private String token;
     private String gatewayToken;
     private String gatewayId;
@@ -169,14 +174,36 @@ class ReaderConcurrencyIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void concurrentCreatesFanOutToEveryReaderWithoutDeadlockAlongsideAReverseOrderRename() throws Exception {
+        String exitId = createReader("Exit", "10.0.0.31");
+        Long exit = deviceRepository.findByPublicId(exitId).orElseThrow().getId();
+        String backward = mappedInReverse("Bwd", "RACE-FB", "8550", exit);
+        int rounds = 5;
+        List<Callable<Integer>> calls = new ArrayList<>();
+        for (int i = 0; i < WRITERS; i++) {
+            int n = i;
+            calls.add(() -> createStatus("Fan" + n, "RACE-FAN" + n, "7" + (500 + n)));
+        }
+        calls.add(() -> renameRounds(backward, "Bwd", rounds).stream().allMatch(code -> code == 200) ? 200 : 500);
+
+        List<Integer> statuses = runTogether(calls);
+
+        assertThat(statuses.subList(0, WRITERS)).containsOnly(201);
+        assertThat(statuses.get(WRITERS)).isEqualTo(200);
+        for (Long device : List.of(reader, exit)) {
+            assertDistinctIds(device, WRITERS + 1);
+            assertGapFreeRevisions(device, 1 + WRITERS + rounds);
+            assertThat(projection(device, backward).getReaderName()).isEqualTo("Bwd" + (rounds - 1) + " Shah");
+        }
+    }
+
+    @Test
     void renamesOfMembersMappedInOppositeReaderOrderDoNotDeadlockOrLoseUpdates() throws Exception {
         String exitId = createReader("Exit", "10.0.0.31");
         Long exit = deviceRepository.findByPublicId(exitId).orElseThrow().getId();
         assertThat(reader).isLessThan(exit);
-        String forward = createOn(readerId, "Fwd", "RACE-F", "8500");
-        String backward = createOn(exitId, "Bwd", "RACE-B", "8501");
-        alsoMap(forward, exit);
-        alsoMap(backward, reader);
+        String forward = createOn("Fwd", "RACE-F", "8500");
+        String backward = mappedInReverse("Bwd", "RACE-B", "8501", exit);
         assertThat(mappedReaders(forward)).containsExactly(reader, exit);
         assertThat(mappedReaders(backward)).containsExactly(exit, reader);
         int rounds = 10;
@@ -204,7 +231,7 @@ class ReaderConcurrencyIT extends AbstractIntegrationTest {
         int ackFirst = 0;
         int ackSuperseded = 0;
         for (int i = 0; i < WRITERS; i++) {
-            String member = createOn(readerId, "Old" + i, "RACE-S" + i, "8" + (600 + i));
+            String member = createOn("Old" + i, "RACE-S" + i, "8" + (600 + i));
             long older = projection(reader, member).getRevision();
             String staleAck = ackFor(older);
             long appliedBefore = applied();
@@ -243,7 +270,7 @@ class ReaderConcurrencyIT extends AbstractIntegrationTest {
 
     @Test
     void anAckBlockedBehindARenameOfTheSameRowIsRefusedAsSuperseded() throws Exception {
-        String member = createOn(readerId, "Wait", "RACE-W", "8700");
+        String member = createOn("Wait", "RACE-W", "8700");
         long older = projection(reader, member).getRevision();
         String staleAck = ackFor(older);
         Long tenantId = memberRepository.findByPublicId(member).orElseThrow().getTenantId();
@@ -302,10 +329,16 @@ class ReaderConcurrencyIT extends AbstractIntegrationTest {
         return statuses;
     }
 
-    private void alsoMap(String memberPublicId, Long deviceId) {
-        Member member = memberRepository.findByPublicId(memberPublicId).orElseThrow();
-        desiredProjectionService.write(member, deviceRepository.findById(deviceId).orElseThrow(),
-                memberFaceRepository.findByMemberId(member.getId()).orElseThrow());
+    /** A member whose mappings were written highest device id first, the reverse of a create. */
+    private String mappedInReverse(String firstName, String code, String serial, Long exit) throws Exception {
+        Member member = saveMember(deviceRepository.findById(reader).orElseThrow().getTenantId(),
+                code, firstName, "Shah", serial);
+        MemberFace face = memberFaceService.storeUploaded(member, faceJpeg());
+        for (Long deviceId : List.of(exit, reader)) {
+            desiredProjectionService.write(member, deviceRepository.findById(deviceId).orElseThrow(), face);
+        }
+        assertThat(mappedReaders(member.getPublicId())).containsExactly(exit, reader);
+        return member.getPublicId();
     }
 
     private List<Long> mappedReaders(String memberPublicId) {
@@ -344,21 +377,29 @@ class ReaderConcurrencyIT extends AbstractIntegrationTest {
     }
 
     private void assertDistinctIds(int expected) {
-        List<String> ids = memberDeviceMappingRepository.findByDeviceId(reader).stream()
+        assertDistinctIds(reader, expected);
+    }
+
+    private void assertDistinctIds(Long device, int expected) {
+        List<String> ids = memberDeviceMappingRepository.findByDeviceId(device).stream()
                 .map(MemberDeviceMapping::getDeviceUserId).toList();
         assertThat(ids).hasSize(expected).doesNotHaveDuplicates();
-        List<String> projected = desiredMemberProjectionRepository.findByDeviceId(reader).stream()
+        List<String> projected = desiredMemberProjectionRepository.findByDeviceId(device).stream()
                 .map(DesiredMemberProjection::getDeviceUserId).toList();
         assertThat(projected).containsExactlyInAnyOrderElementsOf(ids);
     }
 
     /** Every revision bumped is either still on a row or was superseded on that row; none is shared. */
     private void assertGapFreeRevisions(int bumps) {
-        List<Long> revisions = desiredMemberProjectionRepository.findByDeviceId(reader).stream()
+        assertGapFreeRevisions(reader, bumps);
+    }
+
+    private void assertGapFreeRevisions(Long device, int bumps) {
+        List<Long> revisions = desiredMemberProjectionRepository.findByDeviceId(device).stream()
                 .map(DesiredMemberProjection::getRevision).toList();
         assertThat(revisions).doesNotHaveDuplicates();
         assertThat(revisions).allMatch(revision -> revision >= 1 && revision <= bumps);
-        assertThat(revisionCursorDesired()).isEqualTo(bumps);
+        assertThat(readerRevisionRepository.findByDeviceId(device).orElseThrow().getDesiredRevision()).isEqualTo(bumps);
         assertThat(revisions.stream().mapToLong(Long::longValue).max().orElse(0)).isEqualTo(bumps);
     }
 
@@ -369,24 +410,24 @@ class ReaderConcurrencyIT extends AbstractIntegrationTest {
     private List<String> createSequentially(int count, String codePrefix) throws Exception {
         List<String> ids = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            ids.add(createOn(readerId, "Seq" + i, codePrefix + i, "8" + (100 + i)));
+            ids.add(createOn("Seq" + i, codePrefix + i, "8" + (100 + i)));
         }
         return ids;
     }
 
-    private String createOn(String onReader, String firstName, String code, String serial) throws Exception {
-        String body = mockMvc.perform(createRequest(onReader, firstName, code, serial))
+    private String createOn(String firstName, String code, String serial) throws Exception {
+        String body = mockMvc.perform(createRequest(firstName, code, serial))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return readJson(body).get("id").asString();
     }
 
     private int createStatus(String firstName, String code, String serial) throws Exception {
-        return mockMvc.perform(createRequest(readerId, firstName, code, serial)).andReturn().getResponse().getStatus();
+        return mockMvc.perform(createRequest(firstName, code, serial)).andReturn().getResponse().getStatus();
     }
 
     private org.springframework.test.web.servlet.RequestBuilder createRequest(
-            String onReader, String firstName, String code, String serial) throws Exception {
+            String firstName, String code, String serial) throws Exception {
         String member = """
                 {"firstName":"%s","lastName":"Shah","memberCode":"%s","serialNumber":"%s"}
                 """.formatted(firstName, code, serial);
@@ -394,7 +435,6 @@ class ReaderConcurrencyIT extends AbstractIntegrationTest {
                 .file(new MockMultipartFile("member", "member.json", MediaType.APPLICATION_JSON_VALUE,
                         member.getBytes(StandardCharsets.UTF_8)))
                 .file(new MockMultipartFile("face", "face.jpg", MediaType.IMAGE_JPEG_VALUE, jpeg()))
-                .param("readerId", onReader)
                 .header("Authorization", "Bearer " + token);
     }
 

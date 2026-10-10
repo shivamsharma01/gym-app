@@ -17,7 +17,7 @@ These are product or hardware questions the architecture does not close. Do not 
 - Equal face bytes on two ids are two observations. They are not one member.
 - Deleting a member's face photo removes that photo from the server and from every reader that already has the member. The member and the mapping stay. A reader that does not already have the member is not given a user.
 - A member is not created without a face photo.
-- A new member is published to every reader of the gym. The create screen still asks for one reader until that fan-out is built.
+- A new member is published to every reader of the gym. The create screen does not ask for a reader.
 - Gym admin and staff may decide a review item. A pending enrollment of a person on a reader does not expire. The one-time gateway enrollment token does expire (24 hours) and is consumed on use.
 - The WebSocket carries live gateway traffic. The HTTP command poll runs only while that socket is down, so a dropped socket still delivers door, clock, and reconcile commands.
 - Attendance should reach admins as soon as the punches exist, by a poll that does not repeat work while nothing has changed. The reader log is not cleared.

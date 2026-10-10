@@ -2,29 +2,24 @@ package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.DesiredProjectionService;
 import com.example.gym.device.domain.DesiredMemberProjection;
+import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.PendingEnrollment;
+import com.example.gym.face.MemberFaceService;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
-import javax.imageio.ImageIO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.test.web.servlet.MvcResult;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -32,6 +27,12 @@ import tools.jackson.databind.JsonNode;
  * writer. Ambiguous people stay unresolved, and a short list creates nothing.
  */
 class V15BootstrapIT extends AbstractIntegrationTest {
+
+    @Autowired
+    private DesiredProjectionService desiredProjectionService;
+
+    @Autowired
+    private MemberFaceService memberFaceService;
 
     private String token;
     private String gatewayToken;
@@ -62,8 +63,8 @@ class V15BootstrapIT extends AbstractIntegrationTest {
 
     @Test
     void aScriptedRosterConvergesTheMatchAndLeavesTheOtherThreeUnresolved() throws Exception {
-        JsonNode asha = createOnReader("Asha", "Shah", "V15-ASHA", "1501", flaggedId);
-        JsonNode meera = createOnReader("Meera", "Shah", "V15-MEERA", "1502", flaggedId);
+        JsonNode asha = onlyOnReader("Asha", "Shah", "V15-ASHA", "1501", flaggedId);
+        JsonNode meera = onlyOnReader("Meera", "Shah", "V15-MEERA", "1502", flaggedId);
         String ashaId = asha.get("id").asString();
         String meeraId = meera.get("id").asString();
         String ashaDeviceUser = mapping(flagged, ashaId).getDeviceUserId();
@@ -113,13 +114,16 @@ class V15BootstrapIT extends AbstractIntegrationTest {
         JsonNode suggestion = row(report, "UNLINKED", sideId, "9");
         assertThat(suggestion.get("suggestionMemberId").asString()).isEqualTo(meeraId);
         assertThat(mapping(flagged, meeraId).getDeviceUserId()).isEqualTo(meeraDeviceUser);
-        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(side, member(meeraId).getId())).isEmpty();
+        assertThat(mapping(side, meeraId).getDeviceUserId()).isNotEqualTo("9");
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(side, "9")).isEmpty();
+        assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(side, "9").orElseThrow().isResolved())
+                .isFalse();
         assertThat(memberRepository.count()).isEqualTo(members);
     }
 
     @Test
     void aTrustedEmptyRosterFromTheGatewaySeedsDesiredRevisions() throws Exception {
-        JsonNode asha = createOnReader("Asha", "Shah", "V15-LIVE", "1510", flaggedId);
+        JsonNode asha = onlyOnReader("Asha", "Shah", "V15-LIVE", "1510", flaggedId);
         String ashaId = asha.get("id").asString();
         String ashaDeviceUser = mapping(flagged, ashaId).getDeviceUserId();
         long members = memberRepository.count();
@@ -146,7 +150,7 @@ class V15BootstrapIT extends AbstractIntegrationTest {
 
     @Test
     void anEmptyReaderIsSeededFromTheServerAndNotFromAnotherReader() throws Exception {
-        JsonNode asha = createOnReader("Asha", "Shah", "V15-SEED", "1503", flaggedId);
+        JsonNode asha = onlyOnReader("Asha", "Shah", "V15-SEED", "1503", flaggedId);
         String ashaId = asha.get("id").asString();
         String ashaDeviceUser = mapping(flagged, ashaId).getDeviceUserId();
         postRoster(flaggedId, 1, """
@@ -167,7 +171,7 @@ class V15BootstrapIT extends AbstractIntegrationTest {
 
     @Test
     void aShortListCreatesNothing() throws Exception {
-        JsonNode asha = createOnReader("Asha", "Shah", "V15-SHORT", "1504", flaggedId);
+        JsonNode asha = onlyOnReader("Asha", "Shah", "V15-SHORT", "1504", flaggedId);
         String ashaDeviceUser = mapping(flagged, asha.get("id").asString()).getDeviceUserId();
         long members = memberRepository.count();
         long projections = desiredMemberProjectionRepository.count();
@@ -219,8 +223,8 @@ class V15BootstrapIT extends AbstractIntegrationTest {
 
     @Test
     void theSameNameOnTwoMembersIsNotLinked() throws Exception {
-        JsonNode left = createOnReader("Sam", "Lee", "V15-SAM-A", "1505", flaggedId);
-        JsonNode right = createOnReader("Sam", "Lee", "V15-SAM-B", "1506", flaggedId);
+        JsonNode left = onlyOnReader("Sam", "Lee", "V15-SAM-A", "1505", flaggedId);
+        JsonNode right = onlyOnReader("Sam", "Lee", "V15-SAM-B", "1506", flaggedId);
         String leftUser = mapping(flagged, left.get("id").asString()).getDeviceUserId();
         String rightUser = mapping(flagged, right.get("id").asString()).getDeviceUserId();
         postRoster(sideId, 1, """
@@ -234,7 +238,12 @@ class V15BootstrapIT extends AbstractIntegrationTest {
         assertThat(memberRepository.count()).isEqualTo(2);
         assertThat(mapping(flagged, left.get("id").asString()).getDeviceUserId()).isEqualTo(leftUser);
         assertThat(mapping(flagged, right.get("id").asString()).getDeviceUserId()).isEqualTo(rightUser);
-        assertThat(memberDeviceMappingRepository.findByDeviceId(side)).isEmpty();
+        assertThat(memberDeviceMappingRepository.findByDeviceId(side))
+                .extracting(com.example.gym.device.domain.MemberDeviceMapping::getDeviceUserId)
+                .hasSize(2)
+                .doesNotContain("4");
+        assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(side, "4").orElseThrow().isResolved())
+                .isFalse();
         assertThat(memberRepository.findByPublicId(left.get("id").asString()).orElseThrow().getFullName())
                 .isEqualTo("Sam Lee");
     }
@@ -302,20 +311,13 @@ class V15BootstrapIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    private JsonNode createOnReader(
-            String firstName, String lastName, String code, String serial, String readerId) throws Exception {
-        String member = """
-                {"firstName":"%s","lastName":"%s","memberCode":"%s","serialNumber":"%s"}
-                """.formatted(firstName, lastName, code, serial);
-        MvcResult result = mockMvc.perform(multipart("/api/v1/members")
-                        .file(new MockMultipartFile("member", "member.json", MediaType.APPLICATION_JSON_VALUE,
-                                member.getBytes(StandardCharsets.UTF_8)))
-                        .file(new MockMultipartFile("face", "face.jpg", MediaType.IMAGE_JPEG_VALUE, jpeg()))
-                        .param("readerId", readerId)
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isCreated())
-                .andReturn();
-        return readJson(result.getResponse().getContentAsString());
+    /** On this one reader only, as when the other readers were added after the member was created. */
+    private JsonNode onlyOnReader(String firstName, String lastName, String code, String serial, String readerId)
+            throws Exception {
+        Device device = deviceRepository.findByPublicId(readerId).orElseThrow();
+        Member member = saveMember(device.getTenantId(), code, firstName, lastName, serial);
+        desiredProjectionService.write(member, device, memberFaceService.storeUploaded(member, faceJpeg()));
+        return jsonMapper.createObjectNode().put("id", member.getPublicId());
     }
 
     private String createDevice(String name, boolean projection) throws Exception {
@@ -341,14 +343,4 @@ class V15BootstrapIT extends AbstractIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON).content(body));
     }
 
-    private static byte[] jpeg() throws Exception {
-        BufferedImage image = new BufferedImage(400, 400, BufferedImage.TYPE_INT_RGB);
-        Graphics2D graphics = image.createGraphics();
-        graphics.setColor(Color.RED);
-        graphics.fillRect(0, 0, 400, 400);
-        graphics.dispose();
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        ImageIO.write(image, "jpg", out);
-        return out.toByteArray();
-    }
 }

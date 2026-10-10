@@ -2,12 +2,14 @@ package com.example.gym.device;
 
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
+import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
-import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
+import com.example.gym.device.domain.ReaderRevision;
+import com.example.gym.device.repo.DesiredMemberProjectionRepository;
 import com.example.gym.device.repo.DeviceRepository;
-import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
+import com.example.gym.device.repo.ReaderRevisionRepository;
 import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.Member;
@@ -17,13 +19,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Per-device view of where a member (and their face) has reached, plus a per-device retry. */
+/** Per-reader view of this member's desired revision and whether that reader applied it, plus a per-reader republish. */
 @Service
 public class MemberDeviceSyncService {
 
@@ -31,20 +32,23 @@ public class MemberDeviceSyncService {
     private final MemberFaceRepository faceRepository;
     private final MemberDeviceMappingRepository mappingRepository;
     private final DeviceRepository deviceRepository;
-    private final DeviceSyncCommandRepository commandRepository;
+    private final DesiredMemberProjectionRepository projections;
+    private final ReaderRevisionRepository revisions;
     private final DesiredProjectionService desired;
 
     public MemberDeviceSyncService(MemberService memberService,
                                    MemberFaceRepository faceRepository,
                                    MemberDeviceMappingRepository mappingRepository,
                                    DeviceRepository deviceRepository,
-                                   DeviceSyncCommandRepository commandRepository,
+                                   DesiredMemberProjectionRepository projections,
+                                   ReaderRevisionRepository revisions,
                                    DesiredProjectionService desired) {
         this.memberService = memberService;
         this.faceRepository = faceRepository;
         this.mappingRepository = mappingRepository;
         this.deviceRepository = deviceRepository;
-        this.commandRepository = commandRepository;
+        this.projections = projections;
+        this.revisions = revisions;
         this.desired = desired;
     }
 
@@ -64,6 +68,11 @@ public class MemberDeviceSyncService {
         desired.publishRemoval(member, device);
     }
 
+    /**
+     * Each reader that has this member, with the member's desired revision there and that reader's
+     * applied revision. The reader worker applies revisions in order, so the member is on the reader
+     * as desired once the applied revision reaches the member's revision.
+     */
     @Transactional(readOnly = true)
     public SyncStatus status(String memberPublicId, Long tenantId) {
         Member member = memberService.getByPublicId(memberPublicId, tenantId);
@@ -76,9 +85,6 @@ public class MemberDeviceSyncService {
                 face.getSourceDeviceId() == null || !devices.containsKey(face.getSourceDeviceId()) ? null
                         : devices.get(face.getSourceDeviceId()).getName(),
                 face.getChangedAt());
-        Map<Long, List<DeviceSyncCommand>> open = commandRepository
-                .findByMemberIdAndStateIn(member.getId(), DeviceSyncService.OPEN_STATES).stream()
-                .collect(Collectors.groupingBy(DeviceSyncCommand::getDeviceId));
 
         List<DeviceRow> rows = new ArrayList<>();
         for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(member.getId())) {
@@ -86,23 +92,22 @@ public class MemberDeviceSyncService {
             if (device == null) {
                 continue;
             }
-            List<OpenCommand> commands = open.getOrDefault(device.getId(), List.of()).stream()
-                    .map(c -> new OpenCommand(c.getType().name(), c.getState().name(), c.getAttemptCount(),
-                            c.getLastError()))
-                    .toList();
+            DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                    .orElse(null);
+            long applied = revisions.findByDeviceId(device.getId())
+                    .map(ReaderRevision::getAppliedRevision)
+                    .orElse(0L);
             rows.add(new DeviceRow(
                     device.getPublicId(),
                     device.getName(),
                     device.getConnectionState() == null ? null : device.getConnectionState().name(),
                     device.getGatewayId() != null,
                     mapping.getDeviceUserId(),
-                    mapping.getPendingDeviceUserId(),
-                    member.getSerialNumber() != null && !member.getSerialNumber().equals(mapping.getDeviceUserId()),
-                    mapping.getSyncState() == null ? null : mapping.getSyncState().name(),
-                    mapping.getFaceSyncState() == null ? null : mapping.getFaceSyncState().name(),
-                    mapping.getFaceVersionSynced(),
-                    mapping.getFaceLastError(),
-                    commands));
+                    row == null ? null : row.getRevision(),
+                    applied,
+                    row != null && applied >= row.getRevision(),
+                    row != null && row.isPresentOnReader(),
+                    row != null && row.isPresentOnReader() && row.isFacePresent()));
         }
         return new SyncStatus(faceInfo, rows);
     }
@@ -146,17 +151,11 @@ public class MemberDeviceSyncService {
             String connectionState,
             boolean hasGateway,
             String deviceUserId,
-            /** The serial this reader is moving the member to; null when not moving. */
-            String pendingDeviceUserId,
-            /** True when this reader holds the member under an id other than their serial. */
-            boolean differsFromSerial,
-            String userSyncState,
-            String faceSyncState,
-            Integer faceVersionSynced,
-            String faceLastError,
-            List<OpenCommand> openCommands) {
-    }
-
-    public record OpenCommand(String type, String state, int attemptCount, String lastError) {
+            /** This member's desired revision on this reader; null when none was published. */
+            Long revision,
+            long appliedRevision,
+            boolean applied,
+            boolean present,
+            boolean facePresent) {
     }
 }

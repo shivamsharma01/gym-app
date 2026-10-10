@@ -2,7 +2,6 @@ package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.support.AbstractIntegrationTest;
@@ -11,7 +10,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.MediaType;
 
 /** Member list search (name with spaces) and the Member / Serial column sorts. */
 class MemberListIT extends AbstractIntegrationTest {
@@ -63,10 +61,7 @@ class MemberListIT extends AbstractIntegrationTest {
         String body = last == null
                 ? "{\"firstName\":\"%s\",\"serialNumber\":\"%s\"}".formatted(first, serial)
                 : "{\"firstName\":\"%s\",\"lastName\":\"%s\",\"serialNumber\":\"%s\"}".formatted(first, last, serial);
-        return readJson(mockMvc.perform(post("/api/v1/members").header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        return createMemberId(token, body);
     }
 
     private List<String> names(String q) throws Exception {

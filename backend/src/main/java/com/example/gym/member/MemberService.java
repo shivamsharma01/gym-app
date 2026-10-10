@@ -62,11 +62,6 @@ public class MemberService {
         return member;
     }
 
-    @Transactional
-    public Member create(CreateMember request, Long tenantId) {
-        return saveNew(request, tenantId);
-    }
-
     /** Persists the member without sending them to a reader. The caller provisions or projects. */
     @Transactional
     public Member saveNew(CreateMember request, Long tenantId) {

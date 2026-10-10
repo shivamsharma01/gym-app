@@ -7,7 +7,7 @@ Open product decisions and remaining work after the original 0–9 roadmap.
 | Finding | Status |
 | --- | --- |
 | Live visit 2026-09-13 on serial `TW30000005250265` | Remote JPEG INSERT returned SDK success (`0x00000000`); door recognized the person |
-| Product rule | The server stores one photo per member. A new member is published to every reader of the gym. The create flow still asks for one reader until that fan-out is built. |
+| Product rule | The server stores one photo per member. A new member is published to every reader of the gym (V18). The create flow does not ask for a reader. |
 | Gateway face write | Real `OperateAccessFaceService` writes. The image is downloaded with a sha256 check. A second insert over an existing photo is not success. An empty update does not clear the photo. |
 | Guided enroll command | Not used. Face changes are part of the desired revision. |
 
@@ -20,12 +20,12 @@ The design is [the device sync architecture](architecture/device-sync-architectu
 - One gym has one gateway and can have several readers. Each reader has its own worker.
 - `publicId` is the member. `deviceUserId` belongs to one reader. The mapping is the link. A device user id is never a member id, and it is not the member code.
 - The server publishes a desired projection and a revision for each reader. The gateway writes that projection, reads the user and the face back, and acknowledges only when they match. A stale revision does not overwrite a newer one.
-- A new member goes to every reader of the gym. The create flow still asks for one reader until that fan-out is built.
+- A new member goes to every reader of the gym. Each reader gets its own device user id, mapping, and revision. The create flow does not ask for a reader, and the member page shows whether each reader applied the member or is still waiting.
 - A person created on a reader stays a pending enrollment on that reader until staff link, create, or reject them. The reader’s id is kept. They are not copied to another reader.
 - A name, face, freeze, or disappearance that disagrees with the desired record becomes a review item. Staff decide. The decision is a new desired revision and stays open until the reader verifies it. Clocks do not pick a winner.
 - Removing someone from one reader does not deactivate the member and does not write the other readers.
 - Freeze keeps the same device user and the same face and sets the reader status to frozen. Enable sets it back. That is separate from reader-menu administration, which is the reader password.
-- A list that fails, is short, or does not match its announced count changes nothing. An explicitly trusted empty roster is the only empty list that may be seeded from server members.
+- A list that fails, is short, or does not match its announced count changes nothing. Only a trusted roster, empty or not, may be followed by seeding server members onto that reader.
 - The same face on two device user ids is two people until staff say otherwise.
 - Attendance punches are stored separately and do not change member state.
 
@@ -57,7 +57,7 @@ Attendance ingestion should use the same defense in depth: do not treat a missin
 
 A trusted roster becomes a bootstrap report. A matching mapping stays on the desired projection. A different name becomes a review item. An unlinked person becomes a pending enrollment. The same device user id for different people on two readers is a collision report; the mappings stay separate. Two members with the same name are not linked automatically.
 
-A trusted empty reader can be seeded with server members through the desired-state writer. The server allocates a new device user id on that reader. It does not copy ids from another reader. A short or mismatched list creates nothing.
+A reader with a trusted roster is seeded with every active member it does not have yet, through the desired-state writer. The server allocates a new device user id on that reader, above every id the reader showed. It does not copy ids from another reader. People already on the reader stay as they are and are not linked to a member; the same person can therefore appear twice until staff decide the pending enrollment. A short or mismatched list creates nothing. The gateway sends a complete list as one message only for an empty reader today, so a reader added with people on it is not seeded until V21.
 
 Staff link, create, accept the server value, reject, restore, or remove from this reader. Link and create keep the reader’s id. Reject does not create a member. None of these actions are finished until the reader read-back is acknowledged.
 
@@ -73,4 +73,4 @@ Members list **Source** is Manual or Device. SUPER_ADMIN CSV export has no face 
 - Super admin acting as a gym
 - Changing plan mid-cycle (dates can be edited; the plan cannot)
 - Member profile payments omit the paid-on date
-- Publishing a new member to every reader of the gym (V18), the attendance poll (V19), and closing a staff decision that a later member change superseded (V20), in [execution-plan.md](architecture/execution-plan.md)
+- The attendance poll (V19), closing a staff decision that a later member change superseded (V20), and late activations, late photos, and readers added with people on them reaching every reader (V21), in [execution-plan.md](architecture/execution-plan.md)

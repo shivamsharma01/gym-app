@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Classifies a trusted roster. A matching mapping stays on the desired-state writer. Everyone else
  * stays a review or enrollment row. Device user ids are not rewritten, and nobody is auto-linked.
+ * Active members a reader does not have yet are seeded onto it from the server.
  */
 @Service
 public class BootstrapReportService {
@@ -78,33 +79,40 @@ public class BootstrapReportService {
     }
 
     /**
-     * A trusted empty roster. Server members are written with the existing desired-state writer.
-     * A reader that already has people is left alone.
+     * Taken before a trusted roster is recorded, so the roster and the seed that follows it hold
+     * the reader lock before any id this reader allocates from.
      */
     @Transactional
-    public void classifyTrustedEmpty(Device reader) {
-        if (reader == null || !reader.isRosterTrustedEmpty()) {
+    public void lockForRoster(Device reader) {
+        desired.lockReader(reader);
+    }
+
+    /**
+     * A complete roster, empty or not. Every active member this reader has no mapping for is
+     * written with the existing desired-state writer, under an id above every id the reader showed.
+     * Existing mappings and people the server does not know stay as they are, and nobody is linked.
+     * A later roster writes only members still missing.
+     */
+    @Transactional
+    public void seedFromTrustedRoster(Device reader) {
+        if (reader == null) {
             return;
         }
-        List<Member> people = members.findByTenantIdAndStatus(reader.getTenantId(), MemberStatus.ACTIVE);
-        seed(reader, people);
+        seedMissing(reader, members.findByTenantIdAndStatus(reader.getTenantId(), MemberStatus.ACTIVE));
     }
 
     private List<Row> seed(Device reader, List<Member> people) {
         if (!reader.isRosterTrustedEmpty() || !observedUsers.findByDeviceId(reader.getId()).isEmpty()) {
             return List.of();
         }
-        if (!mappings.findByDeviceId(reader.getId()).isEmpty()) {
-            return seededRows(reader);
-        }
-        List<Row> rows = new ArrayList<>();
+        seedMissing(reader, people);
+        return seededRows(reader);
+    }
+
+    private void seedMissing(Device reader, List<Member> people) {
         for (Member member : people) {
-            String deviceUserId = desired.seedIfAbsent(member, reader);
-            if (deviceUserId != null) {
-                rows.add(row(SEEDED, reader, deviceUserId, member.getPublicId(), null, member.getFullName(), null));
-            }
+            desired.seedIfAbsent(member, reader);
         }
-        return rows;
     }
 
     private List<Row> seededRows(Device reader) {

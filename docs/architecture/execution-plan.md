@@ -1,6 +1,6 @@
 # Execution plan
 
-Status: F1–F3 and V1–V17 are implemented. Their automated tests passed on the fake reader and the test database. V18, V19, and V20 are not built. Section E has not been run on a physical reader.
+Status: F1–F3 and V1–V18 are implemented. Their automated tests passed on the fake reader and the test database. V19, V20, and V21 are not built. Section E has not been run on a physical reader.
 Architecture: [device-sync-architecture.md](device-sync-architecture.md).
 Open questions: [open-questions.md](open-questions.md).
 Evidence: [device-poc-results.md](device-poc-results.md), reader serial `TW30000005250265`.
@@ -494,7 +494,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Every active reader's applied revision reaches its desired revision for the new member.
 
-**Done.** Tests green on the fake reader.
+**Done.** Automated tests passed on the fake reader and test database: `V18EveryReaderCreateIT` (two readers with independent ids and the same face, an occupied id retried on one reader only, an offline reader converging after reconnect, one reader's failed read-back leaving the member and the other reader applied, a gym with no reader publishing nothing, no create without a face, and the per-reader applied or pending state); `ReaderConcurrencyIT.concurrentCreatesFanOutToEveryReaderWithoutDeadlockAlongsideAReverseOrderRename`; and the create form and member page cases in `e2e/one-writer.spec.ts`. An "active reader" is a reader of the gym with a gateway; there is no separate active flag. The server seeds a reader added later with the existing active members once it receives a trusted roster, empty or not: each active member with a face that has no mapping on that reader is written through the desired-state writer and the reader's allocator, which now also treats every id seen on a reader list as taken. Existing mappings, staff removals, and unknown people stay as they are; nobody is linked. A later trusted roster writes only what is still missing. The roster is recorded under the reader lock, so it cannot deadlock with a create on the same reader. A trusted roster no longer reports a member as missing when the reader never showed or verified that id, so a member published before the reader's first roster does not open a review item. `V18ReaderAddedLaterIT` covers members created before the first roster, a partially mapped reader, a non-empty roster with unknown users, and rosters racing creates; `ReaderConcurrencyIT` and `V18ReaderAddedLaterIT` passed in 5 repeated runs. These tests post the roster to the server directly. The gateway today sends a complete list as one message only when the reader is empty; a non-empty reader's users arrive one at a time, and those do not trigger the seed. So on the live path, a reader added with people already on it does not yet receive the existing members, and a member who becomes active or gets a photo later does not reach a reader that lacks them. Both are V21. The membership row on the member page no longer shows the old device sync state. The faceless JSON create was removed. The member page reads applied and pending state from the desired revision and the reader's applied revision instead of the per-reader command and sync-state fields that the desired path never wrote. No physical-reader check applies beyond Section E.
 
 ### V19 — Attendance poll
 
@@ -537,6 +537,28 @@ Specified in full in section C. This is the first vertical slice.
 **Tests.** Decide a review item, rename the member before the acknowledgement, and acknowledge the newer revision: the item closes and applied equals the newer revision. The same for a linked pending enrollment. An acknowledgement of the old decision revision is refused and leaves the item applying. A failed read-back of the newer revision leaves the item open with the error. An open decision for another device user id, or on another reader, stays open. A repeated acknowledgement does not change the closed item.
 
 **Acceptance criteria.** No decision stays in applying state after the reader has confirmed a revision that replaced it.
+
+**Done.** Not built.
+
+### V21 — Late changes reach every reader without a new roster
+
+**Behavior.** A member who becomes active, or gets a face, after a reader was seeded is written to every reader of the gym that has a gateway and no mapping for that member. A reader added with people already on it receives the existing active members. Neither waits for another roster. Unknown reader users are never linked or overwritten.
+
+**Prerequisites.** V6, V15, V18.
+
+**Backend.** One reconcile operation per reader. Under that reader's lock, each active member with a face and no mapping on the reader goes through the V18 seed (`seedIfAbsent`). It is idempotent: a second run writes nothing. Triggers: a member becomes active; a member without a face gets one; a reader's trusted list arrives, empty or not; and an explicit staff action on one reader. A trigger that touches several readers takes their locks in ascending device id order. An existing mapping, including a staff removal, is never rewritten. The allocator skips every id seen on that reader. An id the server has not seen is protected by the gateway's no-overwrite write and the occupied retry.
+
+**Gateway.** A trusted non-empty list is uploaded as one list with its announced total, as an empty list already is. Per-user observations stay as they are. A short or mismatched list still uploads no list.
+
+**Adapter.** No change.
+
+**Frontend.** The reader page offers a reconcile action. The bootstrap report keeps its V15 scope (Section D).
+
+**Database.** No new table.
+
+**Tests.** A member inactive when a reader was seeded is reactivated: every reader without a mapping gets the member, with no roster. A member without a face gets one: the same. A staff-removed member is not written again. An unknown user's id is not reused. An unseen id that turns out to be occupied is retried on that reader only. A reader added with people on it receives the existing members after one gateway reconnect on the fake reader. A reconcile racing a create maps each member once. Running the reconcile twice writes nothing the second time.
+
+**Acceptance criteria.** After a late activation or photo, every reader with a gateway reaches that member's desired revision without a new roster. A reader added with people on it reaches the existing active members after one reconnect.
 
 **Done.** Not built.
 
@@ -598,7 +620,8 @@ These are not defined tightly enough to pretend they are already specified.
 | Cross-reader lock order | An operation that touches several readers (a member change on every mapped reader, the bootstrap report) takes the reader locks in ascending device id order, then rereads the projection row and mapping under the lock. Before this, renames of two members mapped in opposite reader order failed with a MySQL deadlock. `ReaderConcurrencyIT.renamesOfMembersMappedInOppositeReaderOrderDoNotDeadlockOrLoseUpdates` runs 10 concurrent rename rounds per member across two readers and checks every final name and a gap-free revision count on both readers. |
 | Rename against an older acknowledgement | An acknowledgement takes the reader lock first and rereads the revision under it. An acknowledgement of a revision that a rename has since replaced is refused with 409 "Revision is not the desired member" and leaves the applied revision unchanged; it never moves applied backward. A repeated acknowledgement of the current revision returns 200 each time. `aRenameRacingAnAckOfTheOlderRevisionNeverLosesOrRegressesState` races the two freely; `anAckBlockedBehindARenameOfTheSameRowIsRefusedAsSuperseded` forces the acknowledgement to wait behind the rename. Without the reread, that test got a generic concurrent-modification 409 instead. A review decision whose revision is superseded by a later revision of the same row is still never settled; that predates this work and is tracked as V20. |
 | `publicId` as `szUserID` | Not supported here. UUID form was never written to this reader, and the face user-id type is a 32-character buffer. |
-| Which readers receive a new member | Every reader of the gym (V18). The create flow still asks for one reader until V18 is built. |
+| Bootstrap report scope | Intentional, as V15 defined it. The report classifies a trusted roster into matching, different, unlinked, and collision rows for staff, and seeds only a reader whose last list was trusted and empty. Seeding a reader that already holds people, and late activations or photos, belong to the V21 reconcile, not the report. The report does not trigger V21. |
+| Which readers receive a new member | Every reader of the gym that has a gateway (V18). The create flow does not ask for a reader. A pending enrollment and a review decision still write only their own reader. |
 | Who may approve review items, and whether an enrollment expires | Gym admin and staff decide review items (V17). A pending person on a reader does not expire. The gateway enrollment token expires after 24 hours. |
 | Safety-scan interval | Not chosen. A safety scan is an occasional full user-list read for a missed alarm. The only measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds. |
 | Offline copy to a second reader | Not allowed. The server publishes desired state. The gateway does not copy an unlinked person or resolve that conflict while the server is down. |
@@ -623,13 +646,14 @@ The 7 October 2026 probe measured related SDK behavior on serial `TW300000052502
 
 ## F. Fake reader only
 
-F1's credential tests, F2, F3, and V1 through V17 were accepted on the fake reader and the test database. That acceptance does not close section E.
+F1's credential tests, F2, F3, and V1 through V18 were accepted on the fake reader and the test database. That acceptance does not close section E.
 
 ## G. Remaining gates
 
-The slice checks through V17 are recorded as done on the fake reader and test database in each slice above. On 9 October 2026, before V18, `ReaderConcurrencyIT` (7 tests) passed in 5 repeated runs with no deadlock, then `mvn clean verify` passed (33 unit, 159 integration) and the gateway suite passed (129). This is test-database evidence only. What remains:
+The slice checks through V18 are recorded as done on the fake reader and test database in each slice above. On 9 October 2026, before V18, `ReaderConcurrencyIT` (7 tests) passed in 5 repeated runs with no deadlock, then `mvn clean verify` passed (33 unit, 159 integration) and the gateway suite passed (129). After V18, including seeding readers added later, `mvn clean verify` passed (33 unit, 171 integration), the gateway suite passed (129), the frontend build passed, and Playwright passed (10 passed, 1 skipped that needs a live API). This is test-database evidence only. What remains:
 
 1. Section E, on a physical reader, before that reader is treated as validated.
 2. The remaining choices in [open-questions.md](open-questions.md): the safety-scan interval, door and time-section values other than 1, and SDK reconnect as a guarantee.
-3. V18 every-reader create, then V19 attendance poll.
+3. V19 attendance poll.
 4. V20 superseded staff decisions close.
+5. V21 late activations and photos, and readers added with people on them, reach every reader without a new roster.

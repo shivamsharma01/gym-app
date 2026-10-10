@@ -575,8 +575,7 @@ export function MembershipPanel({
                           0,
                       ),
                       row.currency,
-                  )}{' '}
-                  · device {row.deviceSyncState}
+                  )}
                 </p>
 
 

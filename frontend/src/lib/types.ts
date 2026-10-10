@@ -108,7 +108,6 @@ export type Membership = {
   effectiveStatus: string
   paymentStatus: string
   amountPaid: number | string
-  deviceSyncState: string
   cancelledOn: string | null
   cancelReason: string | null
   createdAt: string
@@ -271,13 +270,12 @@ export type MemberDeviceSync = {
     connectionState: string | null
     hasGateway: boolean
     deviceUserId: string
-    pendingDeviceUserId: string | null
-    differsFromSerial: boolean
-    userSyncState: string | null
-    faceSyncState: string | null
-    faceVersionSynced: number | null
-    faceLastError: string | null
-    openCommands: { type: string; state: string; attemptCount: number; lastError: string | null }[]
+    /** This member's desired revision on this reader; null when none was published. */
+    revision: number | null
+    appliedRevision: number
+    applied: boolean
+    present: boolean
+    facePresent: boolean
   }[]
 }
 

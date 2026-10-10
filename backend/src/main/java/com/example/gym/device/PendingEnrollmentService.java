@@ -63,7 +63,8 @@ public class PendingEnrollmentService {
 
     /**
      * A short, empty, or mismatched list is not a disappearance and does not change the member.
-     * A trusted list records a mapped id that is missing from it.
+     * A trusted list records a mapped id that is missing from it, when the reader had that id
+     * before, and then seeds the active members this reader does not have yet.
      */
     private void observeSet(Device device, JsonNode payload, JsonNode users) {
         int announced = payload.path("announcedTotal").asInt(-1);
@@ -71,12 +72,8 @@ public class PendingEnrollmentService {
             rememberEmpty(device, false);
             return;
         }
-        if (users.isEmpty()) {
-            rememberEmpty(device, true);
-            bootstrap.classifyTrustedEmpty(device);
-            return;
-        }
-        rememberEmpty(device, false);
+        bootstrap.lockForRoster(device);
+        rememberEmpty(device, users.isEmpty());
         Set<String> present = new HashSet<>();
         for (JsonNode user : users) {
             observeOne(device, user);
@@ -86,10 +83,21 @@ public class PendingEnrollmentService {
             }
         }
         for (DesiredMemberProjection desired : desiredMembers.findByDeviceId(device.getId())) {
-            if (desired.isPresentOnReader() && !present.contains(desired.getDeviceUserId())) {
+            if (desired.isPresentOnReader() && !present.contains(desired.getDeviceUserId())
+                    && wasOnReader(device, desired.getDeviceUserId())) {
                 reviews.recordAbsence(device, desired.getDeviceUserId());
             }
         }
+        bootstrap.seedFromTrustedRoster(device);
+    }
+
+    /**
+     * Seen on an earlier list or verified by a read-back. An id published before the reader ever
+     * showed or verified it cannot have disappeared from that reader.
+     */
+    private boolean wasOnReader(Device device, String deviceUserId) {
+        return observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).isPresent()
+                || reviews.verifiedOnReader(device.getId(), deviceUserId);
     }
 
     private void observeOne(Device device, JsonNode payload) {

@@ -29,8 +29,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * V1: a member with a face is created on one flagged reader from desired state. The old outbox does
- * not also create that user. Unflagged readers keep the outbox.
+ * V1: a member with a face reaches a reader from desired state. The old outbox does not also
+ * create that user.
  */
 class MemberCreateOnReaderIT extends AbstractIntegrationTest {
 
@@ -39,6 +39,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
     private String otherGatewayToken;
     private String flaggedId;
     private String otherId;
+    private String gatewayId;
     private Long flagged;
     private Long other;
 
@@ -52,7 +53,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
         String createdGateway = postJson("/api/v1/gateways", "{\"name\":\"LAN\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        String gatewayId = readJson(createdGateway).get("id").asString();
+        gatewayId = readJson(createdGateway).get("id").asString();
         gatewayToken = enroll(gatewayId, readJson(createdGateway).get("token").asString());
 
         Tenant otherTenant = createTenant("Other Gym", "other-gym");
@@ -76,7 +77,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
     @Test
     void createAppliesTheAllocatedUserAndDoesNotUseTheOutbox() throws Exception {
         String fullName = "A".repeat(40) + " Shah";
-        JsonNode created = createOnReader("A".repeat(40), "Shah", "M-ONE", "5001", flaggedId);
+        JsonNode created = createOnReader("A".repeat(40), "Shah", "M-ONE", "5001");
         String publicId = created.get("id").asString();
         assertThat(publicId).isNotEqualTo("1");
 
@@ -122,7 +123,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
 
     @Test
     void occupiedIdIsReplacedByTheNextIntegerAndTheOldRevisionIsNotApplied() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "M-OCC", "5002", flaggedId);
+        JsonNode created = createOnReader("Asha", "Shah", "M-OCC", "5002");
         String publicId = created.get("id").asString();
         JsonNode first = pullItem(0);
         assertThat(first.get("deviceUserId").asString()).isEqualTo("1");
@@ -142,7 +143,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
         assertThat(retry.get("deviceUserId").asString()).isEqualTo("2");
         ack(retry, flaggedId).andExpect(status().isOk());
 
-        JsonNode second = createOnReader("Bea", "Shah", "M-NEXT", "5003", flaggedId);
+        JsonNode second = createOnReader("Bea", "Shah", "M-NEXT", "5003");
         MemberDeviceMapping next = mapping(second.get("id").asString(), flagged);
         assertThat(next.getDeviceUserId()).isEqualTo("3");
         ack(pullItem(2), flaggedId).andExpect(status().isOk());
@@ -153,7 +154,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
 
     @Test
     void ackIsRejectedWhenTheFaceHashDoesNotMatch() throws Exception {
-        createOnReader("Asha", "Shah", "M-HASH", "5004", flaggedId);
+        createOnReader("Asha", "Shah", "M-HASH", "5004");
         JsonNode item = pullItem(0);
         ObjectNode body = (ObjectNode) jsonMapper.readTree(ackBody(item, flaggedId));
         body.put("faceSha256", "0".repeat(64));
@@ -189,13 +190,13 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
 
     @Test
     void deletingThePhotoClearsItOnMappedReadersAndKeepsTheMember() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "M-FACE", "5010", flaggedId);
+        JsonNode created = createOnReader("Asha", "Shah", "M-FACE", "5010");
         String publicId = created.get("id").asString();
         Long memberId = memberRepository.findByPublicId(publicId).orElseThrow().getId();
-        JsonNode otherMember = createOnReader("Bea", "Shah", "M-OTHER", "5011", otherId);
+        Long late = deviceRepository.findByPublicId(createDevice("Late", false, gatewayId)).orElseThrow().getId();
+        JsonNode otherMember = createOnReader("Bea", "Shah", "M-OTHER", "5011");
         Long otherMemberId = memberRepository.findByPublicId(otherMember.get("id").asString()).orElseThrow().getId();
-        DesiredMemberProjection before = projection(other, otherMemberId);
-        long otherRevision = before.getRevision();
+        long lateRevision = projection(late, otherMemberId).getRevision();
 
         mockMvc.perform(delete("/api/v1/members/" + publicId + "/face")
                         .header("Authorization", "Bearer " + token))
@@ -208,22 +209,24 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
         assertThat(memberRepository.findByPublicId(publicId)).isPresent();
         assertThat(commands(flagged)).isEmpty();
         assertThat(commands(other)).isEmpty();
+        assertThat(commands(late)).isEmpty();
         assertThat(desiredMemberProjectionRepository.findAll())
-                .filteredOn(row -> other.equals(row.getDeviceId()) && memberId.equals(row.getMemberId()))
+                .filteredOn(row -> late.equals(row.getDeviceId()) && memberId.equals(row.getMemberId()))
                 .isEmpty();
 
-        DesiredMemberProjection unchanged = projection(other, otherMemberId);
-        assertThat(unchanged.getRevision()).isEqualTo(otherRevision);
+        DesiredMemberProjection unchanged = projection(late, otherMemberId);
+        assertThat(unchanged.getRevision()).isEqualTo(lateRevision);
         assertThat(unchanged.isFacePresent()).isTrue();
         assertThat(unchanged.isPresentOnReader()).isTrue();
 
         DesiredMemberProjection cleared = projection(flagged, memberId);
         assertThat(cleared.isPresentOnReader()).isTrue();
         assertThat(cleared.isFacePresent()).isFalse();
-        assertThat(cleared.getRevision()).isEqualTo(2);
+        assertThat(cleared.getRevision()).isEqualTo(3);
         assertThat(mapping(publicId, flagged).getDeviceUserId()).isEqualTo(cleared.getDeviceUserId());
+        assertThat(projection(other, memberId).isFacePresent()).isFalse();
 
-        JsonNode item = pullItem(1);
+        JsonNode item = pullItem(2);
         assertThat(item.get("present").asBoolean()).isTrue();
         assertThat(item.get("facePresent").asBoolean()).isFalse();
         assertThat(item.get("faceBase64").asString()).isEmpty();
@@ -250,8 +253,8 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk());
 
         JsonNode page = readJson(pull(gatewayToken, flaggedId, 0).andReturn().getResponse().getContentAsString());
-        assertThat(page.get("appliedRevision").asLong()).isEqualTo(2);
-        assertThat(page.get("desiredRevision").asLong()).isEqualTo(2);
+        assertThat(page.get("appliedRevision").asLong()).isEqualTo(3);
+        assertThat(page.get("desiredRevision").asLong()).isEqualTo(3);
         assertThat(projection(flagged, memberId).getObservedFaceSha256()).isNull();
     }
 
@@ -299,8 +302,7 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
                 item.get("faceSha256").asString());
     }
 
-    private JsonNode createOnReader(String firstName, String lastName, String code, String serial, String readerId)
-            throws Exception {
+    private JsonNode createOnReader(String firstName, String lastName, String code, String serial) throws Exception {
         String member = """
                 {"firstName":"%s","lastName":"%s","memberCode":"%s","serialNumber":"%s"}
                 """.formatted(firstName, lastName, code, serial);
@@ -308,7 +310,6 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
                         .file(new MockMultipartFile("member", "member.json", MediaType.APPLICATION_JSON_VALUE,
                                 member.getBytes(StandardCharsets.UTF_8)))
                         .file(new MockMultipartFile("face", "face.jpg", MediaType.IMAGE_JPEG_VALUE, jpeg()))
-                        .param("readerId", readerId)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isCreated())
                 .andReturn();

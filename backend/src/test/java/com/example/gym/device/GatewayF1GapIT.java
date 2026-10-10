@@ -170,7 +170,8 @@ class GatewayF1GapIT extends AbstractIntegrationTest {
     @Test
     void gatewayCannotReadAnotherGymsMemberFace() throws Exception {
         String deviceA = createDevice("Lane A", "10.1.0.1", gatewayId);
-        String memberOnA = createMember("OnlyA", "9102");
+        Long tenantId = deviceRepository.findByPublicId(deviceA).orElseThrow().getTenantId();
+        String memberOnA = saveMember(tenantId, "9102", "OnlyA", "Test", "9102").getPublicId();
         uploadPhoto(memberOnA, jpeg(Color.BLUE, 400));
         var member = memberRepository.findByPublicId(memberOnA).orElseThrow();
         var device = deviceRepository.findByPublicId(deviceA).orElseThrow();
@@ -291,16 +292,6 @@ class GatewayF1GapIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return readJson(created).get("id").asString();
-    }
-
-    private String createMember(String firstName, String code) throws Exception {
-        return readJson(mockMvc.perform(post("/api/v1/members")
-                        .header("Authorization", "Bearer " + staffToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"firstName\":\"" + firstName + "\",\"lastName\":\"Test\",\"memberCode\":\""
-                                + code + "\",\"serialNumber\":\"" + code + "\"}"))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
     }
 
     private void uploadPhoto(String memberId, byte[] bytes) throws Exception {

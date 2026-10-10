@@ -103,7 +103,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
                 .andExpect(status().isBadRequest());
         assertThat(memberRepository.count()).isZero();
 
-        String manual = postJson("/api/v1/members", "{\"firstName\":\"Manual\",\"lastName\":\"User\"}")
+        String manual = createMemberWithFace(token, "{\"firstName\":\"Manual\",\"lastName\":\"User\"}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         assertThat(readJson(manual).get("creationSource").asString())
@@ -113,7 +113,7 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
 
     @Test
     void platformExportCsvIncludesRosterWithoutBiometrics() throws Exception {
-        postJson("/api/v1/members", "{\"firstName\":\"Export\",\"lastName\":\"Me\",\"serialNumber\":\"3001\"}")
+        createMemberWithFace(token, "{\"firstName\":\"Export\",\"lastName\":\"Me\",\"serialNumber\":\"3001\"}")
                 .andExpect(status().isCreated());
 
         createUser(null, "plat-sa", "plat-sa@platform.local", "SUPER_ADMIN");
@@ -132,12 +132,10 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
 
     @Test
     void anIncompleteReaderListDoesNotFlagMappedUsersAsMissing() throws Exception {
-        String memberId = readJson(postJson("/api/v1/members",
-                "{\"firstName\":\"Om\",\"lastName\":\"Das\",\"memberCode\":\"4001\",\"serialNumber\":\"4001\"}")
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-        var member = memberRepository.findByPublicId(memberId).orElseThrow();
         Long entrance = deviceRepository.findByPublicId(entranceId).orElseThrow().getId();
+        var member = saveMember(deviceRepository.findById(entrance).orElseThrow().getTenantId(),
+                "4001", "Om", "Das", "4001");
+        String memberId = member.getPublicId();
         memberDeviceMappingRepository.save(new com.example.gym.device.domain.MemberDeviceMapping(
                 member.getTenantId(), member.getId(), entrance, "4001"));
 

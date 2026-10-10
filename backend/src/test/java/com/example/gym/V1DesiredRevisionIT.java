@@ -497,8 +497,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void oneReadersAcknowledgementDoesNotAdvanceTheOther() throws Exception {
         String sideId = createDevice("Side", true, gatewayPublicId);
         Long side = deviceRepository.findByPublicId(sideId).orElseThrow().getId();
-        createOnReader("Asha", "Shah", "V7-A", "7701", flaggedId);
-        JsonNode created = createOnReader("Bina", "Shah", "V7-B", "7702", sideId);
+        JsonNode created = createOnReader("Bina", "Shah", "V7-B", "7702");
 
         ackDesired(sideId);
 
@@ -684,6 +683,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         JsonNode created = createOnReader("Asha", "Shah", "V12-BAD", "8201");
         String memberId = created.get("id").asString();
         String onEntrance = mapping(memberId).getDeviceUserId();
+        ackDesired(flaggedId);
         long revision = projection(flagged, memberId).getRevision();
         long removes = deviceSyncCommandRepository.findAll().stream()
                 .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
@@ -973,11 +973,6 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     }
 
     private JsonNode createOnReader(String firstName, String lastName, String code, String serial) throws Exception {
-        return createOnReader(firstName, lastName, code, serial, flaggedId);
-    }
-
-    private JsonNode createOnReader(
-            String firstName, String lastName, String code, String serial, String readerId) throws Exception {
         String member = """
                 {"firstName":"%s","lastName":"%s","memberCode":"%s","serialNumber":"%s"}
                 """.formatted(firstName, lastName, code, serial);
@@ -985,7 +980,6 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
                         .file(new MockMultipartFile("member", "member.json", MediaType.APPLICATION_JSON_VALUE,
                                 member.getBytes(StandardCharsets.UTF_8)))
                         .file(new MockMultipartFile("face", "face.jpg", MediaType.IMAGE_JPEG_VALUE, jpeg()))
-                        .param("readerId", readerId)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isCreated())
                 .andReturn();

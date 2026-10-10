@@ -238,7 +238,7 @@ export function MemberDetailPage() {
         </section>
       ) : null}
 
-      <DeviceSyncPanel memberId={m.id} serialNumber={m.serialNumber} />
+      <DeviceSyncPanel memberId={m.id} />
 
       <ConfirmDialog
         open={confirmDeactivate}
@@ -263,28 +263,14 @@ export function MemberDetailPage() {
   )
 }
 
-const COMMAND_LABELS: Record<string, string> = {
-  CREATE_USER: 'Add user',
-  UPDATE_USER: 'Update name',
-  UPDATE_VALIDITY: 'Update access dates',
-  DISABLE_USER: 'Block access',
-  ENABLE_USER: 'Allow access',
-  REMOVE_USER: 'Remove user',
-  UPSERT_FACE: 'Send photo',
-  DELETE_FACE: 'Remove photo',
-  REPORT_DEVICE_USER: 'Read from device',
+function readerStateLabel(row: MemberDeviceSync['devices'][number]) {
+  if (row.revision == null) return { label: 'Not published', tone: 'muted' as const }
+  if (!row.applied) return { label: 'Waiting for reader', tone: 'warn' as const }
+  if (!row.present) return { label: 'Removed from reader', tone: 'muted' as const }
+  return { label: 'On reader', tone: 'ok' as const }
 }
 
-function faceStateLabel(row: MemberDeviceSync['devices'][number], face: MemberDeviceSync['face']) {
-  if (!face) return { label: 'No photo', tone: 'muted' as const }
-  if (row.faceSyncState === 'SYNCED' && row.faceVersionSynced === face.version) {
-    return { label: 'Photo on device', tone: 'ok' as const }
-  }
-  if (row.faceSyncState === 'FAILED') return { label: 'Photo failed', tone: 'danger' as const }
-  return { label: 'Photo waiting', tone: 'warn' as const }
-}
-
-function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialNumber: string | null }) {
+function DeviceSyncPanel({ memberId }: { memberId: string }) {
   const { has } = useAuth()
   const qc = useQueryClient()
   const [removeDevice, setRemoveDevice] = useState<MemberDeviceSync['devices'][number] | null>(null)
@@ -331,7 +317,7 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
         ) : (
           <div className="divide-y divide-line">
             {rows.map((row) => {
-              const face = faceStateLabel(row, data.face)
+              const state = readerStateLabel(row)
               return (
                 <div key={row.deviceId} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
                   <div className="space-y-1">
@@ -339,32 +325,18 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
                       {row.deviceName}{' '}
                       <span className="text-xs text-muted">· device user {row.deviceUserId}</span>
                     </div>
-                    {row.pendingDeviceUserId ? (
-                      <div className="text-xs text-warn">
-                        Moving to {row.pendingDeviceUserId}. Uses {row.deviceUserId} until the reader confirms.
-                      </div>
-                    ) : row.differsFromSerial ? (
-                      <div className="text-xs text-warn">
-                        This reader uses a different id than serial {serialNumber}. It is not changed
-                        automatically; saving a new serial moves it.
-                      </div>
-                    ) : null}
                     <div className="flex flex-wrap gap-2">
                       <Badge tone={statusTone(row.connectionState)}>{row.connectionState ?? 'UNKNOWN'}</Badge>
-                      <Badge tone={statusTone(row.userSyncState)}>
-                        {row.userSyncState === 'SYNCED' ? 'Details on device' : `Details ${row.userSyncState ?? 'pending'}`}
-                      </Badge>
-                      <Badge tone={face.tone}>{face.label}</Badge>
+                      <Badge tone={state.tone}>{state.label}</Badge>
+                      {row.present ? (
+                        <Badge tone={row.facePresent ? 'ok' : 'muted'}>{row.facePresent ? 'Photo' : 'No photo'}</Badge>
+                      ) : null}
                     </div>
-                    {row.openCommands.length ? (
+                    {row.revision != null ? (
                       <div className="text-xs text-muted">
-                        Waiting:{' '}
-                        {row.openCommands
-                          .map((c) => `${COMMAND_LABELS[c.type] ?? c.type}${c.attemptCount > 1 ? ` (try ${c.attemptCount})` : ''}`)
-                          .join(', ')}
+                        Revision {row.revision}; reader applied {row.appliedRevision}
                       </div>
                     ) : null}
-                    {row.faceLastError ? <div className="text-xs text-danger">{row.faceLastError}</div> : null}
                   </div>
                   {has('DEVICE_SYNC') ? (
                     <div className="flex flex-wrap gap-2">

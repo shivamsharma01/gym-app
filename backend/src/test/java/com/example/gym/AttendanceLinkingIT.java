@@ -193,7 +193,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         assertThat(memberDeviceMappingRepository.findByMemberId(asha.getId()))
                 .allMatch(m -> "1001".equals(m.getDeviceUserId()));
 
-        postJson("/api/v1/members", "{\"firstName\":\"Bina\",\"serialNumber\":\"1001\"}")
+        createMemberWithFace(token, "{\"firstName\":\"Bina\",\"serialNumber\":\"1001\"}")
                 .andExpect(status().isConflict());
         punch(entranceId, "1001");
         punch(entranceId, "7");
@@ -255,12 +255,8 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         });
     }
 
-    private Member createMember(String firstName, String serial) throws Exception {
-        String id = readJson(postJson("/api/v1/members",
-                "{\"firstName\":\"" + firstName + "\",\"serialNumber\":\"" + serial + "\"}")
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-        return memberRepository.findByPublicId(id).orElseThrow();
+    private Member createMember(String firstName, String serial) {
+        return saveMember(tenant.getId(), "M-" + serial, firstName, null, serial);
     }
 
     private Member memberBySerial(String serial) {

@@ -78,10 +78,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
-        memberId = readJson(postJson("/api/v1/members",
-                "{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"memberCode\":\"1001\",\"serialNumber\":\"1001\"}")
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        memberId = createMemberId(token, "{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"memberCode\":\"1001\",\"serialNumber\":\"1001\"}");
 
         membershipId = readJson(postJson("/api/v1/memberships",
                 "{\"memberId\":\"" + memberId + "\",\"planId\":\"" + planId + "\"}")
@@ -90,8 +87,11 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void newMemberIsNotPlacedOnEveryReader() throws Exception {
-        assertThat(memberDeviceMappingRepository.findAll()).isEmpty();
+    void aNewMemberReachesTheReaderByADesiredRevisionNotACommand() throws Exception {
+        var member = memberRepository.findByPublicId(memberId).orElseThrow();
+        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())).isPresent();
+        assertThat(desiredMemberProjectionRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())).isPresent();
         assertThat(deviceSyncCommandRepository.findAll()).extracting(c -> c.getType())
                 .doesNotContain(SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_VALIDITY, SyncCommandType.UPSERT_FACE);
 
@@ -180,12 +180,12 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     void attendanceIngestIsIdempotentAndDeniedRaisesSecurityEvent() throws Exception {
         var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
         var member = memberRepository.findByPublicId(memberId).orElseThrow();
-        memberDeviceMappingRepository.save(new com.example.gym.device.domain.MemberDeviceMapping(
-                device.getTenantId(), member.getId(), device.getId(), "1001"));
+        String deviceUserId = memberDeviceMappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .orElseThrow().getDeviceUserId();
 
         String occurred = Instant.parse("2026-09-11T06:00:00Z").toString();
         String event = envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
-                "{\"deviceUserId\":\"1001\",\"occurredAt\":\"" + occurred
+                "{\"deviceUserId\":\"" + deviceUserId + "\",\"occurredAt\":\"" + occurred
                         + "\",\"method\":\"FACE\",\"granted\":true,\"recNo\":42}");
         gatewayMessageService.process(event, gatewayId);
         gatewayMessageService.process(event, gatewayId); // duplicate recNo
@@ -199,7 +199,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].memberName").value("Asha Rao"));
 
         gatewayMessageService.process(envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
-                "{\"deviceUserId\":\"1001\",\"occurredAt\":\"" + occurred
+                "{\"deviceUserId\":\"" + deviceUserId + "\",\"occurredAt\":\"" + occurred
                         + "\",\"method\":\"FACE\",\"granted\":false,\"recNo\":43}"), gatewayId);
 
         mockMvc.perform(get("/api/v1/security-events").header("Authorization", "Bearer " + token))
@@ -264,17 +264,18 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
     @Test
     void newMemberGetsTheNextFreeSerialAndATakenSerialIsRejected() throws Exception {
+        // Asha holds device user id 1 on the reader, and a serial does not reuse a reader's id.
         mockMvc.perform(get("/api/v1/members/next-serial").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.serialNumber").value("1"));
+                .andExpect(jsonPath("$.serialNumber").value("2"));
 
-        String binaId = readJson(postJson("/api/v1/members", "{\"firstName\":\"Bina\"}")
+        String binaId = readJson(createMemberWithFace(token, "{\"firstName\":\"Bina\"}")
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.serialNumber").value("1"))
+                .andExpect(jsonPath("$.serialNumber").value("2"))
                 .andExpect(jsonPath("$.memberCode").value(org.hamcrest.Matchers.startsWith("MBR-")))
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
-        postJson("/api/v1/members", "{\"firstName\":\"Chetan\",\"serialNumber\":\"1001\"}")
+        createMemberWithFace(token, "{\"firstName\":\"Chetan\",\"serialNumber\":\"1001\"}")
                 .andExpect(status().isConflict());
 
         long commandsBefore = deviceSyncCommandRepository.count();
@@ -284,7 +285,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(status().isConflict());
 
         var bina = memberRepository.findByPublicId(binaId).orElseThrow();
-        assertThat(bina.getSerialNumber()).isEqualTo("1");
+        assertThat(bina.getSerialNumber()).isEqualTo("2");
         assertThat(bina.getFirstName()).isEqualTo("Bina");
         var asha = memberRepository.findByPublicId(memberId).orElseThrow();
         assertThat(asha.getSerialNumber()).isEqualTo("1001");

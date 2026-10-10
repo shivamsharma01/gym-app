@@ -101,8 +101,9 @@ public class DesiredProjectionService {
     }
 
     /**
-     * An empty flagged reader receives this server member through the existing desired-state writer.
-     * The id is allocated for this reader. Nothing is copied from another reader.
+     * A reader with a trusted list receives this server member through the existing desired-state
+     * writer, unless it already has a mapping for the member. The id is allocated for this reader.
+     * Nothing is copied from another reader. Calling it again for the same member writes nothing.
      *
      * @return the device user id written, or null when this reader already has the member or has no face
      */
@@ -111,17 +112,24 @@ public class DesiredProjectionService {
         if (device.getGatewayId() == null) {
             return null;
         }
-        if (mappings.existsByDeviceIdAndMemberId(device.getId(), member.getId())) {
-            return null;
-        }
         MemberFace face = faces.findByMemberId(member.getId()).orElse(null);
         if (face == null) {
+            return null;
+        }
+        revisions.lock(device.getTenantId(), device.getId());
+        if (mappings.countLocked(device.getId(), member.getId()) > 0) {
             return null;
         }
         write(member, device, face);
         return mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
                 .map(MemberDeviceMapping::getDeviceUserId)
                 .orElse(null);
+    }
+
+    /** Holds this reader's lock until the caller's transaction ends. */
+    @Transactional
+    public void lockReader(Device device) {
+        revisions.lock(device.getTenantId(), device.getId());
     }
 
     @Transactional

@@ -116,6 +116,11 @@ public class ReaderReviewService {
         rememberSnapshot(item, device, deviceUserId, payload);
     }
 
+    /** A read-back of this id was accepted on this reader at least once. */
+    public boolean verifiedOnReader(Long deviceId, String deviceUserId) {
+        return baselines.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId).isPresent();
+    }
+
     /**
      * A mapped id missing from a trusted list. The member and every other reader stay as they are.
      * A repeated observation updates this same item.

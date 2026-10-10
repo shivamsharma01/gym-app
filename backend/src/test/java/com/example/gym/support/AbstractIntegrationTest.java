@@ -1,5 +1,6 @@
 package com.example.gym.support;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -24,6 +25,7 @@ import com.example.gym.device.repo.SecurityEventRepository;
 import com.example.gym.enquiry.EnquiryRepository;
 import com.example.gym.face.GatewayFaceUploadRepository;
 import com.example.gym.face.MemberFaceRepository;
+import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.notification.AnnouncementRepository;
@@ -38,15 +40,23 @@ import com.example.gym.tenant.Tenant;
 import com.example.gym.tenant.TenantRepository;
 import com.example.gym.user.AdminUser;
 import com.example.gym.user.AdminUserRepository;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Set;
+import javax.imageio.ImageIO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.testcontainers.containers.MySQLContainer;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -236,6 +246,41 @@ public abstract class AbstractIntegrationTest {
 
     protected JsonNode readJson(String body) {
         return jsonMapper.readTree(body);
+    }
+
+    /** Staff create with a face. Every reader of the gym that has a gateway gets a desired user. */
+    protected ResultActions createMemberWithFace(String bearer, String memberJson) throws Exception {
+        return mockMvc.perform(multipart("/api/v1/members")
+                .file(new MockMultipartFile("member", "member.json", MediaType.APPLICATION_JSON_VALUE,
+                        memberJson.getBytes(StandardCharsets.UTF_8)))
+                .file(new MockMultipartFile("face", "face.jpg", MediaType.IMAGE_JPEG_VALUE, faceJpeg()))
+                .header("Authorization", "Bearer " + bearer));
+    }
+
+    /** The created member's public id. */
+    protected String createMemberId(String bearer, String memberJson) throws Exception {
+        return readJson(createMemberWithFace(bearer, memberJson)
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+    }
+
+    /** A member stored without the create flow, so no reader has them. The test places them itself. */
+    protected Member saveMember(Long tenantId, String memberCode, String firstName, String lastName, String serial) {
+        Member member = new Member(tenantId, memberCode, firstName);
+        member.setLastName(lastName);
+        member.setSerialNumber(serial);
+        return memberRepository.save(member);
+    }
+
+    protected static byte[] faceJpeg() throws Exception {
+        BufferedImage image = new BufferedImage(400, 400, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = image.createGraphics();
+        graphics.setColor(Color.RED);
+        graphics.fillRect(0, 0, 400, 400);
+        graphics.dispose();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(image, "jpg", out);
+        return out.toByteArray();
     }
 
     protected Tenant createTenant(String name, String slug) {

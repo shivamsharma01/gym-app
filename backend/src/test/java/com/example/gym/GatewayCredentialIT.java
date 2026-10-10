@@ -253,12 +253,8 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
                         .content("{\"name\":\"Monthly\",\"price\":1000.00,\"currency\":\"INR\",\"durationDays\":30}"))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
-        String memberId = readJson(mockMvc.perform(post("/api/v1/members")
-                        .header("Authorization", "Bearer " + other.staffToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"serialNumber\":\"1001\"}"))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        String memberId = createMemberId(other.staffToken(),
+                "{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"serialNumber\":\"1001\"}");
         mockMvc.perform(post("/api/v1/memberships")
                         .header("Authorization", "Bearer " + other.staffToken())
                         .contentType(MediaType.APPLICATION_JSON)

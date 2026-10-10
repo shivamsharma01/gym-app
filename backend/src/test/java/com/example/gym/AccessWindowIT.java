@@ -74,11 +74,9 @@ class AccessWindowIT extends AbstractIntegrationTest {
                 "{\"name\":\"Monthly\",\"price\":1000.00,\"currency\":\"INR\",\"durationDays\":30}")
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString())
                 .get("id").asString();
-        memberId = readJson(postJson("/api/v1/members",
-                "{\"firstName\":\"Ria\",\"lastName\":\"Sen\",\"memberCode\":\"8001\",\"serialNumber\":\"8001\"}")
-                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString())
-                .get("id").asString();
-        memberDbId = memberRepository.findByPublicId(memberId).orElseThrow().getId();
+        Member ria = saveMember(tenant.getId(), "8001", "Ria", "Sen", "8001");
+        memberId = ria.getPublicId();
+        memberDbId = ria.getId();
     }
 
     @Test

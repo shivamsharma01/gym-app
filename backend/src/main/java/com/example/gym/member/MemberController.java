@@ -108,23 +108,15 @@ public class MemberController {
         return respond(memberService.getByPublicId(id, SecurityUtils.currentTenantId()));
     }
 
-    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
-    @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAuthority('MEMBER_CREATE')")
-    @Operation(summary = "Create a member")
-    public MemberResponse create(@Valid @RequestBody CreateMember request) {
-        return respond(memberService.create(request, SecurityUtils.currentTenantId()));
-    }
-
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAuthority('MEMBER_CREATE')")
-    @Operation(summary = "Create a member with a face on one flagged reader")
-    public MemberResponse createOnReader(@RequestPart("member") @Valid CreateMember request,
-                                         @RequestPart("face") MultipartFile face,
-                                         @RequestParam("readerId") String readerId) throws IOException {
-        return respond(readerMemberCreate.create(
-                request, SecurityUtils.currentTenantId(), readerId, face.getBytes()));
+    @Operation(summary = "Create a member with a face; every reader of the gym gets a desired user")
+    public MemberResponse create(@RequestPart("member") @Valid CreateMember request,
+                                 @RequestPart(name = "face", required = false) MultipartFile face)
+            throws IOException {
+        byte[] raw = face == null ? null : face.getBytes();
+        return respond(readerMemberCreate.create(request, SecurityUtils.currentTenantId(), raw));
     }
 
     @PutMapping("/{id}")

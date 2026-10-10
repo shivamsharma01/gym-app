@@ -1,7 +1,6 @@
 package com.example.gym;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -10,7 +9,6 @@ import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.MediaType;
 
 /**
  * Phase 7 security-focused API checks that complement AuthAndSecurityIT / Phase9IT.
@@ -52,12 +50,9 @@ class Phase7SecurityIT extends AbstractIntegrationTest {
         String alphaToken = tokenFor("alpha-admin");
         // Create a member in beta via beta admin.
         String betaToken = tokenFor("beta-admin");
-        String created = mockMvc.perform(post("/api/v1/members")
-                        .header("Authorization", "Bearer " + betaToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
+        String created = createMemberWithFace(betaToken, """
                                 {"firstName":"Beta","lastName":"Member","phone":"9000000001"}
-                                """))
+                                """)
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         String memberId = jsonMapper.readTree(created).get("id").asString();

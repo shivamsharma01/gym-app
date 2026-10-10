@@ -40,7 +40,7 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
     List<String> findPendingDeviceUserIds(@org.springframework.data.repository.query.Param("tenantId") Long tenantId);
 
     /**
-     * Every id this reader holds or may soon hold: mapped, being moved to, on the last roster,
+     * Every id this reader holds or may soon hold: mapped, being moved to, seen on a reader list,
      * on an unacknowledged projection, or reported occupied. These are locking reads, so a caller
      * holding the reader lock sees ids committed by the previous holder.
      */
@@ -52,6 +52,8 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
             UNION ALL
             (SELECT device_user_id FROM device_user_snapshot WHERE device_id = :deviceId FOR SHARE)
             UNION ALL
+            (SELECT device_user_id FROM device_observed_user WHERE device_id = :deviceId FOR SHARE)
+            UNION ALL
             (SELECT device_user_id FROM desired_member WHERE device_id = :deviceId AND revision > :applied FOR SHARE)
             UNION ALL
             (SELECT device_user_id FROM reader_blocked_user WHERE device_id = :deviceId FOR SHARE)
@@ -62,6 +64,14 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
     boolean existsByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
     boolean existsByDeviceIdAndMemberId(Long deviceId, Long memberId);
+
+    /** A locking read, so a caller holding the reader lock sees a mapping the previous holder committed. */
+    @org.springframework.data.jpa.repository.Query(value = """
+            SELECT COUNT(*) FROM member_device_mapping
+             WHERE device_id = :deviceId AND member_id = :memberId FOR SHARE
+            """, nativeQuery = true)
+    long countLocked(@org.springframework.data.repository.query.Param("deviceId") Long deviceId,
+                     @org.springframework.data.repository.query.Param("memberId") Long memberId);
 
     Optional<MemberDeviceMapping> findByDeviceIdAndMemberId(Long deviceId, Long memberId);
 }

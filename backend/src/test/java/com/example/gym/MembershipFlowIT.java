@@ -37,10 +37,7 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
-        String memberId = readJson(post("/api/v1/members",
-                "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"phone\":\"5551234567\"}")
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        String memberId = createMemberId(token, "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"phone\":\"5551234567\"}");
 
         // No membership yet -> denied.
         getAccess(memberId)
@@ -115,10 +112,7 @@ class MembershipFlowIT extends AbstractIntegrationTest {
     @Test
     void membersAreIsolatedAcrossTenants() throws Exception {
         token = tokenFor("flow-admin");
-        String memberId = readJson(post("/api/v1/members",
-                "{\"firstName\":\"Private\"}")
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        String memberId = createMemberId(token, "{\"firstName\":\"Private\"}");
 
         // A second tenant's admin must not see the first tenant's member.
         Tenant other = createTenant("Other Gym", "other-gym");
@@ -136,10 +130,7 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 "{\"name\":\"Custom\",\"price\":500.00,\"currency\":\"INR\",\"durationDays\":30}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
-        String memberId = readJson(post("/api/v1/members",
-                "{\"firstName\":\"Dated\"}")
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        String memberId = createMemberId(token, "{\"firstName\":\"Dated\"}");
 
         LocalDate start = LocalDate.now().minusDays(3);
         LocalDate end = start.plusDays(45);
@@ -168,12 +159,8 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 "{\"name\":\"Monthly\",\"price\":1000.00,\"currency\":\"INR\",\"durationDays\":30}")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
-        String staying = readJson(post("/api/v1/members", "{\"firstName\":\"Stay\",\"lastName\":\"Long\"}")
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-        String leaving = readJson(post("/api/v1/members", "{\"firstName\":\"Leave\",\"lastName\":\"Soon\"}")
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        String staying = createMemberId(token, "{\"firstName\":\"Stay\",\"lastName\":\"Long\"}");
+        String leaving = createMemberId(token, "{\"firstName\":\"Leave\",\"lastName\":\"Soon\"}");
         LocalDate today = LocalDate.now();
         post("/api/v1/memberships",
                 "{\"memberId\":\"" + staying + "\",\"planId\":\"" + planId

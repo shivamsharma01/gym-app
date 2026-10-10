@@ -57,7 +57,7 @@ These are the rules implementation should treat as architectural invariants. The
 | Full logical write  | Every user update writes the full logical user record; face is written through the verified face path as a separate operation.                     | The SDK may zero fields omitted from writes.                                 |
 | Freeze vs removal   | Freeze/disable keeps the user record; removal deletes the device record. They are different operations.                                            | Matches device semantics and preserves server history.                       |
 | Device deletion     | A device-side deletion never deletes the server member automatically.                                                                              | A device can erase a projection without proving business deletion.           |
-| Final convergence   | When a reader is connected and its review decisions are resolved, that reader matches the desired projection the server published for it. | A reader is not required to hold every member. Which readers receive a member is an open product choice; the implemented create flow is one chosen reader. |
+| Final convergence   | When a reader is connected and its review decisions are resolved, that reader matches the desired projection the server published for it. | A reader is not required to hold every member. A new member is published to every reader of the gym that has a gateway; a pending enrollment or a review decision stays on its one reader. |
 | No permanent master | There is no permanent master reader. Bootstrap is a reconciliation phase, not a peer hierarchy.                                                    | Avoids single-device authority and simplifies N-reader scaling.              |
 | No blind replay     | On reconnect, observe reader state before applying potentially stale desired commands.                                                             | Prevents overwriting offline device changes before the server sees them.     |
 
@@ -293,7 +293,7 @@ The earlier “master device” model is not the right long-term architecture. F
 
 | **Bootstrap case**                                   | **Treatment**                                                                                                                |
 |------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| One reader has a trusted empty roster; server has members | Seed that reader from server members through its desired-state writer and its own id allocator. A failed, short, or count-mismatched list seeds nothing. |
+| One reader has a trusted roster; server has members it does not have | Seed each active member with a face that has no mapping on that reader, through its desired-state writer and its own id allocator, above every id the reader showed. Existing mappings and unknown people on the reader stay as they are and are not linked. A later trusted roster seeds only what is still missing. A failed, short, or count-mismatched list seeds nothing. The gateway sends a non-empty list as one message only after V21. |
 | Reader + server member with existing mapping         | Compare current reader snapshot against server desired state; apply or review based on three-way/baseline availability.      |
 | Reader has unlinked person                           | Create Pending Device Enrollment. Suggest identity matches, but do not auto-link.                                            |
 | Two readers have same device ID but different people | Treat as separate device-local identities; create/retain per-reader mappings and surface the collision.                      |
@@ -403,7 +403,7 @@ The slice-by-slice record is [execution-plan.md](execution-plan.md). F1–F3 and
 | Authenticated channel | One gateway per gym. Identity comes from the credential. | Anonymous access is refused. |
 | Desired state | Projection, revision, pull, apply, read-back, ack. One worker per reader. SQLite journal. | Stale revisions do not apply. A restart does not apply a verified revision twice. |
 | Observations and review | Reader creates, edits, and trusted disappearances become enrollments or review items. | No silent member merge. No copy of an unlinked person onto another reader. |
-| Bootstrap | One trusted roster becomes a report. A trusted empty reader can be seeded from server members. A short list seeds nothing. | Known mappings stay. Ambiguous people stay unresolved. |
+| Bootstrap | One trusted roster becomes a report. A reader with a trusted roster is seeded with the active members it does not have. A short list seeds nothing. | Known mappings stay. Ambiguous people stay unresolved. |
 | Attendance | Time-window poll, append-only rows, separate from member revisions. | Does not write member state. Record-number survival across reboot or a full log is still unproven. |
 
 # 20. Test strategy

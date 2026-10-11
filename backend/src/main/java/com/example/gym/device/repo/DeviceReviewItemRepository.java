@@ -11,8 +11,6 @@ public interface DeviceReviewItemRepository extends JpaRepository<DeviceReviewIt
 
     Optional<DeviceReviewItem> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
-    Optional<DeviceReviewItem> findByDeviceIdAndDecisionRevision(Long deviceId, long decisionRevision);
-
     List<DeviceReviewItem> findByDeviceId(Long deviceId);
 
     List<DeviceReviewItem> findByMemberId(Long memberId);

@@ -445,7 +445,7 @@ public class DesiredProjectionService {
             if (ack.failCode() != null && !ack.failCode().isBlank()) {
                 error = error + ": " + ack.failCode();
             }
-            reviews.noteVerificationFailure(device.getId(), ack.revision(), error);
+            reviews.noteVerificationFailure(device.getId(), row.getDeviceUserId(), ack.revision(), error);
             throw CommonExceptions.conflict(error);
         }
         if (row.isPresentOnReader() && row.isFacePresent()
@@ -456,7 +456,7 @@ public class DesiredProjectionService {
         if (row.isPresentOnReader()) {
             reviews.reconcile(row);
         }
-        reviews.settle(device.getId(), ack.revision());
+        reviews.settle(device.getId(), row.getDeviceUserId(), ack.revision());
         if (ack.revision() > cursor.getAppliedRevision()) {
             cursor.setAppliedRevision(ack.revision());
         }

@@ -11,8 +11,6 @@ public interface PendingEnrollmentRepository extends JpaRepository<PendingEnroll
 
     Optional<PendingEnrollment> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
-    Optional<PendingEnrollment> findByDeviceIdAndDecisionRevision(Long deviceId, long decisionRevision);
-
     List<PendingEnrollment> findByDeviceId(Long deviceId);
 
     List<PendingEnrollment> findByTenantIdAndResolvedFalse(Long tenantId);

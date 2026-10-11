@@ -180,35 +180,51 @@ public class ReaderReviewService {
     }
 
     /**
-     * The gateway acknowledged this revision. The staff decision that published it is closed.
+     * The reader verified revision {@code revision} of {@code deviceUserId}. Every open staff decision
+     * for that user on this reader published at or below it is closed: the decision's own revision,
+     * or one a later change of the same user replaced before the gateway applied it. The decision
+     * itself is left as recorded. Call inside the acknowledgement's reader lock.
      */
     @Transactional
-    public void settle(Long deviceId, long revision) {
-        reviews.findByDeviceIdAndDecisionRevision(deviceId, revision).ifPresent(item -> {
-            item.resolve();
-            reviews.save(item);
-        });
-        enrollments.findByDeviceIdAndDecisionRevision(deviceId, revision).ifPresent(enrollment -> {
-            enrollment.resolve();
-            enrollments.save(enrollment);
-        });
+    public void settle(Long deviceId, String deviceUserId, long revision) {
+        reviews.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId)
+                .filter(item -> awaiting(item.isResolved(), item.getDecisionRevision(), revision))
+                .ifPresent(item -> {
+                    item.resolve();
+                    reviews.save(item);
+                });
+        enrollments.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId)
+                .filter(enrollment -> awaiting(enrollment.isResolved(), enrollment.getDecisionRevision(), revision))
+                .ifPresent(enrollment -> {
+                    enrollment.resolve();
+                    enrollments.save(enrollment);
+                });
     }
 
     /**
-     * Read-back did not match. The decision stays open and keeps the verification error.
-     * Commits on its own so the error survives the rejected acknowledgement.
+     * Read-back of revision {@code revision} of {@code deviceUserId} did not match. Every open decision
+     * that revision would have closed stays open and keeps the verification error. Commits on its own
+     * so the error survives the rejected acknowledgement.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void noteVerificationFailure(Long deviceId, long revision, String error) {
+    public void noteVerificationFailure(Long deviceId, String deviceUserId, long revision, String error) {
         String stored = cut(error, 255);
-        reviews.findByDeviceIdAndDecisionRevision(deviceId, revision).ifPresent(item -> {
-            item.noteVerificationError(stored);
-            reviews.save(item);
-        });
-        enrollments.findByDeviceIdAndDecisionRevision(deviceId, revision).ifPresent(enrollment -> {
-            enrollment.noteVerificationError(stored);
-            enrollments.save(enrollment);
-        });
+        reviews.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId)
+                .filter(item -> awaiting(item.isResolved(), item.getDecisionRevision(), revision))
+                .ifPresent(item -> {
+                    item.noteVerificationError(stored);
+                    reviews.save(item);
+                });
+        enrollments.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId)
+                .filter(enrollment -> awaiting(enrollment.isResolved(), enrollment.getDecisionRevision(), revision))
+                .ifPresent(enrollment -> {
+                    enrollment.noteVerificationError(stored);
+                    enrollments.save(enrollment);
+                });
+    }
+
+    private static boolean awaiting(boolean resolved, Long decisionRevision, long revision) {
+        return !resolved && decisionRevision != null && decisionRevision <= revision;
     }
 
     /** The reconciled record is the desired record the reader just read back. */

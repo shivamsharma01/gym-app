@@ -1,6 +1,6 @@
 # Execution plan
 
-Status: F1–F3 and V1–V19 are implemented. Their automated tests passed on the fake reader and the test database. V20 and V21 are not built. Section E has not been run on a physical reader.
+Status: F1–F3 and V1–V20 are implemented. Their automated tests passed on the fake reader and the test database. V21 is not built. Section E has not been run on a physical reader.
 Architecture: [device-sync-architecture.md](device-sync-architecture.md).
 Open questions: [open-questions.md](open-questions.md).
 Evidence: [device-poc-results.md](device-poc-results.md), reader serial `TW30000005250265`.
@@ -564,7 +564,31 @@ Limitations:
 
 **Acceptance criteria.** No decision stays in applying state after the reader has confirmed a revision that replaced it.
 
-**Done.** Not built.
+**Done.** Complete, on automated tests (12 October 2026). That is not physical-reader evidence; Section E still applies. Automated tests passed on the test database. `V20SupersededDecisionIT` (4) covers the following:
+- An accept-server decision replaced by a rename: an acknowledgement of the decision revision is refused with 409 and leaves the item applying with no error. The acknowledgement of the rename closes the item, applied equals the rename revision, and the decision, actor, decision revision, and single decision audit row are unchanged. A repeated acknowledgement leaves the closed item untouched (same row version).
+- The same for a linked pending enrollment.
+- A failed read-back of the rename revision leaves the replaced decision open with the verification error. A later matching acknowledgement closes it.
+- On the same reader, an open decision for another device user id stays open even though its decision revision is below the acknowledged one. A decision on another reader also stays open, and both stay in the open review list.
+
+The existing V14, V15, and V17 decision tests pass unchanged.
+
+How it is built:
+- The acknowledgement already takes the reader lock and rereads the row at the acknowledged revision.
+- After read-back passes, it closes each review item and pending enrollment on that reader for the row's device user id that is not resolved and whose decision revision is at or below the acknowledged revision.
+- A failed read-back records the error on the same set, and leaves those decisions open.
+- A stale acknowledgement is refused before either step, so it closes nothing.
+- Closing sets only the resolved flag (and, for an enrollment, its final status); it writes no decision or audit row.
+- Both tables already have a unique key on reader and device user id, so the lookup uses an existing index. There is no migration.
+
+Legacy behavior checked against this slice:
+- The exact-revision settle (close only the decision whose revision equals the acknowledged one) is the behavior V20 replaces. The new rule includes the exact case, so the exact lookup was removed along with its two repository methods.
+- An item that reopens for a new reader difference already clears its decision and decision revision, so a later acknowledgement cannot close a fresh difference.
+- A resolved enrollment does not reopen.
+- No gateway, adapter, frontend, or schema change was made, and no review or conflict behavior was added.
+
+Limitations:
+- Decisions are matched by device user id. A decision whose row later moved to another id (only the occupied-id retry does that, and decisions keep the reader's existing id) would not be closed by acknowledgements of the new id.
+- No physical reader was used.
 
 ### V21 — Late changes reach every reader without a new roster
 
@@ -644,7 +668,7 @@ These are not defined tightly enough to pretend they are already specified.
 | --- | --- |
 | Device-id allocator | The architecture left the exact allocator open. This plan defines highest-known-plus-one decimal ids, plus no-overwrite retry. Server-side writers of one reader (allocation, revision bump, acknowledgement, occupied retry) take that reader's `reader_revision` row lock, and the allocator reads taken ids with locking reads. `ReaderConcurrencyIT` covers concurrent creates, renames, acknowledgements, and an occupied retry on one reader on the test database. A live race against the reader's own screen enrollment was not run. |
 | Cross-reader lock order | An operation that touches several readers (a member change on every mapped reader, the bootstrap report) takes the reader locks in ascending device id order, then rereads the projection row and mapping under the lock. Before this, renames of two members mapped in opposite reader order failed with a MySQL deadlock. `ReaderConcurrencyIT.renamesOfMembersMappedInOppositeReaderOrderDoNotDeadlockOrLoseUpdates` runs 10 concurrent rename rounds per member across two readers and checks every final name and a gap-free revision count on both readers. |
-| Rename against an older acknowledgement | An acknowledgement takes the reader lock first and rereads the revision under it. An acknowledgement of a revision that a rename has since replaced is refused with 409 "Revision is not the desired member" and leaves the applied revision unchanged; it never moves applied backward. A repeated acknowledgement of the current revision returns 200 each time. `aRenameRacingAnAckOfTheOlderRevisionNeverLosesOrRegressesState` races the two freely; `anAckBlockedBehindARenameOfTheSameRowIsRefusedAsSuperseded` forces the acknowledgement to wait behind the rename. Without the reread, that test got a generic concurrent-modification 409 instead. A review decision whose revision is superseded by a later revision of the same row is still never settled; that predates this work and is tracked as V20. |
+| Rename against an older acknowledgement | An acknowledgement takes the reader lock first and rereads the revision under it. An acknowledgement of a revision that a rename has since replaced is refused with 409 "Revision is not the desired member" and leaves the applied revision unchanged; it never moves applied backward. A repeated acknowledgement of the current revision returns 200 each time. `aRenameRacingAnAckOfTheOlderRevisionNeverLosesOrRegressesState` races the two freely; `anAckBlockedBehindARenameOfTheSameRowIsRefusedAsSuperseded` forces the acknowledgement to wait behind the rename. Without the reread, that test got a generic concurrent-modification 409 instead. A decision whose revision a later revision of the same user replaced now closes when the reader confirms that later revision (V20). |
 | `publicId` as `szUserID` | Not supported here. UUID form was never written to this reader, and the face user-id type is a 32-character buffer. |
 | Bootstrap report scope | Intentional, as V15 defined it. The report classifies a trusted roster into matching, different, unlinked, and collision rows for staff, and seeds only a reader whose last list was trusted and empty. Seeding a reader that already holds people, and late activations or photos, belong to the V21 reconcile, not the report. The report does not trigger V21. |
 | Which readers receive a new member | Every reader of the gym that has a gateway (V18). The create flow does not ask for a reader. A pending enrollment and a review decision still write only their own reader. |
@@ -682,14 +706,13 @@ The 7 October 2026 probe measured related SDK behavior on serial `TW300000052502
 
 ## F. Fake reader only
 
-F1's credential tests, F2, F3, and V1 through V19 were accepted on the fake reader and the test database. That acceptance does not close section E.
+F1's credential tests, F2, F3, and V1 through V20 were accepted on the fake reader and the test database. That acceptance does not close section E.
 
 ## G. Remaining gates
 
-The slice checks through V19 are recorded as done on the fake reader and test database in each slice above. On 9 October 2026, before V18, `ReaderConcurrencyIT` (7 tests) passed in 5 repeated runs with no deadlock, then `mvn clean verify` passed (33 unit, 159 integration) and the gateway suite passed (129). After V18, including seeding readers added later, `mvn clean verify` passed (33 unit, 171 integration), the gateway suite passed (129), the frontend build passed, and Playwright passed (10 passed, 1 skipped that needs a live API). On 12 October 2026, after V19, `mvn clean verify` passed (33 unit, 179 integration), the gateway suite passed (139, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). Later on 12 October 2026, after the V19 fixes for batched uploads, future-dated punches, and live read failures, `mvn clean verify` passed (33 unit, 182 integration), the gateway suite passed (149, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). This is test-database evidence only. What remains:
+The slice checks through V20 are recorded as done on the fake reader and test database in each slice above. On 9 October 2026, before V18, `ReaderConcurrencyIT` (7 tests) passed in 5 repeated runs with no deadlock, then `mvn clean verify` passed (33 unit, 159 integration) and the gateway suite passed (129). After V18, including seeding readers added later, `mvn clean verify` passed (33 unit, 171 integration), the gateway suite passed (129), the frontend build passed, and Playwright passed (10 passed, 1 skipped that needs a live API). On 12 October 2026, after V19, `mvn clean verify` passed (33 unit, 179 integration), the gateway suite passed (139, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). Later on 12 October 2026, after the V19 fixes for batched uploads, future-dated punches, and live read failures, `mvn clean verify` passed (33 unit, 182 integration), the gateway suite passed (149, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). On 12 October 2026, after V20, `mvn clean verify` passed (33 unit, 186 integration), the gateway suite passed (149), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). This is test-database evidence only. What remains:
 
 1. Section E, on a physical reader, before that reader is treated as validated.
 2. The remaining choices in [open-questions.md](open-questions.md): the safety-scan interval, door and time-section values other than 1, SDK reconnect as a guarantee, and attendance record-number survival and retention.
 3. A recovery policy for an attendance record whose time cannot be read (Section D). Until it is decided, such a record stalls that reader's attendance rather than being skipped.
-4. V20 superseded staff decisions close.
-5. V21 late activations and photos, and readers added with people on them, reach every reader without a new roster.
+4. V21 late activations and photos, and readers added with people on them, reach every reader without a new roster.

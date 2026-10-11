@@ -184,6 +184,75 @@ public class LiveReaderAdapterTests : IDisposable
     }
 
     [Fact]
+    public void An_attendance_search_that_finds_nothing_is_an_empty_window()
+    {
+        var records = TrueFaceDeviceAdapter.ReadAttendance(new ScriptedSearch(true, (0, [])), 20);
+
+        Assert.Empty(records);
+    }
+
+    [Fact]
+    public void A_failed_attendance_search_is_a_failure_not_an_empty_window()
+    {
+        var error = Assert.Throws<AttendanceReadException>(() =>
+            TrueFaceDeviceAdapter.ReadAttendance(new ScriptedSearch(false), 20));
+
+        Assert.Contains("Attendance search failed", error.Message);
+    }
+
+    [Fact]
+    public void A_failed_later_attendance_page_returns_no_partial_window()
+    {
+        var full = Enumerable.Range(1, 2).Select(i => Record(i, "1", 2026, 10, 11, 5, 0, i)).ToArray();
+        var search = new ScriptedSearch(true, (2, full), (-1, []));
+
+        var error = Assert.Throws<AttendanceReadException>(() => TrueFaceDeviceAdapter.ReadAttendance(search, 2));
+
+        Assert.Contains("page 2 failed after 2 record(s)", error.Message);
+    }
+
+    [Fact]
+    public void An_attendance_record_with_an_unreadable_time_fails_the_window()
+    {
+        var search = new ScriptedSearch(true,
+            (2, [Record(1, "1", 2026, 10, 11, 5, 0, 0), Record(2, "2", 2026, 13, 0, 0, 0, 0)]));
+
+        var error = Assert.Throws<AttendanceReadException>(() => TrueFaceDeviceAdapter.ReadAttendance(search, 20));
+
+        Assert.Contains("record 2 has an unreadable time 2026-13-00", error.Message);
+    }
+
+    [Fact]
+    public void Attendance_pages_are_read_to_the_end_and_returned_oldest_first_as_utc()
+    {
+        var search = new ScriptedSearch(true,
+            (2, [Record(9, "3", 2026, 10, 11, 7, 0, 0), Record(8, "2", 2026, 10, 11, 6, 0, 0)]),
+            (1, [Record(7, "1", 2026, 10, 11, 5, 0, 0)]));
+
+        var records = TrueFaceDeviceAdapter.ReadAttendance(search, 2);
+
+        Assert.Equal([7L, 8L, 9L], records.Select(r => r.RecNo!.Value));
+        Assert.Equal(new DateTimeOffset(2026, 10, 11, 5, 0, 0, TimeSpan.Zero), records[0].OccurredAt);
+        Assert.Equal(TimeSpan.Zero, records[0].OccurredAt.Offset);
+    }
+
+    [Fact]
+    public void A_failed_live_attendance_read_is_a_failed_reader_window()
+    {
+        var device = new StructReader
+        {
+            Attendance = () => throw new AttendanceReadException("Attendance page 2 failed after 20 record(s): timeout")
+        };
+
+        var read = new DeviceReaderAdapter(device).QueryAttendance(
+            DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow);
+
+        Assert.False(read.Ok);
+        Assert.Empty(read.Punches);
+        Assert.Contains("page 2 failed", read.Error);
+    }
+
+    [Fact]
     public void A_reader_that_is_not_online_does_not_answer_the_reconnect_read()
     {
         var reader = new DeviceReaderAdapter(new MockDeviceAdapter());
@@ -217,6 +286,40 @@ public class LiveReaderAdapterTests : IDisposable
 
     private static ReaderUser User(string id, string name, string? nameEx) =>
         new(id, name, nameEx, 0, From, To, "Customer", 1, 1);
+
+    private static NET_RECORDSET_ACCESS_CTL_CARDREC Record(
+        int recNo, string userId, uint year, uint month, uint day, uint hour, uint minute, int second) => new()
+    {
+        nRecNo = recNo,
+        szUserID = userId,
+        bStatus = true,
+        emMethod = EM_ACCESS_DOOROPEN_METHOD.FACE_RECOGNITION,
+        stuTime = new NET_TIME
+        {
+            dwYear = year, dwMonth = month, dwDay = day, dwHour = hour, dwMinute = minute, dwSecond = (uint)second
+        }
+    };
+
+    /// <summary>An SDK search that starts or not, then answers each page with a result and its records.</summary>
+    private sealed class ScriptedSearch(bool starts, params (int Result, NET_RECORDSET_ACCESS_CTL_CARDREC[] Rows)[] pages)
+        : TrueFaceDeviceAdapter.IAttendanceSearch
+    {
+        private int _next;
+
+        public bool Start(out string error)
+        {
+            error = starts ? "" : "NET_ERROR_TIMEOUT";
+            return starts;
+        }
+
+        public int Next(int max, out IReadOnlyList<NET_RECORDSET_ACCESS_CTL_CARDREC> records, out string error)
+        {
+            var (result, rows) = _next < pages.Length ? pages[_next++] : (0, []);
+            records = result < 0 ? [] : rows;
+            error = result < 0 ? "NET_ERROR_TIMEOUT" : "";
+            return result;
+        }
+    }
 
     /// <summary>Stores the SDK record the live adapter writes, and reads it back through ToSnapshot.</summary>
     private sealed class StructReader : IDeviceAdapter
@@ -313,7 +416,10 @@ public class LiveReaderAdapterTests : IDisposable
         public FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes) =>
             throw new NotSupportedException();
 
-        public IReadOnlyList<DeviceAttendanceRecord> FetchAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc) => [];
+        public Func<IReadOnlyList<DeviceAttendanceRecord>>? Attendance { get; set; }
+
+        public IReadOnlyList<DeviceAttendanceRecord> FetchAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc) =>
+            Attendance?.Invoke() ?? [];
 
         public void RegisterEventListener(IDeviceEventListener listener)
         {
@@ -324,9 +430,6 @@ public class LiveReaderAdapterTests : IDisposable
         public DeviceCommandResult CloseDoor() => DeviceCommandResult.Success();
 
         public DeviceCommandResult SynchronizeTime(DateTimeOffset utcNow) => DeviceCommandResult.Success();
-
-        public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null) =>
-            new(true, null, [], ListUsers());
 
         public void Dispose()
         {

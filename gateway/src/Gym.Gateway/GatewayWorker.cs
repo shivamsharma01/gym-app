@@ -25,8 +25,10 @@ public sealed class GatewayWorker : BackgroundService
     private readonly DesiredRevisionHub _desiredRevisions;
     private readonly IReaderAdapterFactory? _readerFactory;
     private readonly IDesiredStateClient _desired;
+    private readonly IAttendanceClient _attendance;
     private readonly string _readerJournalDirectory;
     private readonly List<ReaderWorker> _readerWorkers = [];
+    private readonly List<AttendancePoll> _attendancePolls = [];
     private bool _readersAttached;
     private long _commandsReceived;
     private DateTimeOffset _lastCommandAt;
@@ -49,16 +51,19 @@ public sealed class GatewayWorker : BackgroundService
         ILoggerFactory logFactory,
         IReaderAdapterFactory? readers,
         IDesiredStateClient? desired,
-        string? journalDirectory)
+        string? journalDirectory,
+        IAttendanceClient? attendance = null,
+        DeviceLocks? locks = null)
     {
         _options = options;
         _link = link;
         _log = log;
         _logFactory = logFactory;
-        _locks = new DeviceLocks(logFactory.CreateLogger<DeviceLocks>());
+        _locks = locks ?? new DeviceLocks(logFactory.CreateLogger<DeviceLocks>());
         _desiredRevisions = new DesiredRevisionHub(logFactory.CreateLogger<DesiredRevisionHub>());
         _readerFactory = readers;
         _desired = desired ?? DesiredStateClient.Create(options.BackendUrl, options.Token);
+        _attendance = attendance ?? AttendanceClient.Create(options.BackendUrl, options.Token);
         _readerJournalDirectory = string.IsNullOrWhiteSpace(journalDirectory)
             ? Path.Combine(GatewayConfigStore.DefaultConfigDirectory(), "reader-journal")
             : journalDirectory;
@@ -107,6 +112,7 @@ public sealed class GatewayWorker : BackgroundService
         var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
         var poll = PollLoopAsync(_link, stoppingToken);
         var observe = ObserveReadersAsync(stoppingToken);
+        var attendance = AttendanceLoopAsync(stoppingToken);
         var clock = TimeSyncLoopAsync(stoppingToken);
         var statusLog = StatusLoopAsync(stoppingToken);
         var readerHealth = ReaderHealthLoopAsync(stoppingToken);
@@ -117,7 +123,7 @@ public sealed class GatewayWorker : BackgroundService
             new { agentVersion = "gym-gateway-0.5" },
             null), stoppingToken).ConfigureAwait(false);
 
-        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, observe, clock, statusLog, readerHealth)
+        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, observe, attendance, clock, statusLog, readerHealth)
             .ConfigureAwait(false);
     }
 
@@ -297,8 +303,8 @@ public sealed class GatewayWorker : BackgroundService
         foreach (var device in _options.Devices.Where(device => !string.IsNullOrWhiteSpace(device.DeviceId)))
         {
             var deviceId = device.DeviceId;
-            var reader = _readerFactory.Open(deviceId, OnlineAdapter(deviceId));
-            if (reader == null)
+            var opened = _readerFactory.Open(deviceId, OnlineAdapter(deviceId));
+            if (opened == null)
             {
                 _log.LogInformation(
                     "Reader {DeviceId} has no worker; desired revisions will not be acknowledged",
@@ -306,6 +312,10 @@ public sealed class GatewayWorker : BackgroundService
                 continue;
             }
 
+            var reader = new LockedReaderAdapter(deviceId, opened, _locks);
+            _attendancePolls.Add(new AttendancePoll(
+                deviceId, reader, _attendance, AttendancePollSettings.From(_options),
+                _logFactory.CreateLogger<AttendancePoll>()));
             var journal = Path.Combine(_readerJournalDirectory, JournalFile(deviceId));
             var worker = new ReaderWorker(deviceId, reader, journal);
             _readerWorkers.Add(worker);
@@ -342,6 +352,43 @@ public sealed class GatewayWorker : BackgroundService
             }
         }
     }
+
+    /// <summary>Reads each reader's attendance window on its own schedule, beside the reader worker.</summary>
+    private async Task AttendanceLoopAsync(CancellationToken cancellationToken)
+    {
+        var interval = TimeSpan.FromSeconds(Math.Max(5, _options.AttendancePollSeconds));
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await PollAttendanceAsync(cancellationToken).ConfigureAwait(false);
+                await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>One window per reader. One reader's failure does not stop the others.</summary>
+    internal Task PollAttendanceAsync(CancellationToken cancellationToken) =>
+        Task.WhenAll(_attendancePolls.Select(async poll =>
+        {
+            try
+            {
+                await poll.PollOnceAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Reader {DeviceId}: attendance poll failed; the same window is read again next time",
+                    poll.DeviceId);
+            }
+        }));
 
     internal Task ReceiveDesiredAsync(DesiredRevisionNotice notice, CancellationToken cancellationToken) =>
         _desiredRevisions.HandleAsync(notice, cancellationToken);
@@ -403,13 +450,6 @@ public sealed class GatewayWorker : BackgroundService
     /// <summary>One line per command: what ran, on which reader and user, the result and how long it took.</summary>
     private void LogOutcome(GatewayEnvelope command, string? userId, DispatchOutcome outcome, long elapsedMs)
     {
-        if (outcome.ResultType == ProtocolTypes.ReconciliationResult)
-        {
-            _log.LogInformation("Command {Type} device={DeviceId} corr={Corr} -> reconcile sent ({Events} event(s)) in {Ms}ms",
-                command.Type, command.DeviceId, command.CorrelationId, outcome.Events?.Count ?? 0, elapsedMs);
-            return;
-        }
-
         var result = JsonSerializer.SerializeToElement(outcome.Payload, JsonOptions.Outbound);
         var error = CommandDispatcher.Text(result, "error");
         var skipped = CommandDispatcher.Bool(result, "skipped") == true;
@@ -436,19 +476,6 @@ public sealed class GatewayWorker : BackgroundService
         await link.SendAsync(
             GatewayEnvelope.Create(_options.Id, outcome.ResultType, outcome.Payload, command.DeviceId, command.CorrelationId),
             CancellationToken.None).ConfigureAwait(false);
-
-        if (outcome.ResultType == ProtocolTypes.ReconciliationResult)
-        {
-            // Complete the outbox command — RECONCILIATION_RESULT alone left commands DISPATCHED forever.
-            await link.SendAsync(
-                GatewayEnvelope.Create(
-                    _options.Id,
-                    ProtocolTypes.SyncResult,
-                    new { ok = true },
-                    command.DeviceId,
-                    command.CorrelationId),
-                CancellationToken.None).ConfigureAwait(false);
-        }
     }
 
     private async Task SendLoopAsync(BackendLink link, CancellationToken stoppingToken)
@@ -626,13 +653,12 @@ public sealed class GatewayWorker : BackgroundService
             _writer = writer;
         }
 
+        /// <summary>
+        /// Alarms and connection changes are forwarded. An access event (ALARM_ACCESS_CTL_EVENT) is not:
+        /// attendance is read from the reader log by the attendance poll.
+        /// </summary>
         public void OnNormalizedEvent(NormalizedDeviceEvent evt)
         {
-            if (evt.Kind == "USER_CHANGED")
-            {
-                return;
-            }
-
             if (evt.Kind == "ALARM")
             {
                 _writer.TryWrite(new OutboundMessage(
@@ -654,40 +680,7 @@ public sealed class GatewayWorker : BackgroundService
                         details = evt.Details
                     },
                     null));
-                return;
             }
-
-            _writer.TryWrite(new OutboundMessage(
-                ProtocolTypes.DeviceEvent,
-                _deviceId,
-                new
-                {
-                    deviceUserId = evt.DeviceUserId,
-                    occurredAt = Format(evt.OccurredAt),
-                    method = evt.Method,
-                    granted = evt.Granted,
-                    recNo = evt.RecNo,
-                    errorCode = evt.ErrorCode,
-                    denyReason = MapDeny(evt.ErrorCode, evt.Granted)
-                },
-                null));
-        }
-
-        private static string? MapDeny(int? errorCode, bool granted)
-        {
-            if (granted || errorCode is null or 0)
-            {
-                return null;
-            }
-
-            return errorCode.Value switch
-            {
-                0x10 => "UNAUTHORIZED",
-                0x14 => "VALIDITY_PERIOD",
-                0x20 or 0x21 => "PERIOD_ERROR",
-                0x23 => "OVERDUE",
-                _ => "ERR_0x" + errorCode.Value.ToString("X")
-            };
         }
 
         private static string Format(DateTimeOffset value) =>

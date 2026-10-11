@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using Gym.Gateway.Adapters;
 using Microsoft.Extensions.Logging;
@@ -6,17 +5,23 @@ using Microsoft.Extensions.Logging;
 namespace Gym.Gateway;
 
 /// <summary>
-/// Maps door, clock, and attendance commands onto <see cref="IDeviceAdapter"/>. Member state is
-/// written only by the desired-state worker.
+/// Maps door and clock commands onto <see cref="IDeviceAdapter"/>. Member state is written only by
+/// the desired-state worker, and attendance is read only by the attendance poll.
 /// </summary>
 public sealed class CommandDispatcher
 {
-    /// <summary>Member writes the desired-state worker owns. Door, clock, and attendance stay.</summary>
+    /// <summary>Member writes the desired-state worker owns.</summary>
     private static readonly HashSet<string> MemberWrites = new(StringComparer.Ordinal)
     {
         "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", "DISABLE_USER", "ENABLE_USER",
         "UPDATE_VALIDITY", "REMOVE_USER", "ENROLL_FACE", "UPSERT_FACE", "DELETE_FACE",
         "REPORT_DEVICE_USER"
+    };
+
+    /// <summary>Server-driven log and user-list reads the attendance poll replaced.</summary>
+    private static readonly HashSet<string> AttendanceCommands = new(StringComparer.Ordinal)
+    {
+        "RECONCILE_DEVICE", "REFRESH_DEVICE_USERS"
     };
 
     private readonly IReadOnlyDictionary<string, IDeviceAdapter> _adapters;
@@ -115,6 +120,11 @@ public sealed class CommandDispatcher
             return DispatchOutcome.SyncFail("desired revisions write this reader");
         }
 
+        if (AttendanceCommands.Contains(command.Type ?? ""))
+        {
+            return DispatchOutcome.SyncFail("attendance is read by the gateway's poll");
+        }
+
         if (string.IsNullOrWhiteSpace(command.DeviceId) || !_adapters.TryGetValue(command.DeviceId, out var adapter))
         {
             return DispatchOutcome.SyncFail("Unknown or unconfigured deviceId");
@@ -159,29 +169,6 @@ public sealed class CommandDispatcher
                 return From(adapter.OpenDoor());
             case "CLOSE_DOOR":
                 return From(adapter.CloseDoor());
-            case "REFRESH_DEVICE_USERS":
-            case "RECONCILE_DEVICE":
-                var fromUtc = Instant(payload, "fromUtc");
-                var toUtc = Instant(payload, "toUtc");
-                var recon = adapter.Reconcile(fromUtc, toUtc);
-                if (recon.Ok)
-                {
-                    _log.LogInformation(
-                        "Reconcile read device={DeviceId}: {Users} user(s), {Events} attendance record(s) for {From}..{To}",
-                        command.DeviceId, recon.Users.Count, recon.Events.Count, fromUtc, toUtc);
-                    var digest = RosterDigest.Compute(recon.Users);
-                    var unchanged = string.Equals(digest, Text(payload, "knownDigest"), StringComparison.Ordinal);
-                    if (unchanged)
-                    {
-                        _log.LogInformation("Reconcile device={DeviceId}: user list unchanged since the server's last full comparison; not sent",
-                            command.DeviceId);
-                    }
-
-                    return DispatchOutcome.Reconciliation(recon, rosterDigest: digest, usersUnchanged: unchanged);
-                }
-
-                _log.LogWarning("Reconcile read failed device={DeviceId}: {Error}", command.DeviceId, recon.Error);
-                return DispatchOutcome.SyncFail(recon.Error ?? "reconcile failed");
             case "CLEAR_DEVICE_LOGS":
                 return DispatchOutcome.SyncFail("CLEAR_DEVICE_LOGS has no verified SDK API in this adapter");
             default:
@@ -236,93 +223,17 @@ public sealed class CommandDispatcher
             _ => null
         };
     }
-
-    internal static DateTimeOffset? Instant(JsonElement payload, string name)
-    {
-        var text = Text(payload, name);
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return null;
-        }
-
-        if (DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dto))
-        {
-            return dto.ToUniversalTime();
-        }
-
-        if (DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date))
-        {
-            return new DateTimeOffset(DateTime.SpecifyKind(date, DateTimeKind.Utc));
-        }
-
-        return null;
-    }
 }
 
 public sealed record DispatchOutcome(
     string ResultType,
     object Payload,
-    IReadOnlyList<DeviceAttendanceRecord>? Events = null,
     bool Ok = false)
 {
-    public static DispatchOutcome SyncOk() => new(ProtocolTypes.SyncResult, new { ok = true }, null, true);
+    public static DispatchOutcome SyncOk() => new(ProtocolTypes.SyncResult, new { ok = true }, true);
 
-    public static DispatchOutcome SyncOk(object payload) => new(ProtocolTypes.SyncResult, payload, null, true);
+    public static DispatchOutcome SyncOk(object payload) => new(ProtocolTypes.SyncResult, payload, true);
 
     public static DispatchOutcome SyncFail(string error) =>
         new(ProtocolTypes.SyncResult, new { ok = false, error });
-
-    /// <param name="usersUnchanged">The list matches the server's stored checksum, so it is left out.</param>
-    public static DispatchOutcome Reconciliation(DeviceReconciliationResult result, bool usersComplete = true,
-        string? rosterDigest = null, bool usersUnchanged = false)
-    {
-        var users = usersUnchanged ? [] : result.Users;
-        return new(
-            ProtocolTypes.ReconciliationResult,
-            new
-            {
-                ok = true,
-                usersComplete,
-                usersUnchanged,
-                rosterDigest,
-                deviceUserIds = users.Select(u => u.DeviceUserId).ToArray(),
-                deviceUsers = users.Select(u => new
-                {
-                    deviceUserId = u.DeviceUserId,
-                    name = u.Name,
-                    frozen = u.Frozen,
-                    validFrom = u.ValidFrom?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'"),
-                    validTo = u.ValidTo?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
-                }),
-                events = result.Events.Select(e => new
-                {
-                    deviceUserId = e.DeviceUserId,
-                    occurredAt = e.OccurredAt.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'"),
-                    method = e.Method,
-                    granted = e.Granted,
-                    recNo = e.RecNo,
-                    errorCode = e.ErrorCode,
-                    denyReason = MapDenyReason(e.ErrorCode, e.Granted)
-                })
-            },
-            result.Events,
-            true);
-    }
-
-    private static string? MapDenyReason(int? errorCode, bool granted)
-    {
-        if (granted || errorCode is null or 0)
-        {
-            return null;
-        }
-
-        return errorCode.Value switch
-        {
-            0x10 => "UNAUTHORIZED",
-            0x14 => "VALIDITY_PERIOD",
-            0x20 or 0x21 => "PERIOD_ERROR",
-            0x23 => "OVERDUE",
-            _ => "ERR_0x" + errorCode.Value.ToString("X")
-        };
-    }
 }

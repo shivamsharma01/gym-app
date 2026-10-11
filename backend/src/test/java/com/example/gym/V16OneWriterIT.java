@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.example.gym.device.DeviceReconciliationService;
 import com.example.gym.device.DeviceSyncService;
 import com.example.gym.device.GatewayCommandPollService;
 import com.example.gym.device.domain.DeviceReviewItem;
@@ -35,9 +34,6 @@ class V16OneWriterIT extends AbstractIntegrationTest {
 
     @Autowired
     private GatewayCommandPollService pollService;
-
-    @Autowired
-    private DeviceReconciliationService reconciliationService;
 
     private String token;
     private String gatewayPublicId;
@@ -114,10 +110,6 @@ class V16OneWriterIT extends AbstractIntegrationTest {
                 .isEqualTo(SyncCommandState.CANCELLED);
         assertThat(deviceSyncCommandRepository.findById(door.getId()).orElseThrow().getState())
                 .isEqualTo(SyncCommandState.DISPATCHED);
-
-        reconciliationService.applyDeviceUserSnapshot(
-                deviceRepository.findByPublicId(entranceId).orElseThrow(),
-                jsonMapper.readTree("{\"deviceUsers\":[],\"usersComplete\":true}"));
 
         assertThat(reconciliationConflictRepository.count()).isZero();
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(entrance, member.getId())).isPresent();

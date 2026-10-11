@@ -9,11 +9,10 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 /**
- * A normalized access/attendance event ingested from a device (real-time or via reconciliation).
- * De-duplication is enforced by a unique {@code (tenant_id, device_id, fingerprint)} — the
- * fingerprint prefers the device's stable record number and otherwise falls back to a conservative
- * composite (§10), so a real-time event and a later reconciliation of the same physical event never
- * double-count.
+ * A punch read from a reader's log by the gateway's attendance poll. Append-only: only the member
+ * link of an unlinked row is set later. De-duplication is the unique
+ * {@code (tenant_id, device_id, fingerprint)}, so a punch read again in an overlapping window is not
+ * stored twice.
  */
 @Entity
 @Table(name = "attendance_event")
@@ -119,17 +118,5 @@ public class AttendanceEvent extends TenantAwareEntity {
 
     public String getDenyReason() {
         return denyReason;
-    }
-
-    public void setDeviceRecNo(Long deviceRecNo) {
-        this.deviceRecNo = deviceRecNo;
-    }
-
-    public void setFingerprint(String fingerprint) {
-        this.fingerprint = fingerprint;
-    }
-
-    public void setDenyReason(String denyReason) {
-        this.denyReason = denyReason;
     }
 }

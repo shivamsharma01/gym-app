@@ -97,7 +97,6 @@ export function DeviceDetailPage() {
 function Overview({ device }: { device: Device }) {
   const { has } = useAuth()
   const navigate = useNavigate()
-  const qc = useQueryClient()
   const health = useQuery({
     queryKey: ['device-health', device.id],
     queryFn: () => api<DeviceHealth>(`/api/v1/devices/${device.id}/health`),
@@ -108,13 +107,6 @@ function Overview({ device }: { device: Device }) {
     queryFn: () =>
       api<PageResponse<ReconciliationConflict>>(`/api/v1/devices/${device.id}/conflicts?page=${conflictPage}&size=20`),
     placeholderData: keepPreviousData,
-  })
-  const reconcile = useMutation({
-    mutationFn: () => api<SyncCommand>(`/api/v1/devices/${device.id}/reconcile`, { method: 'POST' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['device-health', device.id] })
-      void qc.invalidateQueries({ queryKey: ['sync-commands', device.id] })
-    },
   })
   const resolveConflict = useMutation({
     mutationFn: ({ id, action }: { id: string; action: string }) =>
@@ -164,32 +156,13 @@ function Overview({ device }: { device: Device }) {
           </Card>
           <Card>
             <div className="text-xs uppercase text-muted">Attendance</div>
-            <div className="mt-1 font-semibold">
-              cursor {health.data.attendanceLastRecNo ?? '—'}
-              {health.data.reconciliationRequired ? (
-                <span className="ml-2">
-                  <Badge tone="warn">Reconcile required</Badge>
-                </span>
-              ) : null}
-            </div>
+            <div className="mt-1 font-semibold">Last punch stored {formatDateTime(health.data.lastPunchAt)}</div>
             <p className="mt-2 text-sm text-muted">
-              Last sync {formatDateTime(health.data.lastAttendanceSyncAt ?? health.data.attendanceLastEventAt)} ·
-              conflicts {health.data.openConflictCount}
+              The gateway reads the reader log on a short interval · conflicts {health.data.openConflictCount}
             </p>
           </Card>
         </div>
       ) : null}
-      {has('DEVICE_SYNC') ? (
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
-            Request attendance reconcile
-          </Button>
-        </div>
-      ) : null}
-      {reconcile.isSuccess ? (
-        <p className="text-sm text-ok">Queued {reconcile.data.type} · {reconcile.data.state}</p>
-      ) : null}
-      {reconcile.error ? <QueryError error={reconcile.error} /> : null}
       {conflicts.data && conflicts.data.content.length > 0 ? (
         <Card className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">

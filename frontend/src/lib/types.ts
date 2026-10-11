@@ -183,11 +183,8 @@ export type DeviceHealth = {
   lastSuccessfulSyncAt: string | null
   pendingCommandCount: number
   failedCommandCount: number
-  reconciliationRequired: boolean
-  lastAttendanceSyncAt: string | null
+  lastPunchAt: string | null
   openConflictCount: number
-  attendanceLastRecNo: number | null
-  attendanceLastEventAt: string | null
 }
 
 export type ReconciliationConflict = {

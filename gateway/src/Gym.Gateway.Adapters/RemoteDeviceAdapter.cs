@@ -190,18 +190,6 @@ public sealed class RemoteDeviceAdapter : IDeviceAdapter
     public DeviceCommandResult SynchronizeTime(DateTimeOffset utcNow) =>
         Command(t => _http.PostAsJsonAsync($"{_baseUrl}/device/sync-time", new { utcNow }, JsonOpts, t));
 
-    public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
-    {
-        if (!IsOnline)
-        {
-            return new DeviceReconciliationResult(false, "Device is offline", [], []);
-        }
-
-        var from = fromUtc ?? DateTimeOffset.UtcNow.AddDays(-1);
-        var to = toUtc ?? DateTimeOffset.UtcNow.AddHours(1);
-        return new DeviceReconciliationResult(true, null, FetchAttendance(from, to), ListUsers());
-    }
-
     public void Dispose()
     {
         Disconnect();

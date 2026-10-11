@@ -815,7 +815,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     {
         if (_loginId == IntPtr.Zero)
         {
-            return [];
+            throw new AttendanceReadException("Attendance search failed: the reader is not logged in");
         }
 
         return QueryAttendance(fromUtc, toUtc);
@@ -836,26 +836,6 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
         var ok = NETClient.SetupDeviceTime(_loginId, DeviceClock(utcNow));
         return ok ? DeviceCommandResult.Success() : DeviceCommandResult.Fail(SdkError("SetupDeviceTime failed"));
-    }
-
-    public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
-    {
-        if (!EnsureLogin(out var err))
-        {
-            return new DeviceReconciliationResult(false, err, [], []);
-        }
-
-        var from = fromUtc ?? DateTimeOffset.UtcNow.AddDays(-1);
-        var to = toUtc ?? DateTimeOffset.UtcNow.AddHours(1);
-        var events = QueryAttendance(from, to);
-        try
-        {
-            return new DeviceReconciliationResult(true, null, events, QueryUsers());
-        }
-        catch (DeviceReadException ex)
-        {
-            return new DeviceReconciliationResult(false, "User list could not be read: " + ex.Message, events, []);
-        }
     }
 
     public void Dispose()
@@ -1252,8 +1232,70 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     private IReadOnlyList<DeviceAttendanceRecord> QueryAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc)
     {
-        var findId = IntPtr.Zero;
-        try
+        using var search = new SdkAttendanceSearch(_loginId, fromUtc, toUtc);
+        return ReadAttendance(search, AttendancePage);
+    }
+
+    /// <summary>
+    /// Every record of one search, oldest first. A failed search, a failed page, or a record whose time
+    /// cannot be read throws <see cref="AttendanceReadException"/>: a partial window is never returned
+    /// as complete. A search that finds nothing returns an empty list.
+    /// </summary>
+    internal static IReadOnlyList<DeviceAttendanceRecord> ReadAttendance(IAttendanceSearch search, int page)
+    {
+        if (!search.Start(out var startError))
+        {
+            throw new AttendanceReadException("Attendance search failed: " + startError);
+        }
+
+        var records = new List<DeviceAttendanceRecord>();
+        for (var pageNo = 1; ; pageNo++)
+        {
+            var result = search.Next(page, out var rows, out var pageError);
+            if (result < 0)
+            {
+                throw new AttendanceReadException(
+                    $"Attendance page {pageNo} failed after {records.Count} record(s): {pageError}");
+            }
+
+            foreach (var row in rows)
+            {
+                if (!TryUtc(row.stuTime, out var at))
+                {
+                    throw new AttendanceReadException(
+                        $"Attendance record {row.nRecNo} has an unreadable time {Raw(row.stuTime)}");
+                }
+
+                records.Add(ToAttendance(row, at));
+            }
+
+            if (rows.Count < page)
+            {
+                break;
+            }
+        }
+
+        return records
+            .OrderBy(r => r.OccurredAt)
+            .ThenBy(r => r.RecNo ?? long.MaxValue)
+            .ToArray();
+    }
+
+    /// <summary>One SDK attendance record search.</summary>
+    internal interface IAttendanceSearch
+    {
+        bool Start(out string error);
+
+        /// <returns>Negative when the page failed; otherwise the SDK result, with the page's records.</returns>
+        int Next(int max, out IReadOnlyList<NET_RECORDSET_ACCESS_CTL_CARDREC> records, out string error);
+    }
+
+    private sealed class SdkAttendanceSearch(IntPtr loginId, DateTimeOffset? fromUtc, DateTimeOffset? toUtc)
+        : IAttendanceSearch, IDisposable
+    {
+        private IntPtr _findId = IntPtr.Zero;
+
+        public bool Start(out string error)
         {
             var condition = new NET_FIND_RECORD_ACCESSCTLCARDREC_CONDITION_EX
             {
@@ -1272,57 +1314,53 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
             object boxed = condition;
             if (!NETClient.FindRecord(
-                    _loginId,
+                    loginId,
                     EM_NET_RECORD_TYPE.ACCESSCTLCARDREC_EX,
                     boxed,
                     typeof(NET_FIND_RECORD_ACCESSCTLCARDREC_CONDITION_EX),
-                    ref findId,
+                    ref _findId,
                     10000)
-                || findId == IntPtr.Zero)
+                || _findId == IntPtr.Zero)
             {
-                return [];
+                error = NETClient.GetLastError();
+                return false;
             }
 
-            const int page = AttendancePage;
-            var records = new List<DeviceAttendanceRecord>();
-            while (true)
-            {
-                var ls = new List<object>(page);
-                for (var i = 0; i < page; i++)
-                {
-                    var rec = new NET_RECORDSET_ACCESS_CTL_CARDREC
-                    {
-                        dwSize = (uint)Marshal.SizeOf<NET_RECORDSET_ACCESS_CTL_CARDREC>()
-                    };
-                    ls.Add(rec);
-                }
-
-                var retNum = 0;
-                NETClient.FindNextRecord(findId, page, ref retNum, ref ls, typeof(NET_RECORDSET_ACCESS_CTL_CARDREC), 10000);
-                if (retNum <= 0)
-                {
-                    break;
-                }
-
-                for (var i = 0; i < retNum && i < ls.Count; i++)
-                {
-                    var info = (NET_RECORDSET_ACCESS_CTL_CARDREC)ls[i];
-                    records.Add(ToAttendance(info));
-                }
-
-                if (retNum < page)
-                {
-                    break;
-                }
-            }
-
-            return records;
+            error = "";
+            return true;
         }
-        finally
+
+        public int Next(int max, out IReadOnlyList<NET_RECORDSET_ACCESS_CTL_CARDREC> records, out string error)
         {
-            if (findId != IntPtr.Zero)
+            var ls = new List<object>(max);
+            for (var i = 0; i < max; i++)
             {
-                NETClient.FindRecordClose(findId);
+                ls.Add(new NET_RECORDSET_ACCESS_CTL_CARDREC
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_RECORDSET_ACCESS_CTL_CARDREC>()
+                });
+            }
+
+            var retNum = 0;
+            var result = NETClient.FindNextRecord(_findId, max, ref retNum, ref ls, typeof(NET_RECORDSET_ACCESS_CTL_CARDREC), 10000);
+            if (result < 0)
+            {
+                records = [];
+                error = NETClient.GetLastError();
+                return result;
+            }
+
+            records = ls.Take(Math.Max(0, retNum)).Cast<NET_RECORDSET_ACCESS_CTL_CARDREC>().ToArray();
+            error = "";
+            return result;
+        }
+
+        public void Dispose()
+        {
+            if (_findId != IntPtr.Zero)
+            {
+                NETClient.FindRecordClose(_findId);
+                _findId = IntPtr.Zero;
             }
         }
     }
@@ -1569,9 +1607,30 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
     }
 
-    private static DeviceAttendanceRecord ToAttendance(NET_RECORDSET_ACCESS_CTL_CARDREC info) =>
-        new(NullIfEmpty(info.szUserID), ToUtc(info.stuTime), MapMethod(info.emMethod), info.bStatus,
+    private static DeviceAttendanceRecord ToAttendance(NET_RECORDSET_ACCESS_CTL_CARDREC info, DateTimeOffset occurredAt) =>
+        new(NullIfEmpty(info.szUserID), occurredAt, MapMethod(info.emMethod), info.bStatus,
             info.nRecNo, info.bStatus ? null : info.nErrorCode);
+
+    /// <summary>A record's <c>stuTime</c> as UTC, or false when it is not a valid date and time.</summary>
+    private static bool TryUtc(NET_TIME time, out DateTimeOffset value)
+    {
+        try
+        {
+            value = new DateTimeOffset(new DateTime(
+                (int)time.dwYear, (int)time.dwMonth, (int)time.dwDay,
+                (int)time.dwHour, (int)time.dwMinute, (int)time.dwSecond,
+                DateTimeKind.Utc));
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            value = default;
+            return false;
+        }
+    }
+
+    private static string Raw(NET_TIME time) =>
+        $"{time.dwYear:D4}-{time.dwMonth:D2}-{time.dwDay:D2} {time.dwHour:D2}:{time.dwMinute:D2}:{time.dwSecond:D2}";
 
     private static string MapMethod(EM_ACCESS_DOOROPEN_METHOD method) =>
         method == EM_ACCESS_DOOROPEN_METHOD.FACE_RECOGNITION ? "FACE" : method.ToString();

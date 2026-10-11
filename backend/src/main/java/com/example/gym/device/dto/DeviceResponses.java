@@ -117,11 +117,8 @@ public final class DeviceResponses {
             Instant lastSuccessfulSyncAt,
             long pendingCommandCount,
             long failedCommandCount,
-            boolean reconciliationRequired,
-            Instant lastAttendanceSyncAt,
-            long openConflictCount,
-            Long attendanceLastRecNo,
-            Instant attendanceLastEventAt) {
+            Instant lastPunchAt,
+            long openConflictCount) {
     }
 
     public record ConflictView(

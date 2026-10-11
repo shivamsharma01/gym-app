@@ -53,6 +53,8 @@ Live door allow can succeed without the SDK delivering `ALARM_ACCESS_CTL_EVENT` 
 
 Attendance ingestion should use the same defense in depth: do not treat a missing live alarm as a missing punch. The 7 October 2026 run stored punches and received no `ALARM_ACCESS_CTL_EVENT`.
 
+The gateway therefore does not use live access events as attendance (V19). It reads each reader's attendance log by time window on its own short interval (`AttendancePollSeconds`, default 15), starting a little before the last stored punch. The server stores each punch once and links it to a member through the reader mapping; a punch by an id with no mapping is stored without a member. The attendance list refreshes every 15 seconds. The reader log is never cleared, and attendance never changes members or mappings. There is no manual attendance reconcile.
+
 ## People already on a reader
 
 A trusted roster becomes a bootstrap report. A matching mapping stays on the desired projection. A different name becomes a review item. An unlinked person becomes a pending enrollment. The same device user id for different people on two readers is a collision report; the mappings stay separate. Two members with the same name are not linked automatically.
@@ -73,4 +75,4 @@ Members list **Source** is Manual or Device. SUPER_ADMIN CSV export has no face 
 - Super admin acting as a gym
 - Changing plan mid-cycle (dates can be edited; the plan cannot)
 - Member profile payments omit the paid-on date
-- The attendance poll (V19), closing a staff decision that a later member change superseded (V20), and late activations, late photos, and readers added with people on them reaching every reader (V21), in [execution-plan.md](architecture/execution-plan.md)
+- Closing a staff decision that a later member change superseded (V20), and late activations, late photos, and readers added with people on them reaching every reader (V21), in [execution-plan.md](architecture/execution-plan.md)

@@ -116,8 +116,6 @@ public class DeviceReadService {
         AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(device.getId()).orElse(null);
         long openConflicts = conflictRepository.countByDeviceIdAndStatus(
                 device.getId(), ReconciliationConflictStatus.OPEN);
-        boolean reconRequired = cursor != null && cursor.isReconciliationRequired();
-        Instant lastAttendanceSync = cursor == null ? null : cursor.getLastEventAt();
         return new DeviceHealth(
                 device.getPublicId(),
                 device.getConnectionState().name(),
@@ -127,10 +125,7 @@ public class DeviceReadService {
                 lastSync,
                 pending,
                 failed,
-                reconRequired || openConflicts > 0,
-                lastAttendanceSync,
-                openConflicts,
-                cursor == null ? null : cursor.getLastRecNo(),
-                cursor == null ? null : cursor.getLastEventAt());
+                cursor == null ? null : cursor.getLastEventAt(),
+                openConflicts);
     }
 }

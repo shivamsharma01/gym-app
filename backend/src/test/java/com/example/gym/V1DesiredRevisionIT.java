@@ -487,10 +487,8 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
 
         connected.onGatewayConnected(new GatewayConnectedEvent(gateway.getPublicId(), gateway.getId()));
 
-        assertThat(commands(flagged)).extracting(DeviceSyncCommand::getType)
-                .containsExactly(SyncCommandType.RECONCILE_DEVICE);
-        assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
-                .containsExactly(SyncCommandType.RECONCILE_DEVICE);
+        assertThat(commands(flagged)).isEmpty();
+        assertThat(commands(other)).isEmpty();
     }
 
     @Test

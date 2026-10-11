@@ -19,11 +19,8 @@ const health = {
   lastSuccessfulSyncAt: null,
   pendingCommandCount: 0,
   failedCommandCount: 0,
-  reconciliationRequired: false,
-  lastAttendanceSyncAt: null,
+  lastPunchAt: null,
   openConflictCount: 0,
-  attendanceLastRecNo: null,
-  attendanceLastEventAt: null,
 }
 
 const device = {
@@ -80,13 +77,42 @@ const membership = {
   netAmount: 1000,
 }
 
-test('a reader has attendance reconcile and no member import', async ({ page }) => {
+test('a reader shows its last stored punch and offers no reconcile or member import', async ({ page }) => {
   await mockStaff(page)
   await page.goto('/app/devices/dev-1')
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
+  await expect(page.getByText(/Last punch stored/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Sync Now' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Import device users' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Request attendance reconcile' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /reconcile/i })).toHaveCount(0)
+})
+
+test('a punch stored by the gateway appears once in the attendance list without a reload', async ({ page }) => {
+  await page.clock.install()
+  await mockStaff(page)
+  const rows: object[] = []
+  await page.route('**/api/v1/attendance?**', async (route) => {
+    await route.fulfill({ json: { content: rows, totalElements: rows.length, totalPages: 1, number: 0, size: 30 } })
+  })
+  await page.goto('/app/attendance')
+  await expect(page.getByText('No attendance yet')).toBeVisible()
+
+  rows.push({
+    id: 'att-1',
+    occurredAt: '2026-10-11T05:00:00Z',
+    direction: 'IN',
+    method: 'FACE',
+    result: 'GRANTED',
+    deviceUserId: '1',
+    deviceRecNo: 7,
+    memberLinked: true,
+    memberName: 'Asha Shah',
+    createdAt: '2026-10-11T05:00:05Z',
+  })
+  await page.clock.runFor(16_000)
+
+  await expect(page.locator('tbody tr')).toHaveCount(1)
+  await expect(page.locator('tbody tr').first()).toContainText('Asha Shah')
 })
 
 test('a validity difference is shown for review and neither side is applied automatically', async ({ page }) => {

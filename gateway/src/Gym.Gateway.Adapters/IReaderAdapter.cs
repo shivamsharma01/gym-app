@@ -34,4 +34,10 @@ public interface IReaderAdapter
 
     /// <summary>Removes the device user. Removing an id that is already gone succeeds.</summary>
     ReaderCallResult RemoveUser(string deviceUserId);
+
+    /// <summary>
+    /// Punches in the reader log between the two instants, inclusive. The reader's punch time is
+    /// taken as UTC. The log is only read: nothing is cleared and no record number is a cursor.
+    /// </summary>
+    ReaderPunchResult QueryAttendance(DateTimeOffset fromUtc, DateTimeOffset toUtc);
 }

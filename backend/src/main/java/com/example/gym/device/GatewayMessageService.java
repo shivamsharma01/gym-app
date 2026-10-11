@@ -43,9 +43,7 @@ public class GatewayMessageService {
     private final DeviceRepository deviceRepository;
     private final DeviceSyncCommandRepository commandRepository;
     private final DeviceService deviceService;
-    private final AttendanceIngestionService attendanceIngestionService;
     private final DeviceSyncService deviceSyncService;
-    private final DeviceReconciliationService reconciliationService;
     private final GatewayMessageDedupeService dedupeService;
     private final SecurityEventRepository securityEventRepository;
     private final MemberDeviceMappingRepository mappingRepository;
@@ -58,9 +56,7 @@ public class GatewayMessageService {
                                  DeviceRepository deviceRepository,
                                  DeviceSyncCommandRepository commandRepository,
                                  DeviceService deviceService,
-                                 AttendanceIngestionService attendanceIngestionService,
                                  DeviceSyncService deviceSyncService,
-                                 DeviceReconciliationService reconciliationService,
                                  GatewayMessageDedupeService dedupeService,
                                  SecurityEventRepository securityEventRepository,
                                  MemberDeviceMappingRepository mappingRepository,
@@ -73,9 +69,7 @@ public class GatewayMessageService {
         this.deviceRepository = deviceRepository;
         this.commandRepository = commandRepository;
         this.deviceService = deviceService;
-        this.attendanceIngestionService = attendanceIngestionService;
         this.deviceSyncService = deviceSyncService;
-        this.reconciliationService = reconciliationService;
         this.dedupeService = dedupeService;
         this.securityEventRepository = securityEventRepository;
         this.mappingRepository = mappingRepository;
@@ -161,7 +155,6 @@ public class GatewayMessageService {
             case DEVICE_STATUS, DEVICE_METADATA -> {
                 Device device = ownedDevice(message);
                 if (device != null) {
-                    DeviceConnectionState previous = device.getConnectionState();
                     deviceService.updateConnection(device,
                             connectionState(message.payload()),
                             text(message.payload(), "firmware"),
@@ -172,22 +165,12 @@ public class GatewayMessageService {
                             Map.of(
                                     "deviceId", device.getPublicId(),
                                     "connectionState", state == null ? "" : state.name())));
-                    if (state == DeviceConnectionState.ONLINE
-                            && previous != DeviceConnectionState.ONLINE) {
-                        deviceService.enqueueReconcileIfAbsent(device);
-                    }
-                    String details = text(message.payload(), "details");
-                    if (details != null && details.toLowerCase().contains("reconnect")) {
-                        deviceService.enqueueReconcileIfAbsent(device);
-                    }
                 }
                 yield ack(message);
             }
-            case DEVICE_EVENT -> {
-                Device device = ownedDevice(message);
-                if (device != null) {
-                    ingestEvent(device, message.payload(), message.timestamp());
-                }
+            case DEVICE_EVENT, RECONCILIATION_RESULT -> {
+                // Attendance comes only from the gateway's poll of the reader log.
+                FlowLog.info("gateway", "ignored {} device={}: not an attendance source", type, message.deviceId());
                 yield ack(message);
             }
             case DEVICE_ALARM -> {
@@ -214,39 +197,6 @@ public class GatewayMessageService {
                         skipped ? text(message.payload(), "reason") : text(message.payload(), "error"), skipped);
                 yield ack(message);
             }
-            case RECONCILIATION_RESULT -> {
-                if (!syncResultAllowed(message)) {
-                    throw new ForeignDeviceRejected(message.correlationId());
-                }
-                Device device = ownedDevice(message);
-                if (device != null) {
-                    boolean ok = message.payload() == null || !message.payload().has("ok")
-                            || message.payload().get("ok").asBoolean();
-                    FlowLog.info("gateway", "reconcile result device={} ok={} users={} events={} error={}",
-                            device.getPublicId(), ok, arraySize(message.payload(), "deviceUsers"),
-                            arraySize(message.payload(), "events"), text(message.payload(), "error"));
-                    if (!ok) {
-                        attendanceIngestionService.markReconciliationRequired(
-                                device.getTenantId(), device.getId(), true);
-                    } else {
-                        // Users first, so punches by users this snapshot maps are credited on insert.
-                        reconciliationService.applyDeviceUserSnapshot(device, message.payload());
-                        JsonNode eventNodes = message.payload() == null ? null
-                                : message.payload().get("events");
-                        if (eventNodes != null && eventNodes.isArray()) {
-                            eventNodes.forEach(e -> ingestEvent(device, e, message.timestamp()));
-                        }
-                        attendanceIngestionService.markReconciliationRequired(
-                                device.getTenantId(), device.getId(), false);
-                    }
-                    // Complete the outbox command even when the gateway also sent SYNC_RESULT
-                    if (message.correlationId() != null) {
-                        deviceSyncService.handleResult(message.correlationId(), ok,
-                                text(message.payload(), "error"));
-                    }
-                }
-                yield ack(message);
-            }
             case DEVICE_USER_CHANGED -> {
                 Device device = ownedDevice(message);
                 if (device != null) {
@@ -270,11 +220,6 @@ public class GatewayMessageService {
         return reply(GatewayMessageType.ERROR, null, Map.of("error", "gateway credential required"));
     }
 
-    private static int arraySize(JsonNode payload, String field) {
-        JsonNode node = payload == null ? null : payload.get(field);
-        return node != null && node.isArray() ? node.size() : 0;
-    }
-
     /** Short, safe summary of the fields that explain a message (no photos or credentials). */
     private String describe(GatewayMessageType type, JsonNode payload) {
         if (payload == null) {
@@ -283,47 +228,11 @@ public class GatewayMessageService {
         return switch (type) {
             case SYNC_RESULT -> " ok=" + text(payload, "ok") + " skipped=" + text(payload, "skipped")
                     + " error=" + text(payload, "error") + " reason=" + text(payload, "reason");
-            case DEVICE_EVENT -> " user=" + text(payload, "deviceUserId") + " granted=" + text(payload, "granted")
-                    + " recNo=" + text(payload, "recNo") + " at=" + text(payload, "occurredAt");
             case DEVICE_USER_CHANGED -> " user=" + text(payload, "deviceUserId") + " isNew=" + text(payload, "isNew")
                     + " deleted=" + text(payload, "deleted") + " nameChanged=" + text(payload, "nameChanged")
                     + " accessChanged=" + text(payload, "frozenChanged") + "/" + text(payload, "validityChanged")
                     + " faceChanged=" + text(payload, "faceChanged") + " changedAt=" + text(payload, "deviceChangedAt");
-            case RECONCILIATION_RESULT -> " users=" + arraySize(payload, "deviceUsers")
-                    + " events=" + arraySize(payload, "events");
             default -> "";
-        };
-    }
-
-    private void ingestEvent(Device device, JsonNode payload, Instant messageTimestamp) {
-        if (payload == null) {
-            return;
-        }
-        String deviceUserId = text(payload, "deviceUserId");
-        Instant occurredAt = instantOr(payload, "occurredAt", messageTimestamp);
-        String method = textOr(payload, "method", "UNKNOWN");
-        boolean granted = payload.has("granted") ? payload.get("granted").asBoolean()
-                : "GRANTED".equalsIgnoreCase(text(payload, "result"));
-        Long recNo = null;
-        if (payload.has("recNo") && !payload.get("recNo").isNull()) {
-            recNo = payload.get("recNo").asLong();
-        }
-        String denyReason = text(payload, "denyReason");
-        if (denyReason == null && payload.has("errorCode") && !payload.get("errorCode").isNull()) {
-            denyReason = mapErrorCode(payload.get("errorCode").asInt());
-        }
-        attendanceIngestionService.ingest(device, deviceUserId, occurredAt, method, granted, recNo,
-                denyReason);
-    }
-
-    private static String mapErrorCode(int code) {
-        return switch (code) {
-            case 0x00 -> null;
-            case 0x10 -> "UNAUTHORIZED";
-            case 0x14 -> "VALIDITY_PERIOD";
-            case 0x20, 0x21 -> "PERIOD_ERROR";
-            case 0x23 -> "OVERDUE";
-            default -> "ERR_0x" + Integer.toHexString(code).toUpperCase();
         };
     }
 

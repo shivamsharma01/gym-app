@@ -19,8 +19,8 @@ These are product or hardware questions the architecture does not close. Do not 
 - A member is not created without a face photo.
 - A new member is published to every reader of the gym. The create screen does not ask for a reader.
 - Gym admin and staff may decide a review item. A pending enrollment of a person on a reader does not expire. The one-time gateway enrollment token does expire (24 hours) and is consumed on use.
-- The WebSocket carries live gateway traffic. The HTTP command poll runs only while that socket is down, so a dropped socket still delivers door, clock, and reconcile commands.
-- Attendance should reach admins as soon as the punches exist, by a poll that does not repeat work while nothing has changed. The reader log is not cleared.
+- The WebSocket carries live gateway traffic. The HTTP command poll runs only while that socket is down, so a dropped socket still delivers door and clock commands.
+- Attendance should reach admins as soon as the punches exist, by a poll that does not repeat work while nothing has changed. The reader log is not cleared. V19 builds this as a gateway-owned time-window poll; the server no longer schedules attendance reads.
 - An unlinked person is not copied to another reader while the server is down. The server publishes desired state. The gateway does not resolve that conflict on its own.
 - Gateway authentication is the credential. Anonymous access is not part of the design. F1 records that the automated tests passed.
 
@@ -30,6 +30,7 @@ These are product or hardware questions the architecture does not close. Do not 
 2. Door and time-section values other than the probe's `nDoorNum=1` and `nTimeSectionNum=1`.
 3. SDK reconnect as a guaranteed behavior. One power cycle reconnected and one did not.
 4. Attendance record-number survival across reboot or a full log, and the reader's retention cap. The poll is a time window of append-only rows and must not write member state.
+5. How staff recover when an attendance record's time cannot be read. Today, that record stalls the reader's attendance; it is never skipped and never given the current time. A recovery step, such as an audited skip of one named record, needs a product decision.
 
 ## Operational risks that remain
 

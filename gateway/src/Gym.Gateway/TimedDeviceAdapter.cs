@@ -222,15 +222,6 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
     public DeviceCommandResult SynchronizeTime(DateTimeOffset utcNow) =>
         Command(nameof(SynchronizeTime), null, () => _inner.SynchronizeTime(utcNow));
 
-    public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
-    {
-        var sw = Stopwatch.StartNew();
-        var result = _inner.Reconcile(fromUtc, toUtc);
-        Report(nameof(Reconcile), $"{result.Users.Count} user(s), {result.Events.Count} record(s), ok={result.Ok}", sw.Elapsed);
-        Observe(result.Ok, result.Error);
-        return result;
-    }
-
     public void Dispose() => _inner.Dispose();
 
     internal static bool IsConnectionError(string? error) =>

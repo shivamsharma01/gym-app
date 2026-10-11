@@ -7,22 +7,6 @@ namespace Gym.Gateway.Tests;
 public class FaceSyncTests
 {
     [Fact]
-    public void Roster_checksum_ignores_list_order_and_sees_every_field()
-    {
-        var a = new DeviceUserSnapshot("1", "Asha", false, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
-            new DateTimeOffset(2026, 12, 31, 23, 59, 59, TimeSpan.Zero), Authority: "USER");
-        var b = new DeviceUserSnapshot("2", "Ravi", true);
-        var digest = RosterDigest.Compute([a, b]);
-
-        Assert.Equal(digest, RosterDigest.Compute([b, a]));
-        Assert.NotEqual(digest, RosterDigest.Compute([a with { Name = "Asha K" }, b]));
-        Assert.NotEqual(digest, RosterDigest.Compute([a with { Frozen = true }, b]));
-        Assert.NotEqual(digest, RosterDigest.Compute([a with { ValidTo = a.ValidTo!.Value.AddDays(1) }, b]));
-        Assert.NotEqual(digest, RosterDigest.Compute([a with { Authority = "ADMIN" }, b]));
-        Assert.NotEqual(digest, RosterDigest.Compute([a]));
-    }
-
-    [Fact]
     public void Repeated_connection_errors_mark_the_reader_degraded()
     {
         var (mock, _) = Device();

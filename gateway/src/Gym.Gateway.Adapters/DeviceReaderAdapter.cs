@@ -242,6 +242,38 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
         }
     }
 
+    /// <summary>
+    /// A time-window record query. A failed search, a failed page, or an unreadable record time is a
+    /// failed read, never an empty or partial window, so the poll posts nothing and reads the same
+    /// window again next time.
+    /// </summary>
+    public ReaderPunchResult QueryAttendance(DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    {
+        if (!Online(out var error))
+        {
+            return ReaderPunchResult.Failed(error);
+        }
+
+        try
+        {
+            var punches = _device.FetchAttendance(fromUtc, toUtc)
+                .Where(record => record.OccurredAt >= fromUtc && record.OccurredAt <= toUtc)
+                .Select(record => new ReaderPunch(
+                    record.DeviceUserId,
+                    record.OccurredAt.ToUniversalTime(),
+                    record.RecNo,
+                    record.Method,
+                    record.Granted,
+                    record.ErrorCode))
+                .ToArray();
+            return ReaderPunchResult.Found(punches);
+        }
+        catch (Exception ex)
+        {
+            return ReaderPunchResult.Failed(ex.Message);
+        }
+    }
+
     /// <summary>NO_RECORD is a missing user. UNKNOWN, including the shared SDK error, is not.</summary>
     internal static ReaderUserResult FromLookup(TrueFaceDeviceAdapter.UserLookup lookup) =>
         lookup switch

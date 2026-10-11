@@ -236,16 +236,6 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
         return ConnectedOrFail();
     }
 
-    public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
-    {
-        if (!EnsureConnected(out var err))
-        {
-            return new DeviceReconciliationResult(false, err, [], []);
-        }
-
-        return new DeviceReconciliationResult(true, null, FetchAttendance(fromUtc, toUtc), ListUsers());
-    }
-
     /// <summary>Test helper: emit a mock attendance event as if the terminal reported it.</summary>
     public void EmitAccessEvent(string deviceUserId, bool granted, long? recNo = null, string method = "FACE")
     {

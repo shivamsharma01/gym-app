@@ -7,8 +7,7 @@ import jakarta.persistence.Table;
 import java.time.LocalDate;
 
 /**
- * Last-known access-user enumeration for a device (from RECONCILIATION_RESULT). Used by roster
- * import; never stores biometrics.
+ * Last-known access-user enumeration for a device. Never stores biometrics.
  */
 @Entity
 @Table(name = "device_user_snapshot")

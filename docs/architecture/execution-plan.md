@@ -1,6 +1,6 @@
 # Execution plan
 
-Status: F1–F3 and V1–V18 are implemented. Their automated tests passed on the fake reader and the test database. V19, V20, and V21 are not built. Section E has not been run on a physical reader.
+Status: F1–F3 and V1–V19 are implemented. Their automated tests passed on the fake reader and the test database. V20 and V21 are not built. Section E has not been run on a physical reader.
 Architecture: [device-sync-architecture.md](device-sync-architecture.md).
 Open questions: [open-questions.md](open-questions.md).
 Evidence: [device-poc-results.md](device-poc-results.md), reader serial `TW30000005250265`.
@@ -518,6 +518,32 @@ Specified in full in section C. This is the first vertical slice.
 
 **Done.** Tests green on the fake reader. Record-number survival across a reboot or full log stays open (Section D).
 
+Automated tests passed on the fake reader and test database. `V19AttendancePollIT` (13) covers the following: a repeated window stores nothing twice; an empty window writes nothing and creates no cursor; an unmapped id is stored unlinked and creates no member; ingest changes no member, mapping, or desired row; the cursor only moves forward; a punch dated after the server's clock is stored but does not move the cursor, and a later real punch is still stored and moves it; a window of only future-dated punches leaves the cursor where it was; a batch of 500 is stored and a batch of 501 is refused with nothing written; a record number seen again at another time is a new punch; a punch stored before polling is not stored again; a punch appears once in `/api/v1/attendance`; a live `DEVICE_EVENT` is ignored; and only the reader's own gateway may post. `AttendancePollTests` (15) in the gateway suite covers the following: a repeated window posts each punch once; an empty window posts nothing; the window starts at the last stored punch less the overlap (or the first lookback); a failed read posts nothing and the same window is read again; a failed upload is sent again; a window of 1,201 punches is uploaded oldest first as 500, 500 and 201; when the second batch fails, the cursor stays at the last punch of the first batch, and the next poll sends the remaining 701 with no duplicate; a future-dated punch does not stop later real punches from being read; a last stored time ahead of the gateway clock never starts a window in the future; an unknown reader user's punch is still sent; the poll only queries and never writes or clears the reader; and a member write waits for the attendance query but not for the upload. `LiveReaderAdapterTests` covers the live adapter's record search through a scripted SDK search: a search that finds nothing is an empty window; a failed search, a failed later page, and a record with an unreadable time each fail the whole window instead of returning part of it; pages are read to the end and returned oldest first as UTC; and a failed live read reaches the poll as a failed read with no punches. The acceptance case runs `GatewayWorker` over HTTP: a fake-reader punch is posted once across two polls. In Playwright, a stored punch appears once in the attendance list on its 15-second refresh, without a reload.
+
+How it is built:
+- The server stores a window at `POST /internal/gateway/attendance` and returns the reader's last stored punch time at `GET /internal/gateway/attendance/cursor`.
+- The fingerprint is user, time, method, result, and record number together. A record number alone is not trusted as the key, because its survival is unproven. A row stored by the old event path is recognized so it is not stored twice.
+- The gateway polls each reader every `AttendancePollSeconds` (default 15). The window runs from `AttendanceOverlapSeconds` (default 120) before the last stored punch to now, or from `AttendanceFirstLookbackHours` (default 24) back when the reader has no stored punch. Each reader call runs under the same per-reader lock as the member worker, the command dispatcher, and clock sync. The lock covers only the query, never the upload.
+- `stuTime` is converted as UTC. The reader clock is not changed.
+- Uploads go oldest first, in batches of at most 500 (the server's limit). A failed batch ends the poll. The batches before it are stored, and the server's cursor is at most the last punch of the last stored batch, so it never passes an unsent punch. The next window starts there less the overlap, and punches already confirmed are not sent again. The server also deduplicates every punch.
+- A punch dated after the server's clock is stored, logged as a warning, and does not move the cursor. The gateway never starts a window after its own clock, even if the stored time is ahead of it.
+- On the live adapter, a failed record search, a failed later page, an unreadable record time, or a reader that is not logged in is a failed read. It is never returned as an empty or partial window. Records are returned oldest first.
+
+Legacy paths checked against this slice and removed, because they conflict with it:
+- Live `ALARM_ACCESS_CTL_EVENT` forwarding (`DEVICE_EVENT`). The gateway no longer sends it, and the server acknowledges and ignores it.
+- The server-scheduled `RECONCILE_DEVICE` / `REFRESH_DEVICE_USERS` / `RECONCILIATION_RESULT` path. It was server-owned rather than on the gateway's schedule, queried after a record number, read the full user list under the reader lock, and could rewrite stored rows. This removal includes the auto-reconcile scheduler, the reconcile on connect and on ONLINE, the `/reconcile` and `/sync-now` endpoints, the roster digest, `reconciliationRequired`, and the record-number cursor. Commands of those types already queued are cancelled with a reason, and new ones are refused.
+- The reader page's reconcile button and record-number cursor display. It now shows the last stored punch time.
+
+Kept: `attendance_sync_cursor.last_event_at` as the last stored punch time, mapping-based linking, security events for denied and unknown punches, and the staff live broadcast. The columns of the removed fields stay in the schema, with no migration.
+
+Limitations:
+- A record whose time cannot be read fails every window that contains it. That reader's attendance stops at that point, with a warning naming the record, until the record leaves the window or someone intervenes. Skipping the record would risk moving past real punches. The recovery policy is a tracked follow-up (Section D).
+- It is unverified on hardware whether `FindRecord` on this firmware succeeds for a time window with no records. If it fails, an empty window is reported as a failed read and retried each poll. Nothing is stored or skipped, but the log shows warnings.
+- The scripted SDK search tests the adapter's handling of search results. They do not call the native SDK.
+- A punch dated after the server's clock is kept and does not move the cursor. If the reader clock is ahead, its punches can still be read and stored, but they do not move the cursor until server time catches up.
+- An unknown route still returns 500 instead of 404. That predates this slice.
+- No physical reader was polled.
+
 ### V20 — A superseded staff decision still closes
 
 **Behavior.** A review item or pending enrollment that a staff decision put into applying state closes once the reader confirms a later revision of the same user. Today it closes only when the gateway acknowledges the exact decision revision. If a member change (for example a rename) publishes a newer revision of that user before the gateway applies the decision, the decision revision is never acknowledged: the gateway refuses it as superseded. The item then stays in applying state forever, even though the reader converges.
@@ -628,7 +654,8 @@ These are not defined tightly enough to pretend they are already specified.
 | Create without a face | Not allowed. Deleting a photo that was already stored is a face-clear revision on readers that already have the member. |
 | Door and time-section fields beyond the probe's create | V1 sends the same `nDoorNum=1` and `nTimeSectionNum=1` the probe used. Other schedules are not verified. |
 | SDK reconnect | One power cycle reconnected and one did not. V6 re-reads and pulls. It does not depend on the old login surviving. |
-| Attendance cursor across reboot or a full log | Unproven. V19 polls by time window, so it does not rely on record numbers. |
+| Attendance cursor across reboot or a full log | Unproven. V19 polls by time window from the last stored punch time, so it does not rely on record numbers, and its fingerprint does not trust a record number alone. Record-number survival across a reboot or a full log, and the reader's retention cap, are not measured. |
+| Unreadable attendance record time | Tracked follow-up; the safety check stays. A record whose `stuTime` cannot be read fails every window that contains it, so that reader's attendance stalls with a warning naming the record. It is never skipped, and the current time is never substituted, because either could move the cursor past real punches. How staff recover from this (for example, an explicit, audited skip of one named record) is not decided. Whether this firmware can produce such a record has not been observed. |
 | `emAuthority` | The menu asks for the reader password. V1 sends `Customer`. Authority changes are observations later, not a projection. |
 
 ## E. Physical-reader confirmation
@@ -641,19 +668,28 @@ Required once, on a reader, before that reader is treated as validated for live 
 - V4 face replace and `PHOTO_EXIST`.
 - Face removal: the user stays, the photo read is the missing-photo result (`UNKNOWN`, SDK `0x800004B5`), and a second remove of an already-missing photo succeeds.
 - V6 reconnect read-before-write.
+- V19 attendance poll, through the Windows gateway build with the live adapter, on serial `TW30000005250265`:
+  - A genuinely empty window: a time range with no punches returns an empty, successful read. This is the first thing to establish: if `FindRecord` fails for an empty range on this firmware, the poll reports a failed read and retries every interval.
+  - Oldest-first order and paging: a window with more punches than one SDK page (20) returns every punch exactly once, oldest first, and the server stores each once.
+  - A failed search and a failed later page (for example, the network dropped during the query): the poll posts nothing from that window, the cursor does not move, and the next poll reads the same window again.
+  - Reboot: punch, power-cycle the reader, punch again. Both punches are stored once, nothing is duplicated after the reconnect, and the record numbers before and after are noted for the Section D question.
+  - Punches near or ahead of server time: a punch within seconds of server time is stored, and one later punch is still stored. The reader clock is not moved to test "ahead": compare the punch `stuTime` with server time and record the offset seen. Do not call `SynchronizeTime` to set the reader to UTC.
+  - Retention (how many records the log keeps, and what happens when it is full) is not tested on this unit, because its log must not be filled. It needs a spare reader.
+
+Status: not run. On 12 October 2026 this pass could not be run from the development machine: the NetSDK ships only Windows libraries (`gateway/native/win-x64`), the machine is Linux, and a reboot needs someone at the reader. None of the items above have physical-reader evidence.
 
 The 7 October 2026 probe measured related SDK behavior on serial `TW30000005250265`. That run is evidence for the design. It is not this confirmation pass. V8 through V15 do not need a new hardware experiment. Do not factory-reset this unit and do not fill its log to test them.
 
 ## F. Fake reader only
 
-F1's credential tests, F2, F3, and V1 through V18 were accepted on the fake reader and the test database. That acceptance does not close section E.
+F1's credential tests, F2, F3, and V1 through V19 were accepted on the fake reader and the test database. That acceptance does not close section E.
 
 ## G. Remaining gates
 
-The slice checks through V18 are recorded as done on the fake reader and test database in each slice above. On 9 October 2026, before V18, `ReaderConcurrencyIT` (7 tests) passed in 5 repeated runs with no deadlock, then `mvn clean verify` passed (33 unit, 159 integration) and the gateway suite passed (129). After V18, including seeding readers added later, `mvn clean verify` passed (33 unit, 171 integration), the gateway suite passed (129), the frontend build passed, and Playwright passed (10 passed, 1 skipped that needs a live API). This is test-database evidence only. What remains:
+The slice checks through V19 are recorded as done on the fake reader and test database in each slice above. On 9 October 2026, before V18, `ReaderConcurrencyIT` (7 tests) passed in 5 repeated runs with no deadlock, then `mvn clean verify` passed (33 unit, 159 integration) and the gateway suite passed (129). After V18, including seeding readers added later, `mvn clean verify` passed (33 unit, 171 integration), the gateway suite passed (129), the frontend build passed, and Playwright passed (10 passed, 1 skipped that needs a live API). On 12 October 2026, after V19, `mvn clean verify` passed (33 unit, 179 integration), the gateway suite passed (139, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). Later on 12 October 2026, after the V19 fixes for batched uploads, future-dated punches, and live read failures, `mvn clean verify` passed (33 unit, 182 integration), the gateway suite passed (149, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). This is test-database evidence only. What remains:
 
 1. Section E, on a physical reader, before that reader is treated as validated.
-2. The remaining choices in [open-questions.md](open-questions.md): the safety-scan interval, door and time-section values other than 1, and SDK reconnect as a guarantee.
-3. V19 attendance poll.
+2. The remaining choices in [open-questions.md](open-questions.md): the safety-scan interval, door and time-section values other than 1, SDK reconnect as a guarantee, and attendance record-number survival and retention.
+3. A recovery policy for an attendance record whose time cannot be read (Section D). Until it is decided, such a record stalls that reader's attendance rather than being skipped.
 4. V20 superseded staff decisions close.
 5. V21 late activations and photos, and readers added with people on them, reach every reader without a new roster.

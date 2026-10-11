@@ -32,8 +32,9 @@ public static class FaceHash
 }
 
 /// <summary>
-/// One lock per device so command dispatch does not interleave SDK calls. Each holder
-/// names its task, so logs can say what a reader is busy with and who had to wait for it.
+/// One lock per device: the reader's connection lock. Commands, member writes and the attendance
+/// poll take it, so their SDK calls never interleave. Each holder names its task, so logs can say
+/// what a reader is busy with and who had to wait for it.
 /// </summary>
 public sealed class DeviceLocks
 {
@@ -60,6 +61,26 @@ public sealed class DeviceLocks
             var holder = BusyWith(deviceId) ?? "another task";
             var waited = Stopwatch.StartNew();
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (waited.Elapsed >= NoticeableWait)
+            {
+                _log.LogInformation("Reader {DeviceId}: {Task} waited {Seconds} s because the reader was busy with {Holder}",
+                    deviceId, task, (long)waited.Elapsed.TotalSeconds, holder);
+            }
+        }
+
+        _busy[deviceId] = (task, DateTimeOffset.UtcNow);
+        return new Lease(this, deviceId, gate);
+    }
+
+    /// <summary>The same lock for a synchronous reader call.</summary>
+    public IDisposable Acquire(string deviceId, string task)
+    {
+        var gate = For(deviceId);
+        if (!gate.Wait(0))
+        {
+            var holder = BusyWith(deviceId) ?? "another task";
+            var waited = Stopwatch.StartNew();
+            gate.Wait();
             if (waited.Elapsed >= NoticeableWait)
             {
                 _log.LogInformation("Reader {DeviceId}: {Task} waited {Seconds} s because the reader was busy with {Holder}",

@@ -156,22 +156,11 @@ public class GatewayProperties {
     /** How long gateway messageId entries are retained for replay dedupe. */
     private Duration messageDedupeTtl = Duration.ofHours(24);
 
-    /** Interval for automatic attendance/user reconcile enqueue (0 disables). */
-    private Duration autoReconcileInterval = Duration.ofMinutes(15);
-
     public Duration getMessageDedupeTtl() {
         return messageDedupeTtl;
     }
 
     public void setMessageDedupeTtl(Duration messageDedupeTtl) {
         this.messageDedupeTtl = messageDedupeTtl;
-    }
-
-    public Duration getAutoReconcileInterval() {
-        return autoReconcileInterval;
-    }
-
-    public void setAutoReconcileInterval(Duration autoReconcileInterval) {
-        this.autoReconcileInterval = autoReconcileInterval;
     }
 }

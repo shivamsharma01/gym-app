@@ -110,11 +110,15 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void registeringAGatewayRunsTheCatchUpStep() {
-        gatewayMessageService.process(envelope("REGISTER_GATEWAY", UUID.randomUUID().toString(),
-                "{\"agentVersion\":\"1\"}"), gatewayId);
-        assertThat(deviceSyncCommandRepository.findAll())
-                .anyMatch(c -> c.getType() == SyncCommandType.RECONCILE_DEVICE && c.getDeviceId().equals(device));
+    void registeringAGatewayQueuesNoAttendanceCommand() {
+        assertThat(gatewayMessageService.process(envelope("REGISTER_GATEWAY", UUID.randomUUID().toString(),
+                "{\"agentVersion\":\"1\"}"), gatewayId).orElseThrow()).contains("REGISTERED");
+        assertThat(deviceSyncCommandRepository.findAll()).noneMatch(c -> c.getType() == SyncCommandType.RECONCILE_DEVICE
+                || c.getType() == SyncCommandType.REFRESH_DEVICE_USERS);
+        assertThatThrownBy(() -> deviceSyncService.enqueue(tenant.getId(), device, null, null,
+                SyncCommandType.RECONCILE_DEVICE, java.util.Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("gateway's poll");
     }
 
     @Test

@@ -34,6 +34,15 @@ public sealed class GatewayOptions
     /// <summary>How often each reader is read for observations.</summary>
     public int RosterPollSeconds { get; set; } = 15;
 
+    /// <summary>How often each reader's attendance log is read, so admins see recent check-ins.</summary>
+    public int AttendancePollSeconds { get; set; } = 15;
+
+    /// <summary>How far before the last stored punch each attendance window starts.</summary>
+    public int AttendanceOverlapSeconds { get; set; } = 120;
+
+    /// <summary>How far back the first window of a reader with no stored punch reaches.</summary>
+    public int AttendanceFirstLookbackHours { get; set; } = 24;
+
     /// <summary>How often the gateway logs a status summary.</summary>
     public int StatusLogSeconds { get; set; } = 60;
 

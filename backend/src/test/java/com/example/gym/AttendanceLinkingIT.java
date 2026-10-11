@@ -54,6 +54,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     private Tenant tenant;
     private String token;
     private String gatewayId;
+    private String gatewayToken;
     private String entranceId;
     private String exitId;
     private Long entrance;
@@ -71,11 +72,12 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         gatewayId = readJson(createdGateway).get("id").asString();
         String enrollmentToken = readJson(createdGateway).get("token").asString();
-        mockMvc.perform(post("/internal/gateway/enroll")
+        gatewayToken = readJson(mockMvc.perform(post("/internal/gateway/enroll")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"gatewayId\":\"" + gatewayId + "\",\"enrollmentToken\":\""
                                 + enrollmentToken + "\"}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString()).get("credential").asString();
 
         entranceId = createDevice("Entrance", "ENTRANCE", "10.0.0.20");
         exitId = createDevice("Exit", "EXIT", "10.0.0.21");
@@ -84,13 +86,10 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void reconcileMapsNewReaderUsersBeforeStoringTheirPunches() throws Exception {
-        gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT", """
-                {"ok":true,
-                 "deviceUsers":[{"deviceUserId":"1114","name":"Ravi Kumar","frozen":false}],
-                 "events":[{"deviceUserId":"1114","occurredAt":"2026-10-02T06:00:00Z",
-                            "method":"FACE","granted":true,"recNo":501}]}
-                """), gatewayId);
+    void aPunchByAnUnmappedIdIsStoredUnlinkedAndCreatesNoMember() throws Exception {
+        postWindow(entranceId, """
+                [{"deviceUserId":"1114","occurredAt":"2026-10-02T06:00:00Z","method":"FACE","granted":true,"recNo":501}]
+                """);
 
         assertThat(memberRepository.findAll()).isEmpty();
         assertThat(memberDeviceMappingRepository.findAll()).isEmpty();
@@ -225,9 +224,9 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         String sameTime = "2026-10-02T07:00:00Z";
         for (String user : List.of("a1", "a2", "a3")) {
             long n = recNo.getAndIncrement();
-            gatewayMessageService.process(envelope(entranceId, "DEVICE_EVENT", """
-                    {"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}
-                    """.formatted(user, sameTime, n)), gatewayId);
+            postWindow(entranceId, """
+                    [{"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}]
+                    """.formatted(user, sameTime, n));
         }
         punch(entranceId, "early");
 
@@ -276,11 +275,18 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
                 .count();
     }
 
-    private void punch(String devicePublicId, String deviceUserId) {
+    private void punch(String devicePublicId, String deviceUserId) throws Exception {
         long n = recNo.getAndIncrement();
-        gatewayMessageService.process(envelope(devicePublicId, "DEVICE_EVENT", """
-                {"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}
-                """.formatted(deviceUserId, Instant.parse("2026-10-02T05:00:00Z").plusSeconds(n), n)), gatewayId);
+        postWindow(devicePublicId, """
+                [{"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}]
+                """.formatted(deviceUserId, Instant.parse("2026-10-02T05:00:00Z").plusSeconds(n), n));
+    }
+
+    private void postWindow(String devicePublicId, String punches) throws Exception {
+        mockMvc.perform(post("/internal/gateway/attendance").header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"deviceId\":\"" + devicePublicId + "\",\"punches\":" + punches + "}"))
+                .andExpect(status().isOk());
     }
 
     private static String newReaderUser(String deviceUserId, String name) {

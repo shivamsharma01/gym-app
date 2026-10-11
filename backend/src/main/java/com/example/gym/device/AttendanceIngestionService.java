@@ -1,5 +1,6 @@
 package com.example.gym.device;
 
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.AccessDirection;
 import com.example.gym.device.domain.AccessResult;
 import com.example.gym.device.domain.AttendanceEvent;
@@ -12,9 +13,9 @@ import com.example.gym.device.repo.AttendanceEventRepository;
 import com.example.gym.device.repo.AttendanceSyncCursorRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
-import com.example.gym.common.logging.FlowLog;
 import com.example.gym.live.StaffLiveBroadcast;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.context.ApplicationEventPublisher;
@@ -23,9 +24,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Normalizes and persists device access events (§10). Prefers stable {@code rec:{nRecNo}}
- * fingerprints; when a later reconcile supplies a recNo for a live composite event, upgrades that
- * row instead of inserting a duplicate.
+ * Stores punches the gateway read from a reader's log for one time window. Rows are append-only:
+ * a punch already stored is skipped, never rewritten. A punch is credited through the reader's
+ * mapping; an unmapped device user id is stored without a member. Member and mapping rows are only read.
  */
 @Service
 public class AttendanceIngestionService {
@@ -51,74 +52,96 @@ public class AttendanceIngestionService {
         this.writer = writer;
     }
 
-    /** @return the persisted event, or empty when it was a duplicate. */
-    @Transactional
-    public Optional<AttendanceEvent> ingest(Device device, String deviceUserId, Instant occurredAt,
-                                            String method, boolean granted, Long deviceRecNo) {
-        return ingest(device, deviceUserId, occurredAt, method, granted, deviceRecNo, null);
+    /** One punch as read from the reader log. {@code occurredAt} is the reader's stuTime taken as UTC. */
+    public record Punch(String deviceUserId, Instant occurredAt, String method, boolean granted,
+                        Long recNo, String denyReason) {
     }
 
-    @Transactional
-    public Optional<AttendanceEvent> ingest(Device device, String deviceUserId, Instant occurredAt,
-                                            String method, boolean granted, Long deviceRecNo,
-                                            String denyReason) {
-        Long tenantId = device.getTenantId();
-        AccessResult result = granted ? AccessResult.GRANTED : AccessResult.DENIED;
+    /** The punches newly stored and the reader's last stored punch time after this window. */
+    public record WindowResult(int stored, Instant lastEventAt) {
+    }
 
-        if (deviceRecNo != null) {
-            String recFp = "rec:" + deviceRecNo;
-            if (attendanceRepository.existsByTenantIdAndDeviceIdAndFingerprint(
-                    tenantId, device.getId(), recFp)) {
-                return Optional.empty();
+    /**
+     * Stores every punch of the window that is not stored yet. The cursor moves to the latest punch
+     * that is now stored, and never backwards. An empty window writes nothing.
+     *
+     * <p>A punch dated after the server's clock is stored but does not move the cursor: the next
+     * window would start after it and skip real punches until that time arrives.
+     */
+    @Transactional
+    public WindowResult storeWindow(Device device, List<Punch> punches) {
+        if (punches.isEmpty()) {
+            return new WindowResult(0, lastEventAt(device));
+        }
+        Instant now = Instant.now();
+        int stored = 0;
+        int future = 0;
+        Instant latest = null;
+        for (Punch punch : punches) {
+            if (ingest(device, punch).isPresent()) {
+                stored++;
             }
-            Optional<AttendanceEvent> upgrade = tryUpgradeComposite(
-                    tenantId, device.getId(), deviceUserId, occurredAt, method, result, deviceRecNo,
-                    denyReason);
-            if (upgrade.isPresent()) {
-                advanceWatermark(tenantId, device.getId(), deviceRecNo, occurredAt);
-                clearReconciliationRequired(device.getId());
-                return upgrade;
+            if (punch.occurredAt().isAfter(now)) {
+                future++;
+            } else if (latest == null || punch.occurredAt().isAfter(latest)) {
+                latest = punch.occurredAt();
             }
         }
+        if (future > 0) {
+            FlowLog.warn("attendance", "device={} sent {} punch(es) dated after server time {}; stored, cursor not moved by them",
+                    device.getPublicId(), future, now);
+        }
+        return new WindowResult(stored, latest == null ? lastEventAt(device) : advanceCursor(device, latest));
+    }
 
-        String fingerprint = fingerprint(deviceUserId, occurredAt, method, granted, deviceRecNo);
-        if (attendanceRepository.existsByTenantIdAndDeviceIdAndFingerprint(
-                tenantId, device.getId(), fingerprint)) {
+    @Transactional(readOnly = true)
+    public Instant lastEventAt(Device device) {
+        return cursorRepository.findByDeviceId(device.getId())
+                .map(AttendanceSyncCursor::getLastEventAt)
+                .orElse(null);
+    }
+
+    /** @return the stored punch, or empty when this punch was already stored. */
+    private Optional<AttendanceEvent> ingest(Device device, Punch punch) {
+        Long tenantId = device.getTenantId();
+        String fingerprint = fingerprint(punch);
+        if (attendanceRepository.existsByTenantIdAndDeviceIdAndFingerprint(tenantId, device.getId(), fingerprint)
+                || storedBeforePolling(tenantId, device.getId(), punch)) {
             return Optional.empty();
         }
 
+        String deviceUserId = punch.deviceUserId();
         MemberDeviceMapping mapping = deviceUserId == null ? null
                 : mappingRepository.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                         .or(() -> mappingRepository.findFirstByDeviceIdAndPendingDeviceUserId(
                                 device.getId(), deviceUserId))
                         .orElse(null);
         Long memberId = mapping == null ? null : mapping.getMemberId();
+        AccessResult result = punch.granted() ? AccessResult.GRANTED : AccessResult.DENIED;
+        String denyReason = punch.granted() ? null : punch.denyReason();
 
         AttendanceEvent event = new AttendanceEvent(tenantId, device.getId(), memberId, deviceUserId,
-                occurredAt, directionFor(device.getRole()), method, result, deviceRecNo, fingerprint,
-                granted ? null : denyReason);
-
+                punch.occurredAt(), directionFor(device.getRole()), punch.method(), result, punch.recNo(),
+                fingerprint, denyReason);
         try {
             event = writer.insert(event);
         } catch (DataIntegrityViolationException dup) {
-            // Stored by a concurrent copy of the same event.
+            // Stored by a concurrent copy of the same window.
             return Optional.empty();
         }
 
-        advanceWatermark(tenantId, device.getId(), deviceRecNo, occurredAt);
-        clearReconciliationRequired(device.getId());
-        maybeRaiseSecurityEvent(tenantId, device.getId(), granted, memberId, deviceUserId, occurredAt,
-                denyReason);
-        events.publishEvent(new StaffLiveBroadcast(tenantId, granted ? "ATTENDANCE" : "ACCESS_DENIED",
+        maybeRaiseSecurityEvent(tenantId, device.getId(), punch.granted(), memberId, deviceUserId,
+                punch.occurredAt(), denyReason);
+        events.publishEvent(new StaffLiveBroadcast(tenantId, punch.granted() ? "ATTENDANCE" : "ACCESS_DENIED",
                 Map.of(
                         "deviceId", device.getPublicId(),
                         "deviceUserId", deviceUserId == null ? "" : deviceUserId,
                         "result", result.name(),
                         "direction", event.getDirection().name(),
-                        "occurredAt", occurredAt == null ? "" : occurredAt.toString(),
+                        "occurredAt", punch.occurredAt().toString(),
                         "memberLinked", memberId != null,
                         "denyReason", denyReason == null ? "" : denyReason)));
-        if (granted) {
+        if (punch.granted()) {
             FlowLog.debug("attendance", "granted device={} user={} direction={} memberLinked={}",
                     device.getPublicId(), deviceUserId, event.getDirection(), memberId != null);
         } else {
@@ -128,56 +151,30 @@ public class AttendanceIngestionService {
         return Optional.of(event);
     }
 
-    @Transactional
-    public void markReconciliationRequired(Long tenantId, Long deviceId, boolean required) {
-        AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(deviceId)
-                .orElseGet(() -> new AttendanceSyncCursor(tenantId, deviceId));
-        cursor.setReconciliationRequired(required);
-        cursorRepository.save(cursor);
+    /**
+     * The same punch stored before the poll existed, under the record-number key or the live-event key.
+     * A record number alone is not trusted: the stored time must match too.
+     */
+    private boolean storedBeforePolling(Long tenantId, Long deviceId, Punch punch) {
+        if (punch.recNo() != null && attendanceRepository
+                .findByTenantIdAndDeviceIdAndFingerprint(tenantId, deviceId, "rec:" + punch.recNo())
+                .filter(e -> punch.occurredAt().equals(e.getOccurredAt()))
+                .isPresent()) {
+            return true;
+        }
+        String live = "cmp:" + punch.deviceUserId() + "|" + punch.occurredAt().toEpochMilli() + "|"
+                + punch.method() + "|" + (punch.granted() ? "G" : "D");
+        return attendanceRepository.existsByTenantIdAndDeviceIdAndFingerprint(tenantId, deviceId, live);
     }
 
-    private Optional<AttendanceEvent> tryUpgradeComposite(Long tenantId, Long deviceId,
-                                                          String deviceUserId, Instant occurredAt,
-                                                          String method, AccessResult result,
-                                                          Long deviceRecNo, String denyReason) {
-        if (deviceUserId == null || occurredAt == null) {
-            return Optional.empty();
+    private Instant advanceCursor(Device device, Instant latest) {
+        AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(device.getId())
+                .orElseGet(() -> new AttendanceSyncCursor(device.getTenantId(), device.getId()));
+        if (cursor.getLastEventAt() == null || latest.isAfter(cursor.getLastEventAt())) {
+            cursor.setLastEventAt(latest);
+            cursorRepository.save(cursor);
         }
-        Optional<AttendanceEvent> existing = attendanceRepository
-                .findFirstByTenantIdAndDeviceIdAndDeviceUserIdAndOccurredAtAndMethodAndResultAndDeviceRecNoIsNull(
-                        tenantId, deviceId, deviceUserId, occurredAt, method, result);
-        if (existing.isEmpty()) {
-            return Optional.empty();
-        }
-        AttendanceEvent event = existing.get();
-        event.setDeviceRecNo(deviceRecNo);
-        event.setFingerprint("rec:" + deviceRecNo);
-        if (denyReason != null && event.getDenyReason() == null) {
-            event.setDenyReason(denyReason);
-        }
-        return Optional.of(attendanceRepository.save(event));
-    }
-
-    private void clearReconciliationRequired(Long deviceId) {
-        cursorRepository.findByDeviceId(deviceId).ifPresent(cursor -> {
-            if (cursor.isReconciliationRequired()) {
-                cursor.setReconciliationRequired(false);
-                cursorRepository.save(cursor);
-            }
-        });
-    }
-
-    private void advanceWatermark(Long tenantId, Long deviceId, Long deviceRecNo, Instant occurredAt) {
-        AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(deviceId)
-                .orElseGet(() -> new AttendanceSyncCursor(tenantId, deviceId));
-        if (deviceRecNo != null && (cursor.getLastRecNo() == null || deviceRecNo > cursor.getLastRecNo())) {
-            cursor.setLastRecNo(deviceRecNo);
-        }
-        if (occurredAt != null && (cursor.getLastEventAt() == null
-                || occurredAt.isAfter(cursor.getLastEventAt()))) {
-            cursor.setLastEventAt(occurredAt);
-        }
-        cursorRepository.save(cursor);
+        return cursor.getLastEventAt();
     }
 
     private void maybeRaiseSecurityEvent(Long tenantId, Long deviceId, boolean granted, Long memberId,
@@ -203,12 +200,27 @@ public class AttendanceIngestionService {
         };
     }
 
-    private String fingerprint(String deviceUserId, Instant occurredAt, String method, boolean granted,
-                               Long deviceRecNo) {
-        if (deviceRecNo != null) {
-            return "rec:" + deviceRecNo;
+    /**
+     * Who punched, when, how, the result and the record number. The record number alone is not the
+     * key: whether it survives a reader reboot or a full log is not established.
+     */
+    static String fingerprint(Punch punch) {
+        return "pt:" + punch.deviceUserId() + "|" + punch.occurredAt().toEpochMilli() + "|" + punch.method()
+                + "|" + (punch.granted() ? "G" : "D") + "|" + (punch.recNo() == null ? "-" : punch.recNo());
+    }
+
+    /** Reader error code of a denied punch as a reason. */
+    public static String denyReason(Integer errorCode) {
+        if (errorCode == null) {
+            return null;
         }
-        long epoch = occurredAt == null ? 0L : occurredAt.toEpochMilli();
-        return "cmp:" + deviceUserId + "|" + epoch + "|" + method + "|" + (granted ? "G" : "D");
+        return switch (errorCode) {
+            case 0x00 -> null;
+            case 0x10 -> "UNAUTHORIZED";
+            case 0x14 -> "VALIDITY_PERIOD";
+            case 0x20, 0x21 -> "PERIOD_ERROR";
+            case 0x23 -> "OVERDUE";
+            default -> "ERR_0x" + Integer.toHexString(errorCode).toUpperCase();
+        };
     }
 }

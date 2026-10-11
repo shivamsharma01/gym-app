@@ -6,7 +6,10 @@ import com.example.gym.device.GatewayAuthService;
 import com.example.gym.device.GatewayCommandPollService;
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.GatewayService;
+import com.example.gym.device.ReaderAttendanceService;
 import com.example.gym.device.domain.Gateway;
+import com.example.gym.device.dto.AttendanceWindowRequests.AttendanceCursor;
+import com.example.gym.device.dto.AttendanceWindowRequests.AttendanceWindow;
 import com.example.gym.device.dto.DesiredStateRequests.AcknowledgeRevision;
 import com.example.gym.device.dto.DesiredStateRequests.DesiredPage;
 import com.example.gym.device.dto.DesiredStateRequests.ReportOccupied;
@@ -49,19 +52,22 @@ public class InternalGatewayController {
     private final GatewayCommandPollService pollService;
     private final MemberFaceService faceService;
     private final DesiredProjectionService desiredProjection;
+    private final ReaderAttendanceService attendance;
 
     public InternalGatewayController(GatewayAuthService authService,
                                      GatewayService gatewayService,
                                      GatewayMessageService messageService,
                                      GatewayCommandPollService pollService,
                                      MemberFaceService faceService,
-                                     DesiredProjectionService desiredProjection) {
+                                     DesiredProjectionService desiredProjection,
+                                     ReaderAttendanceService attendance) {
         this.authService = authService;
         this.gatewayService = gatewayService;
         this.messageService = messageService;
         this.pollService = pollService;
         this.faceService = faceService;
         this.desiredProjection = desiredProjection;
+        this.attendance = attendance;
     }
 
     @PostMapping(value = "/enroll", consumes = MediaType.APPLICATION_JSON_VALUE,
@@ -147,6 +153,23 @@ public class InternalGatewayController {
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @Valid @RequestBody ReportOccupied report) {
         return desiredProjection.occupied(requireBoundGateway(authorization), report);
+    }
+
+    /** Where the reader's next attendance window starts: its last stored punch time. */
+    @GetMapping(value = "/attendance/cursor", produces = MediaType.APPLICATION_JSON_VALUE)
+    public AttendanceCursor attendanceCursor(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestParam("deviceId") String deviceId) {
+        return attendance.cursor(requireBoundGateway(authorization), deviceId);
+    }
+
+    /** Punches of one polled window. A punch already stored is not stored again. */
+    @PostMapping(value = "/attendance", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public AttendanceCursor attendanceWindow(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @Valid @RequestBody AttendanceWindow window) {
+        return attendance.store(requireBoundGateway(authorization), window);
     }
 
     private Gateway requireBoundGateway(String authorization) {

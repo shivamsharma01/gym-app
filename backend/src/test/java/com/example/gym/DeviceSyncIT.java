@@ -103,7 +103,9 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.gatewaySessionOnline").value(false))
                 .andExpect(jsonPath("$.pendingCommandCount").value(greaterThanOrEqualTo(0)))
                 .andExpect(jsonPath("$.failedCommandCount").value(0))
-                .andExpect(jsonPath("$.reconciliationRequired").value(false));
+                .andExpect(jsonPath("$.lastPunchAt").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.reconciliationRequired").doesNotExist())
+                .andExpect(jsonPath("$.attendanceLastRecNo").doesNotExist());
 
         // Mapping the same member again is a conflict, not a second device user.
         postJson("/api/v1/devices/" + deviceId + "/mappings", "{\"memberId\":\"" + memberId + "\"}")
@@ -168,7 +170,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
         deviceSyncCommandRepository.deleteAllInBatch();
         var device = deviceRepository.findAll().getFirst();
         deviceSyncService.enqueue(device.getTenantId(), device.getId(), null, null,
-                SyncCommandType.RECONCILE_DEVICE, java.util.Map.of("reason", "manual"));
+                SyncCommandType.OPEN_DOOR, java.util.Map.of("reason", "manual"));
 
         mockMvc.perform(get("/api/v1/sync-commands").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -184,11 +186,10 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .orElseThrow().getDeviceUserId();
 
         String occurred = Instant.parse("2026-09-11T06:00:00Z").toString();
-        String event = envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
-                "{\"deviceUserId\":\"" + deviceUserId + "\",\"occurredAt\":\"" + occurred
-                        + "\",\"method\":\"FACE\",\"granted\":true,\"recNo\":42}");
-        gatewayMessageService.process(event, gatewayId);
-        gatewayMessageService.process(event, gatewayId); // duplicate recNo
+        String window = "{\"deviceId\":\"" + deviceId + "\",\"punches\":[{\"deviceUserId\":\"" + deviceUserId
+                + "\",\"occurredAt\":\"" + occurred + "\",\"method\":\"FACE\",\"granted\":true,\"recNo\":42}]}";
+        postWindow(window);
+        postWindow(window); // the same window read again
 
         mockMvc.perform(get("/api/v1/attendance").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -198,9 +199,8 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].memberLinked").value(true))
                 .andExpect(jsonPath("$.content[0].memberName").value("Asha Rao"));
 
-        gatewayMessageService.process(envelope("DEVICE_EVENT", UUID.randomUUID().toString(),
-                "{\"deviceUserId\":\"" + deviceUserId + "\",\"occurredAt\":\"" + occurred
-                        + "\",\"method\":\"FACE\",\"granted\":false,\"recNo\":43}"), gatewayId);
+        postWindow("{\"deviceId\":\"" + deviceId + "\",\"punches\":[{\"deviceUserId\":\"" + deviceUserId
+                + "\",\"occurredAt\":\"" + occurred + "\",\"method\":\"FACE\",\"granted\":false,\"recNo\":43}]}");
 
         mockMvc.perform(get("/api/v1/security-events").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -314,6 +314,12 @@ class DeviceSyncIT extends AbstractIntegrationTest {
             req = req.content(body);
         }
         return mockMvc.perform(req);
+    }
+
+    private void postWindow(String window) throws Exception {
+        mockMvc.perform(post("/internal/gateway/attendance").header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(window))
+                .andExpect(status().isOk());
     }
 
     private String envelope(String type, String correlationId, String payloadJson) {

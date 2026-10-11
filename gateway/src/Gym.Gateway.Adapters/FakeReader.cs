@@ -350,11 +350,12 @@ public sealed class FakeReader : IReaderAdapter
         }
     }
 
-    public ReaderPunchResult QueryPunches(DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    public ReaderPunchResult QueryAttendance(DateTimeOffset fromUtc, DateTimeOffset toUtc)
     {
         lock (_gate)
         {
-            if (TakeFailure(FakeReaderOperation.QueryPunches, out var error))
+            Note("QueryAttendance");
+            if (TakeFailure(FakeReaderOperation.QueryAttendance, out var error))
             {
                 return ReaderPunchResult.Failed(error);
             }
@@ -416,7 +417,7 @@ public enum FakeReaderOperation
     InsertFace,
     RemoveFace,
     RemoveUser,
-    QueryPunches
+    QueryAttendance
 }
 
 public sealed record ReaderUser(
@@ -433,7 +434,7 @@ public sealed record ReaderUser(
 public sealed record ReaderPunch(
     string? DeviceUserId,
     DateTimeOffset OccurredAtUtc,
-    long RecordNumber,
+    long? RecordNumber,
     string Method,
     bool Granted,
     int? ErrorCode);

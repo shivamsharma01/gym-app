@@ -31,13 +31,14 @@ export function AttendancePage() {
     queryKey: ['attendance', page, direction],
     queryFn: () => api<PageResponse<Attendance>>(`/api/v1/attendance?page=${page}&size=30&direction=${direction}`),
     placeholderData: keepPreviousData,
+    refetchInterval: 15_000,
   })
 
   return (
     <div>
       <PageHeader
         title="Attendance"
-        description="Door events from the device gateway. Open Live view for near-real-time updates over the staff WebSocket."
+        description="Punches the device gateway reads from each reader's log. The list refreshes every 15 seconds."
         actions={
           <Link to="/app/attendance/live">
             <Button variant="outline">Live view</Button>
@@ -49,7 +50,7 @@ export function AttendancePage() {
       {attendance.data && attendance.data.content.length === 0 ? (
         <EmptyState
           title="No attendance yet"
-          body="Rows appear after the gateway reports access events or a reconcile."
+          body="Rows appear shortly after a punch, once the gateway has read the reader's log."
           icon={<Activity className="h-5 w-5" />}
         />
       ) : null}

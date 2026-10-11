@@ -28,17 +28,26 @@ public class CommandDispatcherTests
     }
 
     [Fact]
-    public async Task Attendance_reconcile_reads_the_reader_and_does_not_write_a_user()
+    public async Task A_server_attendance_command_does_not_read_the_reader()
     {
         var adapter = new MockDeviceAdapter();
         adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
+        var locks = new DeviceLocks();
         var dispatcher = new CommandDispatcher(
             new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
-            NullLogger<CommandDispatcher>.Instance);
+            NullLogger<CommandDispatcher>.Instance,
+            locks);
 
-        var result = await dispatcher.DispatchAsync(Command("RECONCILE_DEVICE", "dev-1", new { }));
+        foreach (var type in new[] { "RECONCILE_DEVICE", "REFRESH_DEVICE_USERS" })
+        {
+            var result = await dispatcher.DispatchAsync(Command(type, "dev-1", new { fromUtc = "2026-10-11T00:00:00Z" }));
 
-        Assert.True(result.Ok);
+            Assert.False(result.Ok);
+            Assert.Equal(ProtocolTypes.SyncResult, result.ResultType);
+            Assert.Contains("attendance is read by the gateway", JsonSerializer.Serialize(result.Payload));
+        }
+
+        Assert.Null(locks.BusyWith("dev-1"));
         Assert.Empty(adapter.KnownUserIds);
     }
 

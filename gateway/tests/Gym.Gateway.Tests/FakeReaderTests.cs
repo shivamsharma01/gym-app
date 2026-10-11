@@ -215,15 +215,15 @@ public class FakeReaderTests
         reader.AddPunch(new ReaderPunch("1210", inside, 10, "FACE", true, null));
         reader.AddPunch(new ReaderPunch("1210", inside.AddHours(-2), 9, "FACE", false, 0x14));
         reader.AddPunch(new ReaderPunch("1211", inside.AddHours(3), 11, "FACE", false, 0xA4));
-        reader.ScriptFailure(FakeReaderOperation.QueryPunches, "query failed");
+        reader.ScriptFailure(FakeReaderOperation.QueryAttendance, "query failed");
 
-        var failed = reader.QueryPunches(inside.AddHours(-1), inside.AddHours(1));
+        var failed = reader.QueryAttendance(inside.AddHours(-1), inside.AddHours(1));
         Assert.False(failed.Ok);
         Assert.Empty(failed.Punches);
 
-        var window = reader.QueryPunches(inside, inside);
+        var window = reader.QueryAttendance(inside, inside);
         Assert.True(window.Ok);
-        Assert.Equal(new long[] { 10 }, window.Punches.Select(p => p.RecordNumber).ToArray());
+        Assert.Equal(new long?[] { 10 }, window.Punches.Select(p => p.RecordNumber).ToArray());
         Assert.Equal("1210", window.Punches[0].DeviceUserId);
     }
 

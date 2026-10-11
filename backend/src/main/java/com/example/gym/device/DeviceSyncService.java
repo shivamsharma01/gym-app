@@ -30,7 +30,6 @@ import java.util.Map;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Stream;
 import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,6 +64,22 @@ public class DeviceSyncService {
             SyncCommandType.UPSERT_FACE,
             SyncCommandType.DELETE_FACE,
             SyncCommandType.REPORT_DEVICE_USER);
+
+    /** Attendance is read by the gateway's own poll of the reader log, not by a server command. */
+    private static final Set<SyncCommandType> ATTENDANCE_COMMANDS = EnumSet.of(
+            SyncCommandType.RECONCILE_DEVICE,
+            SyncCommandType.REFRESH_DEVICE_USERS);
+
+    /** Why a command of this type is never sent, or null when it is sent. */
+    public static String notSentReason(SyncCommandType type) {
+        if (PROJECTION_READER_SKIPS.contains(type)) {
+            return "Member state is a desired revision";
+        }
+        if (ATTENDANCE_COMMANDS.contains(type)) {
+            return "Attendance is read by the gateway's poll";
+        }
+        return null;
+    }
 
     private final DeviceSyncCommandRepository commandRepository;
     private final DeviceRepository deviceRepository;
@@ -132,8 +147,9 @@ public class DeviceSyncService {
     @Transactional
     public DeviceSyncCommand enqueue(Long tenantId, Long deviceId, Long memberId, Long membershipId,
                                      SyncCommandType type, Map<String, Object> payload) {
-        if (PROJECTION_READER_SKIPS.contains(type)) {
-            throw new IllegalArgumentException("Member state is a desired revision; " + type + " is not queued");
+        String notSent = notSentReason(type);
+        if (notSent != null) {
+            throw new IllegalArgumentException(notSent + "; " + type + " is not queued");
         }
         if (memberId != null) {
             List<SyncCommandType> replaced = supersededBy(type);
@@ -147,9 +163,6 @@ public class DeviceSyncService {
         DeviceSyncCommand command = new DeviceSyncCommand(tenantId, deviceId, memberId, membershipId,
                 type, payloadJson, correlationId, properties.getOutbox().getMaxAttempts(), Instant.now());
         DeviceSyncCommand saved = commandRepository.save(command);
-        if (deviceId != null && ROSTER_TYPES.contains(type)) {
-            deviceRepository.clearRosterDigest(deviceId);
-        }
 
         markState(saved, DeviceSyncState.PENDING);
         FlowLog.debug("sync", "enqueued {} corr={} device={} member={} user={}",
@@ -272,10 +285,11 @@ public class DeviceSyncService {
         int waiting = 0;
         int failed = 0;
         for (DeviceSyncCommand command : due) {
-            if (withholdProjectionReplay(command)) {
+            String notSent = notSentReason(command.getType());
+            if (notSent != null) {
                 command.setState(SyncCommandState.CANCELLED);
                 command.setCompletedAt(Instant.now());
-                command.setLastError("Member state is a desired revision");
+                command.setLastError(notSent);
                 commandRepository.save(command);
                 continue;
             }
@@ -429,12 +443,6 @@ public class DeviceSyncService {
         return command;
     }
 
-    @Transactional(readOnly = true)
-    public boolean hasActiveReconcile(Long deviceId) {
-        return commandRepository.existsByDeviceIdAndTypeAndStateIn(
-                deviceId, SyncCommandType.RECONCILE_DEVICE, OPEN_STATES);
-    }
-
     /** Cancels every open command for a member (e.g. the member was deleted on a device). */
     @Transactional
     public int cancelOpenForMember(Long memberId) {
@@ -466,10 +474,6 @@ public class DeviceSyncService {
     private static final List<SyncCommandType> USER_TYPES = List.of(
             SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_USER, SyncCommandType.DISABLE_USER,
             SyncCommandType.ENABLE_USER, SyncCommandType.UPDATE_VALIDITY, SyncCommandType.UPDATE_ACCESS_POLICY);
-
-    /** Commands that change what a reader's user list holds (the roster checksum covers these). */
-    static final List<SyncCommandType> ROSTER_TYPES = Stream.concat(USER_TYPES.stream(), Stream.of(SyncCommandType.REMOVE_USER))
-            .toList();
 
     private static final List<SyncCommandType> ACCESS_TYPES = List.of(
             SyncCommandType.DISABLE_USER, SyncCommandType.ENABLE_USER,
@@ -651,13 +655,6 @@ public class DeviceSyncService {
         command.setNextAttemptAt(Instant.now().plus(properties.getOutbox().getOfflineRecheck()));
         FlowLog.debug("sync", "{} corr={} device={} waits: gateway offline, recheck at {}",
                 command.getType(), command.getCorrelationId(), command.getDeviceId(), command.getNextAttemptAt());
-    }
-
-    /**
-     * A member-state command is not sent to a reader. Door, clock, and attendance reconcile stay.
-     */
-    private boolean withholdProjectionReplay(DeviceSyncCommand command) {
-        return PROJECTION_READER_SKIPS.contains(command.getType());
     }
 
     /** Makes every waiting command of the gateway's devices due now (called when it connects). */

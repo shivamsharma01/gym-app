@@ -66,11 +66,8 @@ public sealed record DeviceAttendanceRecord(
     long? RecNo,
     int? ErrorCode = null);
 
-public sealed record DeviceReconciliationResult(
-    bool Ok,
-    string? Error,
-    IReadOnlyList<DeviceAttendanceRecord> Events,
-    IReadOnlyList<DeviceUserSnapshot> Users);
+/// <summary>The attendance window could not be read completely. Nothing from it may be stored as complete.</summary>
+public sealed class AttendanceReadException(string message) : Exception(message);
 
 /// <summary>
 /// Kind is ACCESS, ALARM, STATUS or USER_CHANGED (a user or face was added/changed on the device;

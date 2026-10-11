@@ -107,20 +107,6 @@ public class DeviceController {
                 id, request.memberId(), request.deviceUserId(), SecurityUtils.currentTenantId()));
     }
 
-    @PostMapping("/{id}/reconcile")
-    @PreAuthorize("hasAuthority('DEVICE_SYNC')")
-    @Operation(summary = "Request attendance + user reconciliation for a device")
-    public SyncCommandView reconcile(@PathVariable String id) {
-        return SyncCommandView.from(deviceService.reconcile(id, SecurityUtils.currentTenantId()));
-    }
-
-    @PostMapping("/{id}/sync-now")
-    @PreAuthorize("hasAuthority('DEVICE_SYNC')")
-    @Operation(summary = "Admin Sync Now — attendance history + user/membership reconcile")
-    public SyncCommandView syncNow(@PathVariable String id) {
-        return SyncCommandView.from(deviceService.syncNow(id, SecurityUtils.currentTenantId()));
-    }
-
     @PostMapping("/{id}/import-users")
     @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
     @Operation(summary = "Rejected. A reader list does not create members.")

@@ -114,7 +114,9 @@ class RosterBootstrapReportIT extends AbstractIntegrationTest {
         JsonNode suggestion = row(report, "UNLINKED", sideId, "9");
         assertThat(suggestion.get("suggestionMemberId").asString()).isEqualTo(meeraId);
         assertThat(mapping(flagged, meeraId).getDeviceUserId()).isEqualTo(meeraDeviceUser);
-        assertThat(mapping(side, meeraId).getDeviceUserId()).isNotEqualTo("9");
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(side, member(meeraId).getId()))
+                .as("person 9 may be Meera: she is not added to the side reader a second time")
+                .isEmpty();
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(side, "9")).isEmpty();
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(side, "9").orElseThrow().isResolved())
                 .isFalse();
@@ -239,9 +241,8 @@ class RosterBootstrapReportIT extends AbstractIntegrationTest {
         assertThat(mapping(flagged, left.get("id").asString()).getDeviceUserId()).isEqualTo(leftUser);
         assertThat(mapping(flagged, right.get("id").asString()).getDeviceUserId()).isEqualTo(rightUser);
         assertThat(memberDeviceMappingRepository.findByDeviceId(side))
-                .extracting(com.example.gym.device.domain.MemberDeviceMapping::getDeviceUserId)
-                .hasSize(2)
-                .doesNotContain("4");
+                .as("person 4 may be either Sam Lee: neither is seeded until staff decide")
+                .isEmpty();
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(side, "4").orElseThrow().isResolved())
                 .isFalse();
         assertThat(memberRepository.findByPublicId(left.get("id").asString()).orElseThrow().getFullName())

@@ -251,6 +251,46 @@ test('a suspended member offers restore under a new id or keep off, and no accep
   await expect(page.getByRole('button', { name: 'Accept server' })).toHaveCount(0)
 })
 
+test('one member items on two readers are grouped under the member and decided per reader', async ({ page }) => {
+  await routeReviews(page, [
+    { ...openItem, id: 'review-entrance', deviceName: 'Entrance', memberId: 'member-asha', memberName: 'Asha Shah' },
+    {
+      ...openItem,
+      id: 'review-exit',
+      deviceId: 'dev-2',
+      deviceUserId: '4',
+      readerName: 'Asha S',
+      deviceName: 'Exit',
+      memberId: 'member-asha',
+      memberName: 'Asha Shah',
+    },
+    {
+      ...openItem,
+      id: 'enrollment-9',
+      kind: 'ENROLLMENT',
+      deviceId: 'dev-2',
+      deviceUserId: '9',
+      serverName: null,
+      readerName: 'asha shah',
+      deviceName: 'Exit',
+      possibleMemberId: 'member-asha',
+      possibleMemberName: 'Asha Shah',
+    },
+  ])
+
+  await page.goto('/app/review')
+  const member = page.getByRole('rowgroup', { name: 'Member: Asha Shah' })
+  await expect(member).toHaveCount(1)
+  await expect(member.getByRole('row')).toHaveCount(3)
+  await expect(member.getByRole('cell', { name: 'Entrance' })).toBeVisible()
+  await expect(member.getByRole('cell', { name: 'Exit' })).toBeVisible()
+  await expect(member.getByRole('button', { name: 'Accept server' })).toHaveCount(2)
+
+  const unknown = page.getByRole('rowgroup', { name: 'People the server does not know' })
+  await expect(unknown.getByText('May already be Asha Shah; link instead of creating')).toBeVisible()
+  await expect(page.getByLabel('Member id for 9')).toHaveValue('member-asha')
+})
+
 test('the bootstrap suggestion fills in the member to link', async ({ page }) => {
   await routeReviews(
     page,

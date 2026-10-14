@@ -81,8 +81,7 @@ public enum MemberApplyKind
     Occupied,
     OccupantChanged,
     Failed,
-    Waiting,
-    NotReady
+    Waiting
 }
 
 /// <summary><see cref="Occupant"/> is set for <see cref="MemberApplyKind.OccupantChanged"/>.</summary>

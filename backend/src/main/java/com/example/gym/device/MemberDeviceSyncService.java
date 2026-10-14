@@ -70,8 +70,10 @@ public class MemberDeviceSyncService {
 
     /**
      * Each reader that has this member, with the member's desired revision there and that reader's
-     * applied revision. The reader worker applies revisions in order, so the member is on the reader
-     * as desired once the applied revision reaches the member's revision.
+     * highest acknowledged revision. The member is on the reader as desired only when the gateway
+     * acknowledged this row's current revision: revisions of different members can be applied out
+     * of order, so a higher reader revision says nothing about this member. A held row waits for
+     * staff; a failure the gateway reported is shown while that revision is current.
      */
     @Transactional(readOnly = true)
     public SyncStatus status(String memberPublicId, Long tenantId) {
@@ -105,9 +107,13 @@ public class MemberDeviceSyncService {
                     mapping.getDeviceUserId(),
                     row == null ? null : row.getRevision(),
                     applied,
-                    row != null && applied >= row.getRevision(),
+                    row != null && row.isApplied(),
                     row != null && row.isPresentOnReader(),
-                    row != null && row.isPresentOnReader() && row.isFacePresent()));
+                    row != null && row.isPresentOnReader() && row.isFacePresent(),
+                    row != null && row.isHeld(),
+                    row == null ? null : row.getApplyError(),
+                    row == null ? null : row.getApplyAttempts(),
+                    row != null && row.isApplyErrorPermanent()));
         }
         return new SyncStatus(faceInfo, rows);
     }
@@ -142,6 +148,13 @@ public class MemberDeviceSyncService {
             long appliedRevision,
             boolean applied,
             boolean present,
-            boolean facePresent) {
+            boolean facePresent,
+            /** The reader showed something else; nothing is written until staff decide. */
+            boolean held,
+            /** Why the gateway has not applied the current revision; null when it reported nothing. */
+            String applyError,
+            Integer applyAttempts,
+            /** The gateway cannot apply the current revision as sent; it stays until replaced. */
+            boolean applyErrorPermanent) {
     }
 }

@@ -82,57 +82,99 @@ export function ReviewPage() {
           <Table>
             <THead>
               <Tr>
+                <Th>Reader</Th>
                 <Th>Device user</Th>
                 <Th>Server</Th>
-                <Th>Reader</Th>
+                <Th>On the reader</Th>
                 <Th>Baseline</Th>
                 <Th>Decision</Th>
               </Tr>
             </THead>
-            <tbody>
-              {(reviews.data ?? []).map((item) => {
-                const suggestion = report?.rows.find(
-                  (row) => row.deviceId === item.deviceId && row.deviceUserId === item.deviceUserId,
-                )?.suggestionMemberId
-                const actions = decisionCell(item, has('REVIEW_DECIDE'), decide.isPending, suggestion, (path, body) =>
-                  decide.mutate({ id: item.id, path, body }),
-                )
-                return (
-                  <Tr key={item.id}>
-                    <Td className="font-mono text-xs">{item.deviceUserId}</Td>
-                    <Td>
-                      <div>{item.serverName || '—'}</div>
-                      <Validity from={item.serverValidFrom} to={item.serverValidTo} />
-                      <Access status={item.serverUserStatus} />
-                    </Td>
-                    <Td>
-                      <div>{item.readerAbsent ? 'Absent' : item.readerName || '—'}</div>
-                      <Validity from={item.readerValidFrom} to={item.readerValidTo} />
-                      <Access status={item.readerUserStatus} />
-                      {item.readerPhotoDiffers ? (
-                        <div className="text-xs text-warn">Photo differs from the server photo</div>
-                      ) : null}
-                      {item.kind === 'SUSPENDED' ? (
-                        <div className="text-xs text-warn">
-                          Someone else holds this id; the member is off this reader
-                        </div>
-                      ) : null}
-                    </Td>
-                    <Td>
-                      <div>{item.baselineName || '—'}</div>
-                      <Validity from={item.baselineValidFrom} to={item.baselineValidTo} />
-                      <Access status={item.baselineUserStatus} />
-                    </Td>
-                    <Td>{actions}</Td>
-                  </Tr>
-                )
-              })}
-            </tbody>
+            {groupByMember(reviews.data ?? []).map((group) => (
+              <tbody key={group.key} aria-label={group.title}>
+                <Tr>
+                  <Td colSpan={6} className="bg-raised text-sm font-semibold">
+                    {group.title}
+                    {group.items.length > 1 ? (
+                      <span className="ml-2 text-xs font-normal text-muted">
+                        {group.items.length} items, decided one reader at a time
+                      </span>
+                    ) : null}
+                  </Td>
+                </Tr>
+                {group.items.map((item) => {
+                  const suggestion =
+                    report?.rows.find((row) => row.deviceId === item.deviceId && row.deviceUserId === item.deviceUserId)
+                      ?.suggestionMemberId ?? item.possibleMemberId
+                  const actions = decisionCell(item, has('REVIEW_DECIDE'), decide.isPending, suggestion, (path, body) =>
+                    decide.mutate({ id: item.id, path, body }),
+                  )
+                  return (
+                    <Tr key={item.id}>
+                      <Td className="text-xs">{item.deviceName || item.deviceId}</Td>
+                      <Td className="font-mono text-xs">{item.deviceUserId}</Td>
+                      <Td>
+                        <div>{item.serverName || '—'}</div>
+                        <Validity from={item.serverValidFrom} to={item.serverValidTo} />
+                        <Access status={item.serverUserStatus} />
+                      </Td>
+                      <Td>
+                        <div>{item.readerAbsent ? 'Absent' : item.readerName || '—'}</div>
+                        <Validity from={item.readerValidFrom} to={item.readerValidTo} />
+                        <Access status={item.readerUserStatus} />
+                        {item.readerPhotoDiffers ? (
+                          <div className="text-xs text-warn">Photo differs from the server photo</div>
+                        ) : null}
+                        {item.kind === 'SUSPENDED' ? (
+                          <div className="text-xs text-warn">
+                            Someone else holds this id; the member is off this reader
+                          </div>
+                        ) : null}
+                        {item.kind === 'ENROLLMENT' && item.possibleMemberId ? (
+                          <div className="text-xs text-warn">
+                            May already be {item.possibleMemberName || item.possibleMemberId}; link instead of creating
+                          </div>
+                        ) : null}
+                      </Td>
+                      <Td>
+                        <div>{item.baselineName || '—'}</div>
+                        <Validity from={item.baselineValidFrom} to={item.baselineValidTo} />
+                        <Access status={item.baselineUserStatus} />
+                      </Td>
+                      <Td>{actions}</Td>
+                    </Tr>
+                  )
+                })}
+              </tbody>
+            ))}
           </Table>
         </TableShell>
       </Card>
     </div>
   )
+}
+
+type ReviewGroup = { key: string; title: string; items: ReviewItem[] }
+
+/** One section per member; each reader's item in it is still decided on its own. Unknown people come last. */
+function groupByMember(items: ReviewItem[]): ReviewGroup[] {
+  const groups = new Map<string, ReviewGroup>()
+  const unknown: ReviewItem[] = []
+  for (const item of items) {
+    if (item.kind === 'ENROLLMENT') {
+      unknown.push(item)
+      continue
+    }
+    const key = item.memberId ?? `item-${item.id}`
+    const group = groups.get(key) ?? { key, title: `Member: ${item.memberName || item.serverName || '—'}`, items: [] }
+    group.items.push(item)
+    groups.set(key, group)
+  }
+  const sections = [...groups.values()]
+  if (unknown.length > 0) {
+    sections.push({ key: 'unknown', title: 'People the server does not know', items: unknown })
+  }
+  return sections
 }
 
 function Validity({ from, to }: Readonly<{ from: string | null; to: string | null }>) {

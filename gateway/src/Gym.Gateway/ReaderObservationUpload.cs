@@ -39,12 +39,13 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         _acceptanceTimeout = acceptanceTimeout ?? DefaultAcceptanceTimeout;
     }
 
-    public async Task UploadAsync(
+    public async Task<IReadOnlyList<string>> UploadAsync(
         string deviceId,
         IReadOnlyList<ReaderUser> users,
         IReadOnlyDictionary<string, string> faceHashes,
         CancellationToken cancellationToken)
     {
+        var sent = new List<string>();
         foreach (var user in users)
         {
             var envelope = GatewayEnvelope.Create(_gatewayId, ProtocolTypes.DeviceUserChanged, new
@@ -62,6 +63,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                 isNew = true,
                 deleted = false
             }, deviceId);
+            sent.Add(envelope.MessageId);
             try
             {
                 await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
@@ -74,9 +76,11 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                     deviceId, user.DeviceUserId, ex.Message);
             }
         }
+
+        return sent;
     }
 
-    public async Task<bool> UploadTrustedRosterAsync(
+    public async Task<RosterUpload> UploadTrustedRosterAsync(
         string deviceId,
         int announcedTotal,
         IReadOnlyList<ReaderUser> users,
@@ -110,7 +114,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             _log.LogWarning(
                 "Roster for {DeviceId} with {Count} users is {Bytes} bytes; it was not uploaded",
                 deviceId, people.Length, size);
-            return false;
+            return RosterUpload.NotSent;
         }
 
         try
@@ -118,7 +122,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             if (!awaitAcceptance)
             {
                 await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
-                return false;
+                return new RosterUpload(false, envelope.MessageId);
             }
 
             var accepted = await _link.SendAndAwaitAckAsync(envelope, _acceptanceTimeout, cancellationToken)
@@ -129,7 +133,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                     "Roster for {DeviceId} was not acknowledged; its users are sent one by one", deviceId);
             }
 
-            return accepted;
+            return new RosterUpload(accepted, envelope.MessageId);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or WebSocketException)
         {
@@ -137,13 +141,14 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                 ex,
                 "Roster for {DeviceId} queued; server unreachable ({Message})",
                 deviceId, ex.Message);
-            return false;
+            return new RosterUpload(false, envelope.MessageId);
         }
     }
 
-    public async Task UploadAbsencesAsync(
+    public async Task<IReadOnlyList<string>> UploadAbsencesAsync(
         string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
     {
+        var sent = new List<string>();
         foreach (var deviceUserId in deviceUserIds)
         {
             if (string.IsNullOrWhiteSpace(deviceUserId))
@@ -157,6 +162,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                 isNew = false,
                 deleted = true
             }, deviceId);
+            sent.Add(envelope.MessageId);
             try
             {
                 await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
@@ -169,5 +175,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                     deviceId, deviceUserId, ex.Message);
             }
         }
+
+        return sent;
     }
 }

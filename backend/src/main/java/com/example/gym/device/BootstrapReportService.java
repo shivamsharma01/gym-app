@@ -17,11 +17,9 @@ import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -94,25 +92,12 @@ public class BootstrapReportService {
      * A complete roster, empty or not. Every active member this reader has no mapping for is
      * written with the existing desired-state writer, under an id above every id the reader showed.
      * Existing mappings and people the server does not know stay as they are, and nobody is linked.
-     * A later roster writes only members still missing.
-     * <p>
-     * While the reader still shows people staff have not decided on, a member created from another
-     * reader's person is not seeded: that person may be one of the undecided, and a seed would add
-     * them a second time under a new id. Staff link them instead. Server-created members are seeded.
+     * A later roster writes only members still missing. Members who may be one of the people this
+     * reader shows undecided are held back, as for every seed.
      */
     @Transactional
     public void seedFromTrustedRoster(Device reader) {
-        if (!enrollments.existsByDeviceIdAndResolvedFalse(reader.getId())) {
-            reconcile.reconcile(reader);
-            return;
-        }
-        Set<String> fromReaders = new HashSet<>();
-        List<PendingEnrollment> created =
-                enrollments.findByTenantIdAndDecision(reader.getTenantId(), ReviewDecisions.CREATE);
-        for (PendingEnrollment enrollment : created) {
-            fromReaders.add(enrollment.getChosenState());
-        }
-        reconcile.reconcile(reader, member -> !fromReaders.contains(member.getPublicId()));
+        reconcile.reconcile(reader);
     }
 
     private List<Row> seed(Device reader) {

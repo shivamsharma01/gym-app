@@ -150,7 +150,7 @@ public sealed class LiveBootstrapTests : IDisposable
             .Select(i => new ReaderUser(i.ToString(), "Person", longName, 0, ValidFrom, ValidTo, "Customer", 1, 1))
             .ToList();
 
-        Assert.False(await upload.UploadTrustedRosterAsync(
+        Assert.Equal(RosterUpload.NotSent, await upload.UploadTrustedRosterAsync(
             "reader-big", users.Count, users, new Dictionary<string, string>(), true, CancellationToken.None));
 
         Assert.Equal(0, backend.Messages);
@@ -240,6 +240,12 @@ public sealed class LiveBootstrapTests : IDisposable
 
         public Task ReportOccupiedAsync(
             string deviceId, long revision, string deviceUserId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<bool> ObservationProcessedAsync(string deviceId, IReadOnlyList<string> messageIds,
+            CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
         public Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,

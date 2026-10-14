@@ -868,6 +868,58 @@ Compatibility: the backend and gateway must be upgraded together. An older gatew
 
 Not covered by this slice: a failed revision blocking newer ones, retry limits, stale observations (slice 2); grouping review items by member in the UI, duplicate import and seeding safeguards (slice 3). Door and time section are not part of the comparison. The reader page does not yet show held or suspended members. Not run on a physical reader.
 
+## Remediation slice 2: failed revisions and reconnect ordering (15 October 2026, uncommitted)
+
+Before this slice, the gateway kept one retry row per reader. Any other revision waited behind it (`NotReady`), and a pass stopped at the first revision that did not succeed. If the server replaced the failed revision, the retry row still pointed at it and the reader stalled for good. One malformed item, an unparseable date, a missing face or a refused acknowledgement stopped every pass in the same way. On reconnect the observation went out over the WebSocket without waiting, and desired state was pulled and applied straight after, so nothing guaranteed the server had processed the observation first. Now:
+- Per-revision attempts with backoff, exhaustion, permanent rejection and supersession, as in architecture section 10. One failed revision no longer stops newer revisions, other pages, or other ids.
+- An unusable pulled item is rejected and reported as permanent; it does not fail the pull.
+- A refused acknowledgement (409) or a read-back that no longer matches makes the revision a retried attempt again. It is not counted as applied.
+- Exhausted and rejected revisions are reported once to `POST /internal/gateway/desired/failed`. The member page shows "Not applied" with the error and attempts, or "Held for review". Its line now shows whether this row was read back, not the reader's highest acknowledged revision.
+- Observation gate: desired state is pulled only after the server confirms it processed the reader's latest observation (`POST /internal/gateway/desired/observed`). A gate that stays closed is re-observed after 2 minutes. Passes are serialized per reader. A 10-second retry tick handles due attempts, unsent acknowledgements and closed gates.
+- Server: a member is applied on a reader only when the row's own revision was acknowledged (`acked_revision`). The id allocator also treats a row that was never acknowledged as taken, so a removal that failed below a later acknowledgement keeps its id.
+- A reader change that overtakes a waiting staff decision gives that decision a verification error, so staff can decide again instead of the item staying "waiting for the reader".
+
+Retry policy: every failed write or removal is stored in the gateway journal (`revision_attempt`). Backoff runs from 1 second, doubling, up to 10 minutes. After 6 failures the revision is Exhausted: it is reported and logged as a warning, and still retried every 10 minutes. Permanent rejections are not retried until a restart or a replacement. A restart makes Exhausted and Rejected revisions due at once. Nothing is dropped unless the server no longer desires it, and every drop is logged.
+
+Compatibility: the backend and gateway must be upgraded together. A new gateway against an old backend gets 404 from `/desired/observed` and never applies desired state, which fails safe. An old gateway against the new backend works but keeps the old blocking retry; `applied` on the member page then stays false for rows whose acknowledgement predates `acked_revision`. The gateway journal migrates itself on start. The old single `retry_state` row becomes a `revision_attempt` row, then the table is dropped. That migration is covered by a test that builds an old-format journal. An older gateway on a journal written by this build was not tested: it would recreate `retry_state` and ignore `revision_attempt` and `verified_revision`, losing pending attempts. Rolling back the gateway therefore means deleting its reader journals, which forces a full re-observation and re-verification. `V1__baseline.sql` was edited in place (five new `desired_member` columns), so the database must be recreated, as for slice 1. Rollback is the previous build of both, a recreated database, and new gateway journals.
+
+Not covered: physical-reader runs; tuning the 6-attempt and 10-minute limits on real hardware; failures that come from a reader being offline also count toward exhaustion, so an offline reader shows "Not applied" on its members until it returns. Observations queued while offline are still replayed after the reconnect observation; compare-and-set prevents a wrong write, but a review item can briefly show the older record. Review grouping, duplicate import and seeding (slice 3).
+
+## Remediation slice 3: cross-reader identity, review isolation, import and seeding (15 October 2026, uncommitted)
+
+Before this slice:
+- Importing a second reader created a new member for every pending person, including people already imported from the first reader; two imports at the same time could do the same.
+- A member without a membership took validity dates from whichever other reader's row had the lowest id.
+- Only the trusted-roster seed held back members created from reader people while that reader had undecided people. Reactivation, a first photo, staff Reconcile and the bootstrap report seeded without that check, and a server member with the same name as an undecided reader person was seeded under a new id.
+- A person disabled on the reader became an inactive member with no audit of why.
+- The review list did not say which member or reader an item belonged to.
+- An offline reader spent retry attempts, so its revisions were exhausted and reported as "Not applied", then waited up to 10 minutes after it came back.
+
+Now (architecture sections 8, 10 and 21):
+- One possible-match rule (same photo hash, or same name ignoring case and spacing) is used by import, seeding and the review list. Import leaves a possible match pending with the member named; each import step locks every reader of the gym and reads committed data, so concurrent imports create each person once.
+- Every seed trigger goes through one gate in `ReaderReconcileService`. Reconcile reports how many members it held back.
+- A member created from a reader keeps that reader's validity on the member (`adopted_valid_from`, `adopted_valid_to`). `heldElsewhere` is removed.
+- The create audit entry records the member status and why it is inactive.
+- The review list carries the member, the reader name and the possible match. The Review page groups a member's per-reader items under the member, lists unknown people last, and fills in the possible match as the member to link.
+- Gateway failure categories: an offline reader is not tried and spends no attempt; a failure seen while it drops is not counted either; every non-rejected revision is due at once when it comes back. Transient failures and permanent rejections are unchanged. The numeric limits are unchanged.
+
+Behaviour change: a server member whose name matches an undecided person on a reader is no longer seeded there until staff decide. Four existing tests asserted the old seed and were updated (`ReaderAddedLaterSeedingIT`, two in `RosterBootstrapReportIT`, one in `LateMemberChangesIT`). A create decision still waiting for the reader is not flagged as a possible match of the member it made.
+
+Compatibility: the backend and frontend change together; the API gains fields only (`held` on Reconcile; `deviceName`, `memberId`, `memberName`, `possibleMemberId`, `possibleMemberName` on review items), so an older frontend still works. The gateway change is local: no protocol change, no journal schema change. `V1__baseline.sql` was edited in place (two `member` columns), so the database must be recreated, as for slices 1 and 2. Rollback is the previous build and a recreated database; the gateway can be rolled back on its own.
+
+Limitations, stated exactly:
+- A person enrolled on a reader under a different name and a different photo is not detected as a possible match. A reader that re-encodes the photo defeats the photo comparison.
+- The seed gate knows only people the server has observed. A person enrolled on a reader whose observation arrives after a seed (gateway offline, or the observation delayed) cannot hold that seed back. The member is then on that reader twice. When the observation arrives, the person becomes a pending enrollment flagged as the member; nothing is linked or overwritten, and import leaves them pending. Staff resolve it by rejecting the person or removing the seeded copy. Covered by a test; not prevented.
+- A single staff "Create member" is not blocked by a possible match; the Review page shows the match.
+- The undecided-people read in the seed gate is a shared lock; an observation that writes the same rows and then waits for the reader lock can deadlock with it. The database detects that and rolls one back; it is not a hang. A rolled-back observation keeps that reader's observation gate closed until the reader is observed again (slice 2); a rolled-back staff action returns an error and can be repeated. Not reproduced in a test.
+- A reader that is offline when the gateway starts gets no worker until the gateway restarts (unchanged).
+- A member whose only membership is cancelled counts as having no plan, so a reader keeps them enabled with their adopted dates (or today). Unchanged semantics; adoption only decides which dates are used.
+- The gateway's offline test drives the probe directly; the wiring to the connection state (`ONLINE` versus `DEGRADED` or `OFFLINE`) is not covered by a test.
+
+Suite results (15 October 2026): backend `mvn clean verify` 32 unit tests, 256 integration tests with 0 failures, 0 errors, 1 skipped; gateway 221 passed, build 0 warnings; frontend build passes, lint exits 0 (14 existing warnings, none in changed files), Playwright 20 passed, 1 skipped. `LateMemberChangesIT.anUnknownUsersIdIsNotReusedOrLinked` asserted the old seed beside an undecided person of the same name and was updated to the held behaviour.
+
+Carried to slice 4 (stale observations): observations queued while the gateway was offline are still replayed after the fresh reconnect observation. Slice 4 must make observation freshness and ordering explicit: an older observation must not override a newer decision, reopen an obsolete conflict, or cause an unsafe reader write. Slice 3 tests cover the interactions found here: a replayed pre-import observation opens nothing, and a delayed observation after a seed is flagged and never linked. Missing-field defaults on adopt (today when the reader gave no dates) also remain for slice 4.
+
 ## F. Fake reader only
 
 F1's credential tests, F2, F3, and V1 through V21 were accepted on the fake reader and the test database. That acceptance does not close section E.

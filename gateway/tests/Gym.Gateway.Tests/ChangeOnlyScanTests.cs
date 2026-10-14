@@ -391,17 +391,17 @@ public sealed class ChangeOnlyScanTests : IDisposable
 
         private bool _held;
 
-        public Task UploadAsync(
+        public Task<IReadOnlyList<string>> UploadAsync(
             string deviceId,
             IReadOnlyList<ReaderUser> users,
             IReadOnlyDictionary<string, string> faceHashes,
             CancellationToken cancellationToken)
         {
             Calls.Add("users");
-            return Task.CompletedTask;
+            return Task.FromResult<IReadOnlyList<string>>(users.Select(user => "user-" + user.DeviceUserId).ToList());
         }
 
-        public async Task<bool> UploadTrustedRosterAsync(
+        public async Task<RosterUpload> UploadTrustedRosterAsync(
             string deviceId,
             int announcedTotal,
             IReadOnlyList<ReaderUser> users,
@@ -410,21 +410,22 @@ public sealed class ChangeOnlyScanTests : IDisposable
             CancellationToken cancellationToken)
         {
             Calls.Add(awaitAcceptance ? "list-awaited" : "list");
+            var id = "list-" + Calls.Count;
             if (!awaitAcceptance || _held)
             {
-                return awaitAcceptance;
+                return new RosterUpload(awaitAcceptance, id);
             }
 
             _held = true;
             Waiting.SetResult();
-            return await Release.Task;
+            return new RosterUpload(await Release.Task, id);
         }
 
-        public Task UploadAbsencesAsync(
+        public Task<IReadOnlyList<string>> UploadAbsencesAsync(
             string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
         {
             Calls.Add("absences");
-            return Task.CompletedTask;
+            return Task.FromResult<IReadOnlyList<string>>(deviceUserIds.Select(id => "absence-" + id).ToList());
         }
     }
 }

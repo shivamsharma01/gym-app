@@ -100,6 +100,23 @@ public class DesiredMemberProjection extends TenantAwareEntity {
     @Column(name = "held", nullable = false)
     private boolean held;
 
+    /** The revision the gateway last acknowledged for this row; applied only when it equals {@link #revision}. */
+    @Column(name = "acked_revision")
+    private Long ackedRevision;
+
+    /** The gateway's last reported failure, for {@link #applyErrorRevision} only. */
+    @Column(name = "apply_error", length = 255)
+    private String applyError;
+
+    @Column(name = "apply_error_revision")
+    private Long applyErrorRevision;
+
+    @Column(name = "apply_attempts")
+    private Integer applyAttempts;
+
+    @Column(name = "apply_error_permanent", nullable = false)
+    private boolean applyErrorPermanent;
+
     protected DesiredMemberProjection() {
     }
 
@@ -256,6 +273,41 @@ public class DesiredMemberProjection extends TenantAwareEntity {
 
     public void setHeld(boolean held) {
         this.held = held;
+    }
+
+    /** The current revision read back on the reader. */
+    public boolean isApplied() {
+        return ackedRevision != null && ackedRevision == revision;
+    }
+
+    public void acknowledged(long ackedRevision) {
+        this.ackedRevision = ackedRevision;
+        if (applyErrorRevision != null && applyErrorRevision <= ackedRevision) {
+            applyError = null;
+            applyErrorRevision = null;
+            applyAttempts = null;
+            applyErrorPermanent = false;
+        }
+    }
+
+    public void failed(long failedRevision, String error, int attempts, boolean permanent) {
+        applyError = cut(error, 255);
+        applyErrorRevision = failedRevision;
+        applyAttempts = attempts;
+        applyErrorPermanent = permanent;
+    }
+
+    /** The failure the gateway reported for the current revision, or null. */
+    public String getApplyError() {
+        return applyErrorRevision != null && applyErrorRevision == revision ? applyError : null;
+    }
+
+    public Integer getApplyAttempts() {
+        return getApplyError() == null ? null : applyAttempts;
+    }
+
+    public boolean isApplyErrorPermanent() {
+        return getApplyError() != null && applyErrorPermanent;
     }
 
     private static String cut(String value, int max) {

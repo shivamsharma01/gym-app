@@ -112,6 +112,7 @@ public sealed class GatewayWorker : BackgroundService
         var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
         var poll = PollLoopAsync(_link, stoppingToken);
         var observe = ObserveReadersAsync(stoppingToken);
+        var retry = RetryReadersAsync(stoppingToken);
         var attendance = AttendanceLoopAsync(stoppingToken);
         var clock = TimeSyncLoopAsync(stoppingToken);
         var statusLog = StatusLoopAsync(stoppingToken);
@@ -123,7 +124,7 @@ public sealed class GatewayWorker : BackgroundService
             new { agentVersion = "gym-gateway-0.5" },
             null), stoppingToken).ConfigureAwait(false);
 
-        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, observe, attendance, clock, statusLog, readerHealth)
+        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, observe, retry, attendance, clock, statusLog, readerHealth)
             .ConfigureAwait(false);
     }
 
@@ -318,20 +319,23 @@ public sealed class GatewayWorker : BackgroundService
                 deviceId, reader, _attendance, AttendancePollSettings.From(_options),
                 _logFactory.CreateLogger<AttendancePoll>()));
             var journal = Path.Combine(_readerJournalDirectory, JournalFile(deviceId));
-            var worker = new ReaderWorker(deviceId, reader, journal);
+            var worker = new ReaderWorker(deviceId, reader, journal, online: () => !KnownOffline(deviceId));
             _readerWorkers.Add(worker);
             IReaderObservationUpload observations = new ReaderObservationUpload(
                 _options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>());
             var memory = new ReaderScanMemory(
                 new FaceChecksumCache(Path.ChangeExtension(journal, ".faces.json")),
                 new ScanUploadState(TimeSpan.FromMinutes(Math.Max(1, _options.RosterRefreshMinutes))));
-            var path = new DesiredRevisionPath(deviceId, worker, reader, _desired, observations, memory);
+            var path = new DesiredRevisionPath(
+                deviceId, worker, reader, _desired, observations, memory,
+                new DesiredPathOptions { Log = _logFactory.CreateLogger<DesiredRevisionPath>() });
             _desiredRevisions.Attach(
                 deviceId,
                 path.HandleAsync,
                 path.ReconnectAsync,
                 ct => path.BootstrapAsync(ct),
                 path.ScanNowAsync);
+            _desiredRevisions.AttachRetry(deviceId, path.RetryAsync);
         }
     }
 
@@ -350,6 +354,26 @@ public sealed class GatewayWorker : BackgroundService
             {
                 await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
                 await _desiredRevisions.ObserveAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Retries failed revisions when their backoff passes, unsent acknowledgements, and readers whose
+    /// observation the server has not yet processed. A reader with nothing to retry is not touched.
+    /// </summary>
+    private async Task RetryReadersAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+                await _desiredRevisions.RetryAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -422,6 +446,10 @@ public sealed class GatewayWorker : BackgroundService
             ? adapter
             : null;
     }
+
+    private bool KnownOffline(string deviceId) =>
+        _adapters.TryGetValue(deviceId, out var adapter)
+        && !string.Equals(adapter.GetHealth().ConnectionState, TimedDeviceAdapter.OnlineState, StringComparison.Ordinal);
 
     private static string JournalFile(string deviceId)
     {

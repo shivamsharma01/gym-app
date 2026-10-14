@@ -17,24 +17,25 @@ import org.springframework.stereotype.Service;
  * Staff turn every person one reader showed, and nobody has decided on yet, into a member. Each
  * person is one create decision in its own transaction, audited like a single create, and the
  * member holds what the reader already shows, so nothing is written to the reader. A person whose
- * photo has not reached the server, or whose decision is still waiting for the reader, stays
- * pending and is reported. Nobody is linked, and no other reader is touched.
+ * photo has not reached the server, whose decision is still waiting for the reader, or who may
+ * already be a member (same photo or same name), stays pending and is reported. Nobody is linked,
+ * and no other reader is touched.
  */
 @Service
 public class ReaderImportService {
 
     private final DeviceRepository devices;
     private final PendingEnrollmentRepository enrollments;
-    private final ReviewDecisionService decisions;
+    private final ReaderImportStep step;
     private final ReviewDecisionAudit audit;
 
     public ReaderImportService(DeviceRepository devices,
                                PendingEnrollmentRepository enrollments,
-                               ReviewDecisionService decisions,
+                               ReaderImportStep step,
                                ReviewDecisionAudit audit) {
         this.devices = devices;
         this.enrollments = enrollments;
-        this.decisions = decisions;
+        this.step = step;
         this.audit = audit;
     }
 
@@ -58,7 +59,7 @@ public class ReaderImportService {
         List<Skipped> skipped = new ArrayList<>();
         for (PendingEnrollment enrollment : pending) {
             try {
-                audit.decided(decisions.create(enrollment.getPublicId(), tenantId));
+                audit.decided(step.createUnlessKnown(enrollment, tenantId));
                 created++;
             } catch (ApiException e) {
                 skipped.add(new Skipped(enrollment.getDeviceUserId(), e.getMessage()));

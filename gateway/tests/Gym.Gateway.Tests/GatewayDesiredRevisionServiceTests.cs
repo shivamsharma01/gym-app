@@ -219,6 +219,12 @@ public class GatewayDesiredRevisionServiceTests : IDisposable
             return Task.CompletedTask;
         }
 
+        public Task<bool> ObservationProcessedAsync(string deviceId, IReadOnlyList<string> messageIds,
+            CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
         public Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,
             CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Unexpected occupant at " + deviceUserId);

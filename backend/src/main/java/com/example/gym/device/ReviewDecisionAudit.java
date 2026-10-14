@@ -7,6 +7,7 @@ import com.example.gym.device.dto.ReviewItemView;
 import com.example.gym.device.repo.DeviceReviewItemRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
+import com.example.gym.member.MemberStatus;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -41,6 +42,14 @@ public class ReviewDecisionAudit {
         String memberId = enrollment ? enrollmentMember(view) : reviewMember(view.id());
         if (memberId != null) {
             details.put("memberId", memberId);
+        }
+        if (enrollment && ReviewDecisions.CREATE.equals(view.decision()) && memberId != null) {
+            members.findByPublicId(memberId).ifPresent(member -> {
+                details.put("memberStatus", member.getStatus().name());
+                if (member.getStatus() != MemberStatus.ACTIVE) {
+                    details.put("statusReason", "the reader showed this person disabled");
+                }
+            });
         }
         audit.record(enrollment ? AuditActions.ENROLLMENT_DECIDED : AuditActions.REVIEW_DECIDED,
                 AuditActions.RESULT_SUCCESS,

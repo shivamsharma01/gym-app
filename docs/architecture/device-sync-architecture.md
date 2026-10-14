@@ -205,6 +205,14 @@ Offline enrollment is supported without turning the gateway into a second busine
 
 8\. **Verify:**The gateway applies that revision, reads the user and face back, and acknowledges only a match.
 
+**Cross-reader identity (remediation slice 3).**
+
+- *Possible match.* A reader person may already be a member when the reader photo has the member photo's SHA-256, or when the names are equal ignoring case and spacing. Members of any status count. A possible match is never linked; it stops automatic creation and seeding so staff decide. A reader that re-encodes the photo defeats the photo comparison; the name comparison still applies; a person enrolled under a different name and a different photo is not detected.
+- *Bulk import* ("Import pending people") creates one member per person in its own transaction. Each step locks every reader of the gym, lowest id first, and reads at READ COMMITTED, so two imports (or an import and a seed) take turns and see each other's members. A possible match is left pending with the reason, naming the member. Staff then link, or create one by one; a single staff create is an explicit decision and is not blocked. The Review page names the possible member on the enrollment and fills it in as the member to link.
+- *Seed gate.* Every seed trigger (trusted roster, bootstrap report, staff Reconcile, reactivation, first photo) goes through one rule. While a reader shows people staff have not decided on, a member is held back from that reader when they were created from any reader's person, or when they possibly match one of those people. The next trigger after the last decision seeds them. Reconcile reports how many it held back. The undecided people are read with a locking read under the reader lock, so one observed after the seed's snapshot still holds it back.
+- *Canonical validity.* A member created from a reader person keeps that reader's validity on the member (`adopted_valid_from`, `adopted_valid_to`). While the member has no membership, every reader gets those dates from the member. Nothing is read from another reader's row. A member created on the server without a membership gets today.
+- *Status on create.* A person the reader shows disabled becomes an inactive member; the create audit entry records `memberStatus` and the reason.
+
 # 9. Device edits, admin promotions, and conflicts
 
 The gym owner may edit a user on a reader. Reader-menu administration is the reader password, not a projected `emAuthority` value. The server treats reader-side changes as reviewable observations.
@@ -244,9 +252,33 @@ Member state for a reader is a versioned desired projection. The gateway pulls r
 
 6\. **Verification:**Gateway reads back enough state to verify the operation or receives an SDK-confirmed success according to the POC-tested semantics.
 
-7\. **Ack:**Gateway records the highest fully applied reader revision. Server marks that reader caught up to that revision.
+7\. **Ack:**Gateway acknowledges each verified revision. The server stores it on that row (`acked_revision`); a member is applied on a reader only when the row's current revision was acknowledged. The reader's highest acknowledged revision is kept for paging, not as proof that lower revisions were applied.
 
 8\. **Supersession:**A newer desired revision makes older desired instructions stale. There is no need to replay every intermediate business edit to the reader.
+
+**Failed revisions (remediation slice 2).** Revisions of different ids can be applied out of order, because every write and removal is compare-and-set against `expected` (section 9). A failed revision does not stop newer ones:
+
+| State in the gateway journal | Meaning | Next |
+|---|---|---|
+| `applied_revision` (cursor) | Every revision at or below it was verified, or reported and settled, or dropped by the server. | Pulls start after it. It moves up to the lowest unresolved revision minus one. |
+| `verified_revision` | Verified above the cursor while a lower revision is unresolved. | Not applied again; folded into the cursor. |
+| `revision_attempt` `Retry` | Failed; retried with backoff 1 s, 2 s, 4 s … capped at 10 minutes. | Retried when due by the 10 s retry tick, a notice, a reconnect, or a scan. |
+| `revision_attempt` `Exhausted` | Six failures. Reported once to `POST /internal/gateway/desired/failed` and logged as a warning. | Still retried every 10 minutes, and at once after a restart. Never treated as applied. |
+| `revision_attempt` `Rejected` | The item cannot be applied as sent (missing face or dates, unparseable). Reported once as permanent. | Not retried until a restart or until the server replaces it. |
+
+**Failure categories (remediation slice 3).** The retry timings and the six-failure limit are provisional defaults, not tuned against hardware.
+
+- *Reader offline.* The reader's session is down (the adapter is not `ONLINE`; the timed adapter reports `DEGRADED` after four connection errors in a row). Nothing is sent to the reader and no attempt is counted. A failure seen while the session drops is not counted either. The attempt keeps its count, state and report, and is due at once. While the reader is offline, nothing is due. When it comes back, every `Retry` and `Exhausted` revision is due at once.
+- *Transient device failure.* The reader answered with an error, or the read-back did not match. Counted, with backoff, towards `Exhausted`.
+- *Permanent rejection.* The item cannot be applied as sent. `Rejected` at once; not retried until a restart or a replacement.
+
+No state discards desired state. An exhausted revision is still retried, and the server keeps the row as desired until it is acknowledged or replaced.
+
+An attempt is deleted only when the revision is verified, when the server took an occupant or occupied report for it, or when a pull no longer lists it (the server replaced it, held it, or dropped it); the drop is logged with the old error. A late retry therefore cannot write an older record over a newer one. An unsent acknowledgement for a row the server replaced is discarded, not sent. An acknowledgement the server refuses (409), or one whose read-back no longer matches, puts the revision back to a retried attempt and the cursor back below it.
+
+The server stores the last reported failure on the row (`apply_error`, `apply_error_revision`, `apply_attempts`, `apply_error_permanent`) and notes it on a staff decision waiting for that revision. It is shown only while that revision is current; a newer revision or a matching acknowledgement clears it. A report for a revision that is no longer current is refused (409) and the gateway drops its attempt.
+
+**Holds are not superseded.** A held row (section 9), a suspended member, or a decision waiting for staff is server state. A member edit or "Send again" republishes the row but keeps the hold and the stored `expected`; only a staff decision releases it. A held row is not pulled, so the gateway drops its own attempt for it; that removes no safety information because the hold lives on the server. If a reader change overtakes a staff decision before it is written, the decision gets a verification error and staff decide again.
 
 <table>
 <colgroup>
@@ -255,7 +287,8 @@ Member state for a reader is a versioned desired projection. The gateway pulls r
 <thead>
 <tr class="header">
 <th><p><strong>Reconnection order</strong></p>
-<p>On gateway reconnect: authenticate -&gt; re-establish reader health -&gt; collect current reader observations -&gt; send observations/cursors to server -&gt; pull current desired revisions -&gt; apply/verify -&gt; acknowledge. Never blindly replay stale desired commands before observing the reader.</p></th>
+<p>On gateway reconnect: authenticate -&gt; re-establish reader health -&gt; collect current reader observations -&gt; send observations/cursors to server -&gt; pull current desired revisions -&gt; apply/verify -&gt; acknowledge. Never blindly replay stale desired commands before observing the reader.</p>
+<p><strong>Ordering contract (remediation slice 2).</strong> Each reader has an observation gate. After a start or reconnect it is closed until the gateway has listed the reader, uploaded the observation, and the server confirms it processed those message ids (<code>POST /internal/gateway/desired/observed</code>, answered from the processed-message table, only for this gateway's own messages). Only then does the gateway pull. Every later observation upload closes the gate again until it is processed. Either the whole list or every per-user message sent with it counts. A failed list, a failed or unanswered check, or a message the server failed to process keeps the gate closed; after 2 minutes the reader is listed and sent again with new ids, at most once every 30 seconds. A reconnect waits up to 5 seconds for processing, then leaves the rest to the retry tick. Passes for one reader are serialized.</p></th>
 </tr>
 </thead>
 <tbody>
@@ -269,11 +302,11 @@ The gateway should move from multiple JSON-based stores to a small SQLite journa
 | **Local record**       | **Purpose**                                                                             | **Retention**                                       |
 |------------------------|-----------------------------------------------------------------------------------------|-----------------------------------------------------|
 | Reader snapshot        | Last normalized reader observation for diff detection and offline local reconciliation. | Current + recent history needed for audit; bounded. |
-| Desired applied cursor | Highest verified server revision per reader.                                            | Until the reader is replaced; compact.              |
+| Desired applied cursor | Revision below which every revision is resolved per reader, plus verified revisions above it (`verified_revision`). | Until the reader is replaced; compact.              |
 | Outbound event journal | Attendance, enrollment, observation and audit events awaiting cloud delivery.           | Until ACKed, then bounded retention.                |
 | Provisional enrollment | Offline device-created users awaiting server review.                                    | Until resolved; then bounded audit copy.            |
 | Attendance cursor      | Last safely processed reader attendance position/window.                                | Until data is confirmed server-side, then bounded.  |
-| Retry metadata         | Attempt count, next attempt, last error.                                                | Until terminal/success; compact.                    |
+| Retry metadata         | One `revision_attempt` row per unresolved revision: attempt count, next attempt, last error, state, reported. | Until verified, reported and settled, or no longer desired; survives restart. |
 
 - **Do not persist heartbeats as replayable business events.** Keep current health state in memory and emit telemetry/status snapshots as telemetry.
 
@@ -304,7 +337,7 @@ The earlier “master device” model is not the right long-term architecture. F
 
 | **Bootstrap case**                                   | **Treatment**                                                                                                                |
 |------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| One reader has a trusted roster; server has members it does not have | Seed each active member with a face that has no mapping on that reader, through its desired-state writer and its own id allocator, above every id the reader showed. Existing mappings and unknown people on the reader stay as they are and are not linked. A later trusted roster seeds only what is still missing. A failed, short, or count-mismatched list seeds nothing. The gateway sends a non-empty list as one message only after V21. |
+| One reader has a trusted roster; server has members it does not have | Seed each active member with a face that has no mapping on that reader, through its desired-state writer and its own id allocator, above every id the reader showed. Existing mappings and unknown people on the reader stay as they are and are not linked. A member who may be one of the reader's undecided people is held back until staff decide (section 8). A later trusted roster seeds only what is still missing. A failed, short, or count-mismatched list seeds nothing. The gateway sends a non-empty list as one message only after V21. |
 | Reader + server member with existing mapping         | Compare current reader snapshot against server desired state; apply or review based on three-way/baseline availability.      |
 | Reader has unlinked person                           | Create Pending Device Enrollment. Suggest identity matches, but do not auto-link.                                            |
 | Two readers have same device ID but different people | Treat as separate device-local identities; create/retain per-reader mappings and surface the collision.                      |
@@ -449,7 +482,9 @@ The review queue is not an exception-handling drawer hidden from the product. It
 
 - **Actions:** Accept the server value, link to an existing member, create a new member, restore to this reader, remove from this reader, or reject. Link and create keep that reader's device user id. Removing from one reader does not deactivate the member and does not write other readers. The decision stays pending until that reader verifies it.
 
-- **Suggested matches:** Show ranked candidates based on evidence (name, face, mapping, other fields). Never auto-merge identity.
+- **Suggested matches:** Show ranked candidates based on evidence (name, face, mapping, other fields). Never auto-merge identity. An enrollment shows the member it may already be (same photo or same name) and fills that member in as the one to link.
+
+- **Grouping:** One item per reader per conflict episode. The list groups a member's items under that member, with the reader named on each row; each is still decided on its own, and a decision on one reader never closes or reopens another reader's item. People the server does not know are listed last.
 
 - **Audit:** Record decision, actor, prior state, chosen state and resulting server/device revisions.
 

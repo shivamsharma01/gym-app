@@ -75,27 +75,31 @@ public class ReaderReviewService {
         if (baseline != null && agrees(payload, held(baseline))) {
             return;
         }
-        open(device, desired, baseline, payload);
+        open(device, desired, baseline, payload, false);
     }
 
     /**
      * The gateway found this record at the id instead of the one it was told to expect, and wrote
      * nothing. The member's item on this reader opens even when the record matches the baseline.
+     * A decision still waiting for the reader was made on a record the reader no longer shows, so
+     * staff decide again.
      */
     @Transactional
     public void recordChange(Device device, DesiredMemberProjection desired, JsonNode payload) {
         DeviceReaderBaseline baseline = baselines
                 .findByDeviceIdAndDeviceUserId(device.getId(), desired.getDeviceUserId())
                 .orElse(null);
-        open(device, desired, baseline, payload);
+        open(device, desired, baseline, payload, true);
     }
 
     private void open(Device device, DesiredMemberProjection desired, DeviceReaderBaseline baseline,
-                      JsonNode payload) {
+                      JsonNode payload, boolean overtakesDecision) {
         String deviceUserId = desired.getDeviceUserId();
         DeviceReviewItem item = itemFor(device, deviceUserId, desired.getMemberId());
         if (item.isResolved()) {
             item.clearDecision();
+        } else if (overtakesDecision && item.getDecision() != null) {
+            item.noteVerificationError("The reader record changed before the decision was applied");
         }
         item.setKind(DeviceReviewItem.CONFLICT);
         item.setReaderAbsent(false);
@@ -240,6 +244,8 @@ public class ReaderReviewService {
         DeviceReviewItem item = itemFor(device, deviceUserId, desired.getMemberId());
         if (item.isResolved()) {
             item.clearDecision();
+        } else if (item.getDecision() != null && !item.isReaderAbsent()) {
+            item.noteVerificationError("The reader no longer has this person");
         }
         item.setKind(DeviceReviewItem.CONFLICT);
         if (item.getId() == null || item.getBaselineName() == null) {

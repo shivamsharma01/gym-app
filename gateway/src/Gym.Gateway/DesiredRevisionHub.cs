@@ -12,6 +12,7 @@ public sealed class DesiredRevisionHub
     private readonly Dictionary<string, Func<CancellationToken, Task>> _reconnects = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<CancellationToken, Task>> _observations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<CancellationToken, Task<bool>>> _scansNow = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Func<CancellationToken, Task>> _retries = new(StringComparer.Ordinal);
     private readonly ILogger<DesiredRevisionHub> _log;
 
     public DesiredRevisionHub(ILogger<DesiredRevisionHub> log)
@@ -43,6 +44,33 @@ public sealed class DesiredRevisionHub
         if (scanNow != null)
         {
             _scansNow[deviceId] = scanNow;
+        }
+    }
+
+    /// <summary>The reader's periodic retry of failed revisions, unsent acknowledgements, and its observation.</summary>
+    public void AttachRetry(string deviceId, Func<CancellationToken, Task> retry)
+    {
+        ArgumentNullException.ThrowIfNull(retry);
+        _retries[deviceId] = retry;
+    }
+
+    /// <summary>Each reader's retry. A failed reader does not stop the next.</summary>
+    public async Task RetryAsync(CancellationToken cancellationToken)
+    {
+        foreach (var (deviceId, retry) in _retries)
+        {
+            try
+            {
+                await retry(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Reader {DeviceId} retry did not apply desired state", deviceId);
+            }
         }
     }
 

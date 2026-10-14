@@ -332,12 +332,20 @@ public class DesiredProjectionService {
      * A member created from a reader person holds what that reader already shows: name, status,
      * validity, door, time section and photo. The gateway reads it back as matching and writes
      * nothing. The reader is written only when staff later change the member. The caller makes a
-     * person the reader shows disabled an inactive member, so the server's own status agrees.
+     * person the reader shows disabled an inactive member, so the server's own status agrees. The
+     * reader's validity is kept on the member, so another reader gets the same dates from the
+     * member, not from this reader's row.
      */
     @Transactional
     public long adoptFromReader(Member member, Device device, MemberFace face, DeviceObservedUser observed) {
-        return keepingId(member, device, observed,
+        long written = keepingId(member, device, observed,
                 (row, revision) -> adopt(row, revision, member, face, observed));
+        String from = readerTime(observed.getValidFrom());
+        String to = readerTime(observed.getValidTo());
+        if (from != null && to != null) {
+            member.adoptReaderWindow(from, to);
+        }
+        return written;
     }
 
     private long keepingId(Member member, Device device, DeviceObservedUser observed,
@@ -506,6 +514,7 @@ public class DesiredProjectionService {
             row.setObservedFaceSha256(ack.faceSha256());
         }
         row.setExpected(null);
+        row.acknowledged(ack.revision());
         projections.save(row);
         if (row.isPresentOnReader()) {
             reviews.reconcile(row);
@@ -661,7 +670,7 @@ public class DesiredProjectionService {
                       Member member, MemberFace face) {
         LocalDate today = LocalDate.now(READER_ZONE);
         var window = authorization.window(member, today);
-        DesiredMemberProjection held = window.isEmpty() ? heldElsewhere(member) : null;
+        boolean adopted = window.isEmpty() && member.getAdoptedValidFrom() != null && member.getAdoptedValidTo() != null;
         String fullName = member.getFullName();
         row.setRevision(revision);
         row.setDeviceUserId(deviceUserId);
@@ -669,9 +678,9 @@ public class DesiredProjectionService {
         row.setReaderName(szName(fullName));
         row.setReaderNameEx(szNameEx(fullName));
         row.setUserStatus(readerStatus(member));
-        if (held != null) {
-            row.setValidFrom(held.getValidFrom());
-            row.setValidTo(held.getValidTo());
+        if (adopted) {
+            row.setValidFrom(member.getAdoptedValidFrom());
+            row.setValidTo(member.getAdoptedValidTo());
         } else {
             LocalDate from = window.map(DeviceAuthorizationService.AccessWindow::validFrom).orElse(today);
             LocalDate to = window.map(DeviceAuthorizationService.AccessWindow::validTo).orElse(today);
@@ -683,17 +692,6 @@ public class DesiredProjectionService {
         row.setTimeSectionNum(TIME_SECTION_NUM);
         row.setFacePresent(true);
         row.setFaceSha256(face.getSha256());
-    }
-
-    /**
-     * The window another reader already holds for a member without a membership, so a member
-     * created from a reader keeps that reader's dates on the next reader too.
-     */
-    private DesiredMemberProjection heldElsewhere(Member member) {
-        return projections.findByMemberId(member.getId()).stream()
-                .filter(DesiredMemberProjection::isPresentOnReader)
-                .min(Comparator.comparing(DesiredMemberProjection::getDeviceId))
-                .orElse(null);
     }
 
     private static void adopt(DesiredMemberProjection row, long revision, Member member, MemberFace face,
@@ -807,7 +805,7 @@ public class DesiredProjectionService {
         return Objects.equals(left, right);
     }
 
-    private Device ownedReader(Gateway gateway, String devicePublicId) {
+    Device ownedReader(Gateway gateway, String devicePublicId) {
         Device device = devices.findByPublicId(devicePublicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Reader"));
         if (!device.getTenantId().equals(gateway.getTenantId())) {

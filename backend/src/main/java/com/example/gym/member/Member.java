@@ -86,7 +86,30 @@ public class Member extends TenantAwareEntity {
     @Column(name = "device_enabled")
     private Boolean deviceEnabled;
 
+    /**
+     * The reader-local validity a member created from a reader person kept from that reader. Used on
+     * every reader while the member has no membership; null for members created on the server.
+     */
+    @Column(name = "adopted_valid_from", length = 40)
+    private String adoptedValidFrom;
+
+    @Column(name = "adopted_valid_to", length = 40)
+    private String adoptedValidTo;
+
     protected Member() {
+    }
+
+    public String getAdoptedValidFrom() {
+        return adoptedValidFrom;
+    }
+
+    public String getAdoptedValidTo() {
+        return adoptedValidTo;
+    }
+
+    public void adoptReaderWindow(String validFrom, String validTo) {
+        this.adoptedValidFrom = validFrom;
+        this.adoptedValidTo = validTo;
     }
 
     public LocalDate getDeviceValidFrom() {

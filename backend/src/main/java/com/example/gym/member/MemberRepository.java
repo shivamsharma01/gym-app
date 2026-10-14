@@ -55,6 +55,14 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
 
     List<Member> findByTenantIdAndStatus(Long tenantId, MemberStatus status);
 
+    List<Member> findByTenantId(Long tenantId);
+
+    @Query("""
+            select m from Member m, MemberFace f
+            where f.memberId = m.id and m.tenantId = :tenantId and f.sha256 = :sha256
+            """)
+    List<Member> findByTenantIdAndFaceSha256(@Param("tenantId") Long tenantId, @Param("sha256") String sha256);
+
     long countByTenantIdAndStatus(Long tenantId, MemberStatus status);
 
     List<Member> findByTenantIdAndJoinedOnBetweenOrderByJoinedOnDesc(

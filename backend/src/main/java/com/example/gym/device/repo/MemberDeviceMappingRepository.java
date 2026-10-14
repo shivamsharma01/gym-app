@@ -52,7 +52,8 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
             UNION ALL
             (SELECT device_user_id FROM device_observed_user WHERE device_id = :deviceId FOR SHARE)
             UNION ALL
-            (SELECT device_user_id FROM desired_member WHERE device_id = :deviceId AND revision > :applied FOR SHARE)
+            (SELECT device_user_id FROM desired_member WHERE device_id = :deviceId
+              AND (revision > :applied OR acked_revision IS NULL OR acked_revision < revision) FOR SHARE)
             UNION ALL
             (SELECT device_user_id FROM reader_blocked_user WHERE device_id = :deviceId FOR SHARE)
             """, nativeQuery = true)

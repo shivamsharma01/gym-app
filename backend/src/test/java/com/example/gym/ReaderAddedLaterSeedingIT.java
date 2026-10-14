@@ -169,6 +169,7 @@ class ReaderAddedLaterSeedingIT extends AbstractIntegrationTest {
     @Test
     void aNonEmptyRosterKeepsUnknownUsersAndSeedsAboveTheirIdsWithoutLinking() throws Exception {
         Member asha = member(create("Asha", "UNK-ASHA", "2301"));
+        Member bina = member(create("Bina", "UNK-BINA", "2302"));
         long members = memberRepository.count();
         String lateId = createReader("Late");
         Long late = deviceId(lateId);
@@ -178,8 +179,10 @@ class ReaderAddedLaterSeedingIT extends AbstractIntegrationTest {
                 {"deviceUserId":"40","name":"Stranger","deleted":false}]
                 """);
 
-        assertThat(mapping(late, asha).getDeviceUserId()).isEqualTo("41");
-        assertThat(projection(late, asha).getDeviceUserId()).isEqualTo("41");
+        assertThat(mapping(late, bina).getDeviceUserId()).isEqualTo("41");
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(late, asha.getId()))
+                .as("person 3 may be Asha: a seed would put her on the reader twice")
+                .isEmpty();
         assertWalkInUntouched(late, "3");
         assertWalkInUntouched(late, "40");
         assertThat(pendingEnrollmentRepository.findByDeviceId(late))

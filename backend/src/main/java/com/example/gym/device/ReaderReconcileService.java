@@ -16,7 +16,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Predicate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +24,12 @@ import org.springframework.transaction.annotation.Transactional;
  * mapping for that member, through the desired-state seed. An existing mapping, a staff removal
  * included, is never rewritten, and people the server does not know are never linked. Running it
  * again writes nothing.
+ * <p>
+ * Every trigger seeds through here: a trusted roster, the bootstrap report, staff Reconcile,
+ * reactivation, and a first photo. While a reader shows people staff have not decided on, a member
+ * created from any reader's person, or who may be one of those people, is held back from that
+ * reader: a seed would add them a second time under a new id. Staff link them instead, and the next
+ * trigger after the last decision seeds the rest.
  */
 @Service
 public class ReaderReconcileService {
@@ -34,20 +39,23 @@ public class ReaderReconcileService {
     private final MemberDeviceMappingRepository mappings;
     private final DesiredProjectionService desired;
     private final AuditService audit;
+    private final MemberMatcher matcher;
 
     public ReaderReconcileService(DeviceRepository devices,
                                   MemberRepository members,
                                   MemberDeviceMappingRepository mappings,
                                   DesiredProjectionService desired,
-                                  AuditService audit) {
+                                  AuditService audit,
+                                  MemberMatcher matcher) {
         this.devices = devices;
         this.members = members;
         this.mappings = mappings;
         this.desired = desired;
         this.audit = audit;
+        this.matcher = matcher;
     }
 
-    public record Reconciled(String deviceId, int written) {
+    public record Reconciled(String deviceId, int written, int held) {
     }
 
     /** Staff ask one reader to receive the active members it does not have yet. */
@@ -59,37 +67,41 @@ public class ReaderReconcileService {
         if (reader.getGatewayId() == null) {
             throw CommonExceptions.badRequest("Reader has no gateway");
         }
-        int written = reconcile(reader);
+        Reconciled done = seed(reader);
         audit.record(AuditActions.DEVICE_RECONCILE_REQUESTED, AuditActions.RESULT_SUCCESS,
-                "Device", reader.getPublicId(), Map.of("written", written));
-        return new Reconciled(reader.getPublicId(), written);
+                "Device", reader.getPublicId(), Map.of("written", done.written(), "held", done.held()));
+        return done;
     }
 
     /** One reader, under its lock. Returns how many members were written. */
     @Transactional
     public int reconcile(Device reader) {
-        return reconcile(reader, member -> true);
+        return seed(reader).written();
     }
 
-    /** One reader, under its lock, writing only the members {@code eligible} accepts. */
-    @Transactional
-    public int reconcile(Device reader, Predicate<Member> eligible) {
+    private Reconciled seed(Device reader) {
         if (reader == null || reader.getGatewayId() == null) {
-            return 0;
+            return new Reconciled(reader == null ? null : reader.getPublicId(), 0, 0);
         }
         desired.lockReader(reader);
         Set<Long> mapped = new HashSet<>(mappings.lockMemberIdsByDeviceId(reader.getId()));
+        MemberMatcher.Undecided undecided = matcher.undecided(reader);
         int written = 0;
+        int held = 0;
         for (Member member : members.findByTenantIdAndStatus(reader.getTenantId(), MemberStatus.ACTIVE)) {
-            if (!mapped.contains(member.getId()) && eligible.test(member)
-                    && desired.seedIfAbsent(member, reader) != null) {
+            if (mapped.contains(member.getId())) {
+                continue;
+            }
+            if (undecided.holds(member)) {
+                held++;
+            } else if (desired.seedIfAbsent(member, reader) != null) {
                 written++;
             }
         }
-        if (written > 0) {
-            FlowLog.info("device", "reconciled reader={} written={}", reader.getPublicId(), written);
+        if (written > 0 || held > 0) {
+            FlowLog.info("device", "reconciled reader={} written={} held={}", reader.getPublicId(), written, held);
         }
-        return written;
+        return new Reconciled(reader.getPublicId(), written, held);
     }
 
     /**
@@ -98,12 +110,16 @@ public class ReaderReconcileService {
      */
     @Transactional
     public void reconcile(Member member) {
-        List<Device> readers = lockReaders(member.getTenantId());
+        List<Device> readers = lockGatewayReaders(member.getTenantId());
         if (member.getStatus() != MemberStatus.ACTIVE) {
             return;
         }
         for (Device reader : readers) {
-            desired.seedIfAbsent(member, reader);
+            if (matcher.undecided(reader).holds(member)) {
+                FlowLog.info("device", "seed held reader={} member={}", reader.getPublicId(), member.getPublicId());
+            } else {
+                desired.seedIfAbsent(member, reader);
+            }
         }
     }
 
@@ -113,7 +129,13 @@ public class ReaderReconcileService {
         desired.lockReader(reader);
     }
 
-    private List<Device> lockReaders(Long tenantId) {
+    /** Every reader of the gym, lowest device id first, until the caller's transaction ends. */
+    @Transactional
+    public void lockReaders(Long tenantId) {
+        lockGatewayReaders(tenantId);
+    }
+
+    private List<Device> lockGatewayReaders(Long tenantId) {
         List<Device> readers = devices.findByTenantId(tenantId).stream()
                 .filter(device -> device.getGatewayId() != null)
                 .sorted(Comparator.comparing(Device::getId))

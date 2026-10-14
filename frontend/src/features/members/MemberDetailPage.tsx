@@ -262,6 +262,8 @@ export function MemberDetailPage() {
 
 function readerStateLabel(row: MemberDeviceSync['devices'][number]) {
   if (row.revision == null) return { label: 'Not published', tone: 'muted' as const }
+  if (row.held) return { label: 'Held for review', tone: 'warn' as const }
+  if (!row.applied && row.applyError) return { label: 'Not applied', tone: 'danger' as const }
   if (!row.applied) return { label: 'Waiting for reader', tone: 'warn' as const }
   if (!row.present) return { label: 'Removed from reader', tone: 'muted' as const }
   return { label: 'On reader', tone: 'ok' as const }
@@ -331,7 +333,20 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
                     </div>
                     {row.revision != null ? (
                       <div className="text-xs text-muted">
-                        Revision {row.revision}; reader applied {row.appliedRevision}
+                        Revision {row.revision}
+                        {row.applied ? '; read back on the reader' : '; not yet read back on the reader'}
+                      </div>
+                    ) : null}
+                    {row.held ? (
+                      <div className="text-xs text-muted">
+                        The reader showed a different record at this id. Decide in Reviews before it is written.
+                      </div>
+                    ) : null}
+                    {!row.held && row.applyError ? (
+                      <div className="text-xs text-danger">
+                        {row.applyErrorPermanent
+                          ? `The reader cannot apply this change: ${row.applyError}`
+                          : `Not applied after ${row.applyAttempts ?? 0} attempts: ${row.applyError}. The gateway keeps retrying.`}
                       </div>
                     ) : null}
                   </div>

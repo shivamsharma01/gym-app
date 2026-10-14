@@ -521,9 +521,12 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(MemberApplyKind.OccupantChanged, result.Kind);
         Assert.False(result.Occupant!.Present);
         Assert.Equal(0, worker.AppliedRevision);
-        Assert.Null(worker.Retry);
+        Assert.Equal(1, worker.Retry!.Revision);
         Assert.Empty(reader.ListUsers().Users);
         Assert.Empty(reader.Writes);
+
+        worker.Settle(1);
+        Assert.Null(worker.Retry);
     }
 
     [Fact]
@@ -656,6 +659,12 @@ public class MemberCreateWorkerTests : IDisposable
 
         public Task ReportOccupiedAsync(
             string deviceId, long revision, string deviceUserId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<bool> ObservationProcessedAsync(string deviceId, IReadOnlyList<string> messageIds,
+            CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
         public Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,

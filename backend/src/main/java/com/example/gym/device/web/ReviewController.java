@@ -3,6 +3,7 @@ package com.example.gym.device.web;
 import com.example.gym.device.BootstrapReportService;
 import com.example.gym.device.ReviewDecisionAudit;
 import com.example.gym.device.ReviewDecisionService;
+import com.example.gym.device.ReviewListService;
 import com.example.gym.device.dto.BootstrapReport;
 import com.example.gym.device.dto.LinkMemberRequest;
 import com.example.gym.device.dto.ReviewItemView;
@@ -27,19 +28,21 @@ public class ReviewController {
     private final ReviewDecisionService decisions;
     private final BootstrapReportService bootstrap;
     private final ReviewDecisionAudit audit;
+    private final ReviewListService list;
 
     public ReviewController(ReviewDecisionService decisions, BootstrapReportService bootstrap,
-                            ReviewDecisionAudit audit) {
+                            ReviewDecisionAudit audit, ReviewListService list) {
         this.decisions = decisions;
         this.bootstrap = bootstrap;
         this.audit = audit;
+        this.list = list;
     }
 
     @GetMapping
     @PreAuthorize("hasAuthority('DEVICE_VIEW')")
     @Operation(summary = "Open review items and pending enrollments")
     public List<ReviewItemView> open() {
-        return decisions.open(SecurityUtils.currentTenantId());
+        return list.open(SecurityUtils.currentTenantId());
     }
 
     @PostMapping("/bootstrap")

@@ -213,10 +213,12 @@ public class ReviewDecisionService {
     }
 
     private ReviewItemView reviewView(DeviceReviewItem item) {
+        Device device = devices.findById(item.getDeviceId()).orElse(null);
+        Member member = members.getById(item.getMemberId(), item.getTenantId());
         return new ReviewItemView(
                 item.getPublicId(),
                 item.isSuspended() ? ReviewDecisions.SUSPENDED : ReviewDecisions.REVIEW,
-                devicePublicId(item.getDeviceId()),
+                device == null ? "" : device.getPublicId(),
                 item.getDeviceUserId(),
                 serverShown(item),
                 readerShown(item),
@@ -239,7 +241,12 @@ public class ReviewDecisionService {
                 item.getReaderUserStatus(),
                 item.getBaselineUserStatus(),
                 item.getReaderFaceSha256() != null
-                        && !item.getReaderFaceSha256().equalsIgnoreCase(item.getServerFaceSha256()));
+                        && !item.getReaderFaceSha256().equalsIgnoreCase(item.getServerFaceSha256()),
+                device == null ? null : device.getName(),
+                member.getPublicId(),
+                member.getFullName(),
+                null,
+                null);
     }
 
     private ReviewItemView enrollmentView(PendingEnrollment enrollment) {
@@ -247,10 +254,11 @@ public class ReviewDecisionService {
         String reader = observed == null
                 ? enrollment.getDeviceUserId()
                 : ReaderReviewService.shown(observed.getReaderName(), observed.getReaderNameEx());
+        Device device = devices.findById(enrollment.getDeviceId()).orElse(null);
         return new ReviewItemView(
                 enrollment.getPublicId(),
                 ReviewDecisions.ENROLLMENT,
-                devicePublicId(enrollment.getDeviceId()),
+                device == null ? "" : device.getPublicId(),
                 enrollment.getDeviceUserId(),
                 null,
                 reader,
@@ -272,11 +280,12 @@ public class ReviewDecisionService {
                 null,
                 observed == null ? null : observed.getUserStatus(),
                 null,
-                false);
-    }
-
-    private String devicePublicId(Long deviceId) {
-        return devices.findById(deviceId).map(Device::getPublicId).orElse("");
+                false,
+                device == null ? null : device.getName(),
+                null,
+                null,
+                null,
+                null);
     }
 
     private static String readerShown(DeviceReviewItem item) {

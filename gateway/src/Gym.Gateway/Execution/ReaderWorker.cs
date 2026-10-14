@@ -6,14 +6,27 @@ using Microsoft.Data.Sqlite;
 namespace Gym.Gateway.Execution;
 
 /// <summary>
-/// Execution state for one reader. The SQLite file remembers the verified revision, the ack that
-/// still has to be sent, retry metadata, and the record it last wrote at each id. It does not record
-/// heartbeats and it does not decide which member wins. A write or removal goes ahead only while the
-/// reader shows the record the server expects at the id, or the record this gateway last wrote there.
+/// Execution state for one reader. The SQLite file remembers the applied cursor, revisions verified
+/// above it, the acks that still have to be sent, one attempt row per revision that has not
+/// succeeded, and the record it last wrote at each id. It does not record heartbeats and it does
+/// not decide which member wins. A write or removal goes ahead only while the reader shows the
+/// record the server expects at the id, or the record this gateway last wrote there.
 /// Device calls go through <see cref="IReaderAdapter"/>.
 /// </summary>
+/// <remarks>
+/// The applied cursor is the highest revision at or below which every pulled revision was verified,
+/// reported to the server, or dropped by the server. A revision that fails keeps the cursor below
+/// it and is retried with backoff, while newer revisions of other ids still go ahead and are kept
+/// in the verified set until the cursor passes them.
+/// </remarks>
 public sealed class ReaderWorker : IDisposable
 {
+    /// <summary>Failures of one revision before it is reported as exhausted.</summary>
+    public const int ExhaustAfter = 6;
+
+    /// <summary>Longest wait between two attempts of one revision, and the wait once exhausted.</summary>
+    public static readonly TimeSpan MaxRetryDelay = TimeSpan.FromMinutes(10);
+
     private readonly IReaderAdapter _reader;
     private readonly string _readerId;
     private readonly Func<DateTimeOffset> _clock;
@@ -23,14 +36,21 @@ public sealed class ReaderWorker : IDisposable
     private const string RevisionParam = "$revision";
     private const string UserParam = "$user";
     private readonly object _gate = new();
+    private readonly Func<bool> _online;
+    private bool _wasOffline;
     private string? _health;
 
+    /// <param name="online">
+    /// False while the reader's session is down. An attempt is not made then, and a failure seen
+    /// while it is down does not count towards <see cref="ExhaustAfter"/>.
+    /// </param>
     public ReaderWorker(
         string readerId,
         IReaderAdapter reader,
         string journalPath,
         TimeSpan? retryDelay = null,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null,
+        Func<bool>? online = null)
     {
         if (string.IsNullOrWhiteSpace(readerId))
         {
@@ -41,6 +61,7 @@ public sealed class ReaderWorker : IDisposable
         _reader = reader ?? throw new ArgumentNullException(nameof(reader));
         _retryDelay = retryDelay ?? TimeSpan.FromSeconds(1);
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _online = online ?? (() => true);
         var directory = Path.GetDirectoryName(Path.GetFullPath(journalPath));
         if (!string.IsNullOrEmpty(directory))
         {
@@ -62,6 +83,8 @@ public sealed class ReaderWorker : IDisposable
 
     public string? Health => _health;
 
+    public DateTimeOffset Now => _clock();
+
     public long AppliedRevision
     {
         get
@@ -77,31 +100,96 @@ public sealed class ReaderWorker : IDisposable
         }
     }
 
+    /// <summary>The lowest revision that has not succeeded, or null.</summary>
     public RetryState? Retry
     {
         get
         {
             lock (_gate)
             {
-                using var command = _connection.CreateCommand();
-                command.CommandText = """
-                    SELECT revision, attempt_count, next_attempt, last_error
-                    FROM retry_state WHERE reader_id = $reader
-                    """;
-                command.Parameters.AddWithValue(ReaderParam, _readerId);
-                using var row = command.ExecuteReader();
-                if (!row.Read())
-                {
-                    return null;
-                }
-
-                return new RetryState(
-                    row.GetInt64(0),
-                    row.GetInt32(1),
-                    DateTimeOffset.Parse(row.GetString(2), CultureInfo.InvariantCulture),
-                    row.GetString(3));
+                return AttemptsUnlocked(null).FirstOrDefault();
             }
         }
+    }
+
+    /// <summary>Every revision that has not succeeded, lowest first.</summary>
+    public IReadOnlyList<RetryState> Attempts
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return AttemptsUnlocked(null);
+            }
+        }
+    }
+
+    public RetryState? Attempt(long revision)
+    {
+        lock (_gate)
+        {
+            return AttemptsUnlocked(revision).FirstOrDefault();
+        }
+    }
+
+    /// <summary>Verified at or below the cursor, or above it while an older revision is unresolved.</summary>
+    public bool IsVerified(long revision)
+    {
+        lock (_gate)
+        {
+            return IsVerifiedUnlocked(revision);
+        }
+    }
+
+    /// <summary>A revision whose next attempt is due now. Nothing is due while the reader is offline.</summary>
+    public bool HasDueAttempt()
+    {
+        if (!ReaderOnline)
+        {
+            return false;
+        }
+
+        var now = _clock();
+        return Attempts.Any(attempt => attempt.NextAttempt <= now);
+    }
+
+    /// <summary>
+    /// Whether the reader's session is up. When it comes back, every failed revision that is not
+    /// rejected is due again at once, exhausted ones included.
+    /// </summary>
+    public bool ReaderOnline
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return OnlineUnlocked();
+            }
+        }
+    }
+
+    private bool OnlineUnlocked()
+    {
+        if (!_online())
+        {
+            _wasOffline = true;
+            return false;
+        }
+
+        if (_wasOffline)
+        {
+            _wasOffline = false;
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                UPDATE revision_attempt SET next_attempt = $now
+                WHERE reader_id = $reader AND state IN ('Retry', 'Exhausted')
+                """;
+            command.Parameters.AddWithValue(ReaderParam, _readerId);
+            command.Parameters.AddWithValue("$now", _clock().ToString("o", CultureInfo.InvariantCulture));
+            command.ExecuteNonQuery();
+        }
+
+        return true;
     }
 
     public IReadOnlyList<RevisionAck> PendingAcks
@@ -144,15 +232,16 @@ public sealed class ReaderWorker : IDisposable
         ArgumentNullException.ThrowIfNull(verify);
         lock (_gate)
         {
-            if (revision <= AppliedRevisionUnlocked())
+            if (IsVerifiedUnlocked(revision))
             {
                 return ApplyOutcome.AlreadyVerified;
             }
 
-            var retry = RetryUnlocked();
-            if (retry != null && retry.Revision != revision)
+            var retry = AttemptsUnlocked(revision).FirstOrDefault();
+            if (!OnlineUnlocked())
             {
-                return ApplyOutcome.NotReady;
+                RecordOffline(revision, deviceUserId, retry, "the reader is offline");
+                return ApplyOutcome.ReaderOffline;
             }
 
             if (retry != null && _clock() < retry.NextAttempt)
@@ -172,7 +261,14 @@ public sealed class ReaderWorker : IDisposable
 
             if (!verification.Verified)
             {
-                RecordFailure(revision, retry?.AttemptCount ?? 0, verification.Error ?? "not verified");
+                var error = verification.Error ?? "not verified";
+                if (!OnlineUnlocked())
+                {
+                    RecordOffline(revision, deviceUserId, retry, "the reader went offline: " + error);
+                    return ApplyOutcome.ReaderOffline;
+                }
+
+                RecordFailure(revision, deviceUserId, retry, error, false);
                 return ApplyOutcome.Failed;
             }
 
@@ -191,7 +287,7 @@ public sealed class ReaderWorker : IDisposable
         ArgumentNullException.ThrowIfNull(desired);
         if (desired.ValidFrom is null || desired.ValidTo is null)
         {
-            return new MemberApplyResult(MemberApplyKind.Failed, null);
+            return Rejected(desired.Revision, desired.DeviceUserId, "the desired member has no validity dates");
         }
 
         if (!desired.FacePresent)
@@ -201,7 +297,7 @@ public sealed class ReaderWorker : IDisposable
 
         if (desired.Face is not { Length: > 0 })
         {
-            throw new ArgumentException("The desired member has no face.", nameof(desired));
+            return Rejected(desired.Revision, desired.DeviceUserId, "the desired member has no face");
         }
 
         WriteStep? written = null;
@@ -245,7 +341,7 @@ public sealed class ReaderWorker : IDisposable
             var step = Remove(reader, deviceUserId, expected ?? ExpectedOccupant.Absent);
             written = step;
             return step.Verification;
-        });
+        }, deviceUserId);
         if (outcome == ApplyOutcome.Verified)
         {
             Forget(deviceUserId);
@@ -287,17 +383,19 @@ public sealed class ReaderWorker : IDisposable
         return WriteStep.Fail(user.Ok ? "user still present" : user.FailCode ?? user.Error ?? "not NO_RECORD");
     }
 
-    private MemberApplyResult ToMemberResult(ApplyOutcome outcome, WriteStep? written, string deviceUserId)
+    /// <summary>
+    /// An occupied id or an unexpected occupant keeps its attempt until the caller has told the
+    /// server and calls <see cref="Settle"/>; a report that fails is retried like any failure.
+    /// </summary>
+    private static MemberApplyResult ToMemberResult(ApplyOutcome outcome, WriteStep? written, string deviceUserId)
     {
         if (written is { Occupied: true })
         {
-            ClearRetry();
             return new MemberApplyResult(MemberApplyKind.Occupied, deviceUserId);
         }
 
         if (written is { Shown: { } occupant })
         {
-            ClearRetry();
             return new MemberApplyResult(MemberApplyKind.OccupantChanged, deviceUserId, occupant);
         }
 
@@ -305,11 +403,101 @@ public sealed class ReaderWorker : IDisposable
         {
             ApplyOutcome.Verified => MemberApplyKind.Applied,
             ApplyOutcome.AlreadyVerified => MemberApplyKind.AlreadyApplied,
-            ApplyOutcome.WaitingToRetry => MemberApplyKind.Waiting,
-            ApplyOutcome.NotReady => MemberApplyKind.NotReady,
+            ApplyOutcome.WaitingToRetry or ApplyOutcome.ReaderOffline => MemberApplyKind.Waiting,
             _ => MemberApplyKind.Failed
         };
         return new MemberApplyResult(kind, null);
+    }
+
+    private MemberApplyResult Rejected(long revision, string deviceUserId, string error)
+    {
+        if (IsVerified(revision))
+        {
+            return new MemberApplyResult(MemberApplyKind.AlreadyApplied, null);
+        }
+
+        Reject(revision, deviceUserId, error);
+        return new MemberApplyResult(MemberApplyKind.Failed, error);
+    }
+
+    /// <summary>
+    /// The revision cannot be applied as sent. It is not retried until the server replaces it or
+    /// the gateway restarts.
+    /// </summary>
+    public RetryState Reject(long revision, string? deviceUserId, string error)
+    {
+        lock (_gate)
+        {
+            return RecordFailure(revision, deviceUserId, AttemptsUnlocked(revision).FirstOrDefault(), error, true);
+        }
+    }
+
+    /// <summary>
+    /// The revision needs no further attempt: the server took the report, or dropped or replaced
+    /// the revision. The cursor moves up to the next unresolved revision.
+    /// </summary>
+    public void Settle(long revision)
+    {
+        lock (_gate)
+        {
+            using var transaction = _connection.BeginTransaction();
+            using (var delete = _connection.CreateCommand())
+            {
+                delete.Transaction = transaction;
+                delete.CommandText = "DELETE FROM revision_attempt WHERE reader_id = $reader AND revision = $revision";
+                delete.Parameters.AddWithValue(ReaderParam, _readerId);
+                delete.Parameters.AddWithValue(RevisionParam, revision);
+                delete.ExecuteNonQuery();
+            }
+
+            AdvanceUnlocked(transaction);
+            transaction.Commit();
+        }
+    }
+
+    /// <summary>The server has the exhausted or rejected state of this attempt.</summary>
+    public void MarkReported(long revision)
+    {
+        lock (_gate)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "UPDATE revision_attempt SET reported = 1 WHERE reader_id = $reader AND revision = $revision";
+            command.Parameters.AddWithValue(ReaderParam, _readerId);
+            command.Parameters.AddWithValue(RevisionParam, revision);
+            command.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// The server refused the acknowledgement of a revision verified here. The revision is no longer
+    /// treated as applied: the ack is dropped, the cursor goes back below it, and it is retried.
+    /// </summary>
+    public RetryState Unverify(long revision, string? deviceUserId, string error)
+    {
+        lock (_gate)
+        {
+            using (var transaction = _connection.BeginTransaction())
+            {
+                foreach (var sql in new[]
+                         {
+                             "DELETE FROM revision_ack WHERE reader_id = $reader AND revision = $revision",
+                             "DELETE FROM verified_revision WHERE reader_id = $reader AND revision = $revision",
+                             "UPDATE applied_revision SET revision = $revision - 1 WHERE reader_id = $reader AND revision >= $revision"
+                         })
+                {
+                    using var command = _connection.CreateCommand();
+                    command.Transaction = transaction;
+                    command.CommandText = sql;
+                    command.Parameters.AddWithValue(ReaderParam, _readerId);
+                    command.Parameters.AddWithValue(RevisionParam, revision);
+                    command.ExecuteNonQuery();
+                }
+
+                transaction.Commit();
+            }
+
+            return RecordFailure(revision, deviceUserId, AttemptsUnlocked(revision).FirstOrDefault(), error, false);
+        }
     }
 
     private WriteStep WriteAndReadBack(IReaderAdapter reader, DesiredMember desired)
@@ -590,17 +778,6 @@ public sealed class ReaderWorker : IDisposable
         return CryptographicOperations.FixedTimeEquals(SHA256.HashData(readBack), SHA256.HashData(sent));
     }
 
-    private void ClearRetry()
-    {
-        lock (_gate)
-        {
-            using var command = _connection.CreateCommand();
-            command.CommandText = "DELETE FROM retry_state WHERE reader_id = $reader";
-            command.Parameters.AddWithValue(ReaderParam, _readerId);
-            command.ExecuteNonQuery();
-        }
-    }
-
     private readonly record struct WriteStep(Verification Verification, bool Occupied, ReaderOccupant? Shown = null)
     {
         public static WriteStep Done() => new(new Verification(true, null), false);
@@ -643,12 +820,21 @@ public sealed class ReaderWorker : IDisposable
                 revision INTEGER NOT NULL,
                 PRIMARY KEY (reader_id, revision)
             );
-            CREATE TABLE IF NOT EXISTS retry_state (
-                reader_id TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS revision_attempt (
+                reader_id TEXT NOT NULL,
                 revision INTEGER NOT NULL,
+                device_user_id TEXT,
                 attempt_count INTEGER NOT NULL,
                 next_attempt TEXT NOT NULL,
-                last_error TEXT NOT NULL
+                last_error TEXT NOT NULL,
+                state TEXT NOT NULL,
+                reported INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (reader_id, revision)
+            );
+            CREATE TABLE IF NOT EXISTS verified_revision (
+                reader_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                PRIMARY KEY (reader_id, revision)
             );
             CREATE TABLE IF NOT EXISTS applied_user (
                 reader_id TEXT NOT NULL,
@@ -658,6 +844,59 @@ public sealed class ReaderWorker : IDisposable
             """;
         command.ExecuteNonQuery();
         AddWrittenRecordColumns();
+        MoveSingleRetry();
+        RetryStoppedOnStart();
+    }
+
+    /// <summary>A journal from before per-revision attempts keeps its one retry as an attempt.</summary>
+    private void MoveSingleRetry()
+    {
+        using (var exists = _connection.CreateCommand())
+        {
+            exists.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'retry_state'";
+            if (Convert.ToInt64(exists.ExecuteScalar(), CultureInfo.InvariantCulture) == 0)
+            {
+                return;
+            }
+        }
+
+        using var transaction = _connection.BeginTransaction();
+        using (var copy = _connection.CreateCommand())
+        {
+            copy.Transaction = transaction;
+            copy.CommandText = """
+                INSERT INTO revision_attempt (reader_id, revision, device_user_id, attempt_count, next_attempt, last_error, state, reported)
+                SELECT reader_id, revision, NULL, attempt_count, next_attempt, last_error, 'Retry', 0 FROM retry_state
+                WHERE true
+                ON CONFLICT (reader_id, revision) DO NOTHING
+                """;
+            copy.ExecuteNonQuery();
+        }
+
+        using (var drop = _connection.CreateCommand())
+        {
+            drop.Transaction = transaction;
+            drop.CommandText = "DROP TABLE retry_state";
+            drop.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    /// <summary>
+    /// A restart gives every exhausted or rejected revision one more attempt now. Another failure
+    /// puts it straight back, without a new report.
+    /// </summary>
+    private void RetryStoppedOnStart()
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = """
+            UPDATE revision_attempt SET next_attempt = $now
+            WHERE reader_id = $reader AND state IN ('Exhausted', 'Rejected')
+            """;
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
+        command.Parameters.AddWithValue("$now", _clock().ToString("o", CultureInfo.InvariantCulture));
+        command.ExecuteNonQuery();
     }
 
     /// <summary>A journal from before the written record was kept gets the columns, empty.</summary>
@@ -696,46 +935,171 @@ public sealed class ReaderWorker : IDisposable
         return value is long revision ? revision : 0;
     }
 
-    private RetryState? RetryUnlocked()
+    private bool IsVerifiedUnlocked(long revision)
     {
-        using var command = _connection.CreateCommand();
-        command.CommandText = """
-            SELECT revision, attempt_count, next_attempt, last_error
-            FROM retry_state WHERE reader_id = $reader
-            """;
-        command.Parameters.AddWithValue(ReaderParam, _readerId);
-        using var row = command.ExecuteReader();
-        if (!row.Read())
+        if (revision <= AppliedRevisionUnlocked())
         {
-            return null;
+            return true;
         }
 
-        return new RetryState(
-            row.GetInt64(0),
-            row.GetInt32(1),
-            DateTimeOffset.Parse(row.GetString(2), CultureInfo.InvariantCulture),
-            row.GetString(3));
+        using var command = _connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM verified_revision WHERE reader_id = $reader AND revision = $revision";
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
+        command.Parameters.AddWithValue(RevisionParam, revision);
+        return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) > 0;
     }
 
-    private void RecordFailure(long revision, int previousAttempts, string error)
+    private List<RetryState> AttemptsUnlocked(long? revision)
     {
-        var next = _clock().Add(_retryDelay);
         using var command = _connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO retry_state (reader_id, revision, attempt_count, next_attempt, last_error)
-            VALUES ($reader, $revision, $attempts, $next, $error)
-            ON CONFLICT (reader_id) DO UPDATE SET
-                revision = excluded.revision,
-                attempt_count = excluded.attempt_count,
+            SELECT revision, attempt_count, next_attempt, last_error, device_user_id, state, reported
+            FROM revision_attempt WHERE reader_id = $reader AND ($revision IS NULL OR revision = $revision)
+            ORDER BY revision
+            """;
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
+        command.Parameters.AddWithValue(RevisionParam, (object?)revision ?? DBNull.Value);
+        using var row = command.ExecuteReader();
+        var attempts = new List<RetryState>();
+        while (row.Read())
+        {
+            attempts.Add(new RetryState(
+                row.GetInt64(0),
+                row.GetInt32(1),
+                DateTimeOffset.Parse(row.GetString(2), CultureInfo.InvariantCulture),
+                row.GetString(3),
+                row.IsDBNull(4) ? null : row.GetString(4),
+                Enum.Parse<AttemptState>(row.GetString(5)),
+                row.GetInt64(6) != 0));
+        }
+
+        return attempts;
+    }
+
+    /// <summary>
+    /// The wait doubles from the retry delay up to <see cref="MaxRetryDelay"/>. After
+    /// <see cref="ExhaustAfter"/> failures the revision is exhausted and still tried at that longest
+    /// wait. A permanent failure is rejected and not tried again on its own. A change of state needs
+    /// a new report.
+    /// </summary>
+    /// <summary>
+    /// The reader was offline, so the operation was not tried or not finished. The count, state and
+    /// report stay as they were; the revision is due as soon as the reader is back. A rejected
+    /// revision stays rejected.
+    /// </summary>
+    private void RecordOffline(long revision, string? deviceUserId, RetryState? previous, string error)
+    {
+        if (previous is { State: AttemptState.Rejected })
+        {
+            return;
+        }
+
+        using var command = _connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO revision_attempt (reader_id, revision, device_user_id, attempt_count, next_attempt, last_error, state, reported)
+            VALUES ($reader, $revision, $user, $attempts, $next, $error, $state, $reported)
+            ON CONFLICT (reader_id, revision) DO UPDATE SET
+                device_user_id = excluded.device_user_id,
                 next_attempt = excluded.next_attempt,
                 last_error = excluded.last_error
             """;
         command.Parameters.AddWithValue(ReaderParam, _readerId);
         command.Parameters.AddWithValue(RevisionParam, revision);
-        command.Parameters.AddWithValue("$attempts", previousAttempts + 1);
-        command.Parameters.AddWithValue("$next", next.ToString("o"));
+        command.Parameters.AddWithValue(UserParam, (object?)(deviceUserId ?? previous?.DeviceUserId) ?? DBNull.Value);
+        command.Parameters.AddWithValue("$attempts", previous?.AttemptCount ?? 0);
+        command.Parameters.AddWithValue("$next", _clock().ToString("o", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$error", error);
+        command.Parameters.AddWithValue("$state", (previous?.State ?? AttemptState.Retry).ToString());
+        command.Parameters.AddWithValue("$reported", previous is { Reported: true } ? 1 : 0);
         command.ExecuteNonQuery();
+    }
+
+    private RetryState RecordFailure(long revision, string? deviceUserId, RetryState? previous, string error, bool permanent)
+    {
+        var attempts = (previous?.AttemptCount ?? 0) + 1;
+        var state = permanent
+            ? AttemptState.Rejected
+            : attempts >= ExhaustAfter ? AttemptState.Exhausted : AttemptState.Retry;
+        var next = state switch
+        {
+            AttemptState.Rejected => DateTimeOffset.MaxValue,
+            AttemptState.Exhausted => _clock().Add(MaxRetryDelay),
+            _ => _clock().Add(Backoff(attempts))
+        };
+        var reported = previous != null && previous.Reported && previous.State == state;
+        var recorded = new RetryState(revision, attempts, next, error, deviceUserId ?? previous?.DeviceUserId, state, reported);
+        using var command = _connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO revision_attempt (reader_id, revision, device_user_id, attempt_count, next_attempt, last_error, state, reported)
+            VALUES ($reader, $revision, $user, $attempts, $next, $error, $state, $reported)
+            ON CONFLICT (reader_id, revision) DO UPDATE SET
+                device_user_id = excluded.device_user_id,
+                attempt_count = excluded.attempt_count,
+                next_attempt = excluded.next_attempt,
+                last_error = excluded.last_error,
+                state = excluded.state,
+                reported = excluded.reported
+            """;
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
+        command.Parameters.AddWithValue(RevisionParam, revision);
+        command.Parameters.AddWithValue(UserParam, (object?)recorded.DeviceUserId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$attempts", attempts);
+        command.Parameters.AddWithValue("$next", next.ToString("o", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$error", error);
+        command.Parameters.AddWithValue("$state", state.ToString());
+        command.Parameters.AddWithValue("$reported", reported ? 1 : 0);
+        command.ExecuteNonQuery();
+        return recorded;
+    }
+
+    private TimeSpan Backoff(int attempts)
+    {
+        var factor = Math.Pow(2, Math.Min(attempts - 1, 30));
+        var ticks = Math.Min(_retryDelay.Ticks * factor, MaxRetryDelay.Ticks);
+        return TimeSpan.FromTicks((long)ticks);
+    }
+
+    /// <summary>
+    /// The cursor moves to the highest verified revision below the lowest unresolved one. Verified
+    /// revisions at or below the cursor are no longer kept apart.
+    /// </summary>
+    private void AdvanceUnlocked(SqliteTransaction transaction)
+    {
+        long? Scalar(string sql)
+        {
+            using var command = _connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            command.Parameters.AddWithValue(ReaderParam, _readerId);
+            var value = command.ExecuteScalar();
+            return value is long number ? number : null;
+        }
+
+        var verified = Scalar("SELECT MAX(revision) FROM verified_revision WHERE reader_id = $reader");
+        if (verified == null)
+        {
+            return;
+        }
+
+        var unresolved = Scalar("SELECT MIN(revision) FROM revision_attempt WHERE reader_id = $reader");
+        var target = unresolved == null ? verified.Value : Math.Min(verified.Value, unresolved.Value - 1);
+        foreach (var sql in new[]
+                 {
+                     """
+                     INSERT INTO applied_revision (reader_id, revision) VALUES ($reader, $revision)
+                     ON CONFLICT (reader_id) DO UPDATE SET revision = excluded.revision
+                     WHERE excluded.revision > applied_revision.revision
+                     """,
+                     "DELETE FROM verified_revision WHERE reader_id = $reader AND revision <= (SELECT revision FROM applied_revision WHERE reader_id = $reader)"
+                 })
+        {
+            using var command = _connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            command.Parameters.AddWithValue(ReaderParam, _readerId);
+            command.Parameters.AddWithValue(RevisionParam, target);
+            command.ExecuteNonQuery();
+        }
     }
 
     public IReadOnlyList<string> AppliedUserIds()
@@ -837,17 +1201,16 @@ public sealed class ReaderWorker : IDisposable
     private void CommitVerified(long revision, string? deviceUserId)
     {
         using var transaction = _connection.BeginTransaction();
-        using (var applied = _connection.CreateCommand())
+        using (var verified = _connection.CreateCommand())
         {
-            applied.Transaction = transaction;
-            applied.CommandText = """
-                INSERT INTO applied_revision (reader_id, revision) VALUES ($reader, $revision)
-                ON CONFLICT (reader_id) DO UPDATE SET revision = excluded.revision
-                WHERE excluded.revision > applied_revision.revision
+            verified.Transaction = transaction;
+            verified.CommandText = """
+                INSERT INTO verified_revision (reader_id, revision) VALUES ($reader, $revision)
+                ON CONFLICT (reader_id, revision) DO NOTHING
                 """;
-            applied.Parameters.AddWithValue(ReaderParam, _readerId);
-            applied.Parameters.AddWithValue(RevisionParam, revision);
-            applied.ExecuteNonQuery();
+            verified.Parameters.AddWithValue(ReaderParam, _readerId);
+            verified.Parameters.AddWithValue(RevisionParam, revision);
+            verified.ExecuteNonQuery();
         }
 
         using (var ack = _connection.CreateCommand())
@@ -865,8 +1228,9 @@ public sealed class ReaderWorker : IDisposable
         using (var retry = _connection.CreateCommand())
         {
             retry.Transaction = transaction;
-            retry.CommandText = "DELETE FROM retry_state WHERE reader_id = $reader";
+            retry.CommandText = "DELETE FROM revision_attempt WHERE reader_id = $reader AND revision = $revision";
             retry.Parameters.AddWithValue(ReaderParam, _readerId);
+            retry.Parameters.AddWithValue(RevisionParam, revision);
             retry.ExecuteNonQuery();
         }
 
@@ -883,6 +1247,7 @@ public sealed class ReaderWorker : IDisposable
             owned.ExecuteNonQuery();
         }
 
+        AdvanceUnlocked(transaction);
         transaction.Commit();
     }
 }
@@ -893,11 +1258,32 @@ public enum ApplyOutcome
     AlreadyVerified,
     Failed,
     WaitingToRetry,
-    NotReady
+
+    /// <summary>The reader's session is down; nothing was counted against the revision.</summary>
+    ReaderOffline
 }
 
 public sealed record Verification(bool Verified, string? Error);
 
-public sealed record RetryState(long Revision, int AttemptCount, DateTimeOffset NextAttempt, string LastError);
+/// <summary>
+/// <see cref="Retry"/> waits with backoff; <see cref="Exhausted"/> failed <see cref="ReaderWorker.ExhaustAfter"/>
+/// times and waits the longest delay; <see cref="Rejected"/> cannot be applied as sent.
+/// </summary>
+public enum AttemptState
+{
+    Retry,
+    Exhausted,
+    Rejected
+}
+
+/// <summary>A revision that has not succeeded. <see cref="Reported"/>: the server has this state.</summary>
+public sealed record RetryState(
+    long Revision,
+    int AttemptCount,
+    DateTimeOffset NextAttempt,
+    string LastError,
+    string? DeviceUserId = null,
+    AttemptState State = AttemptState.Retry,
+    bool Reported = false);
 
 public sealed record RevisionAck(string ReaderId, long Revision);

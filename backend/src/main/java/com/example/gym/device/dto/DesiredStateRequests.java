@@ -53,6 +53,30 @@ public final class DesiredStateRequests {
             @Size(max = 64) String faceSha256) {
     }
 
+    /** The message ids of one reader observation the gateway sent before it applies desired state. */
+    public record ObservationQuery(
+            @NotBlank String deviceId,
+            @NotNull @Size(min = 1, max = 5000) java.util.List<@NotBlank @Size(max = 64) String> messageIds) {
+    }
+
+    /** True once every message was processed. */
+    public record ObservationStatus(boolean processed) {
+    }
+
+    /**
+     * A revision the gateway could not apply after repeated attempts ({@code permanent} false), or
+     * cannot apply as sent ({@code permanent} true). The gateway keeps the revision until it applies
+     * or is replaced.
+     */
+    public record ReportFailed(
+            @NotBlank String deviceId,
+            @NotNull @Positive Long revision,
+            @Size(max = 64) String deviceUserId,
+            @NotBlank String error,
+            @NotNull @Positive Integer attempts,
+            @NotNull Boolean permanent) {
+    }
+
     /** {@code expected} is what the reader must still show at the id before it is written or removed. */
     public record DesiredItem(
             long revision,

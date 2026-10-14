@@ -185,17 +185,21 @@ test('a member page offers send again and remove for each reader', async ({ page
   await mockStaff(page)
   await page.goto('/app/members/mem-1')
   await expect(page.getByRole('heading', { name: 'Asha Shah' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Send again' })).toHaveCount(2)
-  await expect(page.getByRole('button', { name: 'Remove from reader' })).toHaveCount(2)
+  await expect(page.getByRole('button', { name: 'Send again' })).toHaveCount(3)
+  await expect(page.getByRole('button', { name: 'Remove from reader' })).toHaveCount(3)
 })
 
-test('a member page shows each reader as applied or waiting', async ({ page }) => {
+test('a member page shows each reader as applied, not applied, or held, from that row only', async ({ page }) => {
   await mockStaff(page)
   await page.goto('/app/members/mem-1')
   await expect(page.getByText('On reader')).toBeVisible()
-  await expect(page.getByText('Revision 2; reader applied 2')).toBeVisible()
-  await expect(page.getByText('Waiting for reader')).toBeVisible()
-  await expect(page.getByText('Revision 1; reader applied 0')).toBeVisible()
+  await expect(page.getByText('Revision 2; read back on the reader')).toBeVisible()
+  await expect(page.getByText('Not applied', { exact: true })).toBeVisible()
+  await expect(page.getByText('Revision 1; not yet read back on the reader')).toBeVisible()
+  await expect(page.getByText('Not applied after 6 attempts: create failed. The gateway keeps retrying.')).toBeVisible()
+  await expect(page.getByText('Held for review')).toBeVisible()
+  await expect(page.getByText(/Decide in Reviews before it is written/)).toBeVisible()
+  await expect(page.getByText(/reader applied/)).toHaveCount(0)
   await expect(page.getByText('Monthly')).toBeVisible()
 })
 
@@ -324,6 +328,10 @@ async function mockStaff(
               applied: true,
               present: true,
               facePresent: true,
+              held: false,
+              applyError: null,
+              applyAttempts: null,
+              applyErrorPermanent: false,
             },
             {
               deviceId: 'dev-2',
@@ -332,10 +340,30 @@ async function mockStaff(
               hasGateway: true,
               deviceUserId: '1',
               revision: 1,
-              appliedRevision: 0,
+              appliedRevision: 3,
               applied: false,
               present: true,
               facePresent: true,
+              held: false,
+              applyError: 'create failed',
+              applyAttempts: 6,
+              applyErrorPermanent: false,
+            },
+            {
+              deviceId: 'dev-3',
+              deviceName: 'Gym floor',
+              connectionState: 'ONLINE',
+              hasGateway: true,
+              deviceUserId: '4',
+              revision: 5,
+              appliedRevision: 6,
+              applied: false,
+              present: true,
+              facePresent: true,
+              held: true,
+              applyError: null,
+              applyAttempts: null,
+              applyErrorPermanent: false,
             },
           ],
         },

@@ -284,7 +284,17 @@ public class PendingEnrollmentTests : IDisposable
         /// <summary>The next per-user upload throws something other than a network error.</summary>
         public bool FailUsersOnce { get; set; }
 
-        public Task UploadAsync(
+        /// <summary>Every message id handed out, in order.</summary>
+        public List<string> MessageIds { get; } = [];
+
+        private string NextId(string kind)
+        {
+            var id = kind + "-" + (MessageIds.Count + 1);
+            MessageIds.Add(id);
+            return id;
+        }
+
+        public Task<IReadOnlyList<string>> UploadAsync(
             string deviceId,
             IReadOnlyList<ReaderUser> users,
             IReadOnlyDictionary<string, string> faceHashes,
@@ -306,10 +316,10 @@ public class PendingEnrollmentTests : IDisposable
             Names.AddRange(users.Select(user => user.Name ?? ""));
             FaceHashes.AddRange(users.Select(user =>
                 faceHashes.TryGetValue(user.DeviceUserId, out var hash) ? hash : ""));
-            return Task.CompletedTask;
+            return Task.FromResult<IReadOnlyList<string>>(users.Select(_ => NextId("user")).ToList());
         }
 
-        public Task<bool> UploadTrustedRosterAsync(
+        public Task<RosterUpload> UploadTrustedRosterAsync(
             string deviceId,
             int announcedTotal,
             IReadOnlyList<ReaderUser> users,
@@ -331,10 +341,10 @@ public class PendingEnrollmentTests : IDisposable
             RosterHashes.Add(new Dictionary<string, string>(faceHashes));
             TrustedRosterTotals.Add(announcedTotal);
             RosterIds.AddRange(users.Select(user => user.DeviceUserId));
-            return Task.FromResult(awaitAcceptance && RosterAccepted);
+            return Task.FromResult(new RosterUpload(awaitAcceptance && RosterAccepted, NextId("list")));
         }
 
-        public Task UploadAbsencesAsync(
+        public Task<IReadOnlyList<string>> UploadAbsencesAsync(
             string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
         {
             if (Offline)
@@ -344,7 +354,7 @@ public class PendingEnrollmentTests : IDisposable
 
             Calls.Add("absences");
             AbsentIds.AddRange(deviceUserIds);
-            return Task.CompletedTask;
+            return Task.FromResult<IReadOnlyList<string>>(deviceUserIds.Select(_ => NextId("absence")).ToList());
         }
     }
 
@@ -363,6 +373,12 @@ public class PendingEnrollmentTests : IDisposable
 
         public Task ReportOccupiedAsync(
             string deviceId, long revision, string deviceUserId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<bool> ObservationProcessedAsync(string deviceId, IReadOnlyList<string> messageIds,
+            CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
         public Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,

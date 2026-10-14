@@ -83,7 +83,7 @@ public class ReaderWorkerTests : IDisposable
     }
 
     [Fact]
-    public void A_failed_device_call_records_retry_and_does_not_ack()
+    public void A_failed_device_call_records_retry_and_does_not_block_a_newer_revision()
     {
         var journal = Path.Combine(_directory, "gateway.sqlite");
         var reader = new FakeReader();
@@ -114,12 +114,14 @@ public class ReaderWorkerTests : IDisposable
             calls++;
             return new Verification(true, null);
         }));
-        Assert.Equal(ApplyOutcome.NotReady, worker.Apply(2, _ =>
+        Assert.Equal(ApplyOutcome.Verified, worker.Apply(2, _ =>
         {
             calls++;
             return new Verification(true, null);
         }));
-        Assert.Equal(1, calls);
+        Assert.Equal(2, calls);
+        Assert.True(worker.IsVerified(2));
+        Assert.Equal(0, worker.AppliedRevision);
 
         _now = _start.AddMinutes(1);
         var verified = worker.Apply(1, device =>
@@ -130,10 +132,10 @@ public class ReaderWorkerTests : IDisposable
         });
 
         Assert.Equal(ApplyOutcome.Verified, verified);
-        Assert.Equal(2, calls);
-        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal(3, calls);
+        Assert.Equal(2, worker.AppliedRevision);
         Assert.Null(worker.Retry);
-        Assert.Single(worker.PendingAcks);
+        Assert.Equal(2, worker.PendingAcks.Count);
     }
 
     [Fact]
@@ -181,9 +183,10 @@ public class ReaderWorkerTests : IDisposable
         Assert.Equal(1, applied);
         Assert.Equal(1, pending);
         Assert.Equal(
-            new[] { "applied_revision", "applied_user", "retry_state", "revision_ack" },
+            new[] { "applied_revision", "applied_user", "revision_ack", "revision_attempt", "verified_revision" },
             TableNames(journal));
-        Assert.Equal(0, CountRows(journal, "retry_state"));
+        Assert.Equal(0, CountRows(journal, "revision_attempt"));
+        Assert.Equal(0, CountRows(journal, "verified_revision"));
     }
 
     public void Dispose()

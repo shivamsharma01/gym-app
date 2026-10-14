@@ -20,8 +20,13 @@ public sealed record DesiredPullItem(
     byte[] Face,
     bool Present,
     bool FacePresent = true,
-    ExpectedOccupant? Expected = null)
+    ExpectedOccupant? Expected = null,
+    string? Invalid = null)
 {
+    /// <summary>An item whose revision and id are known but whose record cannot be applied as sent.</summary>
+    public static DesiredPullItem Unusable(long revision, string deviceUserId, string reason) =>
+        new(revision, deviceUserId, "", null, 0, "", "", "", 0, 0, [], true, true, ExpectedOccupant.Absent, reason);
+
     public DesiredMember ToMember() => new(
         Revision,
         DeviceUserId,
@@ -49,7 +54,19 @@ public interface IDesiredStateClient
     /// <summary>The id holds something other than the expected record, or no one; nothing was written.</summary>
     Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// True only when the server has processed every one of these gateway messages for this reader.
+    /// Any failure to answer is not processed.
+    /// </summary>
+    Task<bool> ObservationProcessedAsync(string deviceId, IReadOnlyList<string> messageIds, CancellationToken cancellationToken);
+
+    /// <summary>A revision exhausted its retries or cannot be applied as sent. Nothing about the reader changes.</summary>
+    Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken);
 }
+
+/// <summary>The server answered 409: the revision was replaced, or it does not accept what was sent.</summary>
+public sealed class DesiredRefusedException(string message) : InvalidOperationException(message);
 
 public sealed record DesiredAcknowledgement(
     string DeviceId,
@@ -138,12 +155,53 @@ public sealed class DesiredStateClient : IDesiredStateClient
         }, Json);
         using var response = await PostAsync("/internal/gateway/desired/ack", json, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        ThrowUnlessSuccess(response, "Desired ack", body);
+        AcknowledgementPosts++;
+    }
+
+    public async Task<bool> ObservationProcessedAsync(
+        string deviceId, IReadOnlyList<string> messageIds, CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(new { deviceId, messageIds }, Json);
+        using var response = await PostAsync("/internal/gateway/desired/observed", json, cancellationToken).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Desired ack failed HTTP {(int)response.StatusCode}: {body}");
+            return false;
         }
 
-        AcknowledgementPosts++;
+        using var document = JsonDocument.Parse(body);
+        return document.RootElement.TryGetProperty("processed", out var processed)
+            && processed.ValueKind == JsonValueKind.True;
+    }
+
+    public async Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(new
+        {
+            deviceId,
+            revision = attempt.Revision,
+            deviceUserId = attempt.DeviceUserId,
+            error = attempt.LastError.Length > 255 ? attempt.LastError[..255] : attempt.LastError,
+            attempts = attempt.AttemptCount,
+            permanent = attempt.State == AttemptState.Rejected
+        }, Json);
+        using var response = await PostAsync("/internal/gateway/desired/failed", json, cancellationToken).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        ThrowUnlessSuccess(response, "Failure report", body);
+    }
+
+    private static void ThrowUnlessSuccess(HttpResponseMessage response, string what, string body)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var message = $"{what} failed HTTP {(int)response.StatusCode}: {body}";
+        throw response.StatusCode == System.Net.HttpStatusCode.Conflict
+            ? new DesiredRefusedException(message)
+            : new InvalidOperationException(message);
     }
 
     public async Task ReportOccupiedAsync(string deviceId, long revision, string deviceUserId, CancellationToken cancellationToken)
@@ -156,11 +214,7 @@ public sealed class DesiredStateClient : IDesiredStateClient
         }, Json);
         using var response = await PostAsync("/internal/gateway/desired/occupied", json, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new InvalidOperationException($"Occupied report failed HTTP {(int)response.StatusCode}: {body}");
-        }
-
+        ThrowUnlessSuccess(response, "Occupied report", body);
         _occupiedIds.Add(deviceUserId);
     }
 
@@ -186,10 +240,7 @@ public sealed class DesiredStateClient : IDesiredStateClient
         }, Json);
         using var response = await PostAsync("/internal/gateway/desired/occupant", json, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new InvalidOperationException($"Occupant report failed HTTP {(int)response.StatusCode}: {body}");
-        }
+        ThrowUnlessSuccess(response, "Occupant report", body);
     }
 
     private async Task<HttpResponseMessage> PostAsync(string path, string json, CancellationToken cancellationToken)
@@ -217,7 +268,28 @@ public sealed class DesiredStateClient : IDesiredStateClient
             items);
     }
 
+    /// <summary>
+    /// An item with a revision and an id is always returned, so one bad record cannot stop the
+    /// rest of the page; a record that cannot be applied carries why.
+    /// </summary>
     private static DesiredPullItem ParseItem(JsonElement item)
+    {
+        var revision = Long(item, "revision");
+        var deviceUserId = Required(item, "deviceUserId");
+        try
+        {
+            var parsed = ParseRecord(item);
+            parsed.ToMember();
+            return parsed;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or KeyNotFoundException
+                                       or ArgumentException)
+        {
+            return DesiredPullItem.Unusable(revision, deviceUserId, "the desired record is malformed: " + ex.Message);
+        }
+    }
+
+    private static DesiredPullItem ParseRecord(JsonElement item)
     {
         var present = !item.TryGetProperty("present", out var presentValue)
             || presentValue.ValueKind != JsonValueKind.False;

@@ -49,6 +49,13 @@ export type ReviewItem = {
   readerUserStatus: number | null
   baselineUserStatus: number | null
   readerPhotoDiffers: boolean
+  deviceName?: string | null
+  /** The member a review is about; groups one member's items across readers. */
+  memberId?: string | null
+  memberName?: string | null
+  /** A member an unknown reader person may already be. Never linked automatically. */
+  possibleMemberId?: string | null
+  possibleMemberName?: string | null
 }
 
 export type UserSummary = {
@@ -240,9 +247,16 @@ export type MemberDeviceSync = {
     /** This member's desired revision on this reader; null when none was published. */
     revision: number | null
     appliedRevision: number
+    /** The gateway read back this row's current revision on the reader. */
     applied: boolean
     present: boolean
     facePresent: boolean
+    /** The reader showed something else; nothing is written until staff decide in Reviews. */
+    held: boolean
+    /** Why the gateway has not applied the current revision; null when it reported nothing. */
+    applyError: string | null
+    applyAttempts: number | null
+    applyErrorPermanent: boolean
   }[]
 }
 

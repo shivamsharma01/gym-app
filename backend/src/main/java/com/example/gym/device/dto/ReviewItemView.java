@@ -1,8 +1,9 @@
 package com.example.gym.device.dto;
 
 /**
- * One open review row: the server value, the reader value, and the last baseline.
- * {@code id} is the public id. No numeric ids are exposed.
+ * One open or decided item: a member's record on one reader (a review), or a person a reader shows
+ * that the server does not know (an enrollment). {@code memberId} groups one member's items across
+ * readers; {@code possibleMemberId} is a member an enrollment may already be, never linked on its own.
  */
 public record ReviewItemView(
         String id,
@@ -29,5 +30,18 @@ public record ReviewItemView(
         Integer serverUserStatus,
         Integer readerUserStatus,
         Integer baselineUserStatus,
-        boolean readerPhotoDiffers) {
+        boolean readerPhotoDiffers,
+        String deviceName,
+        String memberId,
+        String memberName,
+        String possibleMemberId,
+        String possibleMemberName) {
+
+    public ReviewItemView withPossibleMember(String memberPublicId, String name) {
+        return new ReviewItemView(id, kind, deviceId, deviceUserId, serverName, readerName, baselineName,
+                readerAbsent, open, decision, actor, priorState, chosenState, revision, verificationError,
+                serverValidFrom, serverValidTo, readerValidFrom, readerValidTo, baselineValidFrom,
+                baselineValidTo, serverUserStatus, readerUserStatus, baselineUserStatus, readerPhotoDiffers,
+                deviceName, memberId, memberName, memberPublicId, name);
+    }
 }

@@ -180,8 +180,8 @@ function ImportPending({ deviceId }: Readonly<{ deviceId: string }>) {
       <p className="text-sm text-muted">
         Creates a member for every person this reader showed that nobody has decided on yet. Each member keeps the
         reader&apos;s name, dates and photo, so nothing is written to the reader. Someone disabled on the reader
-        becomes an inactive member. If someone is already a member from another reader, link them on the Review page
-        first.
+        becomes an inactive member. Someone who may already be a member (same photo or same name) is left pending, so
+        staff link them or create them one by one on the Review page.
       </p>
       <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate()}>
         Import pending people
@@ -209,24 +209,32 @@ function ImportPending({ deviceId }: Readonly<{ deviceId: string }>) {
 function Reconcile({ deviceId }: Readonly<{ deviceId: string }>) {
   const reconcile = useMutation({
     mutationFn: () =>
-      api<{ deviceId: string; written: number }>(`/api/v1/devices/${deviceId}/reconcile`, { method: 'POST' }),
+      api<{ deviceId: string; written: number; held?: number }>(`/api/v1/devices/${deviceId}/reconcile`, {
+        method: 'POST',
+      }),
   })
   const written = reconcile.data?.written ?? 0
+  const held = reconcile.data?.held ?? 0
   const queuedMessage = `${written} member${written === 1 ? '' : 's'} queued for this reader. The reader confirms each one when the gateway applies it.`
   return (
     <Card className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Members on this reader</h2>
       <p className="text-sm text-muted">
         Writes every active member with a photo that this reader does not have yet. People already on the reader,
-        members removed from it, and people the server does not know are left as they are. Import or link the people
-        this reader showed first, or a member already on it under another id is added a second time.
+        members removed from it, and people the server does not know are left as they are. While this reader shows
+        people nobody has decided on, members who may be one of them are held back until staff decide on the Review
+        page.
       </p>
       <Button size="sm" variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
         Reconcile members
       </Button>
       {reconcile.isSuccess ? (
         <p className="text-sm text-muted">
-          {written === 0 ? 'Nothing was missing.' : queuedMessage}
+          {written === 0 && held === 0 ? 'Nothing was missing.' : null}
+          {written > 0 ? queuedMessage : null}
+          {held > 0
+            ? ` ${held} member${held === 1 ? '' : 's'} held back: decide on this reader's undecided people first.`
+            : null}
         </p>
       ) : null}
       {reconcile.error ? <QueryError error={reconcile.error} /> : null}

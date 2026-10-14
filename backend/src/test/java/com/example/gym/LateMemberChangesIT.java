@@ -204,7 +204,9 @@ class LateMemberChangesIT extends AbstractIntegrationTest {
 
         uploadFace(noor, faceJpeg());
 
-        assertThat(mapping(exit, noor).getDeviceUserId()).isEqualTo("2");
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(exit, noor.getId()))
+                .as("the undecided Noor Shah on that reader may be this member, so nothing is seeded there")
+                .isEmpty();
         assertThat(mapping(entrance, noor).getDeviceUserId()).isEqualTo("1");
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(exit, "1")).isEmpty();
         assertThat(desiredMemberProjectionRepository.findByDeviceIdAndDeviceUserId(exit, "1")).isEmpty();

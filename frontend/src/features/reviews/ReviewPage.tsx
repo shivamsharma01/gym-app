@@ -91,7 +91,10 @@ export function ReviewPage() {
             </THead>
             <tbody>
               {(reviews.data ?? []).map((item) => {
-                const actions = decisionCell(item, has('REVIEW_DECIDE'), decide.isPending, (path, body) =>
+                const suggestion = report?.rows.find(
+                  (row) => row.deviceId === item.deviceId && row.deviceUserId === item.deviceUserId,
+                )?.suggestionMemberId
+                const actions = decisionCell(item, has('REVIEW_DECIDE'), decide.isPending, suggestion, (path, body) =>
                   decide.mutate({ id: item.id, path, body }),
                 )
                 return (
@@ -100,14 +103,20 @@ export function ReviewPage() {
                     <Td>
                       <div>{item.serverName || '—'}</div>
                       <Validity from={item.serverValidFrom} to={item.serverValidTo} />
+                      <Access status={item.serverUserStatus} />
                     </Td>
                     <Td>
                       <div>{item.readerAbsent ? 'Absent' : item.readerName || '—'}</div>
                       <Validity from={item.readerValidFrom} to={item.readerValidTo} />
+                      <Access status={item.readerUserStatus} />
+                      {item.readerPhotoDiffers ? (
+                        <div className="text-xs text-warn">Photo differs from the server photo</div>
+                      ) : null}
                     </Td>
                     <Td>
                       <div>{item.baselineName || '—'}</div>
                       <Validity from={item.baselineValidFrom} to={item.baselineValidTo} />
+                      <Access status={item.baselineUserStatus} />
                     </Td>
                     <Td>{actions}</Td>
                   </Tr>
@@ -130,10 +139,16 @@ function Validity({ from, to }: Readonly<{ from: string | null; to: string | nul
   )
 }
 
+function Access({ status }: Readonly<{ status: number | null }>) {
+  if (status == null) return null
+  return <div className="text-xs text-zinc-500">{status === 0 ? 'Enabled' : 'Disabled'}</div>
+}
+
 function decisionCell(
   item: ReviewItem,
   canManage: boolean,
   pending: boolean,
+  suggestion: string | null | undefined,
   onDecide: (path: string, body?: unknown) => void,
 ) {
   if (item.decision) {
@@ -149,7 +164,15 @@ function decisionCell(
     )
   }
   if (canManage) {
-    return <RowActions item={item} pending={pending} onDecide={onDecide} />
+    return (
+      <RowActions
+        key={suggestion ?? ''}
+        item={item}
+        pending={pending}
+        suggestion={suggestion}
+        onDecide={onDecide}
+      />
+    )
   }
   return '—'
 }
@@ -157,13 +180,15 @@ function decisionCell(
 function RowActions({
   item,
   pending,
+  suggestion,
   onDecide,
 }: Readonly<{
   item: ReviewItem
   pending: boolean
+  suggestion: string | null | undefined
   onDecide: (path: string, body?: unknown) => void
 }>) {
-  const [memberId, setMemberId] = useState('')
+  const [memberId, setMemberId] = useState(suggestion ?? '')
   if (item.kind === 'ENROLLMENT') {
     return (
       <div className="flex flex-wrap items-center gap-2">

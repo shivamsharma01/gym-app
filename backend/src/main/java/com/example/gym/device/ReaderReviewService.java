@@ -60,32 +60,14 @@ public class ReaderReviewService {
         DeviceReaderBaseline baseline = baselines
                 .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElse(null);
-        String baselineName = baseline == null
-                ? desired.getReaderName() : baseline.getReaderName();
-        String baselineNameEx = baseline == null
-                ? desired.getReaderNameEx() : baseline.getReaderNameEx();
-        String storedBaselineAuthority = baseline == null
-                ? desired.getAuthority() : baseline.getAuthority();
-
-        String readerName = shown(text(payload, "name"), text(payload, "nameEx"));
-        String serverName = shown(desired.getReaderName(), desired.getReaderNameEx());
-        String comparedBaseline = shown(baselineName, baselineNameEx);
-        String readerAuthority = authority(text(payload, "authority"));
-        String serverAuthority = authority(desired.getAuthority());
-        String baselineAuthority = authority(storedBaselineAuthority);
-        String baselineFrom = baseline == null ? desired.getValidFrom() : baseline.getValidFrom();
-        String baselineTo = baseline == null ? desired.getValidTo() : baseline.getValidTo();
-
-        if (agrees(payload, readerName, readerAuthority, serverName, serverAuthority,
-                desired.getValidFrom(), desired.getValidTo())) {
+        if (agrees(payload, held(desired))) {
             if (baseline != null && !baselineAgrees(baseline, desired)) {
                 copyBaseline(baseline, desired);
                 baselines.save(baseline);
             }
             return;
         }
-        if (baseline != null && agrees(payload, readerName, readerAuthority, comparedBaseline, baselineAuthority,
-                baseline.getValidFrom(), baseline.getValidTo())) {
+        if (baseline != null && agrees(payload, held(baseline))) {
             return;
         }
 
@@ -95,25 +77,50 @@ public class ReaderReviewService {
             item.clearDecision();
         }
         if (thisReader) {
-            item.setBaselineName(baselineName);
-            item.setBaselineNameEx(baselineNameEx);
-            item.setBaselineAuthority(storedBaselineAuthority);
-            item.setServerName(desired.getReaderName());
-            item.setServerNameEx(desired.getReaderNameEx());
-            item.setServerAuthority(desired.getAuthority());
-            item.setBaselineValidFrom(baselineFrom);
-            item.setBaselineValidTo(baselineTo);
-            item.setServerValidFrom(desired.getValidFrom());
-            item.setServerValidTo(desired.getValidTo());
-            item.setReaderName(cut(text(payload, "name"), 127));
-            item.setReaderNameEx(cut(text(payload, "nameEx"), 127));
-            item.setReaderAuthority(cut(text(payload, "authority"), 32));
-            item.setReaderValidFrom(cut(text(payload, "validFrom"), 40));
-            item.setReaderValidTo(cut(text(payload, "validTo"), 40));
-            item.setObservedAt(Instant.now());
+            describe(item, desired, baseline, payload);
         }
         item = reviews.save(item);
         rememberSnapshot(item, device, deviceUserId, payload);
+    }
+
+    private static void describe(DeviceReviewItem item, DesiredMemberProjection desired,
+                                 DeviceReaderBaseline baseline, JsonNode payload) {
+        if (baseline == null) {
+            item.setBaselineName(desired.getReaderName());
+            item.setBaselineNameEx(desired.getReaderNameEx());
+            item.setBaselineAuthority(desired.getAuthority());
+            item.setBaselineValidFrom(desired.getValidFrom());
+            item.setBaselineValidTo(desired.getValidTo());
+            item.setBaselineUserStatus(desired.getUserStatus());
+            item.setBaselineFaceSha256(serverFace(desired));
+        } else {
+            item.setBaselineName(baseline.getReaderName());
+            item.setBaselineNameEx(baseline.getReaderNameEx());
+            item.setBaselineAuthority(baseline.getAuthority());
+            item.setBaselineValidFrom(baseline.getValidFrom());
+            item.setBaselineValidTo(baseline.getValidTo());
+            item.setBaselineUserStatus(baseline.getUserStatus());
+            item.setBaselineFaceSha256(baseline.getFaceSha256());
+        }
+        describeServer(item, desired);
+        item.setReaderName(cut(text(payload, "name"), 127));
+        item.setReaderNameEx(cut(text(payload, "nameEx"), 127));
+        item.setReaderAuthority(cut(text(payload, "authority"), 32));
+        item.setReaderValidFrom(cut(text(payload, "validFrom"), 40));
+        item.setReaderValidTo(cut(text(payload, "validTo"), 40));
+        item.setReaderUserStatus(status(payload));
+        item.setReaderFaceSha256(face(payload));
+        item.setObservedAt(Instant.now());
+    }
+
+    private static void describeServer(DeviceReviewItem item, DesiredMemberProjection desired) {
+        item.setServerName(desired.getReaderName());
+        item.setServerNameEx(desired.getReaderNameEx());
+        item.setServerAuthority(desired.getAuthority());
+        item.setServerValidFrom(desired.getValidFrom());
+        item.setServerValidTo(desired.getValidTo());
+        item.setServerUserStatus(desired.getUserStatus());
+        item.setServerFaceSha256(serverFace(desired));
     }
 
     /** A read-back of this id was accepted on this reader at least once. */
@@ -143,9 +150,9 @@ public class ReaderReviewService {
             item.setBaselineName(desired.getReaderName());
             item.setBaselineNameEx(desired.getReaderNameEx());
             item.setBaselineAuthority(desired.getAuthority());
-            item.setServerName(desired.getReaderName());
-            item.setServerNameEx(desired.getReaderNameEx());
-            item.setServerAuthority(desired.getAuthority());
+            item.setBaselineUserStatus(desired.getUserStatus());
+            item.setBaselineFaceSha256(serverFace(desired));
+            describeServer(item, desired);
         }
         item.setReaderAbsent(true);
         item.setObservedAt(Instant.now());
@@ -175,6 +182,8 @@ public class ReaderReviewService {
         snapshot.setReaderAuthority(cut(text(payload, "authority"), 32));
         snapshot.setReaderValidFrom(cut(text(payload, "validFrom"), 40));
         snapshot.setReaderValidTo(cut(text(payload, "validTo"), 40));
+        snapshot.setReaderUserStatus(status(payload));
+        snapshot.setReaderFaceSha256(face(payload));
         snapshot.setObservedAt(Instant.now());
         snapshots.save(snapshot);
     }
@@ -248,17 +257,41 @@ public class ReaderReviewService {
         baseline.setValidFrom(desired.getValidFrom());
         baseline.setValidTo(desired.getValidTo());
         baseline.setAuthority(desired.getAuthority());
+        baseline.setFaceSha256(serverFace(desired));
+    }
+
+    /** What one side holds for a reader user, in the form an observation is compared with. */
+    private record Held(String name, String authority, String validFrom, String validTo,
+                        int userStatus, String faceSha256) {
+    }
+
+    private static Held held(DesiredMemberProjection desired) {
+        return new Held(shown(desired.getReaderName(), desired.getReaderNameEx()), authority(desired.getAuthority()),
+                desired.getValidFrom(), desired.getValidTo(), desired.getUserStatus(), serverFace(desired));
+    }
+
+    private static Held held(DeviceReaderBaseline baseline) {
+        return new Held(shown(baseline.getReaderName(), baseline.getReaderNameEx()), authority(baseline.getAuthority()),
+                baseline.getValidFrom(), baseline.getValidTo(), baseline.getUserStatus(), baseline.getFaceSha256());
+    }
+
+    private static String serverFace(DesiredMemberProjection desired) {
+        return desired.isFacePresent() ? desired.getFaceSha256() : null;
     }
 
     /**
-     * Name and authority always count. A validity value counts only when the observation includes it,
-     * and only as a calendar day, so a clock suffix on the same day is not a difference.
+     * Name and authority always count. Validity, enabled or frozen, and the photo count only when
+     * the observation includes them; validity only as a calendar day, so a clock suffix on the
+     * same day is not a difference.
      */
-    private static boolean agrees(JsonNode payload, String readerName, String readerAuthority,
-                                  String otherName, String otherAuthority, String otherFrom, String otherTo) {
-        return readerName.equals(otherName)
-                && readerAuthority.equals(otherAuthority)
-                && validityAgrees(payload, otherFrom, otherTo);
+    private static boolean agrees(JsonNode payload, Held other) {
+        Integer readerStatus = status(payload);
+        String readerFace = face(payload);
+        return shown(text(payload, "name"), text(payload, "nameEx")).equals(other.name())
+                && authority(text(payload, "authority")).equals(other.authority())
+                && validityAgrees(payload, other.validFrom(), other.validTo())
+                && (readerStatus == null || readerStatus == other.userStatus())
+                && (readerFace == null || readerFace.equalsIgnoreCase(other.faceSha256()));
     }
 
     private static boolean baselineAgrees(DeviceReaderBaseline baseline, DesiredMemberProjection desired) {
@@ -266,7 +299,23 @@ public class ReaderReviewService {
                 .equals(shown(desired.getReaderName(), desired.getReaderNameEx()))
                 && authority(baseline.getAuthority()).equals(authority(desired.getAuthority()))
                 && sameDay(baseline.getValidFrom(), desired.getValidFrom())
-                && sameDay(baseline.getValidTo(), desired.getValidTo());
+                && sameDay(baseline.getValidTo(), desired.getValidTo())
+                && baseline.getUserStatus() == desired.getUserStatus()
+                && sameFace(baseline.getFaceSha256(), serverFace(desired));
+    }
+
+    private static boolean sameFace(String left, String right) {
+        return left == null ? right == null : left.equalsIgnoreCase(right);
+    }
+
+    private static Integer status(JsonNode payload) {
+        JsonNode value = payload == null ? null : payload.get("userStatus");
+        return value == null || !value.isNumber() ? null : value.asInt();
+    }
+
+    private static String face(JsonNode payload) {
+        String value = text(payload, "faceSha256");
+        return value != null && value.length() == 64 ? value : null;
     }
 
     private static boolean validityAgrees(JsonNode payload, String otherFrom, String otherTo) {

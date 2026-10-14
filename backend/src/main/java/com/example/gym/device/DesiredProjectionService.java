@@ -4,6 +4,7 @@ import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
+import com.example.gym.device.domain.DeviceObservedUser;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.ReaderBlockedUser;
@@ -27,6 +28,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -34,6 +36,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.ObjLongConsumer;
 import java.util.function.Supplier;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -296,6 +299,24 @@ public class DesiredProjectionService {
     @Transactional
     public long writeKeepingId(Member member, Device device, MemberFace face, String deviceUserId,
                                boolean keepDeviceUserId) {
+        return keepingId(member, device, deviceUserId, keepDeviceUserId,
+                (row, revision) -> fill(row, revision, deviceUserId, member, face));
+    }
+
+    /**
+     * A member created from a reader person holds what that reader already shows: name, status,
+     * validity, door, time section and photo. The gateway reads it back as matching and writes
+     * nothing. The reader is written only when staff later change the member. The caller makes a
+     * person the reader shows disabled an inactive member, so the server's own status agrees.
+     */
+    @Transactional
+    public long adoptFromReader(Member member, Device device, MemberFace face, DeviceObservedUser observed) {
+        return keepingId(member, device, observed.getDeviceUserId(), false,
+                (row, revision) -> adopt(row, revision, member, face, observed));
+    }
+
+    private long keepingId(Member member, Device device, String deviceUserId, boolean keepDeviceUserId,
+                           ObjLongConsumer<DesiredMemberProjection> filler) {
         if (device.getGatewayId() == null) {
             throw CommonExceptions.badRequest("Reader has no gateway");
         }
@@ -315,7 +336,7 @@ public class DesiredProjectionService {
         long revision = cursor.bumpDesired();
         DesiredMemberProjection row = new DesiredMemberProjection(
                 member.getTenantId(), device.getId(), member.getId());
-        fill(row, revision, deviceUserId, member, face);
+        filler.accept(row, revision);
         row.setKeepDeviceUserId(keepDeviceUserId);
         projections.save(row);
         notifyAfterCommit(device, revision);
@@ -566,8 +587,7 @@ public class DesiredProjectionService {
                       Member member, MemberFace face) {
         LocalDate today = LocalDate.now(READER_ZONE);
         var window = authorization.window(member, today);
-        LocalDate from = window.map(DeviceAuthorizationService.AccessWindow::validFrom).orElse(today);
-        LocalDate to = window.map(DeviceAuthorizationService.AccessWindow::validTo).orElse(today);
+        DesiredMemberProjection held = window.isEmpty() ? heldElsewhere(member) : null;
         String fullName = member.getFullName();
         row.setRevision(revision);
         row.setDeviceUserId(deviceUserId);
@@ -575,13 +595,65 @@ public class DesiredProjectionService {
         row.setReaderName(szName(fullName));
         row.setReaderNameEx(szNameEx(fullName));
         row.setUserStatus(readerStatus(member));
-        row.setValidFrom(at(from, LocalTime.MIN));
-        row.setValidTo(at(to, LocalTime.of(23, 59, 59)));
+        if (held != null) {
+            row.setValidFrom(held.getValidFrom());
+            row.setValidTo(held.getValidTo());
+        } else {
+            LocalDate from = window.map(DeviceAuthorizationService.AccessWindow::validFrom).orElse(today);
+            LocalDate to = window.map(DeviceAuthorizationService.AccessWindow::validTo).orElse(today);
+            row.setValidFrom(at(from, LocalTime.MIN));
+            row.setValidTo(at(to, LocalTime.of(23, 59, 59)));
+        }
         row.setAuthority(AUTHORITY);
         row.setDoorNum(DOOR_NUM);
         row.setTimeSectionNum(TIME_SECTION_NUM);
         row.setFacePresent(true);
         row.setFaceSha256(face.getSha256());
+    }
+
+    /**
+     * The window another reader already holds for a member without a membership, so a member
+     * created from a reader keeps that reader's dates on the next reader too.
+     */
+    private DesiredMemberProjection heldElsewhere(Member member) {
+        return projections.findByMemberId(member.getId()).stream()
+                .filter(DesiredMemberProjection::isPresentOnReader)
+                .min(Comparator.comparing(DesiredMemberProjection::getDeviceId))
+                .orElse(null);
+    }
+
+    private static void adopt(DesiredMemberProjection row, long revision, Member member, MemberFace face,
+                              DeviceObservedUser observed) {
+        LocalDate today = LocalDate.now(READER_ZONE);
+        boolean named = observed.getReaderName() != null;
+        row.setRevision(revision);
+        row.setDeviceUserId(observed.getDeviceUserId());
+        row.setPresentOnReader(true);
+        row.setReaderName(named ? observed.getReaderName() : szName(member.getFullName()));
+        row.setReaderNameEx(named ? observed.getReaderNameEx() : szNameEx(member.getFullName()));
+        row.setUserStatus(observed.getUserStatus());
+        row.setValidFrom(readerTime(observed.getValidFrom(), at(today, LocalTime.MIN)));
+        row.setValidTo(readerTime(observed.getValidTo(), at(today, LocalTime.of(23, 59, 59))));
+        row.setAuthority(observed.getAuthority() == null ? AUTHORITY : observed.getAuthority());
+        row.setDoorNum(observed.getDoorNum() == null ? DOOR_NUM : observed.getDoorNum());
+        row.setTimeSectionNum(observed.getTimeSectionNum() == null ? TIME_SECTION_NUM : observed.getTimeSectionNum());
+        row.setFacePresent(true);
+        row.setFaceSha256(face.getSha256());
+    }
+
+    /** The reader's own time, in the form the gateway's read-back reports. */
+    private static String readerTime(String observed, String fallback) {
+        if (blank(observed)) {
+            return fallback;
+        }
+        try {
+            return OffsetDateTime.parse(observed)
+                    .atZoneSameInstant(READER_ZONE)
+                    .toOffsetDateTime()
+                    .format(READER_TIME);
+        } catch (DateTimeParseException e) {
+            return fallback;
+        }
     }
 
     private DesiredItem item(DesiredMemberProjection row) {

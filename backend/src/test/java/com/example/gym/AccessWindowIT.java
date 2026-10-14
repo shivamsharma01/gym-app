@@ -200,7 +200,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void datesEditedOnTheDeviceAreAppliedEvenWhenTheyOverlapTheNextMembership() throws Exception {
+    void datesEditedOnTheDeviceThatOverlapTheNextMembershipOpenAReviewAndChangeNoMembership() throws Exception {
         String current = membership(today.minusDays(5), today.plusDays(10));
         String next = membership(today.plusDays(15), today.plusDays(45));
         pay(current);
@@ -224,7 +224,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void datesEditedOnTheDeviceApplyToAFrozenMembershipToo() throws Exception {
+    void datesEditedOnTheDeviceForAFrozenMembershipOpenAReviewAndKeepItFrozen() throws Exception {
         String current = membership(today.minusDays(5), today.plusDays(25));
         pay(current);
         postJson("/api/v1/memberships/" + current + "/freeze", null).andExpect(status().isOk());

@@ -844,6 +844,15 @@ Release 1 has no earlier install to stay compatible with, so code that only refu
 - Schema: `V1__baseline.sql` was edited in place. A database created from the previous baseline must be recreated.
 - Tests: tests that only checked a refusal of a removed path were deleted. Test classes and test data no longer carry slice labels.
 
+## Initial import from readers (15 October 2026, uncommitted)
+
+The first install starts with an empty server and readers that already hold people, on one reader or both. When the gateway connects, each reader's whole list is uploaded and every person the server does not know becomes a pending enrollment, as before. On top of that:
+- Import: `POST /api/v1/devices/{id}/import-pending` (gym admin: `DEVICE_SYNC` and `REVIEW_DECIDE`), with an "Import pending people" button on the reader page, runs one staff create per undecided person on that reader. A person whose photo has not reached the server, or whose decision is still waiting for the reader, stays pending and is listed. Nobody is linked.
+- Create from a reader, single or imported, adopts the reader's record as the desired member: name, dates, enabled or disabled, authority, door and time section, and photo. The gateway reads it back as matching and writes nothing. A person the reader shows disabled becomes an inactive member. The gateway's list upload now carries `doorNum` and `timeSectionNum`.
+- A member without a membership keeps the dates a reader already holds for them when they are linked or seeded to another reader, instead of today only. A staff edit writes the change and keeps those dates until a membership exists.
+- A person on both readers is imported from one reader and linked on the other with Link, under that reader's own id; `member_device_mapping` holds one row per reader. While a reader has undecided people, the automatic seed after its trusted list skips members created from another reader's people, so an imported member is not copied onto it under a second id; server-created members are seeded as before. Once staff have decided on everyone that reader showed, imported members it still lacks are seeded with the dates they already hold. Staff Reconcile is unchanged.
+- A reader-side change of enabled/disabled or of the photo on a mapped member opens a review item, as name and date changes already did. The review page shows both.
+
 ## F. Fake reader only
 
 F1's credential tests, F2, F3, and V1 through V21 were accepted on the fake reader and the test database. That acceptance does not close section E.

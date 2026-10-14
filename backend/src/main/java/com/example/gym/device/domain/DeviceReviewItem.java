@@ -68,6 +68,24 @@ public class DeviceReviewItem extends TenantAwareEntity {
     @Column(name = "reader_valid_to", length = 40)
     private String readerValidTo;
 
+    @Column(name = "baseline_user_status")
+    private Integer baselineUserStatus;
+
+    @Column(name = "server_user_status")
+    private Integer serverUserStatus;
+
+    @Column(name = "reader_user_status")
+    private Integer readerUserStatus;
+
+    @Column(name = "baseline_face_sha256", length = 64)
+    private String baselineFaceSha256;
+
+    @Column(name = "server_face_sha256", length = 64)
+    private String serverFaceSha256;
+
+    @Column(name = "reader_face_sha256", length = 64)
+    private String readerFaceSha256;
+
     @Column(name = "reader_absent", nullable = false)
     private boolean readerAbsent;
 
@@ -323,5 +341,53 @@ public class DeviceReviewItem extends TenantAwareEntity {
     public void resolve() {
         this.resolved = true;
         this.verificationError = null;
+    }
+
+    public Integer getBaselineUserStatus() {
+        return baselineUserStatus;
+    }
+
+    public void setBaselineUserStatus(Integer baselineUserStatus) {
+        this.baselineUserStatus = baselineUserStatus;
+    }
+
+    public Integer getServerUserStatus() {
+        return serverUserStatus;
+    }
+
+    public void setServerUserStatus(Integer serverUserStatus) {
+        this.serverUserStatus = serverUserStatus;
+    }
+
+    public Integer getReaderUserStatus() {
+        return readerUserStatus;
+    }
+
+    public void setReaderUserStatus(Integer readerUserStatus) {
+        this.readerUserStatus = readerUserStatus;
+    }
+
+    public String getBaselineFaceSha256() {
+        return baselineFaceSha256;
+    }
+
+    public void setBaselineFaceSha256(String baselineFaceSha256) {
+        this.baselineFaceSha256 = baselineFaceSha256;
+    }
+
+    public String getServerFaceSha256() {
+        return serverFaceSha256;
+    }
+
+    public void setServerFaceSha256(String serverFaceSha256) {
+        this.serverFaceSha256 = serverFaceSha256;
+    }
+
+    public String getReaderFaceSha256() {
+        return readerFaceSha256;
+    }
+
+    public void setReaderFaceSha256(String readerFaceSha256) {
+        this.readerFaceSha256 = readerFaceSha256;
     }
 }

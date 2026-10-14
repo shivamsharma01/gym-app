@@ -37,6 +37,12 @@ public class DeviceObservedUser extends TenantAwareEntity {
     @Column(name = "authority", length = 32)
     private String authority;
 
+    @Column(name = "door_num")
+    private Integer doorNum;
+
+    @Column(name = "time_section_num")
+    private Integer timeSectionNum;
+
     @Column(name = "face_sha256", length = 64)
     private String faceSha256;
 
@@ -106,6 +112,22 @@ public class DeviceObservedUser extends TenantAwareEntity {
 
     public void setAuthority(String authority) {
         this.authority = authority;
+    }
+
+    public Integer getDoorNum() {
+        return doorNum;
+    }
+
+    public void setDoorNum(Integer doorNum) {
+        this.doorNum = doorNum;
+    }
+
+    public Integer getTimeSectionNum() {
+        return timeSectionNum;
+    }
+
+    public void setTimeSectionNum(Integer timeSectionNum) {
+        this.timeSectionNum = timeSectionNum;
     }
 
     public String getFaceSha256() {

@@ -58,6 +58,23 @@ public class MemberCreateWorkerTests : IDisposable
     }
 
     [Fact]
+    public void A_reader_that_already_holds_the_desired_member_is_read_back_and_acked_without_a_write()
+    {
+        var reader = new FakeReader();
+        reader.CreateUser(new ReaderUser("1", "Asha", null, 1, ValidFrom, ValidTo, "Customer", 1, 1));
+        reader.InsertFace("1", Face);
+        var writes = reader.Writes.ToArray();
+        using var worker = Start(Path.Combine(_directory, "adopted.sqlite"), reader);
+
+        var result = worker.ApplyMember(Member("1", nameEx: null) with { UserStatus = 1 });
+
+        Assert.Equal(MemberApplyKind.Applied, result.Kind);
+        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal(writes, reader.Writes);
+        Assert.Equal(1, reader.GetUser("1").User!.UserStatus);
+    }
+
+    [Fact]
     public void Occupied_id_is_not_overwritten_and_the_next_revision_uses_the_server_id()
     {
         var reader = new FakeReader();

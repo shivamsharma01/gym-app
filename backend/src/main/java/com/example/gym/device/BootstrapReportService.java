@@ -17,9 +17,11 @@ import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,7 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Classifies a trusted roster. A matching mapping stays on the desired-state writer. Everyone else
  * stays a review or enrollment row. Device user ids are not rewritten, and nobody is auto-linked.
- * Active members a reader does not have yet are seeded onto it from the server.
+ * Active members a reader does not have yet are seeded onto it from the server. A member created
+ * from a reader's person waits until staff have decided on every person this reader showed.
  */
 @Service
 public class BootstrapReportService {
@@ -92,10 +95,24 @@ public class BootstrapReportService {
      * written with the existing desired-state writer, under an id above every id the reader showed.
      * Existing mappings and people the server does not know stay as they are, and nobody is linked.
      * A later roster writes only members still missing.
+     * <p>
+     * While the reader still shows people staff have not decided on, a member created from another
+     * reader's person is not seeded: that person may be one of the undecided, and a seed would add
+     * them a second time under a new id. Staff link them instead. Server-created members are seeded.
      */
     @Transactional
     public void seedFromTrustedRoster(Device reader) {
-        reconcile.reconcile(reader);
+        if (!enrollments.existsByDeviceIdAndResolvedFalse(reader.getId())) {
+            reconcile.reconcile(reader);
+            return;
+        }
+        Set<String> fromReaders = new HashSet<>();
+        List<PendingEnrollment> created =
+                enrollments.findByTenantIdAndDecision(reader.getTenantId(), ReviewDecisions.CREATE);
+        for (PendingEnrollment enrollment : created) {
+            fromReaders.add(enrollment.getChosenState());
+        }
+        reconcile.reconcile(reader, member -> !fromReaders.contains(member.getPublicId()));
     }
 
     private List<Row> seed(Device reader) {

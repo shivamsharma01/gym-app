@@ -143,6 +143,9 @@ public sealed class RosterAcceptanceTests : IDisposable
 
         var delivered = Assert.Single(server.Delivered);
         Assert.Equal(2, delivered.Payload.GetProperty("announcedTotal").GetInt32());
+        var first = delivered.Payload.GetProperty("users")[0];
+        Assert.Equal(1, first.GetProperty("doorNum").GetInt32());
+        Assert.Equal(1, first.GetProperty("timeSectionNum").GetInt32());
         Assert.Empty(store.LoadPending());
     }
 

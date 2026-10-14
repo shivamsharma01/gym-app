@@ -187,3 +187,83 @@ test('staff can decide a review item but cannot run bootstrap', async ({ page })
   await page.getByRole('button', { name: 'Accept server' }).click()
   await expect(page.getByText('ACCEPT_SERVER')).toBeVisible()
 })
+
+async function routeReviews(page: import('@playwright/test').Page, items: unknown[], report?: unknown) {
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url())
+    const path = url.pathname
+    const method = route.request().method()
+    if (path === '/api/v1/auth/refresh' && method === 'POST') {
+      await route.fulfill({
+        json: { accessToken: 'token', tokenType: 'Bearer', expiresInSeconds: 900, user },
+      })
+      return
+    }
+    if (path === '/api/v1/me') {
+      await route.fulfill({ json: user })
+      return
+    }
+    if (path === '/api/v1/settings') {
+      await route.fulfill({ json: {} })
+      return
+    }
+    if (path.startsWith('/api/v1/gateways')) {
+      await route.fulfill({ json: { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 } })
+      return
+    }
+    if (path === '/api/v1/reviews' && method === 'GET') {
+      await route.fulfill({ json: items })
+      return
+    }
+    if (path === '/api/v1/reviews/bootstrap' && method === 'POST' && report) {
+      await route.fulfill({ json: report })
+      return
+    }
+    await route.fulfill({ status: 404, json: {} })
+  })
+}
+
+test('a reader-side disable and photo change are shown against the server', async ({ page }) => {
+  await routeReviews(page, [
+    {
+      ...openItem,
+      readerName: 'Asha Shah',
+      serverUserStatus: 0,
+      readerUserStatus: 1,
+      baselineUserStatus: 0,
+      readerPhotoDiffers: true,
+    },
+  ])
+
+  await page.goto('/app/review')
+  await expect(page.getByText('Disabled')).toBeVisible()
+  await expect(page.getByText('Enabled')).toHaveCount(2)
+  await expect(page.getByText('Photo differs from the server photo')).toBeVisible()
+})
+
+test('the bootstrap suggestion fills in the member to link', async ({ page }) => {
+  await routeReviews(
+    page,
+    [{ ...openItem, id: 'enrollment-7', kind: 'ENROLLMENT', deviceUserId: '7', serverName: null, readerName: 'Asha Rao' }],
+    {
+      runId: 'run-16',
+      rows: [
+        {
+          outcome: 'UNLINKED',
+          deviceId: 'dev-1',
+          deviceUserId: '7',
+          memberId: null,
+          readerName: 'Asha Rao',
+          serverName: null,
+          suggestionMemberId: 'member-asha',
+        },
+      ],
+    },
+  )
+
+  await page.goto('/app/review')
+  await expect(page.getByLabel('Member id for 7')).toHaveValue('')
+  await page.getByRole('button', { name: 'Bootstrap report' }).click()
+  await expect(page.getByLabel('Member id for 7')).toHaveValue('member-asha')
+  await expect(page.getByRole('button', { name: 'Link', exact: true })).toBeEnabled()
+})

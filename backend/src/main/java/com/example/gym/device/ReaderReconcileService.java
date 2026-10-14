@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -67,6 +68,12 @@ public class ReaderReconcileService {
     /** One reader, under its lock. Returns how many members were written. */
     @Transactional
     public int reconcile(Device reader) {
+        return reconcile(reader, member -> true);
+    }
+
+    /** One reader, under its lock, writing only the members {@code eligible} accepts. */
+    @Transactional
+    public int reconcile(Device reader, Predicate<Member> eligible) {
         if (reader == null || reader.getGatewayId() == null) {
             return 0;
         }
@@ -74,7 +81,8 @@ public class ReaderReconcileService {
         Set<Long> mapped = new HashSet<>(mappings.lockMemberIdsByDeviceId(reader.getId()));
         int written = 0;
         for (Member member : members.findByTenantIdAndStatus(reader.getTenantId(), MemberStatus.ACTIVE)) {
-            if (!mapped.contains(member.getId()) && desired.seedIfAbsent(member, reader) != null) {
+            if (!mapped.contains(member.getId()) && eligible.test(member)
+                    && desired.seedIfAbsent(member, reader) != null) {
                 written++;
             }
         }

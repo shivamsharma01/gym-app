@@ -45,6 +45,10 @@ export type ReviewItem = {
   readerValidTo: string | null
   baselineValidFrom: string | null
   baselineValidTo: string | null
+  serverUserStatus: number | null
+  readerUserStatus: number | null
+  baselineUserStatus: number | null
+  readerPhotoDiffers: boolean
 }
 
 export type UserSummary = {

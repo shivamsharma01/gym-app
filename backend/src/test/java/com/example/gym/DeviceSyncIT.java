@@ -172,7 +172,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void freezeEnqueuesDisableAndRemoteDoorRequiresConfirmation() throws Exception {
+    void freezeQueuesNoDeviceCommandAndARemoteDoorNeedsConfirmation() throws Exception {
         long before = deviceSyncCommandRepository.count();
 
         postJson("/api/v1/memberships/" + membershipId + "/freeze", null)

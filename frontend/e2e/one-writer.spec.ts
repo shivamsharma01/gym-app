@@ -109,6 +109,23 @@ test('reading a reader now sends one request and shows the gateway result', asyn
   expect(requests).toEqual(['/api/v1/devices/dev-1/scan'])
 })
 
+test('importing a reader sends one request and lists who stayed pending', async ({ page }) => {
+  const requests: string[] = []
+  await mockStaff(page, [], user, requests)
+  await page.goto('/app/devices/dev-1')
+  await page.getByRole('button', { name: 'Import pending people' }).click()
+  await expect(page.getByText('2 members created · 1 left pending.')).toBeVisible()
+  await expect(page.getByText('Reader id 13: The reader face is not on the server')).toBeVisible()
+  expect(requests).toEqual(['/api/v1/devices/dev-1/import-pending'])
+})
+
+test('staff without device sync cannot import a reader', async ({ page }) => {
+  await mockStaff(page, [], { ...user, roles: ['STAFF'], permissions: ['DEVICE_VIEW', 'REVIEW_DECIDE'] })
+  await page.goto('/app/devices/dev-1')
+  await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Import pending people' })).toHaveCount(0)
+})
+
 function scanCommand(state: string) {
   return {
     id: 'scan-1',
@@ -253,6 +270,17 @@ async function mockStaff(
     if (path === '/api/v1/devices/dev-1/reconcile' && method === 'POST') {
       reconciles.push(path)
       await route.fulfill({ json: { deviceId: 'dev-1', written: 2 } })
+      return
+    }
+    if (path === '/api/v1/devices/dev-1/import-pending' && method === 'POST') {
+      reconciles.push(path)
+      await route.fulfill({
+        json: {
+          deviceId: 'dev-1',
+          created: 2,
+          skipped: [{ deviceUserId: '13', reason: 'The reader face is not on the server' }],
+        },
+      })
       return
     }
     if (path === '/api/v1/devices/dev-1/scan' && method === 'POST') {

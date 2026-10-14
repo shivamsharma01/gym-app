@@ -146,12 +146,63 @@ function Overview({ device }: { device: Device }) {
           </Card>
         </div>
       ) : null}
+      {has('DEVICE_SYNC') && has('REVIEW_DECIDE') && device.gatewayAssigned ? (
+        <ImportPending deviceId={device.id} />
+      ) : null}
       {has('DEVICE_SYNC') && device.gatewayAssigned ? <Reconcile deviceId={device.id} /> : null}
       <p className="text-sm text-muted">
         Health is not a single online/offline lamp. Device, gateway session, last sync, and pending/failed commands are
         separate facts.
       </p>
     </div>
+  )
+}
+
+type ImportResult = {
+  deviceId: string
+  created: number
+  skipped: { deviceUserId: string; reason: string }[]
+}
+
+function ImportPending({ deviceId }: Readonly<{ deviceId: string }>) {
+  const qc = useQueryClient()
+  const run = useMutation({
+    mutationFn: () => api<ImportResult>(`/api/v1/devices/${deviceId}/import-pending`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['reviews'] })
+    },
+  })
+  const created = run.data?.created ?? 0
+  const skipped = run.data?.skipped ?? []
+  return (
+    <Card className="space-y-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">People already on this reader</h2>
+      <p className="text-sm text-muted">
+        Creates a member for every person this reader showed that nobody has decided on yet. Each member keeps the
+        reader&apos;s name, dates and photo, so nothing is written to the reader. Someone disabled on the reader
+        becomes an inactive member. If someone is already a member from another reader, link them on the Review page
+        first.
+      </p>
+      <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate()}>
+        Import pending people
+      </Button>
+      {run.isSuccess ? (
+        <p className="text-sm text-muted">
+          {created} member{created === 1 ? '' : 's'} created
+          {skipped.length > 0 ? ` · ${skipped.length} left pending` : ''}.
+        </p>
+      ) : null}
+      {skipped.length > 0 ? (
+        <ul className="space-y-1 text-sm text-muted">
+          {skipped.map((item) => (
+            <li key={item.deviceUserId}>
+              Reader id {item.deviceUserId}: {item.reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {run.error ? <QueryError error={run.error} /> : null}
+    </Card>
   )
 }
 
@@ -167,7 +218,8 @@ function Reconcile({ deviceId }: Readonly<{ deviceId: string }>) {
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Members on this reader</h2>
       <p className="text-sm text-muted">
         Writes every active member with a photo that this reader does not have yet. People already on the reader,
-        members removed from it, and people the server does not know are left as they are.
+        members removed from it, and people the server does not know are left as they are. Import or link the people
+        this reader showed first, or a member already on it under another id is added a second time.
       </p>
       <Button size="sm" variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
         Reconcile members

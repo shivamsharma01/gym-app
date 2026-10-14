@@ -25,5 +25,9 @@ public record ReviewItemView(
         String readerValidFrom,
         String readerValidTo,
         String baselineValidFrom,
-        String baselineValidTo) {
+        String baselineValidTo,
+        Integer serverUserStatus,
+        Integer readerUserStatus,
+        Integer baselineUserStatus,
+        boolean readerPhotoDiffers) {
 }

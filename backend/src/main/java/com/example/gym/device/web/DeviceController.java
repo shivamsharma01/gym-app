@@ -3,6 +3,8 @@ package com.example.gym.device.web;
 import com.example.gym.common.web.PageResponse;
 import com.example.gym.device.DeviceReadService;
 import com.example.gym.device.DeviceService;
+import com.example.gym.device.ReaderImportService;
+import com.example.gym.device.ReaderImportService.Imported;
 import com.example.gym.device.ReaderReconcileService;
 import com.example.gym.device.ReaderReconcileService.Reconciled;
 import com.example.gym.device.dto.DeviceRequests.CreateDevice;
@@ -39,13 +41,16 @@ public class DeviceController {
     private final DeviceService deviceService;
     private final DeviceReadService deviceReadService;
     private final ReaderReconcileService reconcileService;
+    private final ReaderImportService importService;
 
     public DeviceController(DeviceService deviceService,
                             DeviceReadService deviceReadService,
-                            ReaderReconcileService reconcileService) {
+                            ReaderReconcileService reconcileService,
+                            ReaderImportService importService) {
         this.deviceService = deviceService;
         this.deviceReadService = deviceReadService;
         this.reconcileService = reconcileService;
+        this.importService = importService;
     }
 
     @GetMapping
@@ -95,6 +100,13 @@ public class DeviceController {
     @Operation(summary = "Write every active member with a face that this reader has no mapping for")
     public Reconciled reconcile(@PathVariable String id) {
         return reconcileService.reconcile(id, SecurityUtils.currentTenantId());
+    }
+
+    @PostMapping("/{id}/import-pending")
+    @PreAuthorize("hasAuthority('DEVICE_SYNC') and hasAuthority('REVIEW_DECIDE')")
+    @Operation(summary = "Create a member for every undecided person this reader showed, keeping the reader's record")
+    public Imported importPending(@PathVariable String id) {
+        return importService.importPending(id, SecurityUtils.currentTenantId());
     }
 
     @PostMapping("/{id}/scan")

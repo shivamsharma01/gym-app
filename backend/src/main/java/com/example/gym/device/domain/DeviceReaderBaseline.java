@@ -34,6 +34,9 @@ public class DeviceReaderBaseline extends TenantAwareEntity {
     @Column(name = "valid_to", length = 40)
     private String validTo;
 
+    @Column(name = "face_sha256", length = 64)
+    private String faceSha256;
+
     @Column(name = "authority", length = 32)
     private String authority;
 
@@ -100,5 +103,13 @@ public class DeviceReaderBaseline extends TenantAwareEntity {
 
     public void setAuthority(String authority) {
         this.authority = authority;
+    }
+
+    public String getFaceSha256() {
+        return faceSha256;
+    }
+
+    public void setFaceSha256(String faceSha256) {
+        this.faceSha256 = faceSha256;
     }
 }

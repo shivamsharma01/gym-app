@@ -35,6 +35,12 @@ public class DeviceReviewSnapshot extends TenantAwareEntity {
     @Column(name = "reader_valid_to", length = 40)
     private String readerValidTo;
 
+    @Column(name = "reader_user_status")
+    private Integer readerUserStatus;
+
+    @Column(name = "reader_face_sha256", length = 64)
+    private String readerFaceSha256;
+
     @Column(name = "observed_at", nullable = false)
     private Instant observedAt;
 
@@ -106,5 +112,21 @@ public class DeviceReviewSnapshot extends TenantAwareEntity {
 
     public void setObservedAt(Instant observedAt) {
         this.observedAt = observedAt;
+    }
+
+    public Integer getReaderUserStatus() {
+        return readerUserStatus;
+    }
+
+    public void setReaderUserStatus(Integer readerUserStatus) {
+        this.readerUserStatus = readerUserStatus;
+    }
+
+    public String getReaderFaceSha256() {
+        return readerFaceSha256;
+    }
+
+    public void setReaderFaceSha256(String readerFaceSha256) {
+        this.readerFaceSha256 = readerFaceSha256;
     }
 }

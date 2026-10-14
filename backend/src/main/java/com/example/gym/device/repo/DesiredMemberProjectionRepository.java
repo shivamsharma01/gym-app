@@ -14,6 +14,8 @@ public interface DesiredMemberProjectionRepository extends JpaRepository<Desired
 
     List<DesiredMemberProjection> findByDeviceId(Long deviceId);
 
+    List<DesiredMemberProjection> findByMemberId(Long memberId);
+
     Optional<DesiredMemberProjection> findByDeviceIdAndMemberId(Long deviceId, Long memberId);
 
     /** A locking read: sees a row another transaction committed after this one's snapshot. */

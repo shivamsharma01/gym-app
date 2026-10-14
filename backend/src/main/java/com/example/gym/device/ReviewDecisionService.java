@@ -14,6 +14,7 @@ import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceService;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
+import com.example.gym.member.MemberStatus;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.security.SecurityUtils;
 import com.example.gym.tenant.TenantGuard;
@@ -121,9 +122,12 @@ public class ReviewDecisionService {
         String[] name = personName(ReaderReviewService.shown(observed.getReaderName(), observed.getReaderNameEx()));
         Member member = members.saveNew(new CreateMember(
                 name[0], name[1], null, null, null, null, null, null, null, null), tenantId);
+        if (observed.getUserStatus() != DesiredProjectionService.USER_STATUS) {
+            member.setStatus(MemberStatus.INACTIVE);
+        }
         MemberFace face = faces.applyFromDevice(member, upload, enrollment.getDeviceId(), Instant.now());
         Device device = device(enrollment.getDeviceId(), tenantId);
-        long revision = desired.writeKeepingId(member, device, face, enrollment.getDeviceUserId(), false);
+        long revision = desired.adoptFromReader(member, device, face, observed);
         enrollment.decide(ReviewDecisions.CREATE, actor(), "PENDING", member.getPublicId(), revision);
         return enrollmentView(enrollments.save(enrollment));
     }
@@ -209,7 +213,12 @@ public class ReviewDecisionService {
                 item.getReaderValidFrom(),
                 item.getReaderValidTo(),
                 item.getBaselineValidFrom(),
-                item.getBaselineValidTo());
+                item.getBaselineValidTo(),
+                item.getServerUserStatus(),
+                item.getReaderUserStatus(),
+                item.getBaselineUserStatus(),
+                item.getReaderFaceSha256() != null
+                        && !item.getReaderFaceSha256().equalsIgnoreCase(item.getServerFaceSha256()));
     }
 
     private ReviewItemView enrollmentView(PendingEnrollment enrollment) {
@@ -238,7 +247,11 @@ public class ReviewDecisionService {
                 observed == null ? null : observed.getValidFrom(),
                 observed == null ? null : observed.getValidTo(),
                 null,
-                null);
+                null,
+                null,
+                observed == null ? null : observed.getUserStatus(),
+                null,
+                false);
     }
 
     private String devicePublicId(Long deviceId) {

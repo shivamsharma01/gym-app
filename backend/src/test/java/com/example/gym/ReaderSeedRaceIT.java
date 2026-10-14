@@ -80,7 +80,7 @@ class ReaderSeedRaceIT extends AbstractIntegrationTest {
         });
 
         assertThat(deactivation.get(30, TimeUnit.SECONDS)).isEqualTo(204);
-        assertNotEnabled(exit, ria);
+        assertSeededDisabled(exit, ria);
     }
 
     /** The deactivation commits while the seed, whose snapshot predates it, waits for the reader. */
@@ -142,7 +142,7 @@ class ReaderSeedRaceIT extends AbstractIntegrationTest {
         });
 
         assertThat(freeze.get(30, TimeUnit.SECONDS)).isEqualTo(200);
-        assertNotEnabled(exit, ria);
+        assertSeededDisabled(exit, ria);
     }
 
     /** A rename racing a seed still reaches the seeded reader, and neither side deadlocks. */
@@ -215,11 +215,25 @@ class ReaderSeedRaceIT extends AbstractIntegrationTest {
         });
     }
 
+    /** The seed either wrote the member disabled, or deferred and wrote nothing at all. */
     private void assertNotEnabled(Long device, Member member) {
         Optional<DesiredMemberProjection> row = projection(device, member);
-        row.ifPresent(found -> assertThat(found.getUserStatus())
+        if (row.isEmpty()) {
+            assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(device, member.getId()))
+                    .as("a deferred seed leaves no mapping behind")
+                    .isEmpty();
+            return;
+        }
+        assertThat(row.get().getUserStatus())
                 .as("member must not stay enabled on the seeded reader")
-                .isEqualTo(1));
+                .isEqualTo(1);
+    }
+
+    /** The seed committed its row, and the change that raced it left that row disabled. */
+    private void assertSeededDisabled(Long device, Member member) {
+        assertThat(projection(device, member))
+                .as("the seed wrote this reader")
+                .hasValueSatisfying(found -> assertThat(found.getUserStatus()).isEqualTo(1));
     }
 
     private static int lockWaits() {

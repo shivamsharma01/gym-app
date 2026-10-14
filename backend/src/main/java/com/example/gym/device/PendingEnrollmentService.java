@@ -144,6 +144,8 @@ public class PendingEnrollmentService {
         snapshot.setValidFrom(cut(text(payload, "validFrom"), 40));
         snapshot.setValidTo(cut(text(payload, "validTo"), 40));
         snapshot.setAuthority(cut(text(payload, "authority"), 32));
+        snapshot.setDoorNum(optionalNumber(payload, "doorNum"));
+        snapshot.setTimeSectionNum(optionalNumber(payload, "timeSectionNum"));
         snapshot.setFaceSha256(face(text(payload, "faceSha256")));
         snapshot.setObservedAt(Instant.now());
         observedUsers.save(snapshot);
@@ -179,6 +181,11 @@ public class PendingEnrollmentService {
     private static int number(JsonNode node, String field) {
         JsonNode value = node.get(field);
         return value == null || value.isNull() ? 0 : value.asInt();
+    }
+
+    private static Integer optionalNumber(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value == null || !value.isNumber() ? null : value.asInt();
     }
 
     private static String text(JsonNode node, String field) {

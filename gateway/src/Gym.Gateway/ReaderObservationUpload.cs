@@ -56,6 +56,8 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                 validFrom = user.ValidFrom?.ToString("o"),
                 validTo = user.ValidTo?.ToString("o"),
                 authority = user.Authority,
+                doorNum = user.DoorNum,
+                timeSectionNum = user.TimeSectionNum,
                 faceSha256 = faceHashes.TryGetValue(user.DeviceUserId, out var hash) ? hash : null,
                 isNew = true,
                 deleted = false
@@ -91,6 +93,8 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             validFrom = user.ValidFrom?.ToString("o"),
             validTo = user.ValidTo?.ToString("o"),
             authority = user.Authority,
+            doorNum = user.DoorNum,
+            timeSectionNum = user.TimeSectionNum,
             faceSha256 = faceHashes.TryGetValue(user.DeviceUserId, out var hash) ? hash : null,
             isNew = true,
             deleted = false

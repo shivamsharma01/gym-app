@@ -199,6 +199,16 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
         return read;
     }
 
+    public FaceChecksumList ListFaceChecksums()
+    {
+        var sw = Stopwatch.StartNew();
+        var list = _inner.ListFaceChecksums();
+        Report(nameof(ListFaceChecksums),
+            list.Ok ? $"{list.ByUserId.Count} photo checksum(s)" : "unavailable: " + list.Error, sw.Elapsed);
+        Observe(list.Ok, list.Error);
+        return list;
+    }
+
     public DeviceCommandResult DeleteFace(string deviceUserId) =>
         Command(nameof(DeleteFace), deviceUserId, () => _inner.DeleteFace(deviceUserId));
 

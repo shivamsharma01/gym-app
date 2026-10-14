@@ -42,7 +42,7 @@ import tools.jackson.databind.JsonNode;
  * either way, with every protection intact, and a list racing a member change must not apply or
  * flag stale state.
  */
-class V21ListOnlyIT extends AbstractIntegrationTest {
+class TrustedListOnlyScanIT extends AbstractIntegrationTest {
 
     private static final Pattern VOLATILE = Pattern.compile("^id$|^public_id$|^version$|_at$|_by$|(?<!device_user)_id$");
     private static final List<String> OBSERVED_TABLES = List.of(

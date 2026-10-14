@@ -246,6 +246,18 @@ P13 already showed that walks before the reboot produced no live door event, so 
 
 Closed without a trial. The operator confirmed this reader cannot be factory-reset, so there is no reset alarm or empty-state signature to capture. The architecture's "reader becomes empty, server rebuilds it" path still applies when the unit is replaced. It is not an in-place operation on this firmware. After an ordinary test-user delete, GET reported no record. That note is not an empty-reader signal.
 
+## Photo checksum index
+
+OBSERVED on both gym readers on 4 October 2026, with the read-only SDK probe (`gateway/tools/Gym.Gateway.SdkProbe`), before this run:
+- `StartFindFaceInfo` with an empty user id, paged with `DoFindFaceInfo` 50 at a time, lists the MD5 of every stored photo: 1,122 photos in about 4 s per reader. No photo is transferred.
+- Downloading every photo with `GetFace` took about 100 s on one reader and about 300 s on the other.
+- The listed MD5 matched the MD5 of the downloaded photo in 20 of 20 samples, and equalled the MD5 of the file the probe uploaded.
+- It was identical on both readers for all 1,122 photos, and it changed when a face was re-enrolled on the reader screen.
+- The 73 users without a photo are not in the list. A photo read for them answers a generic error (0x800004B5), not NO_RECORD.
+- `stuUpdateTime` is zero for every user and every photo, so the reader has no last-modified time to compare instead.
+
+P21 shows the reader sometimes stores a re-encoded image. The checksum is therefore compared with the reader's own earlier checksum, never with the file the gateway sent. The gateway uses it to download a photo only when it changed (see the change-only scans in [execution-plan.md](execution-plan.md)).
+
 ## What this closes for the sync design
 
 These are readings of this run, for the decisions in the architecture doc. They are not a second verdict layered on top of the harness.

@@ -24,7 +24,6 @@ import com.example.gym.member.DeviceAuthority;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.device.domain.ReaderRevision;
-import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
 import java.awt.Color;
@@ -61,12 +60,12 @@ import org.springframework.test.web.servlet.MvcResult;
 import tools.jackson.databind.JsonNode;
 
 /**
- * V1 desired-revision path against the real allocator, the websocket notice, and FakeReader.
+ * The desired-revision path end to end, against the real allocator, the websocket notice, and FakeReader.
  * The harness is the gateway receive loop for one flagged reader. It does not choose device ids.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Timeout(value = 10, unit = TimeUnit.MINUTES)
-class V1DesiredRevisionIT extends AbstractIntegrationTest {
+class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
 
     private static Path harnessDll;
 
@@ -89,8 +88,8 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     @BeforeAll
     static void buildHarness() throws Exception {
         Path repo = repoRoot();
-        Path project = repo.resolve("gateway/tests/Gym.Gateway.V1Harness/Gym.Gateway.V1Harness.csproj");
-        harnessDll = repo.resolve("gateway/tests/Gym.Gateway.V1Harness/bin/Release/net10.0/Gym.Gateway.V1Harness.dll");
+        Path project = repo.resolve("gateway/tests/Gym.Gateway.ReaderHarness/Gym.Gateway.ReaderHarness.csproj");
+        harnessDll = repo.resolve("gateway/tests/Gym.Gateway.ReaderHarness/bin/Release/net10.0/Gym.Gateway.ReaderHarness.dll");
         ProcessBuilder build = new ProcessBuilder(dotnet(), "build", project.toString(), "-c", "Release", "-v", "q");
         build.environment().put("DOTNET_ROOT", dotnetHome());
         build.environment().put("DOTNET_CLI_TELEMETRY_OPTOUT", "1");
@@ -99,7 +98,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         build.redirectErrorStream(true);
         Process process = build.start();
         StringBuilder output = new StringBuilder();
-        Thread reader = new Thread(() -> output.append(readQuietly(process.getInputStream())), "v1-harness-build");
+        Thread reader = new Thread(() -> output.append(readQuietly(process.getInputStream())), "reader-harness-build");
         reader.start();
         boolean finished = process.waitFor(4, TimeUnit.MINUTES);
         if (!finished) {
@@ -114,9 +113,9 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         resetDatabase();
-        Tenant tenant = createTenant("V1 Gym", "v1-gym");
-        createUser(tenant.getId(), "v1-admin", "v1-admin@gym.local", "GYM_ADMIN");
-        token = tokenFor("v1-admin");
+        Tenant tenant = createTenant("Revision Gym", "revision-gym");
+        createUser(tenant.getId(), "revision-admin", "revision-admin@gym.local", "GYM_ADMIN");
+        token = tokenFor("revision-admin");
 
         String createdGateway = postJson("/api/v1/gateways", "{\"name\":\"LAN\"}")
                 .andExpect(status().isCreated())
@@ -133,7 +132,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void memberCreateReachesTheReaderAndAcksOnlyAfterReadBack() throws Exception {
         try (Harness harness = start("happy", null)) {
             harness.awaitReady();
-            JsonNode created = createOnReader("Asha", "Shah", "V1-HAPPY", "7101");
+            JsonNode created = createOnReader("Asha", "Shah", "HAPPY-PATH", "7101");
             String publicId = created.get("id").asString();
             JsonNode report = harness.finish();
 
@@ -141,7 +140,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(report.get("ackCount").asInt()).isEqualTo(1);
             assertThat(report.get("appliedLocal").asLong()).isEqualTo(1);
             assertThat(report.get("pendingAcks").asInt()).isZero();
-            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("commandDispatched").asBoolean()).isFalse();
             assertThat(report.get("createdId").asString()).isEqualTo("1");
             assertThat(report.get("writes")).extracting(JsonNode::asString)
                     .containsExactly("CreateUser 1", "InsertFace 1");
@@ -165,7 +164,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void occupiedIdIsReplacedByTheNextServerInteger() throws Exception {
         try (Harness harness = start("occupied", "1")) {
             harness.awaitReady();
-            JsonNode created = createOnReader("Asha", "Shah", "V1-OCC", "7102");
+            JsonNode created = createOnReader("Asha", "Shah", "OCCUPIED-ID", "7102");
             String publicId = created.get("id").asString();
             JsonNode report = harness.finish();
 
@@ -175,7 +174,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(report.get("appliedLocal").asLong()).isEqualTo(2);
             assertThat(report.get("pendingAcks").asInt()).isZero();
             assertThat(report.get("acked").asBoolean()).isTrue();
-            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("commandDispatched").asBoolean()).isFalse();
             assertThat(report.get("writes")).extracting(JsonNode::asString)
                     .containsExactly("CreateUser 2", "InsertFace 2");
             assertThat(Long.parseLong(report.get("createdId").asString()))
@@ -198,7 +197,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void faceReadBackMismatchDoesNotAck() throws Exception {
         try (Harness harness = start("face", null)) {
             harness.awaitReady();
-            JsonNode created = createOnReader("Asha", "Shah", "V1-FACE", "7103");
+            JsonNode created = createOnReader("Asha", "Shah", "FACE-MISMATCH", "7103");
             String publicId = created.get("id").asString();
             JsonNode report = harness.finish();
 
@@ -206,7 +205,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(report.get("ackCount").asInt()).isZero();
             assertThat(report.get("appliedLocal").asLong()).isZero();
             assertThat(report.get("pendingAcks").asInt()).isZero();
-            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("commandDispatched").asBoolean()).isFalse();
             assertThat(report.get("writes")).extracting(JsonNode::asString)
                     .containsExactly("CreateUser 1", "InsertFace 1");
             assertNotPublicId(report, publicId);
@@ -222,7 +221,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void restartDoesNotExecuteTheRevisionAgain() throws Exception {
         try (Harness harness = start("restart", null)) {
             harness.awaitReady();
-            JsonNode created = createOnReader("Asha", "Shah", "V1-RESTART", "7104");
+            JsonNode created = createOnReader("Asha", "Shah", "RESTART", "7104");
             String publicId = created.get("id").asString();
             JsonNode report = harness.finish();
 
@@ -231,7 +230,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(report.get("appliedLocal").asLong()).isEqualTo(1);
             assertThat(report.get("pendingAcks").asInt()).isZero();
             assertThat(report.get("executedAgain").asBoolean()).isFalse();
-            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("commandDispatched").asBoolean()).isFalse();
             assertThat(report.get("writes")).extracting(JsonNode::asString)
                     .containsExactly("CreateUser 1", "InsertFace 1");
             assertNotPublicId(report, publicId);
@@ -245,7 +244,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void disallowThenAllowKeepsTheUserAndTheFace() throws Exception {
         try (Harness harness = start("freeze", null)) {
             harness.awaitReady();
-            JsonNode created = createOnReader("Asha", "Shah", "V2-FREEZE", "7201");
+            JsonNode created = createOnReader("Asha", "Shah", "FREEZE", "7201");
             String publicId = created.get("id").asString();
             awaitApplied(1);
             mockMvc.perform(delete("/api/v1/members/" + publicId).header("Authorization", "Bearer " + token))
@@ -260,7 +259,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(report.get("ackCount").asInt()).isEqualTo(3);
             assertThat(report.get("appliedLocal").asLong()).isEqualTo(3);
             assertThat(report.get("pendingAcks").asInt()).isZero();
-            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("commandDispatched").asBoolean()).isFalse();
             assertThat(report.get("writes")).extracting(JsonNode::asString)
                     .containsExactly("CreateUser 1", "InsertFace 1", "ReplaceUser 1", "ReplaceUser 1");
             JsonNode user = user(report, "1");
@@ -287,7 +286,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void statusReadBackStillEnabledDoesNotAck() throws Exception {
         try (Harness harness = start("held", null)) {
             harness.awaitReady();
-            JsonNode created = createOnReader("Asha", "Shah", "V2-HELD", "7202");
+            JsonNode created = createOnReader("Asha", "Shah", "STILL-ENABLED", "7202");
             String publicId = created.get("id").asString();
             Long memberId = memberRepository.findByPublicId(publicId).orElseThrow().getId();
             awaitApplied(1);
@@ -297,7 +296,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
 
             assertThat(report.get("ackCount").asInt()).isEqualTo(1);
             assertThat(report.get("appliedLocal").asLong()).isEqualTo(1);
-            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("commandDispatched").asBoolean()).isFalse();
             assertThat(report.get("writes")).extracting(JsonNode::asString)
                     .containsExactly("CreateUser 1", "InsertFace 1", "ReplaceUser 1");
             JsonNode user = user(report, "1");
@@ -324,7 +323,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void nameAndDatesReplaceTheUserOnTheFlaggedReader() throws Exception {
         try (Harness harness = start("edit", null)) {
             harness.awaitReady();
-            JsonNode created = createOnReader("Asha", "Shah", "V3-NAME", "7301");
+            JsonNode created = createOnReader("Asha", "Shah", "NAME-DATES", "7301");
             String publicId = created.get("id").asString();
             awaitApplied(1);
 
@@ -352,10 +351,11 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             awaitApplied(3);
 
             LocalDate later = end.plusDays(15);
-            mockMvc.perform(put("/api/v1/memberships/" + membershipId + "/dates")
+            mockMvc.perform(put("/api/v1/memberships/" + membershipId)
                             .header("Authorization", "Bearer " + token)
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"startDate\":\"" + start + "\",\"endDate\":\"" + later + "\"}"))
+                            .content("{\"planId\":\"" + planId + "\",\"startDate\":\"" + start
+                                    + "\",\"endDate\":\"" + later + "\"}"))
                     .andExpect(status().isOk());
             awaitApplied(4);
             JsonNode report = harness.finish();
@@ -363,7 +363,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(report.get("ackCount").asInt()).isEqualTo(4);
             assertThat(report.get("appliedLocal").asLong()).isEqualTo(4);
             assertThat(report.get("pendingAcks").asInt()).isZero();
-            assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+            assertThat(report.get("commandDispatched").asBoolean()).isFalse();
             assertThat(report.get("writes")).extracting(JsonNode::asString)
                     .containsExactly("CreateUser 1", "InsertFace 1", "ReplaceUser 1", "ReplaceUser 1", "ReplaceUser 1");
             assertThat(report.get("writes")).extracting(JsonNode::asString)
@@ -399,7 +399,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void photoReplacePublishesAFaceRevisionAndReadsTheNewBytesBack() throws Exception {
         try (Harness harness = start("photo", null)) {
             harness.awaitReady();
-            JsonNode created = createOnReader("Asha", "Shah", "V4-FACE", "7401");
+            JsonNode created = createOnReader("Asha", "Shah", "PHOTO-REPLACE", "7401");
             String publicId = created.get("id").asString();
             awaitApplied(1);
 
@@ -440,7 +440,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void removeFromOneReaderLeavesTheMemberAndDoesNotWriteTheOther() throws Exception {
         try (Harness harness = start("remove", null)) {
             harness.awaitReady();
-            JsonNode created = createOnReader("Asha", "Shah", "V5-REMOVE", "7501");
+            JsonNode created = createOnReader("Asha", "Shah", "REMOVE", "7501");
             String publicId = created.get("id").asString();
             awaitApplied(1);
 
@@ -465,8 +465,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(cursor.getAppliedRevision()).isEqualTo(cursor.getDesiredRevision()).isEqualTo(2);
             assertThat(mapping(publicId).getDeviceUserId()).isEqualTo("1");
             assertThat(commands(flagged)).isEmpty();
-            assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
-                    .doesNotContain(SyncCommandType.REMOVE_USER);
+            assertThat(commands(other)).isEmpty();
             assertNotPublicId(report, publicId);
 
             mockMvc.perform(post("/api/v1/members/" + publicId + "/device-sync/" + flaggedId + "/remove")
@@ -475,14 +474,13 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
             assertThat(revision().getDesiredRevision()).isEqualTo(2);
             assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
             assertThat(commands(flagged)).isEmpty();
-            assertThat(commands(other)).extracting(DeviceSyncCommand::getType)
-                    .doesNotContain(SyncCommandType.REMOVE_USER);
+            assertThat(commands(other)).isEmpty();
         }
     }
 
     @Test
     void reconnectDoesNotReplayOutboxCommandsForTheFlaggedReader() throws Exception {
-        createOnReader("Asha", "Shah", "V6-RECONNECT", "7601");
+        createOnReader("Asha", "Shah", "RECONNECT", "7601");
         var gateway = gatewayRepository.findByPublicId(gatewayPublicId).orElseThrow();
 
         connected.onGatewayConnected(new GatewayConnectedEvent(gateway.getPublicId(), gateway.getId()));
@@ -495,7 +493,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     void oneReadersAcknowledgementDoesNotAdvanceTheOther() throws Exception {
         String sideId = createDevice("Side", true, gatewayPublicId);
         Long side = deviceRepository.findByPublicId(sideId).orElseThrow().getId();
-        JsonNode created = createOnReader("Bina", "Shah", "V7-B", "7702");
+        JsonNode created = createOnReader("Bina", "Shah", "SIDE-ACK", "7702");
 
         ackDesired(sideId);
 
@@ -515,7 +513,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
 
     @Test
     void aPersonCreatedOnTheReaderWaitsWithoutAMember() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V8-OWNED", "7801");
+        JsonNode created = createOnReader("Asha", "Shah", "READER-OWNED", "7801");
         long members = memberRepository.count();
         String allocated = mapping(created.get("id").asString()).getDeviceUserId();
 
@@ -533,16 +531,11 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
                 .containsExactly("7", "Walk In Again");
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(flagged, "7")).isEmpty();
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(flagged, allocated)).isEmpty();
-
-        mockMvc.perform(post("/api/v1/devices/" + flaggedId + "/import-users")
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isBadRequest());
-        assertThat(memberRepository.count()).isEqualTo(members);
     }
 
     @Test
     void aReaderNameEditStaysAReviewItemAndTheMemberMatchesTheBaseline() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V9-NAME", "7901");
+        JsonNode created = createOnReader("Asha", "Shah", "READER-NAME", "7901");
         String memberId = created.get("id").asString();
         ackDesired(flaggedId);
         long revision = revision().getDesiredRevision();
@@ -572,7 +565,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
 
     @Test
     void aReaderEditWithoutABaselineUsesTheDesiredRecord() throws Exception {
-        JsonNode created = createOnReader("A", "", "V9-BASE", "7902");
+        JsonNode created = createOnReader("A", "", "NO-BASELINE", "7902");
         String memberId = created.get("id").asString();
         String allocated = mapping(memberId).getDeviceUserId();
         assertThat(deviceReaderBaselineRepository.findByDeviceId(flagged)).isEmpty();
@@ -598,7 +591,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
 
     @Test
     void twoReadersKeepBothNamesOnOneConflict() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V10-TWO", "8001");
+        JsonNode created = createOnReader("Asha", "Shah", "TWO-READERS", "8001");
         String memberId = created.get("id").asString();
         Member member = memberRepository.findByPublicId(memberId).orElseThrow();
         String sideId = createDevice("Side", true, gatewayPublicId);
@@ -634,7 +627,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
 
     @Test
     void aTrustedDisappearanceKeepsTheMemberAndOneReviewItem() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V11-GONE", "8101");
+        JsonNode created = createOnReader("Asha", "Shah", "GONE", "8101");
         String memberId = created.get("id").asString();
         Member member = memberRepository.findByPublicId(memberId).orElseThrow();
         String sideId = createDevice("Side", true, gatewayPublicId);
@@ -644,9 +637,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         String onEntrance = mapping(memberId).getDeviceUserId();
         long entranceRevision = projection(flagged, memberId).getRevision();
         long sideRevision = projection(side.getId(), memberId).getRevision();
-        long removes = deviceSyncCommandRepository.findAll().stream()
-                .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
-                .count();
+        long commandCount = deviceSyncCommandRepository.count();
 
         postAbsence(flaggedId, onEntrance);
         DeviceReviewItem opened = deviceReviewItemRepository
@@ -671,21 +662,17 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         assertThat(projection(side.getId(), memberId).isPresentOnReader()).isTrue();
         assertThat(projection(side.getId(), memberId).getRevision()).isEqualTo(sideRevision);
         assertThat(projection(side.getId(), memberId).getReaderName()).isEqualTo("Asha Shah");
-        assertThat(deviceSyncCommandRepository.findAll().stream()
-                .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
-                .count()).isEqualTo(removes);
+        assertThat(deviceSyncCommandRepository.count()).isEqualTo(commandCount);
     }
 
     @Test
     void aBadListCreatesNoDisappearanceAndTheNextTrustedListStillDoes() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V12-BAD", "8201");
+        JsonNode created = createOnReader("Asha", "Shah", "BAD-LIST", "8201");
         String memberId = created.get("id").asString();
         String onEntrance = mapping(memberId).getDeviceUserId();
         ackDesired(flaggedId);
         long revision = projection(flagged, memberId).getRevision();
-        long removes = deviceSyncCommandRepository.findAll().stream()
-                .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
-                .count();
+        long commandCount = deviceSyncCommandRepository.count();
 
         postRoster(flaggedId, 1, "[{\"deviceUserId\":\"9\",\"name\":\"Still Here\",\"deleted\":false}]");
         DeviceReviewItem opened = deviceReviewItemRepository
@@ -724,14 +711,12 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
         assertThat(projection(flagged, memberId).isPresentOnReader()).isTrue();
         assertThat(projection(flagged, memberId).getRevision()).isEqualTo(revision);
-        assertThat(deviceSyncCommandRepository.findAll().stream()
-                .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
-                .count()).isEqualTo(removes);
+        assertThat(deviceSyncCommandRepository.count()).isEqualTo(commandCount);
     }
 
     @Test
     void theSameFaceOnTwoIdsStaysTwoObservations() throws Exception {
-        JsonNode created = createOnReader("Asha", "Shah", "V13-FACE", "8301");
+        JsonNode created = createOnReader("Asha", "Shah", "SAME-FACE", "8301");
         long members = memberRepository.count();
         String memberId = created.get("id").asString();
         Member member = memberRepository.findByPublicId(memberId).orElseThrow();
@@ -860,7 +845,7 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         assertThat(publicId).isNotBlank();
         assertThat(report.get("createdId").asString()).isNotEqualTo(publicId);
         assertThat(report.get("pullTranscript").asString()).doesNotContain(publicId);
-        assertThat(report.get("legacyDispatched").asBoolean()).isFalse();
+        assertThat(report.get("commandDispatched").asBoolean()).isFalse();
         for (JsonNode write : report.get("writes")) {
             assertThat(write.asString()).doesNotContain(publicId);
         }
@@ -886,8 +871,8 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
     }
 
     private Harness start(String mode, String occupy) throws Exception {
-        Path result = Files.createTempFile("v1-result-", ".json");
-        Path journal = Files.createTempDirectory("v1-journal-").resolve("reader.sqlite");
+        Path result = Files.createTempFile("reader-result-", ".json");
+        Path journal = Files.createTempDirectory("reader-journal-").resolve("reader.sqlite");
         List<String> command = new ArrayList<>();
         command.add(dotnet());
         command.add(harnessDll.toString());
@@ -1061,8 +1046,8 @@ class V1DesiredRevisionIT extends AbstractIntegrationTest {
         private Harness(Process process, Path result) {
             this.process = process;
             this.result = result;
-            this.outputThread = new Thread(() -> collect(process.getInputStream(), output, ready), "v1-harness-out");
-            this.errorThread = new Thread(() -> collect(process.getErrorStream(), errors, null), "v1-harness-err");
+            this.outputThread = new Thread(() -> collect(process.getInputStream(), output, ready), "reader-harness-out");
+            this.errorThread = new Thread(() -> collect(process.getErrorStream(), errors, null), "reader-harness-err");
             outputThread.start();
             errorThread.start();
         }

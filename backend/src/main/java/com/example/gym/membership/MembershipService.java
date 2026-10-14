@@ -11,7 +11,6 @@ import com.example.gym.common.web.PageResponse;
 import com.example.gym.membership.dto.MembershipRequests.CreateMembership;
 import com.example.gym.membership.dto.MembershipRequests.RenewMembership;
 import com.example.gym.membership.dto.MembershipRequests.UpdateMembership;
-import com.example.gym.membership.dto.MembershipRequests.UpdateMembershipDates;
 import com.example.gym.membership.dto.PlanActiveMemberResponse;
 import com.example.gym.membership.dto.PlanActivityCount;
 import com.example.gym.membership.dto.PlanRosterResponse;
@@ -588,75 +587,6 @@ public class MembershipService {
 
         publish(saved, ChangeType.DATES_UPDATED);
         return saved;
-    }
-
-    @Transactional
-    public Membership updateDates(String membershipPublicId, UpdateMembershipDates request, Long tenantId) {
-        Membership membership = getByPublicId(membershipPublicId, tenantId);
-        requireActiveMemberForMembershipMutation(membership.getMemberId(), tenantId);
-        if (membership.getStatus() == MembershipStatus.CANCELLED
-                || membership.getStatus() == MembershipStatus.FROZEN) {
-            throw CommonExceptions.badRequest("Cannot change dates on a frozen or cancelled membership");
-        }
-        LocalDate start = request.startDate();
-        LocalDate end = request.endDate();
-
-        requireEndOnOrAfterStart(start, end);
-
-        if (membershipRepository.existsOverlappingMembership(
-                membership.getMemberId(),
-                membership.getPublicId(),
-                start,
-                end
-        )) {
-            throw CommonExceptions.badRequest(
-                    "Membership dates overlap with an existing membership. " +
-                            "Cancel the existing membership before changing these dates."
-            );
-        }
-
-        membership.setStartDate(start);
-        membership.setEndDate(end);
-        LocalDate today = LocalDate.now();
-        if (start.isAfter(today)) {
-            membership.setStatus(MembershipStatus.PENDING);
-        } else if (today.isAfter(end)) {
-            membership.setStatus(MembershipStatus.EXPIRED);
-        } else {
-            membership.setStatus(MembershipStatus.ACTIVE);
-        }
-        Membership saved = membershipRepository.save(membership);
-        auditService.record(AuditActions.MEMBERSHIP_DATES_UPDATED, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(),
-                Map.of("startDate", start.toString(), "endDate", end.toString()));
-        publish(saved, ChangeType.DATES_UPDATED);
-        return saved;
-    }
-
-    /**
-     * Dates edited on a device. Applied as the device holds them (also on a frozen membership, and
-     * even if they now overlap another membership). Returns true when they overlap, so the caller
-     * can flag it for staff.
-     */
-    @Transactional
-    public boolean applyDatesFromDevice(Membership membership, LocalDate start, LocalDate end) {
-        requireEndOnOrAfterStart(start, end);
-        boolean overlaps = membershipRepository.existsOverlappingMembership(
-                membership.getMemberId(), membership.getPublicId(), start, end);
-        membership.setStartDate(start);
-        membership.setEndDate(end);
-        if (membership.getStatus() != MembershipStatus.FROZEN) {
-            LocalDate today = LocalDate.now();
-            membership.setStatus(start.isAfter(today) ? MembershipStatus.PENDING
-                    : today.isAfter(end) ? MembershipStatus.EXPIRED : MembershipStatus.ACTIVE);
-        }
-        Membership saved = membershipRepository.save(membership);
-        auditService.recordSystem(AuditActions.MEMBERSHIP_DATES_UPDATED, AuditActions.RESULT_SUCCESS,
-                "Membership", saved.getPublicId(), saved.getTenantId(), "device",
-                Map.of("startDate", start.toString(), "endDate", end.toString(), "source", "device",
-                        "overlapsAnotherMembership", overlaps));
-        publish(saved, ChangeType.DATES_UPDATED);
-        return overlaps;
     }
 
     private BigDecimal validateDiscount(BigDecimal discountAmount, BigDecimal planPrice) {

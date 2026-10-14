@@ -43,11 +43,11 @@ import org.springframework.web.socket.WebSocketMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 /**
- * The three F1 follow-ups: a socket dies when its credential expires or is rotated, a gateway
+ * Gateway socket and credential boundaries: a socket dies when its credential expires or is rotated, a gateway
  * cannot read another gym's member face, and the handshake takes the credential from
  * Authorization rather than the URL.
  */
-class GatewayF1GapIT extends AbstractIntegrationTest {
+class GatewaySocketCredentialIT extends AbstractIntegrationTest {
 
     @Autowired
     private GatewayAuthService authService;

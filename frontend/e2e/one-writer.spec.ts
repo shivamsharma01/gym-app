@@ -2,9 +2,9 @@ import { expect, test } from '@playwright/test'
 
 const user = {
   id: 'u1',
-  username: 'v1-admin',
-  email: 'v1-admin@gym.local',
-  fullName: 'Test v1-admin',
+  username: 'gym-admin',
+  email: 'gym-admin@gym.local',
+  fullName: 'Test gym-admin',
   tenantId: 't1',
   roles: ['GYM_ADMIN'],
   permissions: ['DEVICE_VIEW', 'DEVICE_MANAGE', 'DEVICE_SYNC', 'MEMBER_VIEW', 'MEMBER_CREATE', 'MEMBERSHIP_VIEW', 'REVIEW_DECIDE'],
@@ -20,7 +20,6 @@ const health = {
   pendingCommandCount: 0,
   failedCommandCount: 0,
   lastPunchAt: null,
-  openConflictCount: 0,
 }
 
 const device = {
@@ -40,7 +39,7 @@ const device = {
 
 const member = {
   id: 'mem-1',
-  memberCode: 'V16-ASHA',
+  memberCode: 'ASHA-1',
   serialNumber: '1',
   firstName: 'Asha',
   lastName: 'Shah',
@@ -52,7 +51,6 @@ const member = {
   status: 'ACTIVE',
   joinedOn: '2026-10-09',
   notes: null,
-  creationSource: 'MANUAL',
   coverageStatus: 'NONE',
   createdAt: '2026-10-09T00:00:00Z',
 }
@@ -64,12 +62,10 @@ const membership = {
   currency: 'INR',
   startDate: '2026-10-01',
   endDate: '2026-10-31',
-  endDateInferred: false,
   status: 'ACTIVE',
   effectiveStatus: 'ACTIVE',
   paymentStatus: 'PAID',
   amountPaid: 1000,
-  deviceSyncState: 'NOT_SYNCED',
   cancelledOn: null,
   cancelReason: null,
   createdAt: '2026-10-01T00:00:00Z',
@@ -77,13 +73,11 @@ const membership = {
   netAmount: 1000,
 }
 
-test('a reader shows its last stored punch and offers no attendance reconcile or member import', async ({ page }) => {
+test('a reader shows its last stored punch and one reconcile action', async ({ page }) => {
   await mockStaff(page)
   await page.goto('/app/devices/dev-1')
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
   await expect(page.getByText(/Last punch stored/)).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Sync Now' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Import device users' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /reconcile/i })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Reconcile members' })).toBeVisible()
 })
@@ -102,7 +96,35 @@ test('staff without device sync see no reconcile action', async ({ page }) => {
   await page.goto('/app/devices/dev-1')
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Reconcile members' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Read reader now' })).toHaveCount(0)
 })
+
+test('reading a reader now sends one request and shows the gateway result', async ({ page }) => {
+  const requests: string[] = []
+  await mockStaff(page, [], user, requests)
+  await page.goto('/app/devices/dev-1')
+  await page.getByRole('button', { name: 'Read reader now' }).click()
+  await expect(page.getByText('The gateway read this reader and sent its user list to the server.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Read reader now' })).toBeEnabled()
+  expect(requests).toEqual(['/api/v1/devices/dev-1/scan'])
+})
+
+function scanCommand(state: string) {
+  return {
+    id: 'scan-1',
+    type: 'SCAN_READER',
+    state,
+    attemptCount: state === 'PENDING' ? 0 : 1,
+    maxAttempts: 5,
+    nextAttemptAt: null,
+    lastError: null,
+    correlationId: 'corr-scan-1',
+    dispatchedAt: null,
+    acknowledgedAt: null,
+    completedAt: null,
+    createdAt: '2026-10-14T00:00:00Z',
+  }
+}
 
 test('a punch stored by the gateway appears once in the attendance list without a reload', async ({ page }) => {
   await page.clock.install()
@@ -142,16 +164,15 @@ test('a validity difference is shown for review and neither side is applied auto
   await expect(page.getByRole('button', { name: /accept reader|use reader|reader wins/i })).toHaveCount(0)
 })
 
-test('a member page does not offer a clock-based device read', async ({ page }) => {
+test('a member page offers send again and remove for each reader', async ({ page }) => {
   await mockStaff(page)
   await page.goto('/app/members/mem-1')
   await expect(page.getByRole('heading', { name: 'Asha Shah' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Read from device' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Send again' })).toHaveCount(2)
   await expect(page.getByRole('button', { name: 'Remove from reader' })).toHaveCount(2)
 })
 
-test('a member page shows each reader as applied or waiting and no membership sync label', async ({ page }) => {
+test('a member page shows each reader as applied or waiting', async ({ page }) => {
   await mockStaff(page)
   await page.goto('/app/members/mem-1')
   await expect(page.getByText('On reader')).toBeVisible()
@@ -159,8 +180,6 @@ test('a member page shows each reader as applied or waiting and no membership sy
   await expect(page.getByText('Waiting for reader')).toBeVisible()
   await expect(page.getByText('Revision 1; reader applied 0')).toBeVisible()
   await expect(page.getByText('Monthly')).toBeVisible()
-  await expect(page.getByText(/device NOT_SYNCED/)).toHaveCount(0)
-  await expect(page.getByText(/NOT_SYNCED/)).toHaveCount(0)
 })
 
 test('creating a member sends one request with a face and no reader choice', async ({ page }) => {
@@ -236,8 +255,13 @@ async function mockStaff(
       await route.fulfill({ json: { deviceId: 'dev-1', written: 2 } })
       return
     }
-    if (path.startsWith('/api/v1/devices/dev-1/conflicts')) {
-      await route.fulfill({ json: { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 } })
+    if (path === '/api/v1/devices/dev-1/scan' && method === 'POST') {
+      reconciles.push(path)
+      await route.fulfill({ json: scanCommand('PENDING') })
+      return
+    }
+    if (path === '/api/v1/sync-commands/scan-1') {
+      await route.fulfill({ json: scanCommand('SUCCEEDED') })
       return
     }
     if (path === '/api/v1/members/next-serial') {

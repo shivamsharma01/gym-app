@@ -101,14 +101,14 @@ public sealed class RosterAcceptanceTests : IDisposable
         var stillHere = Person("2");
         reader.ScriptList(1, stillHere);
         reader.ScriptList(1, stillHere);
-        var sink = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = true };
+        var sink = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
         var path = new DesiredRevisionPath("reader-a", worker, reader, new PendingEnrollmentTests.EmptyPull(), sink);
 
         await path.BootstrapAsync(CancellationToken.None);
-        sink.RosterAccepted = false;
+        sink.RosterAccepted = true;
         await path.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "absences", "list-awaited", "absences", "list-awaited", "users" }, sink.Calls);
+        Assert.Equal(new[] { "absences", "list-awaited", "users", "absences", "list-awaited" }, sink.Calls);
         Assert.Equal(new[] { "1", "1" }, sink.AbsentIds);
         Assert.Equal(new[] { "2" }, sink.Ids);
     }

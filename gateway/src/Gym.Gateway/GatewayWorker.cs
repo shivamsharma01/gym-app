@@ -103,7 +103,7 @@ public sealed class GatewayWorker : BackgroundService
         }
 
         _dispatcher = new CommandDispatcher(
-            _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _locks);
+            _adapters, _logFactory.CreateLogger<CommandDispatcher>(), _locks, _desiredRevisions.ScanNowAsync);
         AttachReaders();
 
         var sendLoop = SendLoopAsync(_link, stoppingToken);
@@ -321,12 +321,16 @@ public sealed class GatewayWorker : BackgroundService
             _readerWorkers.Add(worker);
             IReaderObservationUpload observations = new ReaderObservationUpload(
                 _options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>());
-            var path = new DesiredRevisionPath(deviceId, worker, reader, _desired, observations);
+            var memory = new ReaderScanMemory(
+                new FaceChecksumCache(Path.ChangeExtension(journal, ".faces.json")),
+                new ScanUploadState(TimeSpan.FromMinutes(Math.Max(1, _options.RosterRefreshMinutes))));
+            var path = new DesiredRevisionPath(deviceId, worker, reader, _desired, observations, memory);
             _desiredRevisions.Attach(
                 deviceId,
                 path.HandleAsync,
                 path.ReconnectAsync,
-                ct => path.BootstrapAsync(ct));
+                ct => path.BootstrapAsync(ct),
+                path.ScanNowAsync);
         }
     }
 
@@ -437,38 +441,28 @@ public sealed class GatewayWorker : BackgroundService
 
     private async Task HandleCommandAsync(BackendLink link, CommandDispatcher dispatcher, GatewayEnvelope command)
     {
-        var userId = CommandDispatcher.Text(command.Payload, "deviceUserId");
-        _log.LogDebug("Command start {Type} device={DeviceId} user={User} corr={Corr}",
-            command.Type, command.DeviceId, userId, command.CorrelationId);
+        _log.LogDebug("Command start {Type} device={DeviceId} corr={Corr}",
+            command.Type, command.DeviceId, command.CorrelationId);
         var timer = Stopwatch.StartNew();
         var outcome = await dispatcher.DispatchAsync(command).ConfigureAwait(false);
         timer.Stop();
-        LogOutcome(command, userId, outcome, timer.ElapsedMilliseconds);
+        LogOutcome(command, outcome, timer.ElapsedMilliseconds);
         await PublishOutcome(link, command, outcome).ConfigureAwait(false);
     }
 
-    /// <summary>One line per command: what ran, on which reader and user, the result and how long it took.</summary>
-    private void LogOutcome(GatewayEnvelope command, string? userId, DispatchOutcome outcome, long elapsedMs)
+    /// <summary>One line per command: what ran, on which reader, the result and how long it took.</summary>
+    private void LogOutcome(GatewayEnvelope command, DispatchOutcome outcome, long elapsedMs)
     {
-        var result = JsonSerializer.SerializeToElement(outcome.Payload, JsonOptions.Outbound);
-        var error = CommandDispatcher.Text(result, "error");
-        var skipped = CommandDispatcher.Bool(result, "skipped") == true;
         if (!outcome.Ok)
         {
-            _log.LogWarning("Command {Type} device={DeviceId} user={User} corr={Corr} -> FAILED in {Ms}ms: {Error}",
-                command.Type, command.DeviceId, userId, command.CorrelationId, elapsedMs, error);
+            var result = JsonSerializer.SerializeToElement(outcome.Payload, JsonOptions.Outbound);
+            _log.LogWarning("Command {Type} device={DeviceId} corr={Corr} -> FAILED in {Ms}ms: {Error}",
+                command.Type, command.DeviceId, command.CorrelationId, elapsedMs, CommandDispatcher.Text(result, "error"));
+            return;
         }
-        else if (skipped)
-        {
-            _log.LogInformation("Command {Type} device={DeviceId} user={User} corr={Corr} -> skipped in {Ms}ms: {Reason}",
-                command.Type, command.DeviceId, userId, command.CorrelationId, elapsedMs,
-                CommandDispatcher.Text(result, "reason"));
-        }
-        else
-        {
-            _log.LogInformation("Command {Type} device={DeviceId} user={User} corr={Corr} -> ok in {Ms}ms",
-                command.Type, command.DeviceId, userId, command.CorrelationId, elapsedMs);
-        }
+
+        _log.LogInformation("Command {Type} device={DeviceId} corr={Corr} -> ok in {Ms}ms",
+            command.Type, command.DeviceId, command.CorrelationId, elapsedMs);
     }
 
     private async Task PublishOutcome(BackendLink link, GatewayEnvelope command, DispatchOutcome outcome)
@@ -552,8 +546,8 @@ public sealed class GatewayWorker : BackgroundService
     {
         Interlocked.Increment(ref _commandsReceived);
         _lastCommandAt = DateTimeOffset.UtcNow;
-        _log.LogInformation("Server command received: {Type} device={DeviceId} user={User} corr={Corr}",
-            command.Type, command.DeviceId, CommandDispatcher.Text(command.Payload, "deviceUserId"), command.CorrelationId);
+        _log.LogInformation("Server command received: {Type} device={DeviceId} corr={Corr}",
+            command.Type, command.DeviceId, command.CorrelationId);
         var key = string.IsNullOrWhiteSpace(command.DeviceId) ? "" : command.DeviceId;
         var channel = _inbox.GetOrAdd(key, deviceId =>
         {
@@ -653,10 +647,7 @@ public sealed class GatewayWorker : BackgroundService
             _writer = writer;
         }
 
-        /// <summary>
-        /// Alarms and connection changes are forwarded. An access event (ALARM_ACCESS_CTL_EVENT) is not:
-        /// attendance is read from the reader log by the attendance poll.
-        /// </summary>
+        /// <summary>Alarms and connection changes are forwarded; attendance comes from the attendance poll.</summary>
         public void OnNormalizedEvent(NormalizedDeviceEvent evt)
         {
             if (evt.Kind == "ALARM")

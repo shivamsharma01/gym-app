@@ -42,6 +42,9 @@ public interface IDeviceAdapter : IDisposable
     /// <summary>Reads the user's face photo as stored on the device.</summary>
     DeviceFaceRead GetFace(string deviceUserId);
 
+    /// <summary>Every stored photo's MD5 from the reader's photo index. No photo is transferred.</summary>
+    FaceChecksumList ListFaceChecksums() => FaceChecksumList.Unavailable("photo checksum list is not supported");
+
     DeviceCommandResult DeleteFace(string deviceUserId);
 
     /// <summary>

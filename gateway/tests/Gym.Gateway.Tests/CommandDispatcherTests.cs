@@ -8,50 +8,6 @@ namespace Gym.Gateway.Tests;
 public class CommandDispatcherTests
 {
     [Fact]
-    public async Task A_member_command_does_not_write_the_reader()
-    {
-        var adapter = new MockDeviceAdapter();
-        adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
-        var dispatcher = new CommandDispatcher(
-            new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
-            NullLogger<CommandDispatcher>.Instance);
-
-        var result = await dispatcher.DispatchAsync(
-            Command("CREATE_USER", "dev-1", new { deviceUserId = "1001", name = "Ada" }));
-        var disable = await dispatcher.DispatchAsync(Command("DISABLE_USER", "dev-1",
-            new { deviceUserId = "1001", enabled = false, validFrom = "2027-02-05", validTo = "2027-03-04" }));
-
-        Assert.False(result.Ok);
-        Assert.False(disable.Ok);
-        Assert.Contains("desired revisions write this reader", JsonSerializer.Serialize(result.Payload));
-        Assert.Empty(adapter.KnownUserIds);
-    }
-
-    [Fact]
-    public async Task A_server_attendance_command_does_not_read_the_reader()
-    {
-        var adapter = new MockDeviceAdapter();
-        adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
-        var locks = new DeviceLocks();
-        var dispatcher = new CommandDispatcher(
-            new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
-            NullLogger<CommandDispatcher>.Instance,
-            locks);
-
-        foreach (var type in new[] { "RECONCILE_DEVICE", "REFRESH_DEVICE_USERS" })
-        {
-            var result = await dispatcher.DispatchAsync(Command(type, "dev-1", new { fromUtc = "2026-10-11T00:00:00Z" }));
-
-            Assert.False(result.Ok);
-            Assert.Equal(ProtocolTypes.SyncResult, result.ResultType);
-            Assert.Contains("attendance is read by the gateway", JsonSerializer.Serialize(result.Payload));
-        }
-
-        Assert.Null(locks.BusyWith("dev-1"));
-        Assert.Empty(adapter.KnownUserIds);
-    }
-
-    [Fact]
     public async Task A_door_command_delivered_twice_is_applied_once_and_answered_twice()
     {
         var adapter = new MockDeviceAdapter();
@@ -87,22 +43,6 @@ public class CommandDispatcherTests
     }
 
     [Fact]
-    public async Task A_member_face_command_does_not_write_the_reader()
-    {
-        var adapter = new MockDeviceAdapter();
-        adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
-        var dispatcher = new CommandDispatcher(
-            new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
-            NullLogger<CommandDispatcher>.Instance);
-
-        var result = await dispatcher.DispatchAsync(
-            Command("ENROLL_FACE", "dev-1", new { deviceUserId = "1001" }));
-        Assert.False(result.Ok);
-        Assert.Contains("desired revisions write this reader", JsonSerializer.Serialize(result.Payload));
-        Assert.Empty(adapter.KnownUserIds);
-    }
-
-    [Fact]
     public async Task Unknown_device_fails_without_touching_adapter()
     {
         var adapter = new MockDeviceAdapter();
@@ -117,16 +57,49 @@ public class CommandDispatcherTests
     }
 
     [Fact]
-    public async Task Clear_logs_is_not_faked()
+    public async Task A_requested_scan_runs_outside_the_reader_lock_and_reports_its_result()
+    {
+        var adapter = new MockDeviceAdapter();
+        adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
+        var locks = new DeviceLocks();
+        var lockedDuringScan = new List<string?>();
+        var results = new Queue<bool?>([true, false, null]);
+        var dispatcher = new CommandDispatcher(
+            new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
+            NullLogger<CommandDispatcher>.Instance,
+            locks,
+            (deviceId, _) =>
+            {
+                lockedDuringScan.Add(locks.BusyWith(deviceId));
+                return Task.FromResult(results.Dequeue());
+            });
+
+        var scanned = await dispatcher.DispatchAsync(Command("SCAN_READER", "dev-1", new { }));
+        var shortList = await dispatcher.DispatchAsync(Command("SCAN_READER", "dev-1", new { }));
+        var noWorker = await dispatcher.DispatchAsync(Command("SCAN_READER", "dev-1", new { }));
+
+        Assert.True(scanned.Ok);
+        Assert.Equal(ProtocolTypes.SyncResult, scanned.ResultType);
+        Assert.False(shortList.Ok);
+        Assert.Contains("did not match its announced total", JsonSerializer.Serialize(shortList.Payload));
+        Assert.False(noWorker.Ok);
+        Assert.Contains("no worker", JsonSerializer.Serialize(noWorker.Payload));
+        Assert.Equal(new string?[] { null, null, null }, lockedDuringScan);
+    }
+
+    [Fact]
+    public async Task A_requested_scan_fails_on_a_gateway_that_cannot_scan()
     {
         var adapter = new MockDeviceAdapter();
         adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
         var dispatcher = new CommandDispatcher(
             new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
             NullLogger<CommandDispatcher>.Instance);
-        var result = await dispatcher.DispatchAsync(Command("CLEAR_DEVICE_LOGS", "dev-1", new { }));
-        var json = JsonSerializer.Serialize(result.Payload);
-        Assert.Contains("\"ok\":false", json.Replace(" ", ""));
+
+        var result = await dispatcher.DispatchAsync(Command("SCAN_READER", "dev-1", new { }));
+
+        Assert.False(result.Ok);
+        Assert.Contains("cannot scan readers", JsonSerializer.Serialize(result.Payload));
     }
 
     private static GatewayEnvelope Command(string type, string deviceId, object payload) =>

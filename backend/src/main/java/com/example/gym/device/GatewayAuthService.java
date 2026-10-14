@@ -15,8 +15,7 @@ import org.springframework.util.StringUtils;
 /**
  * Per-gateway authentication. Operational credentials (and pending rotated credentials) are stored
  * only as SHA-256 hashes. A connection is accepted only when the presented token matches one
- * gateway and {@code token_expires_at} is still in the future. There is no shared token and no
- * anonymous path. Enrollment tokens are never accepted here — use {@link GatewayService#enroll}.
+ * gateway and {@code token_expires_at} is still in the future. Enrollment tokens are never accepted here — use {@link GatewayService#enroll}.
  * Tokens are never logged.
  */
 @Service

@@ -244,6 +244,22 @@ public sealed class FakeReader : IReaderAdapter
         }
     }
 
+    /// <summary>The MD5 of each stored photo, as the reader's photo index reports it.</summary>
+    public FaceChecksumList ListFaceChecksums()
+    {
+        lock (_gate)
+        {
+            Note("ListFaceChecksums");
+            if (TakeFailure(FakeReaderOperation.ListFaceChecksums, out var error))
+            {
+                return FaceChecksumList.Unavailable(error);
+            }
+
+            return FaceChecksumList.Complete(_faces.ToDictionary(
+                face => face.Key, face => PhotoMd5.Hex(face.Value), StringComparer.Ordinal));
+        }
+    }
+
     public ReaderCallResult UpdateFace(string deviceUserId, byte[]? jpeg)
     {
         lock (_gate)
@@ -417,7 +433,8 @@ public enum FakeReaderOperation
     InsertFace,
     RemoveFace,
     RemoveUser,
-    QueryAttendance
+    QueryAttendance,
+    ListFaceChecksums
 }
 
 public sealed record ReaderUser(

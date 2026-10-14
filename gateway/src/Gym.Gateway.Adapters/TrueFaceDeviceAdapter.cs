@@ -16,6 +16,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     /// <summary>Larger pages were slower per call and timed out on a 1,200-user reader.</summary>
     private const int UserPage = 50;
     private const int AttendancePage = 20;
+    /// <summary>The page the gym probe measured for the photo index.</summary>
+    private const int FacePage = 50;
     private const int ListWaitMs = 10000;
     private const int PageAttempts = 3;
     private const int MaxFacePhotoBytes = 120 * 1024;
@@ -436,6 +438,118 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             NETClient.StopFindFaceInfo(find);
         }
     }
+
+    /// <summary>
+    /// Pages through the photo index with an empty user id. Measured on the gym readers: 1,122 MD5s in
+    /// about 4 s, each equal to the MD5 of the photo GetFace returns. Anything short of exactly the
+    /// announced number of distinct users is unavailable, never a partial list.
+    /// </summary>
+    public FaceChecksumList ListFaceChecksums()
+    {
+        if (!EnsureLogin(out var err))
+        {
+            return FaceChecksumList.Unavailable(err);
+        }
+
+        var startIn = new NET_IN_FACEINFO_START_FIND
+        {
+            dwSize = (uint)Marshal.SizeOf<NET_IN_FACEINFO_START_FIND>(),
+            szUserID = ""
+        };
+        var startOut = new NET_OUT_FACEINFO_START_FIND
+        {
+            dwSize = (uint)Marshal.SizeOf<NET_OUT_FACEINFO_START_FIND>()
+        };
+        var find = NETClient.StartFindFaceInfo(_loginId, startIn, ref startOut, ListWaitMs);
+        if (find == IntPtr.Zero)
+        {
+            return FaceChecksumList.Unavailable(SdkError("StartFindFaceInfo failed"));
+        }
+
+        try
+        {
+            var total = (int)startOut.nTotalCount;
+            var read = ReadFacePages(find, total);
+            if (read.Error != null)
+            {
+                return FaceChecksumList.Unavailable(read.Error);
+            }
+
+            if (read.ByUserId.Count != total)
+            {
+                return FaceChecksumList.Unavailable(
+                    $"photo index listed {read.ByUserId.Count} user(s) of {total} announced");
+            }
+
+            Touch();
+            return FaceChecksumList.Complete(read.ByUserId);
+        }
+        finally
+        {
+            NETClient.StopFindFaceInfo(find);
+        }
+    }
+
+    private (Dictionary<string, string> ByUserId, string? Error) ReadFacePages(IntPtr find, int total)
+    {
+        var byUserId = new Dictionary<string, string>(StringComparer.Ordinal);
+        var size = Marshal.SizeOf<NET_FACEINFO>();
+        var buffer = Marshal.AllocHGlobal(size * FacePage);
+        try
+        {
+            var start = 0;
+            for (var call = 0; call <= total / FacePage + 1; call++)
+            {
+                var findIn = new NET_IN_FACEINFO_DO_FIND
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_IN_FACEINFO_DO_FIND>(),
+                    nStartNo = start,
+                    nCount = FacePage
+                };
+                var findOut = new NET_OUT_FACEINFO_DO_FIND
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_OUT_FACEINFO_DO_FIND>(),
+                    pstuInfo = buffer,
+                    nMaxNum = FacePage,
+                    byReserved = new byte[4]
+                };
+                if (!NETClient.DoFindFaceInfo(find, findIn, ref findOut, ListWaitMs))
+                {
+                    return (byUserId, SdkError($"DoFindFaceInfo at {start} failed"));
+                }
+
+                var returned = Math.Min(findOut.nRetNum, FacePage);
+                if (returned <= 0)
+                {
+                    return (byUserId, null);
+                }
+
+                for (var i = 0; i < returned; i++)
+                {
+                    var info = Marshal.PtrToStructure<NET_FACEINFO>(IntPtr.Add(buffer, size * i));
+                    var id = (info.szUserID ?? "").Trim();
+                    if (id.Length == 0 || !byUserId.TryAdd(id, JoinedMd5(info)))
+                    {
+                        return (byUserId, $"photo index repeated or blanked a user at {start + i}");
+                    }
+                }
+
+                start += returned;
+            }
+
+            return (byUserId, null);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private static string JoinedMd5(NET_FACEINFO info) =>
+        string.Join(",", (info.szMD5 ?? [])
+            .Take(Math.Clamp(info.nMD5, 0, 5))
+            .Select(m => (m.szDM5 ?? "").Trim().ToUpperInvariant())
+            .Where(m => m.Length > 0));
 
     /// <summary>False when the last SDK call failed in transport (timeout, lost login): the reader gave no answer.</summary>
     private static bool ReaderAnswered() =>

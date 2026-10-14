@@ -2,9 +2,9 @@ import { expect, test } from '@playwright/test'
 
 const user = {
   id: 'u1',
-  username: 'v1-admin',
-  email: 'v1-admin@gym.local',
-  fullName: 'Test v1-admin',
+  username: 'gym-admin',
+  email: 'gym-admin@gym.local',
+  fullName: 'Test gym-admin',
   tenantId: 't1',
   roles: ['GYM_ADMIN'],
   permissions: ['DEVICE_VIEW', 'DEVICE_MANAGE', 'REVIEW_DECIDE'],
@@ -13,9 +13,9 @@ const user = {
 const staff = {
   ...user,
   id: 'u2',
-  username: 'v17-staff',
-  email: 'v17-staff@gym.local',
-  fullName: 'Test v17-staff',
+  username: 'front-desk',
+  email: 'front-desk@gym.local',
+  fullName: 'Test front-desk',
   roles: ['STAFF'],
   permissions: ['DEVICE_VIEW', 'REVIEW_DECIDE'],
 }
@@ -63,7 +63,7 @@ test('accept server records the staff decision', async ({ page }) => {
       return
     }
     if (path === '/api/v1/reviews' && method === 'GET') {
-      await route.fulfill({ json: [accepted ? { ...openItem, decision: 'ACCEPT_SERVER', actor: 'v1-admin', priorState: 'Left', chosenState: 'Asha Shah', revision: 2 } : openItem] })
+      await route.fulfill({ json: [accepted ? { ...openItem, decision: 'ACCEPT_SERVER', actor: 'gym-admin', priorState: 'Left', chosenState: 'Asha Shah', revision: 2 } : openItem] })
       return
     }
     if (path === '/api/v1/reviews/review-1/accept-server' && method === 'POST') {
@@ -72,7 +72,7 @@ test('accept server records the staff decision', async ({ page }) => {
         json: {
           ...openItem,
           decision: 'ACCEPT_SERVER',
-          actor: 'v1-admin',
+          actor: 'gym-admin',
           priorState: 'Left',
           chosenState: 'Asha Shah',
           revision: 2,
@@ -92,13 +92,11 @@ test('accept server records the staff decision', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Link all' })).toHaveCount(0)
 })
 
-test('bootstrap report lists the roster and does not import users', async ({ page }) => {
-  const requested: string[] = []
+test('bootstrap report lists the roster and offers no bulk link', async ({ page }) => {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
     const method = route.request().method()
-    requested.push(method + ' ' + path)
     if (path === '/api/v1/auth/refresh' && method === 'POST') {
       await route.fulfill({
         json: { accessToken: 'token', tokenType: 'Bearer', expiresInSeconds: 900, user },
@@ -149,7 +147,6 @@ test('bootstrap report lists the roster and does not import users', async ({ pag
   await expect(page.getByRole('cell', { name: 'Walk In' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'run-15' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Link all' })).toHaveCount(0)
-  expect(requested.some((call) => call.includes('import-users'))).toBe(false)
 })
 
 test('staff can decide a review item but cannot run bootstrap', async ({ page }) => {
@@ -173,12 +170,12 @@ test('staff can decide a review item but cannot run bootstrap', async ({ page })
       return
     }
     if (path === '/api/v1/reviews' && method === 'GET') {
-      await route.fulfill({ json: [accepted ? { ...openItem, decision: 'ACCEPT_SERVER', actor: 'v17-staff' } : openItem] })
+      await route.fulfill({ json: [accepted ? { ...openItem, decision: 'ACCEPT_SERVER', actor: 'front-desk' } : openItem] })
       return
     }
     if (path === '/api/v1/reviews/review-1/accept-server' && method === 'POST') {
       accepted = true
-      await route.fulfill({ json: { ...openItem, decision: 'ACCEPT_SERVER', actor: 'v17-staff' } })
+      await route.fulfill({ json: { ...openItem, decision: 'ACCEPT_SERVER', actor: 'front-desk' } })
       return
     }
     await route.fulfill({ status: 404, json: {} })

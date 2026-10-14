@@ -107,7 +107,7 @@ public sealed class CredentialRotationServiceTests
             var options = new GatewayOptions
             {
                 Id = "gw-1",
-                Token = "v1-token",
+                Token = "current-token",
                 BackendUrl = "http://127.0.0.1:9",
                 CredentialExpiresAt = DateTimeOffset.UtcNow.AddDays(1),
                 RenewBefore = TimeSpan.FromDays(7),
@@ -126,11 +126,11 @@ public sealed class CredentialRotationServiceTests
                 Assert.Equal(HttpMethod.Post, req.Method);
                 Assert.Contains("/internal/gateway/credentials/rotate", req.RequestUri!.AbsoluteUri);
                 Assert.Equal("Bearer", req.Headers.Authorization?.Scheme);
-                Assert.Equal("v1-token", req.Headers.Authorization?.Parameter);
+                Assert.Equal("current-token", req.Headers.Authorization?.Parameter);
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
-                        """{"gatewayId":"gw-1","credential":"v2-token","expiresAt":"2031-01-01T00:00:00Z"}""",
+                        """{"gatewayId":"gw-1","credential":"rotated-token","expiresAt":"2031-01-01T00:00:00Z"}""",
                         Encoding.UTF8,
                         "application/json")
                 };
@@ -146,12 +146,12 @@ public sealed class CredentialRotationServiceTests
 
             await service.MaybeRotateAsync(CancellationToken.None);
 
-            Assert.Equal("v2-token", options.Token);
+            Assert.Equal("rotated-token", options.Token);
             Assert.Equal(DateTimeOffset.Parse("2031-01-01T00:00:00Z"), options.CredentialExpiresAt);
 
             var reloaded = new GatewayOptions();
             store.ApplyTo(reloaded, store.TryLoad()!);
-            Assert.Equal("v2-token", reloaded.Token);
+            Assert.Equal("rotated-token", reloaded.Token);
             Assert.Equal("p", reloaded.Devices[0].Password);
         }
         finally

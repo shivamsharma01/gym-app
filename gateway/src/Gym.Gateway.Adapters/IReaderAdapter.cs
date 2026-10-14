@@ -1,7 +1,7 @@
 namespace Gym.Gateway.Adapters;
 
 /// <summary>
-/// V1 reader operations. Tests supply <see cref="FakeReader"/>. The service supplies the connected
+/// The reader operations the desired-revision path uses. Tests supply <see cref="FakeReader"/>. The service supplies the connected
 /// device adapter behind the same calls.
 /// </summary>
 public interface IReaderAdapter
@@ -21,6 +21,12 @@ public interface IReaderAdapter
     ReaderCallResult ReplaceUser(ReaderUser user);
 
     ReaderFaceResult GetFace(string deviceUserId);
+
+    /// <summary>
+    /// Every stored photo's MD5 without transferring photos. When it is not Ok, callers read each
+    /// photo instead.
+    /// </summary>
+    FaceChecksumList ListFaceChecksums() => FaceChecksumList.Unavailable("photo checksum list is not supported");
 
     /// <summary>First photo for a user. A second insert over a stored photo is PHOTO_EXIST.</summary>
     ReaderCallResult InsertFace(string deviceUserId, byte[]? jpeg);

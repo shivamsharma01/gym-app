@@ -391,7 +391,7 @@ public class DesiredProjectionService {
         return revision;
     }
 
-    /** Inactive is access disallowed, not an archive. A member with no plan stays enabled, as V1 wrote them. */
+    /** Inactive is access disallowed, not an archive. A member with no plan stays enabled. */
     private int readerStatus(Member member) {
         if (member.getStatus() != MemberStatus.ACTIVE) {
             return 1;

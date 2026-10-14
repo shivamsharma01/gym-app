@@ -34,6 +34,8 @@ public sealed class LockedReaderAdapter : IReaderAdapter
     public ReaderFaceResult GetFace(string deviceUserId) =>
         Locked("member worker: reading face " + deviceUserId, () => _inner.GetFace(deviceUserId));
 
+    public FaceChecksumList ListFaceChecksums() => Locked("reading the photo checksums", _inner.ListFaceChecksums);
+
     public ReaderCallResult InsertFace(string deviceUserId, byte[]? jpeg) =>
         Locked("member worker: inserting face " + deviceUserId, () => _inner.InsertFace(deviceUserId, jpeg));
 

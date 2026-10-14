@@ -6,7 +6,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.domain.AccessDirection;
 import com.example.gym.device.domain.AccessResult;
 import com.example.gym.device.domain.AttendanceEvent;
@@ -17,25 +16,20 @@ import com.example.gym.tenant.Tenant;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.ResultActions;
 import tools.jackson.databind.JsonNode;
 
 /**
- * V19: the gateway polls one time window per reader and posts what it read. A repeated window stores
+ * The gateway polls one time window per reader and posts what it read. A repeated window stores
  * nothing new, an empty window writes nothing, an unmapped punch is stored without a member, the
  * cursor only moves forward, and no member or mapping row changes.
  */
-class V19AttendancePollIT extends AbstractIntegrationTest {
-
-    @Autowired
-    private GatewayMessageService gatewayMessageService;
+class AttendanceWindowIngestIT extends AbstractIntegrationTest {
 
     private Tenant tenant;
     private String token;
@@ -243,19 +237,6 @@ class V19AttendancePollIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].deviceUserId").value("9200"))
                 .andExpect(jsonPath("$.content[0].memberLinked").value(false));
-    }
-
-    @Test
-    void aLiveAccessEventIsNotAnAttendanceSource() {
-        String reply = gatewayMessageService.process("""
-                {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s","type":"DEVICE_EVENT",
-                 "correlationId":null,"payload":{"deviceUserId":"7","occurredAt":"2026-10-11T05:00:00Z",
-                 "method":"FACE","granted":true,"recNo":10}}
-                """.formatted(UUID.randomUUID(), Instant.now(), gatewayId, entranceId), gatewayId).orElseThrow();
-
-        assertThat(reply).contains("ACK");
-        assertThat(attendanceEventRepository.findAll()).isEmpty();
-        assertThat(attendanceSyncCursorRepository.findAll()).isEmpty();
     }
 
     @Test

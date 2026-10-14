@@ -150,7 +150,7 @@ The backend should model access policy separately from device administrative aut
 | Membership validity   | Paid/current plan period.                                                          | Device valid-begin / valid-end fields.                                              |
 | Effective door access | \`accessAllowed == true\` AND membership currently active AND member not archived. | Device must be provisioned so that its local enforcement reflects this combination. |
 | Disable               | Keep member and device user; block access.                                         | Freeze same user; do not remove record.                                             |
-| Remove from reader    | Projection no longer present on that reader.                                       | \`REMOVE_USER\` / equivalent. Does not delete canonical member.                     |
+| Remove from reader    | Projection no longer present on that reader.                                       | The gateway removes the reader user when its desired revision is absent. Does not delete canonical member. |
 
 <table>
 <colgroup>

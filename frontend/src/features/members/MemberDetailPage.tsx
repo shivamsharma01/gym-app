@@ -139,9 +139,6 @@ export function MemberDetailPage() {
             </Badge>
           </div>
         </div>
-        <Badge tone={m.creationSource === 'DEVICE_IMPORT' ? 'warn' : 'ok'}>
-          {m.creationSource === 'DEVICE_IMPORT' ? 'Created from device' : 'Created manually'}
-        </Badge>
         {access.data ? (
           <Badge tone={access.data.allowed ? 'ok' : 'danger'}>
             {access.data.allowed ? 'Access allowed' : `Denied: ${access.data.reason}`}

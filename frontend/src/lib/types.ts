@@ -79,7 +79,6 @@ export type Member = {
   status: string
   joinedOn: string
   notes: string | null
-  creationSource: string
   deviceAuthority?: 'USER' | 'ADMIN'
   createdAt: string
   coverageStatus: string
@@ -103,7 +102,6 @@ export type Membership = {
   currency: string
   startDate: string
   endDate: string
-  endDateInferred: boolean
   status: string
   effectiveStatus: string
   paymentStatus: string
@@ -128,7 +126,6 @@ export type AccessStatus = {
   membershipStatus: string | null
   validUntil: string | null
   paymentStatus: string | null
-  deviceSyncState: string | null
 }
 
 export type Payment = {
@@ -184,26 +181,6 @@ export type DeviceHealth = {
   pendingCommandCount: number
   failedCommandCount: number
   lastPunchAt: string | null
-  openConflictCount: number
-}
-
-export type ReconciliationConflict = {
-  id: string
-  deviceUserId: string
-  conflictType: string
-  details: string | null
-  status: string
-  createdAt: string
-  resolvedAt: string | null
-}
-
-export type ImportUsersResult = {
-  created: number
-  mapped: number
-  skipped: number
-  inactiveFrozen: number
-  inferredEndDates: number
-  deviceUsersSeen: number
 }
 
 export type Gateway = {
@@ -233,17 +210,6 @@ export type SyncCommand = {
   dispatchedAt: string | null
   acknowledgedAt: string | null
   completedAt: string | null
-  createdAt: string
-  memberName: string | null
-  deviceUserId: string | null
-}
-
-export type Mapping = {
-  id: string
-  deviceUserId: string
-  enrollmentStatus: string
-  syncState: string
-  enrolledAt: string | null
   createdAt: string
 }
 

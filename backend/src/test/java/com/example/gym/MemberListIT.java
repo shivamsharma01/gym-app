@@ -26,8 +26,8 @@ class MemberListIT extends AbstractIntegrationTest {
         createMember("Kunal", "Sharma", "10");
         createMember("Kunalpreet", "Singh", "2");
         createMember("Asha", null, "1");
-        String legacy = createMember("Old", "Member", "500");
-        var member = memberRepository.findByPublicId(legacy).orElseThrow();
+        String noSerial = createMember("Old", "Member", "500");
+        var member = memberRepository.findByPublicId(noSerial).orElseThrow();
         member.setSerialNumber(null);
         memberRepository.save(member);
     }

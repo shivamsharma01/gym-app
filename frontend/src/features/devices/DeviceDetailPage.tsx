@@ -10,7 +10,7 @@ import { useAuth } from '@/lib/auth'
 import { DEVICE_MODELS } from '@/lib/catalog'
 import { cn, formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
-import type { Device, DeviceHealth, Gateway, PageResponse, ReconciliationConflict, SecurityEvent, SyncCommand } from '@/lib/types'
+import type { Device, DeviceHealth, Gateway, PageResponse, SecurityEvent, SyncCommand } from '@/lib/types'
 
 export function DeviceDetailPage() {
   const { id, section } = useParams()
@@ -101,23 +101,6 @@ function Overview({ device }: { device: Device }) {
     queryKey: ['device-health', device.id],
     queryFn: () => api<DeviceHealth>(`/api/v1/devices/${device.id}/health`),
   })
-  const [conflictPage, setConflictPage] = useState(0)
-  const conflicts = useQuery({
-    queryKey: ['device-conflicts', device.id, conflictPage],
-    queryFn: () =>
-      api<PageResponse<ReconciliationConflict>>(`/api/v1/devices/${device.id}/conflicts?page=${conflictPage}&size=20`),
-    placeholderData: keepPreviousData,
-  })
-  const resolveConflict = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: string }) =>
-      api<ReconciliationConflict>(`/api/v1/devices/${device.id}/conflicts/${id}/resolve?action=${action}`, {
-        method: 'POST',
-      }),
-    onSuccess: () => {
-      void health.refetch()
-      void conflicts.refetch()
-    },
-  })
 
   return (
     <div className="space-y-4">
@@ -158,46 +141,15 @@ function Overview({ device }: { device: Device }) {
             <div className="text-xs uppercase text-muted">Attendance</div>
             <div className="mt-1 font-semibold">Last punch stored {formatDateTime(health.data.lastPunchAt)}</div>
             <p className="mt-2 text-sm text-muted">
-              The gateway reads the reader log on a short interval · conflicts {health.data.openConflictCount}
+              The gateway reads the reader log on a short interval
             </p>
           </Card>
         </div>
       ) : null}
       {has('DEVICE_SYNC') && device.gatewayAssigned ? <Reconcile deviceId={device.id} /> : null}
-      {conflicts.data && conflicts.data.content.length > 0 ? (
-        <Card className="space-y-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-            Reconciliation conflicts ({conflicts.data.totalElements})
-          </h2>
-          <ul className="divide-y divide-line">
-            {conflicts.data.content.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-start justify-between gap-2 py-2 text-sm">
-                <div>
-                  <div className="font-semibold">
-                    {c.conflictType} · {c.deviceUserId}
-                  </div>
-                  <p className="text-muted">{c.details ?? '—'}</p>
-                </div>
-                {has('DEVICE_SYNC') ? (
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => resolveConflict.mutate({ id: c.id, action: 'DISMISS' })}
-                    >
-                      Dismiss
-                    </Button>
-                  </div>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-          <PageNav data={conflicts.data} onPageChange={setConflictPage} />
-        </Card>
-      ) : null}
       <p className="text-sm text-muted">
-        Health is not a single online/offline lamp. Device, gateway session, last sync, pending/failed outbox, and
-        reconciliation conflicts are separate facts.
+        Health is not a single online/offline lamp. Device, gateway session, last sync, and pending/failed commands are
+        separate facts.
       </p>
     </div>
   )
@@ -226,7 +178,53 @@ function Reconcile({ deviceId }: { deviceId: string }) {
         </p>
       ) : null}
       {reconcile.error ? <QueryError error={reconcile.error} /> : null}
+      <ScanNow deviceId={deviceId} />
     </Card>
+  )
+}
+
+const FINISHED_COMMAND_STATES = ['SUCCEEDED', 'DEAD_LETTER', 'CANCELLED']
+
+function ScanNow({ deviceId }: { deviceId: string }) {
+  const scan = useMutation({
+    mutationFn: () => api<SyncCommand>(`/api/v1/devices/${deviceId}/scan`, { method: 'POST' }),
+  })
+  const commandId = scan.data?.id
+  const command = useQuery({
+    queryKey: ['sync-command', commandId],
+    queryFn: () => api<SyncCommand>(`/api/v1/sync-commands/${commandId}`),
+    enabled: !!commandId,
+    refetchInterval: (query) =>
+      query.state.data && FINISHED_COMMAND_STATES.includes(query.state.data.state) ? false : 3000,
+  })
+  const current = command.data ?? scan.data
+  const state = current?.state
+  const running = scan.isPending || (!!state && !FINISHED_COMMAND_STATES.includes(state))
+  return (
+    <div className="space-y-2 border-t border-line pt-3">
+      <p className="text-sm text-muted">
+        The gateway reads each reader every few minutes. Read this reader now to pick up people enrolled or
+        changed at the device without waiting.
+      </p>
+      <Button size="sm" variant="outline" disabled={running} onClick={() => scan.mutate()}>
+        Read reader now
+      </Button>
+      {state === 'SUCCEEDED' ? (
+        <p className="text-sm text-ok">The gateway read this reader and sent its user list to the server.</p>
+      ) : null}
+      {state && !FINISHED_COMMAND_STATES.includes(state) ? (
+        <p className="text-sm text-muted">
+          Asked the gateway · {state}
+          {current?.lastError ? ` · ${current.lastError}` : ''}
+        </p>
+      ) : null}
+      {state === 'DEAD_LETTER' || state === 'CANCELLED' ? (
+        <p className="text-sm text-danger">
+          The reader was not read{current?.lastError ? `: ${current.lastError}` : '.'}
+        </p>
+      ) : null}
+      {scan.error ? <QueryError error={scan.error} /> : null}
+    </div>
   )
 }
 
@@ -319,7 +317,6 @@ function Sync({ deviceId }: { deviceId: string }) {
             <THead>
               <tr>
                 <Th>Type</Th>
-                <Th>Member</Th>
                 <Th>State</Th>
                 <Th>Attempts</Th>
                 <Th>When</Th>
@@ -333,10 +330,6 @@ function Sync({ deviceId }: { deviceId: string }) {
                 return (
                   <Tr key={c.id}>
                     <Td className="font-medium">{c.type}</Td>
-                    <Td>
-                      <div className="font-medium">{c.memberName ?? '—'}</div>
-                      <div className="font-mono text-[11px] text-muted">{c.deviceUserId ?? ''}</div>
-                    </Td>
                     <Td>
                       <Badge tone={statusTone(c.state)}>{c.state}</Badge>
                     </Td>

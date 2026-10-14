@@ -15,8 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Computes a member's <em>business</em> access decision from their memberships. This does not talk
- * to any device; it is the authoritative "allowed / denied" that the device sync engine (Phase 3)
- * will later enforce on the hardware.
+ * to any device; it is the authoritative "allowed / denied" that desired revisions carry to the
+ * readers.
  */
 @Service
 public class AccessService {
@@ -81,7 +81,6 @@ public class AccessService {
                 m == null ? null : m.getPublicId(),
                 m == null ? null : m.effectiveStatus(today).name(),
                 m == null ? null : m.getEndDate(),
-                m == null ? null : m.getPaymentStatus().name(),
-                m == null ? null : m.getDeviceSyncState().name());
+                m == null ? null : m.getPaymentStatus().name());
     }
 }

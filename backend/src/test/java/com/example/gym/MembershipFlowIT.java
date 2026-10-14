@@ -13,7 +13,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.ResultActions;
 
 /**
- * End-to-end Phase 2 flow through the real HTTP stack + MySQL: plan -> member -> membership ->
+ * End-to-end membership flow through the real HTTP stack + MySQL: plan -> member -> membership ->
  * payment -> access decision, plus freeze/unfreeze/cancel and tenant isolation.
  */
 class MembershipFlowIT extends AbstractIntegrationTest {
@@ -50,7 +50,6 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andExpect(jsonPath("$.paymentStatus").value("UNPAID"))
-                .andExpect(jsonPath("$.deviceSyncState").value("NOT_SYNCED"))
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
         // Active with nothing paid is still allowed. Payment is bookkeeping.
@@ -81,8 +80,7 @@ class MembershipFlowIT extends AbstractIntegrationTest {
 
         getAccess(memberId)
                 .andExpect(jsonPath("$.allowed").value(true))
-                .andExpect(jsonPath("$.reason").value("ALLOWED"))
-                .andExpect(jsonPath("$.deviceSyncState").value("NOT_SYNCED"));
+                .andExpect(jsonPath("$.reason").value("ALLOWED"));
 
         // Freeze -> denied; unfreeze -> allowed again.
         post("/api/v1/memberships/" + membershipId + "/freeze", null)
@@ -144,10 +142,11 @@ class MembershipFlowIT extends AbstractIntegrationTest {
 
         LocalDate newEnd = end.plusDays(10);
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                        .put("/api/v1/memberships/" + membershipId + "/dates")
+                        .put("/api/v1/memberships/" + membershipId)
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"startDate\":\"" + start + "\",\"endDate\":\"" + newEnd + "\"}"))
+                        .content("{\"planId\":\"" + planId + "\",\"startDate\":\"" + start
+                                + "\",\"endDate\":\"" + newEnd + "\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.endDate").value(newEnd.toString()));
     }

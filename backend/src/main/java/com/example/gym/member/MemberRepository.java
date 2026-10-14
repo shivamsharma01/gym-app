@@ -27,8 +27,8 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
     List<String> findCodesWithoutSerial(@Param("tenantId") Long tenantId);
 
     /**
-     * Tenant-scoped search over name/phone/serial/member-code with optional status and
-     * creation-source filters. All filters are optional (pass {@code null} to skip).
+     * Tenant-scoped search over name/phone/serial/member-code with optional status and device
+     * authority filters. All filters are optional (pass {@code null} to skip).
      * {@code name} is matched against "first last " (word-separated, ending in a space), so a
      * trailing space ("kunal ") finds Kunal Sharma but not Kunalpreet, and "kunal sharma " still
      * matches; {@code q} is the trimmed text for the other columns.
@@ -37,7 +37,6 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
             select m from Member m
             where m.tenantId = :tenantId
               and (:status is null or m.status = :status)
-              and (:creationSource is null or m.creationSource = :creationSource)
               and (:deviceAuthority is null or m.deviceAuthority = :deviceAuthority)
               and (:q is null
                    or lower(concat(m.firstName, ' ', coalesce(m.lastName, ''), ' ')) like lower(concat('%', :name, '%'))
@@ -49,7 +48,6 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
                         @Param("q") String q,
                         @Param("name") String name,
                         @Param("status") MemberStatus status,
-                        @Param("creationSource") MemberCreationSource creationSource,
                         @Param("deviceAuthority") DeviceAuthority deviceAuthority,
                         Pageable pageable);
 

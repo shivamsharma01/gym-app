@@ -8,7 +8,7 @@ namespace Gym.Gateway.Tests;
 
 public class SecondReaderTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-v7-" + Guid.NewGuid().ToString("N"));
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-second-reader-" + Guid.NewGuid().ToString("N"));
     private static readonly DateTimeOffset ValidFrom = new(2026, 10, 8, 0, 0, 0, TimeSpan.FromHours(5.5));
     private static readonly DateTimeOffset ValidTo = new(2026, 10, 8, 23, 59, 59, TimeSpan.FromHours(5.5));
     private static readonly byte[] Face = [1, 2, 3, 4, 5];

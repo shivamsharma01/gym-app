@@ -56,16 +56,9 @@ public interface DeviceSyncCommandRepository extends JpaRepository<DeviceSyncCom
     List<DeviceSyncCommand> findByStateInAndDispatchedAtLessThanEqual(
             Collection<SyncCommandState> states, Instant cutoff, Pageable pageable);
 
-    boolean existsByDeviceIdAndTypeAndStateIn(
+    Optional<DeviceSyncCommand> findFirstByDeviceIdAndTypeAndStateInOrderByCreatedAtAsc(
             Long deviceId, com.example.gym.device.domain.SyncCommandType type,
             Collection<SyncCommandState> states);
-
-    List<DeviceSyncCommand> findByDeviceIdAndMemberIdAndTypeInAndStateIn(
-            Long deviceId, Long memberId,
-            Collection<com.example.gym.device.domain.SyncCommandType> types,
-            Collection<SyncCommandState> states);
-
-    List<DeviceSyncCommand> findByMemberIdAndStateIn(Long memberId, Collection<SyncCommandState> states);
 
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("update DeviceSyncCommand c set c.nextAttemptAt = :now "

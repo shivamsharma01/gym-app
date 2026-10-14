@@ -6,7 +6,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.domain.MemberDeviceMapping;
-import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
@@ -68,8 +67,7 @@ class FaceSyncIT extends AbstractIntegrationTest {
 
         assertThat(memberRepository.findById(member.getId()).orElseThrow().getFirstName()).isEqualTo("Asha");
         assertThat(memberDeviceMappingRepository.findAll()).hasSize(1);
-        assertThat(deviceSyncCommandRepository.findAll()).extracting(c -> c.getType())
-                .doesNotContain(SyncCommandType.UPDATE_USER, SyncCommandType.CREATE_USER);
+        assertThat(deviceSyncCommandRepository.findAll()).isEmpty();
     }
 
     @Test

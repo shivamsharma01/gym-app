@@ -29,9 +29,4 @@ public record AuditLogResponse(
                 log.getDetails(),
                 log.getCreatedAt());
     }
-
-    /** @deprecated Prefer {@link #from(AuditLog, String)} with a resolved label. */
-    public static AuditLogResponse from(AuditLog log) {
-        return from(log, null);
-    }
 }

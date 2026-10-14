@@ -7,7 +7,6 @@ import com.example.gym.membership.dto.PlanRosterResponse;
 import com.example.gym.membership.dto.MembershipRequests.CreateMembership;
 import com.example.gym.membership.dto.MembershipRequests.RenewMembership;
 import com.example.gym.membership.dto.MembershipRequests.UpdateMembership;
-import com.example.gym.membership.dto.MembershipRequests.UpdateMembershipDates;
 import com.example.gym.membership.dto.MembershipResponse;
 import com.example.gym.security.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
@@ -82,16 +81,6 @@ public class MembershipController {
                                      @Valid @RequestBody UpdateMembership request) {
         return MembershipResponse.from(
                 membershipService.updateMembership(id, request, SecurityUtils.currentTenantId()),
-                LocalDate.now());
-    }
-
-    @PutMapping("/memberships/{id}/dates")
-    @PreAuthorize("hasAuthority('MEMBERSHIP_UPDATE')")
-    @Operation(summary = "Change a membership's start and end dates")
-    public MembershipResponse updateDates(@PathVariable("id") String id,
-                                          @Valid @RequestBody UpdateMembershipDates request) {
-        return MembershipResponse.from(
-                membershipService.updateDates(id, request, SecurityUtils.currentTenantId()),
                 LocalDate.now());
     }
 

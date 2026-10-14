@@ -1,11 +1,9 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.example.gym.device.DeviceSyncService;
 import com.example.gym.device.GatewayCommandPollService;
 import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.DeviceSyncCommand;
@@ -24,13 +22,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 
 /**
- * Member state is a desired revision on every reader. Review rows stay. A member command is not
- * dispatched. An empty user list does not remove a mapping. A door command still dispatches.
+ * Member state is a desired revision on every reader. Review rows stay. An empty user list does not
+ * remove a mapping. A door command dispatches.
  */
-class V16OneWriterIT extends AbstractIntegrationTest {
-
-    @Autowired
-    private DeviceSyncService deviceSyncService;
+class DesiredStateSingleWriterIT extends AbstractIntegrationTest {
 
     @Autowired
     private GatewayCommandPollService pollService;
@@ -42,10 +37,10 @@ class V16OneWriterIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         resetDatabase();
-        Tenant tenant = createTenant("V16 Gym", "v16-gym");
+        Tenant tenant = createTenant("Writer Gym", "writer-gym");
         tenantId = tenant.getId();
-        createUser(tenant.getId(), "v1-admin", "v1-admin@gym.local", "GYM_ADMIN");
-        token = tokenFor("v1-admin");
+        createUser(tenant.getId(), "writer-admin", "writer-admin@gym.local", "GYM_ADMIN");
+        token = tokenFor("writer-admin");
 
         String createdGateway = postJson("/api/v1/gateways", "{\"name\":\"LAN\"}")
                 .andExpect(status().isCreated())
@@ -57,7 +52,7 @@ class V16OneWriterIT extends AbstractIntegrationTest {
     void updatingAReaderKeepsReviewRows() throws Exception {
         String deviceId = createDevice("Entrance");
         Long device = deviceRepository.findByPublicId(deviceId).orElseThrow().getId();
-        Member member = memberRepository.save(new Member(tenantId, "V16-ASHA", "Asha"));
+        Member member = memberRepository.save(new Member(tenantId, "WRITER-ASHA", "Asha"));
 
         DeviceReviewItem review = new DeviceReviewItem(tenantId, device, member.getId(), "1");
         review.setObservedAt(Instant.now());
@@ -82,36 +77,22 @@ class V16OneWriterIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void memberCommandsAreNotDispatchedAndAnEmptyListDoesNotDropAMapping() throws Exception {
+    void thePollClaimsADoorCommandAndLeavesTheMappingAlone() throws Exception {
         String entranceId = createDevice("Entrance");
         String sideId = createDevice("Side");
         Long entrance = deviceRepository.findByPublicId(entranceId).orElseThrow().getId();
         Long side = deviceRepository.findByPublicId(sideId).orElseThrow().getId();
-        Member member = memberRepository.save(new Member(tenantId, "V16-ASHA", "Asha"));
+        Member member = memberRepository.save(new Member(tenantId, "ASHA-1", "Asha"));
         memberDeviceMappingRepository.save(new MemberDeviceMapping(tenantId, member.getId(), entrance, "1"));
 
-        assertThatThrownBy(() -> deviceSyncService.enqueue(tenantId, entrance, member.getId(), null,
-                SyncCommandType.CREATE_USER, java.util.Map.of("deviceUserId", "1")))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> deviceSyncService.enqueue(tenantId, side, member.getId(), null,
-                SyncCommandType.CREATE_USER, java.util.Map.of("deviceUserId", "1")))
-                .isInstanceOf(IllegalArgumentException.class);
-
-        DeviceSyncCommand queued = deviceSyncCommandRepository.save(new DeviceSyncCommand(
-                tenantId, entrance, member.getId(), null, SyncCommandType.UPDATE_USER,
-                "{\"deviceUserId\":\"1\"}", UUID.randomUUID().toString(), 3, Instant.now()));
         DeviceSyncCommand door = deviceSyncCommandRepository.save(new DeviceSyncCommand(
-                tenantId, side, null, null, SyncCommandType.OPEN_DOOR,
+                tenantId, side, SyncCommandType.OPEN_DOOR,
                 "{}", UUID.randomUUID().toString(), 3, Instant.now()));
 
         var claimed = pollService.claimDue(gatewayRepository.findByPublicId(gatewayPublicId).orElseThrow());
         assertThat(claimed).extracting(row -> row.get("type")).containsExactly("OPEN_DOOR");
-        assertThat(deviceSyncCommandRepository.findById(queued.getId()).orElseThrow().getState())
-                .isEqualTo(SyncCommandState.CANCELLED);
         assertThat(deviceSyncCommandRepository.findById(door.getId()).orElseThrow().getState())
                 .isEqualTo(SyncCommandState.DISPATCHED);
-
-        assertThat(reconciliationConflictRepository.count()).isZero();
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(entrance, member.getId())).isPresent();
     }
 

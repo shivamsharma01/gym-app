@@ -37,22 +37,6 @@ public class LiveReaderAdapterTests : IDisposable
         Assert.Equal(5u, clock.dwMinute);
         Assert.Equal(25u, clock.dwSecond);
 
-        var adapter = new MockDeviceAdapter();
-        adapter.Connect(new DeviceConnectionConfig("dev-1", "127.0.0.1", 37777, "admin", "x"));
-        var dispatcher = new CommandDispatcher(
-            new Dictionary<string, IDeviceAdapter> { ["dev-1"] = adapter },
-            NullLogger<CommandDispatcher>.Instance);
-        var synced = await dispatcher.DispatchAsync(new GatewayEnvelope
-        {
-            Type = "SYNC_DEVICE_TIME",
-            DeviceId = "dev-1",
-            CorrelationId = Guid.NewGuid().ToString(),
-            Payload = System.Text.Json.JsonSerializer.SerializeToElement(new { })
-        });
-        Assert.True(synced.Ok);
-        Assert.NotNull(adapter.LastSynchronized);
-        Assert.Equal(India, adapter.LastSynchronized.Value.Offset);
-
         var options = new GatewayOptions { Id = "g", Token = "t", BackendUrl = "http://127.0.0.1:9" };
         var store = new DurableOutboundStore(NullLogger<DurableOutboundStore>.Instance, _directory);
         var link = new BackendLink(options, NullLogger<BackendLink>.Instance, store);

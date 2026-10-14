@@ -5,28 +5,15 @@ using Microsoft.Extensions.Logging;
 namespace Gym.Gateway;
 
 /// <summary>
-/// Maps door and clock commands onto <see cref="IDeviceAdapter"/>. Member state is written only by
-/// the desired-state worker, and attendance is read only by the attendance poll.
+/// Runs the staff commands for one reader: open or close the door, or scan it now. Member state
+/// reaches readers only as desired revisions, and attendance only through the attendance poll.
 /// </summary>
 public sealed class CommandDispatcher
 {
-    /// <summary>Member writes the desired-state worker owns.</summary>
-    private static readonly HashSet<string> MemberWrites = new(StringComparer.Ordinal)
-    {
-        "CREATE_USER", "UPDATE_USER", "UPDATE_ACCESS_POLICY", "DISABLE_USER", "ENABLE_USER",
-        "UPDATE_VALIDITY", "REMOVE_USER", "ENROLL_FACE", "UPSERT_FACE", "DELETE_FACE",
-        "REPORT_DEVICE_USER"
-    };
-
-    /// <summary>Server-driven log and user-list reads the attendance poll replaced.</summary>
-    private static readonly HashSet<string> AttendanceCommands = new(StringComparer.Ordinal)
-    {
-        "RECONCILE_DEVICE", "REFRESH_DEVICE_USERS"
-    };
-
     private readonly IReadOnlyDictionary<string, IDeviceAdapter> _adapters;
     private readonly ILogger<CommandDispatcher> _log;
     private readonly DeviceLocks _locks;
+    private readonly Func<string, CancellationToken, Task<bool?>>? _scanNow;
     private static readonly TimeSpan FinishedKept = TimeSpan.FromMinutes(30);
     private readonly object _seenGate = new();
     private readonly Dictionary<string, Task<DispatchOutcome>> _running = new(StringComparer.Ordinal);
@@ -35,11 +22,13 @@ public sealed class CommandDispatcher
     public CommandDispatcher(
         IReadOnlyDictionary<string, IDeviceAdapter> adapters,
         ILogger<CommandDispatcher> log,
-        DeviceLocks? locks = null)
+        DeviceLocks? locks = null,
+        Func<string, CancellationToken, Task<bool?>>? scanNow = null)
     {
         _adapters = adapters;
         _log = log;
         _locks = locks ?? new DeviceLocks();
+        _scanNow = scanNow;
     }
 
     /// <summary>
@@ -115,16 +104,6 @@ public sealed class CommandDispatcher
 
     private async Task<DispatchOutcome> DispatchOnceAsync(GatewayEnvelope command)
     {
-        if (MemberWrites.Contains(command.Type ?? ""))
-        {
-            return DispatchOutcome.SyncFail("desired revisions write this reader");
-        }
-
-        if (AttendanceCommands.Contains(command.Type ?? ""))
-        {
-            return DispatchOutcome.SyncFail("attendance is read by the gateway's poll");
-        }
-
         if (string.IsNullOrWhiteSpace(command.DeviceId) || !_adapters.TryGetValue(command.DeviceId, out var adapter))
         {
             return DispatchOutcome.SyncFail("Unknown or unconfigured deviceId");
@@ -135,6 +114,11 @@ public sealed class CommandDispatcher
         {
             // Each call would wait out its timeout and keep the broken session busy; the server retries later.
             return DispatchOutcome.SyncFail($"Reader connection is broken and reconnecting ({health.Detail}); retry later");
+        }
+
+        if (command.Type == "SCAN_READER")
+        {
+            return await ScanNowAsync(command.DeviceId).ConfigureAwait(false);
         }
 
         try
@@ -153,28 +137,41 @@ public sealed class CommandDispatcher
         }
     }
 
-    private DispatchOutcome Dispatch(IDeviceAdapter adapter, GatewayEnvelope command)
+    /// <summary>
+    /// The scan takes the reader lock for each reader call itself, so it runs outside the command's
+    /// lock; holding that lock here would make the scan wait for itself.
+    /// </summary>
+    private async Task<DispatchOutcome> ScanNowAsync(string deviceId)
     {
-        if (MemberWrites.Contains(command.Type ?? ""))
+        if (_scanNow == null)
         {
-            return DispatchOutcome.SyncFail("desired revisions write this reader");
+            return DispatchOutcome.SyncFail("this gateway cannot scan readers");
         }
 
-        var payload = command.Payload;
-        switch (command.Type)
+        try
         {
-            case "SYNC_DEVICE_TIME":
-                return From(adapter.SynchronizeTime(ReaderLocalClock.Now(DateTimeOffset.UtcNow)));
-            case "OPEN_DOOR":
-                return From(adapter.OpenDoor());
-            case "CLOSE_DOOR":
-                return From(adapter.CloseDoor());
-            case "CLEAR_DEVICE_LOGS":
-                return DispatchOutcome.SyncFail("CLEAR_DEVICE_LOGS has no verified SDK API in this adapter");
-            default:
-                return DispatchOutcome.SyncFail("unsupported command " + command.Type);
+            _log.LogInformation("Reader {DeviceId}: scan requested from the app", deviceId);
+            return await _scanNow(deviceId, CancellationToken.None).ConfigureAwait(false) switch
+            {
+                true => DispatchOutcome.SyncOk(),
+                false => DispatchOutcome.SyncFail("the reader's user list failed or did not match its announced total"),
+                null => DispatchOutcome.SyncFail("this reader has no worker on the gateway")
+            };
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Reader {DeviceId}: requested scan failed", deviceId);
+            return DispatchOutcome.SyncFail(ex.Message);
         }
     }
+
+    private static DispatchOutcome Dispatch(IDeviceAdapter adapter, GatewayEnvelope command) =>
+        command.Type switch
+        {
+            "OPEN_DOOR" => From(adapter.OpenDoor()),
+            "CLOSE_DOOR" => From(adapter.CloseDoor()),
+            _ => DispatchOutcome.SyncFail("unsupported command " + command.Type)
+        };
 
     private static DispatchOutcome From(DeviceCommandResult result) =>
         result.Ok ? DispatchOutcome.SyncOk() : DispatchOutcome.SyncFail(result.Error ?? "command failed");

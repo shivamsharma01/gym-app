@@ -9,9 +9,8 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 /**
- * Transactional-outbox work item (§9). A business change and its sync command are written in the
- * same transaction; a dispatcher later delivers it to the gateway with retry/backoff, and the
- * gateway's {@code SYNC_RESULT} drives it to a terminal state. Idempotency is keyed on
+ * Transactional-outbox work item (§9): a staff command for one reader. It is written in the request's
+ * transaction; a dispatcher later delivers it to the gateway with retry/backoff, and the gateway's {@code SYNC_RESULT} drives it to a terminal state. Idempotency is keyed on
  * {@code correlationId}.
  */
 @Entity
@@ -20,12 +19,6 @@ public class DeviceSyncCommand extends TenantAwareEntity {
 
     @Column(name = "device_id", nullable = false)
     private Long deviceId;
-
-    @Column(name = "member_id")
-    private Long memberId;
-
-    @Column(name = "membership_id")
-    private Long membershipId;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "type", nullable = false, length = 32)
@@ -65,13 +58,10 @@ public class DeviceSyncCommand extends TenantAwareEntity {
     protected DeviceSyncCommand() {
     }
 
-    public DeviceSyncCommand(Long tenantId, Long deviceId, Long memberId, Long membershipId,
-                             SyncCommandType type, String payload, String correlationId,
+    public DeviceSyncCommand(Long tenantId, Long deviceId, SyncCommandType type, String payload, String correlationId,
                              int maxAttempts, Instant nextAttemptAt) {
         setTenantId(tenantId);
         this.deviceId = deviceId;
-        this.memberId = memberId;
-        this.membershipId = membershipId;
         this.type = type;
         this.payload = payload;
         this.correlationId = correlationId;
@@ -82,14 +72,6 @@ public class DeviceSyncCommand extends TenantAwareEntity {
 
     public Long getDeviceId() {
         return deviceId;
-    }
-
-    public Long getMemberId() {
-        return memberId;
-    }
-
-    public Long getMembershipId() {
-        return membershipId;
     }
 
     public SyncCommandType getType() {

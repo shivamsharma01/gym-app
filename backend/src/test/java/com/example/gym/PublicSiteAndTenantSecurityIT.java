@@ -11,9 +11,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Phase 7 security-focused API checks that complement AuthAndSecurityIT / Phase9IT.
+ * Security-focused API checks that complement AuthAndSecurityIT / SuperAdminGymEnrollmentIT.
  */
-class Phase7SecurityIT extends AbstractIntegrationTest {
+class PublicSiteAndTenantSecurityIT extends AbstractIntegrationTest {
 
     private Tenant tenantA;
     private Tenant tenantB;

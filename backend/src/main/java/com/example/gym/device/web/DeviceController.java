@@ -3,19 +3,13 @@ package com.example.gym.device.web;
 import com.example.gym.common.web.PageResponse;
 import com.example.gym.device.DeviceReadService;
 import com.example.gym.device.DeviceService;
-import com.example.gym.device.DeviceUserImportService;
 import com.example.gym.device.ReaderReconcileService;
 import com.example.gym.device.ReaderReconcileService.Reconciled;
-import com.example.gym.device.ReconciliationConflictService;
 import com.example.gym.device.dto.DeviceRequests.CreateDevice;
-import com.example.gym.device.dto.DeviceRequests.CreateMapping;
 import com.example.gym.device.dto.DeviceRequests.RemoteDoor;
 import com.example.gym.device.dto.DeviceRequests.UpdateDevice;
-import com.example.gym.device.dto.DeviceResponses.ConflictView;
 import com.example.gym.device.dto.DeviceResponses.DeviceHealth;
 import com.example.gym.device.dto.DeviceResponses.DeviceView;
-import com.example.gym.device.dto.DeviceResponses.ImportUsersResult;
-import com.example.gym.device.dto.DeviceResponses.MappingView;
 import com.example.gym.device.dto.DeviceResponses.SyncCommandView;
 import com.example.gym.security.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,7 +19,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,19 +38,13 @@ public class DeviceController {
 
     private final DeviceService deviceService;
     private final DeviceReadService deviceReadService;
-    private final ReconciliationConflictService conflictService;
-    private final DeviceUserImportService importService;
     private final ReaderReconcileService reconcileService;
 
     public DeviceController(DeviceService deviceService,
                             DeviceReadService deviceReadService,
-                            ReconciliationConflictService conflictService,
-                            DeviceUserImportService importService,
                             ReaderReconcileService reconcileService) {
         this.deviceService = deviceService;
         this.deviceReadService = deviceReadService;
-        this.conflictService = conflictService;
-        this.importService = importService;
         this.reconcileService = reconcileService;
     }
 
@@ -103,22 +90,6 @@ public class DeviceController {
         return deviceReadService.health(id, SecurityUtils.currentTenantId());
     }
 
-    @PostMapping("/{id}/mappings")
-    @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
-    @Operation(summary = "Map a member to this device (enrolment intent; seeds authorization sync)")
-    public MappingView createMapping(@PathVariable String id, @Valid @RequestBody CreateMapping request) {
-        return MappingView.from(deviceService.createMapping(
-                id, request.memberId(), request.deviceUserId(), SecurityUtils.currentTenantId()));
-    }
-
-    @PostMapping("/{id}/import-users")
-    @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
-    @Operation(summary = "Rejected. A reader list does not create members.")
-    public ImportUsersResult importUsers(@PathVariable String id) {
-        return ImportUsersResult.from(importService.importUsers(id, SecurityUtils.currentTenantId()));
-    }
-
     @PostMapping("/{id}/reconcile")
     @PreAuthorize("hasAuthority('DEVICE_SYNC')")
     @Operation(summary = "Write every active member with a face that this reader has no mapping for")
@@ -126,29 +97,11 @@ public class DeviceController {
         return reconcileService.reconcile(id, SecurityUtils.currentTenantId());
     }
 
-    @GetMapping("/{id}/conflicts")
-    @PreAuthorize("hasAuthority('DEVICE_VIEW')")
-    @Operation(summary = "Open reconciliation conflicts for a device")
-    public PageResponse<ConflictView> conflicts(
-            @PathVariable String id,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
-        return PageResponse.from(
-                deviceReadService.conflicts(id, SecurityUtils.currentTenantId(),
-                        PageRequest.of(Math.max(page, 0), safeSize)),
-                ConflictView::from);
-    }
-
-    @PostMapping("/{id}/conflicts/{conflictId}/resolve")
+    @PostMapping("/{id}/scan")
     @PreAuthorize("hasAuthority('DEVICE_SYNC')")
-    @Operation(summary = "Dismiss a conflict, or refuse a reader removal that is not a review decision")
-    public ConflictView resolveConflict(
-            @PathVariable String id,
-            @PathVariable String conflictId,
-            @RequestParam(defaultValue = "REMOVE") String action) {
-        return ConflictView.from(conflictService.resolve(
-                id, conflictId, action, SecurityUtils.currentTenantId()));
+    @Operation(summary = "Ask the gateway to read this reader now instead of waiting for its next scan")
+    public SyncCommandView scan(@PathVariable String id) {
+        return SyncCommandView.from(deviceService.scanReader(id, SecurityUtils.currentTenantId()));
     }
 
     @PostMapping("/{id}/door")

@@ -24,10 +24,10 @@ import tools.jackson.databind.JsonNode;
 /**
  * Measures the server cost of a full trusted list on the test database: one reader with every
  * active member already mapped, so a list seeds nothing. Not part of the normal run; enable with
- * {@code -Dgym.measure=true}. The figures are printed with the prefix {@code V21-MEASURE}.
+ * {@code -Dgym.measure=true}. The figures are printed with the prefix {@code ROSTER-LOAD}.
  */
 @EnabledIfSystemProperty(named = "gym.measure", matches = "true")
-class V21RosterLoadIT extends AbstractIntegrationTest {
+class RosterScanLoadIT extends AbstractIntegrationTest {
 
     private static final int USERS = Integer.getInteger("gym.measure.users", 1200);
     private static final int ROUNDS = 3;
@@ -214,6 +214,6 @@ class V21RosterLoadIT extends AbstractIntegrationTest {
     }
 
     private static void report(String format, Object... args) {
-        System.out.println("V21-MEASURE " + String.format(format, args));
+        System.out.println("ROSTER-LOAD " + String.format(format, args));
     }
 }

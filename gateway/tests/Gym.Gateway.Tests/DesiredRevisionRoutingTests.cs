@@ -35,10 +35,10 @@ public class DesiredRevisionRoutingTests
     }
 
     [Fact]
-    public async Task Outbox_command_is_not_a_desired_revision()
+    public async Task A_staff_command_is_not_a_desired_revision()
     {
         var desired = false;
-        var json = """{"type":"CREATE_USER","deviceId":"reader-public","payload":{"deviceUserId":"9"}}""";
+        var json = """{"type":"OPEN_DOOR","deviceId":"reader-public","payload":{}}""";
         var handled = await InboundDispatch.RouteAsync(
             json,
             _ => Task.CompletedTask,
@@ -54,7 +54,7 @@ public class DesiredRevisionRoutingTests
     }
 
     [Fact]
-    public async Task Legacy_dispatcher_cannot_execute_a_desired_revision()
+    public async Task The_command_dispatcher_refuses_a_desired_revision()
     {
         var reader = new MockDeviceAdapter();
         reader.Connect(new DeviceConnectionConfig("reader-1", "10.0.0.8", 37777, "admin", "admin"));

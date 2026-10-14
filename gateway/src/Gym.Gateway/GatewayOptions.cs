@@ -23,7 +23,7 @@ public sealed class GatewayOptions
 
     public string? NativeDirectory { get; set; }
 
-    /// <summary>When the operational credential expires (UTC). Null when using env-only / permanent legacy tokens.</summary>
+    /// <summary>When the operational credential expires (UTC). Null when the credential has no expiry (set only through the environment).</summary>
     public DateTimeOffset? CredentialExpiresAt { get; set; }
 
     /// <summary>Renew when now &gt; expiresAt - renewBefore. Default 7 days.</summary>
@@ -31,8 +31,17 @@ public sealed class GatewayOptions
 
     public List<DeviceEndpointOptions> Devices { get; set; } = [];
 
-    /// <summary>How often each reader is read for observations.</summary>
-    public int RosterPollSeconds { get; set; } = 15;
+    /// <summary>
+    /// How often each reader is read for observations. Staff can ask for one reader now from the app
+    /// (SCAN_READER), so this only bounds how long a change made at the reader goes unnoticed.
+    /// </summary>
+    public int RosterPollSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// A scan that finds exactly what the server last acknowledged sends nothing; the list is sent
+    /// again anyway after this many minutes.
+    /// </summary>
+    public int RosterRefreshMinutes { get; set; } = 60;
 
     /// <summary>How often each reader's attendance log is read, so admins see recent check-ins.</summary>
     public int AttendancePollSeconds { get; set; } = 15;

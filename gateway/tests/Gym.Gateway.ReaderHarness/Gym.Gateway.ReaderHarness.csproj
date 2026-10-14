@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>Gym.Gateway.V1Harness</RootNamespace>
+    <RootNamespace>Gym.Gateway.ReaderHarness</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Gym.Gateway\Gym.Gateway.csproj" />

@@ -23,10 +23,10 @@ import org.springframework.http.MediaType;
 import tools.jackson.databind.JsonNode;
 
 /**
- * V15: one trusted roster becomes a bootstrap report. Known mappings stay on the desired-state
+ * One trusted roster becomes a bootstrap report. Known mappings stay on the desired-state
  * writer. Ambiguous people stay unresolved, and a short list creates nothing.
  */
-class V15BootstrapIT extends AbstractIntegrationTest {
+class RosterBootstrapReportIT extends AbstractIntegrationTest {
 
     @Autowired
     private DesiredProjectionService desiredProjectionService;
@@ -45,9 +45,9 @@ class V15BootstrapIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         resetDatabase();
-        Tenant tenant = createTenant("V15 Gym", "v15-gym");
-        createUser(tenant.getId(), "v1-admin", "v1-admin@gym.local", "GYM_ADMIN");
-        token = tokenFor("v1-admin");
+        Tenant tenant = createTenant("Bootstrap Gym", "bootstrap-gym");
+        createUser(tenant.getId(), "bootstrap-admin", "bootstrap-admin@gym.local", "GYM_ADMIN");
+        token = tokenFor("bootstrap-admin");
 
         String createdGateway = postJson("/api/v1/gateways", "{\"name\":\"LAN\"}")
                 .andExpect(status().isCreated())
@@ -63,8 +63,8 @@ class V15BootstrapIT extends AbstractIntegrationTest {
 
     @Test
     void aScriptedRosterConvergesTheMatchAndLeavesTheOtherThreeUnresolved() throws Exception {
-        JsonNode asha = onlyOnReader("Asha", "Shah", "V15-ASHA", "1501", flaggedId);
-        JsonNode meera = onlyOnReader("Meera", "Shah", "V15-MEERA", "1502", flaggedId);
+        JsonNode asha = onlyOnReader("Asha", "Shah", "BOOT-ASHA", "1501", flaggedId);
+        JsonNode meera = onlyOnReader("Meera", "Shah", "BOOT-MEERA", "1502", flaggedId);
         String ashaId = asha.get("id").asString();
         String meeraId = meera.get("id").asString();
         String ashaDeviceUser = mapping(flagged, ashaId).getDeviceUserId();
@@ -123,7 +123,7 @@ class V15BootstrapIT extends AbstractIntegrationTest {
 
     @Test
     void aTrustedEmptyRosterFromTheGatewaySeedsDesiredRevisions() throws Exception {
-        JsonNode asha = onlyOnReader("Asha", "Shah", "V15-LIVE", "1510", flaggedId);
+        JsonNode asha = onlyOnReader("Asha", "Shah", "BOOT-LIVE", "1510", flaggedId);
         String ashaId = asha.get("id").asString();
         String ashaDeviceUser = mapping(flagged, ashaId).getDeviceUserId();
         long members = memberRepository.count();
@@ -150,7 +150,7 @@ class V15BootstrapIT extends AbstractIntegrationTest {
 
     @Test
     void anEmptyReaderIsSeededFromTheServerAndNotFromAnotherReader() throws Exception {
-        JsonNode asha = onlyOnReader("Asha", "Shah", "V15-SEED", "1503", flaggedId);
+        JsonNode asha = onlyOnReader("Asha", "Shah", "BOOT-SEED", "1503", flaggedId);
         String ashaId = asha.get("id").asString();
         String ashaDeviceUser = mapping(flagged, ashaId).getDeviceUserId();
         postRoster(flaggedId, 1, """
@@ -171,7 +171,7 @@ class V15BootstrapIT extends AbstractIntegrationTest {
 
     @Test
     void aShortListCreatesNothing() throws Exception {
-        JsonNode asha = onlyOnReader("Asha", "Shah", "V15-SHORT", "1504", flaggedId);
+        JsonNode asha = onlyOnReader("Asha", "Shah", "BOOT-SHORT", "1504", flaggedId);
         String ashaDeviceUser = mapping(flagged, asha.get("id").asString()).getDeviceUserId();
         long members = memberRepository.count();
         long projections = desiredMemberProjectionRepository.count();
@@ -223,8 +223,8 @@ class V15BootstrapIT extends AbstractIntegrationTest {
 
     @Test
     void theSameNameOnTwoMembersIsNotLinked() throws Exception {
-        JsonNode left = onlyOnReader("Sam", "Lee", "V15-SAM-A", "1505", flaggedId);
-        JsonNode right = onlyOnReader("Sam", "Lee", "V15-SAM-B", "1506", flaggedId);
+        JsonNode left = onlyOnReader("Sam", "Lee", "BOOT-SAM-A", "1505", flaggedId);
+        JsonNode right = onlyOnReader("Sam", "Lee", "BOOT-SAM-B", "1506", flaggedId);
         String leftUser = mapping(flagged, left.get("id").asString()).getDeviceUserId();
         String rightUser = mapping(flagged, right.get("id").asString()).getDeviceUserId();
         postRoster(sideId, 1, """

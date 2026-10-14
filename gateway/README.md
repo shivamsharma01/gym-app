@@ -31,9 +31,9 @@ Use **Reissue enrollment** in the staff UI (`POST /api/v1/gateways/{id}/enrollme
 - Uninstall leaves ProgramData unless `PURGE_CONFIG=1` is passed to msiexec
 - **Linux cannot build the MSI or WPF configurator** — use [`.github/workflows/gateway-msi.yml`](../.github/workflows/gateway-msi.yml) (`windows-latest`)
 
-## Local simulator (no TrueFace hardware)
+## Without TrueFace hardware
 
-The old Python device simulator was removed. A new one will be built for the [device sync architecture](../docs/architecture/device-sync-architecture.md). Until then the `Remote` adapter has no device server to talk to; use `TrueFace` against a real reader.
+`Adapter: Mock` (the default) keeps an in-memory reader; it is for tests and wiring checks only. Use `TrueFace` against a real reader.
 
 ## Develop on Linux (this machine)
 

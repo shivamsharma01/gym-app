@@ -12,7 +12,6 @@ import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.PendingEnrollment;
-import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.face.MemberFaceService;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberStatus;
@@ -33,10 +32,10 @@ import org.springframework.http.MediaType;
 import tools.jackson.databind.JsonNode;
 
 /**
- * V14: a staff decision becomes a desired revision. The existing read-back acknowledgement is the
+ * A staff decision becomes a desired revision. The existing read-back acknowledgement is the
  * only way that decision is closed. Link and create keep the reader's device user id.
  */
-class V14StaffDecisionIT extends AbstractIntegrationTest {
+class StaffReviewDecisionIT extends AbstractIntegrationTest {
 
     @Autowired
     private DesiredProjectionService desiredProjectionService;
@@ -58,9 +57,9 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         resetDatabase();
-        Tenant tenant = createTenant("V14 Gym", "v14-gym");
-        createUser(tenant.getId(), "v1-admin", "v1-admin@gym.local", "GYM_ADMIN");
-        token = tokenFor("v1-admin");
+        Tenant tenant = createTenant("Review Gym", "review-gym");
+        createUser(tenant.getId(), "review-admin", "review-admin@gym.local", "GYM_ADMIN");
+        token = tokenFor("review-admin");
 
         String createdGateway = postJson("/api/v1/gateways", "{\"name\":\"LAN\"}")
                 .andExpect(status().isCreated())
@@ -76,7 +75,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void acceptServerWritesTheServerValueAndAckClosesTheAudit() throws Exception {
-        JsonNode created = onlyOnReader("Asha", "Shah", "V14-ACC", "9101", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "REVIEW-ACC", "9101", flaggedId);
         String memberId = created.get("id").asString();
         String deviceUserId = mapping(memberId).getDeviceUserId();
         postReaderEdit(deviceUserId, "Left");
@@ -86,7 +85,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         JsonNode decision = decide(opened.getPublicId(), "accept-server");
 
         assertThat(decision.get("decision").asString()).isEqualTo("ACCEPT_SERVER");
-        assertThat(decision.get("actor").asString()).isEqualTo("v1-admin");
+        assertThat(decision.get("actor").asString()).isEqualTo("review-admin");
         assertThat(decision.get("priorState").asString()).isEqualTo("Left");
         assertThat(decision.get("chosenState").asString()).isEqualTo("Asha Shah");
         assertThat(decision.get("open").asBoolean()).isTrue();
@@ -95,7 +94,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         DesiredMemberProjection projected = projection(memberId);
         assertThat(projected.getReaderName()).isEqualTo("Asha Shah");
         assertThat(projected.getRevision()).isEqualTo(decision.get("revision").asLong());
-        JsonNode audited = onlyDecisionAudit(opened.getPublicId(), "REVIEW_DECIDED", "v1-admin");
+        JsonNode audited = onlyDecisionAudit(opened.getPublicId(), "REVIEW_DECIDED", "review-admin");
         assertThat(audited.get("decision").asString()).isEqualTo("ACCEPT_SERVER");
         assertThat(audited.get("memberId").asString()).isEqualTo(memberId);
         assertThat(audited.get("deviceId").asString()).isEqualTo(flaggedId);
@@ -109,7 +108,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         DeviceReviewItem closed = deviceReviewItemRepository.findByPublicId(opened.getPublicId()).orElseThrow();
         assertThat(closed.isResolved()).isTrue();
         assertThat(closed.getVerificationError()).isNull();
-        assertThat(closed.getActor()).isEqualTo("v1-admin");
+        assertThat(closed.getActor()).isEqualTo("review-admin");
         assertThat(decisionAudits(opened.getPublicId())).isEqualTo(1);
         assertThat(readerRevisionRepository.findByDeviceId(flagged).orElseThrow().getAppliedRevision())
                 .isEqualTo(closed.getDecisionRevision());
@@ -117,7 +116,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void aFailedReadBackLeavesTheDecisionOpenWithTheVerificationError() throws Exception {
-        JsonNode created = onlyOnReader("Asha", "Shah", "V14-FAIL", "9102", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "REVIEW-FAIL", "9102", flaggedId);
         String memberId = created.get("id").asString();
         String deviceUserId = mapping(memberId).getDeviceUserId();
         postReaderEdit(deviceUserId, "Left");
@@ -142,7 +141,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         DeviceReviewItem stillOpen = deviceReviewItemRepository.findByPublicId(opened.getPublicId()).orElseThrow();
         assertThat(stillOpen.isResolved()).isFalse();
         assertThat(stillOpen.getDecision()).isEqualTo("ACCEPT_SERVER");
-        assertThat(stillOpen.getActor()).isEqualTo("v1-admin");
+        assertThat(stillOpen.getActor()).isEqualTo("review-admin");
         assertThat(stillOpen.getVerificationError()).contains("Read-back does not match");
         assertThat(decisionAudits(opened.getPublicId())).isEqualTo(1);
         assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("Asha Shah");
@@ -161,16 +160,16 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
         assertThat(memberRepository.count()).isEqualTo(members + 1);
         assertThat(decision.get("decision").asString()).isEqualTo("CREATE");
-        assertThat(decision.get("actor").asString()).isEqualTo("v1-admin");
+        assertThat(decision.get("actor").asString()).isEqualTo("review-admin");
         String memberId = decision.get("chosenState").asString();
         assertThat(mapping(memberId).getDeviceUserId()).isEqualTo("11");
         assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("Nila Sen");
-        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "v1-admin");
+        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "review-admin");
         assertThat(audited.get("decision").asString()).isEqualTo("CREATE");
         assertThat(audited.get("memberId").asString()).isEqualTo(memberId);
         assertThat(audited.get("deviceUserId").asString()).isEqualTo("11");
         assertThat(audited.get("revision").asLong()).isEqualTo(decision.get("revision").asLong());
-        assertMemberCreatedBy(memberId, "v1-admin");
+        assertMemberCreatedBy(memberId, "review-admin");
 
         postFace("11", "Nila Sen", hash);
         assertThat(mapping(memberId).getDeviceUserId()).isEqualTo("11");
@@ -184,7 +183,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void linkKeepsTheReaderDeviceUserIdAndDoesNotCreateAMember() throws Exception {
-        JsonNode existing = onlyOnReader("Ria", "Shah", "V14-LINK", "9103", sideId);
+        JsonNode existing = onlyOnReader("Ria", "Shah", "REVIEW-LINK", "9103", sideId);
         String memberId = existing.get("id").asString();
         long members = memberRepository.count();
         postFace("12", "Door", uploadFace());
@@ -205,7 +204,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         assertThat(pulled.get("deviceUserId").asString()).isEqualTo("12");
         assertThat(pulled.get("name").asString()).isEqualTo("Ria Shah");
         assertThat(pulled.get("keepDeviceUserId").asBoolean()).isTrue();
-        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "v1-admin");
+        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "review-admin");
         assertThat(audited.get("decision").asString()).isEqualTo("LINK");
         assertThat(audited.get("memberId").asString()).isEqualTo(memberId);
         assertThat(audited.get("deviceUserId").asString()).isEqualTo("12");
@@ -221,7 +220,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
     void rejectCreatesNoMemberAndRemovesThatDeviceUser() throws Exception {
         postFace("13", "Ghost", uploadFace());
         long members = memberRepository.count();
-        long removes = removeCommands();
+        long commands = commandCount();
         PendingEnrollment enrollment = pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(flagged, "13")
                 .orElseThrow();
 
@@ -231,14 +230,14 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(flagged, "13")).isEmpty();
         assertThat(decision.get("decision").asString()).isEqualTo("REJECT");
         assertThat(decision.get("chosenState").asString()).isEqualTo("removed");
-        assertThat(decision.get("actor").asString()).isEqualTo("v1-admin");
+        assertThat(decision.get("actor").asString()).isEqualTo("review-admin");
         DesiredMemberProjection absence = desiredMemberProjectionRepository
                 .findByDeviceIdAndDeviceUserId(flagged, "13").orElseThrow();
         assertThat(absence.getMemberId()).isNull();
         assertThat(absence.isPresentOnReader()).isFalse();
         assertThat(absence.getDeviceUserId()).isEqualTo("13");
-        assertThat(removeCommands()).isEqualTo(removes);
-        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "v1-admin");
+        assertThat(commandCount()).isEqualTo(commands);
+        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "review-admin");
         assertThat(audited.get("decision").asString()).isEqualTo("REJECT");
         assertThat(audited.has("memberId")).isFalse();
         assertThat(audited.get("deviceUserId").asString()).isEqualTo("13");
@@ -253,7 +252,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void restoreRepublishesTheServerRecordOnTheSameId() throws Exception {
-        JsonNode created = onlyOnReader("Asha", "Shah", "V14-RES", "9104", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "REVIEW-RES", "9104", flaggedId);
         String memberId = created.get("id").asString();
         String deviceUserId = mapping(memberId).getDeviceUserId();
         postAbsence(deviceUserId);
@@ -269,7 +268,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         assertThat(projected.getDeviceUserId()).isEqualTo(deviceUserId);
         assertThat(projected.getReaderName()).isEqualTo("Asha Shah");
         assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
-        JsonNode audited = onlyDecisionAudit(opened.getPublicId(), "REVIEW_DECIDED", "v1-admin");
+        JsonNode audited = onlyDecisionAudit(opened.getPublicId(), "REVIEW_DECIDED", "review-admin");
         assertThat(audited.get("decision").asString()).isEqualTo("RESTORE");
         assertThat(audited.get("priorState").asString()).isEqualTo("absent");
         assertThat(audited.get("memberId").asString()).isEqualTo(memberId);
@@ -282,13 +281,13 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void removeFromThisReaderUsesTheAbsenceWriterAndKeepsTheMember() throws Exception {
-        JsonNode created = onlyOnReader("Asha", "Shah", "V14-REM", "9105", flaggedId);
+        JsonNode created = onlyOnReader("Asha", "Shah", "REVIEW-REM", "9105", flaggedId);
         String memberId = created.get("id").asString();
         String deviceUserId = mapping(memberId).getDeviceUserId();
         postReaderEdit(deviceUserId, "Left");
         DeviceReviewItem opened = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, deviceUserId)
                 .orElseThrow();
-        long removes = removeCommands();
+        long commands = commandCount();
 
         JsonNode decision = decide(opened.getPublicId(), "remove");
 
@@ -300,8 +299,8 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
         assertThat(mapping(memberId).getDeviceUserId()).isEqualTo(deviceUserId);
         assertThat(desiredMemberProjectionRepository.findByDeviceId(other)).isEmpty();
-        assertThat(removeCommands()).isEqualTo(removes);
-        JsonNode audited = onlyDecisionAudit(opened.getPublicId(), "REVIEW_DECIDED", "v1-admin");
+        assertThat(commandCount()).isEqualTo(commands);
+        JsonNode audited = onlyDecisionAudit(opened.getPublicId(), "REVIEW_DECIDED", "review-admin");
         assertThat(audited.get("decision").asString()).isEqualTo("REMOVE");
         assertThat(audited.get("chosenState").asString()).isEqualTo("removed");
         assertThat(audited.get("memberId").asString()).isEqualTo(memberId);
@@ -313,46 +312,22 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         ackAbsence(flaggedId, projected.getRevision(), deviceUserId);
         DeviceReviewItem closed = deviceReviewItemRepository.findByPublicId(opened.getPublicId()).orElseThrow();
         assertThat(closed.isResolved()).isTrue();
-        assertThat(closed.getActor()).isEqualTo("v1-admin");
+        assertThat(closed.getActor()).isEqualTo("review-admin");
         assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getStatus()).isEqualTo(MemberStatus.ACTIVE);
-    }
-
-    @Test
-    void dismissAndRemoveDoNotCloseTheReviewItem() throws Exception {
-        JsonNode created = onlyOnReader("Asha", "Shah", "V14-OLD", "9106", flaggedId);
-        String deviceUserId = mapping(created.get("id").asString()).getDeviceUserId();
-        postReaderEdit(deviceUserId, "Left");
-        DeviceReviewItem opened = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, deviceUserId)
-                .orElseThrow();
-
-        mockMvc.perform(post("/api/v1/devices/" + flaggedId + "/conflicts/" + opened.getPublicId() + "/resolve")
-                        .param("action", "DISMISS")
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound());
-        mockMvc.perform(post("/api/v1/devices/" + flaggedId + "/conflicts/" + opened.getPublicId() + "/resolve")
-                        .param("action", "REMOVE")
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound());
-
-        DeviceReviewItem still = deviceReviewItemRepository.findByPublicId(opened.getPublicId()).orElseThrow();
-        assertThat(still.isResolved()).isFalse();
-        assertThat(still.getDecision()).isNull();
-        assertThat(still.getDeviceUserId()).isEqualTo(deviceUserId);
-        assertThat(decisionAudits(opened.getPublicId())).isZero();
     }
 
     @Test
     void staffDecideReviewsButDoNotManageDevicesOrBootstrap() throws Exception {
         Long tenantId = deviceRepository.findByPublicId(flaggedId).orElseThrow().getTenantId();
-        createUser(tenantId, "v17-staff", "v17-staff@gym.local", "STAFF");
-        createUser(tenantId, "v17-viewer", "v17-viewer@gym.local", "REPORT_VIEWER");
-        JsonNode created = onlyOnReader("Asha", "Shah", "V17-ACC", "9201", flaggedId);
+        createUser(tenantId, "front-desk", "front-desk@gym.local", "STAFF");
+        createUser(tenantId, "viewer", "viewer@gym.local", "REPORT_VIEWER");
+        JsonNode created = onlyOnReader("Asha", "Shah", "ROLE-ACC", "9201", flaggedId);
         String deviceUserId = mapping(created.get("id").asString()).getDeviceUserId();
         postReaderEdit(deviceUserId, "Left");
         DeviceReviewItem opened = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, deviceUserId)
                 .orElseThrow();
-        String viewer = tokenFor("v17-viewer");
-        token = tokenFor("v17-staff");
+        String viewer = tokenFor("viewer");
+        token = tokenFor("front-desk");
 
         mockMvc.perform(post("/api/v1/reviews/" + opened.getPublicId() + "/accept-server")
                         .header("Authorization", "Bearer " + viewer)
@@ -368,8 +343,8 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         JsonNode decision = decide(opened.getPublicId(), "accept-server");
 
         assertThat(decision.get("decision").asString()).isEqualTo("ACCEPT_SERVER");
-        assertThat(decision.get("actor").asString()).isEqualTo("v17-staff");
-        assertThat(onlyDecisionAudit(opened.getPublicId(), "REVIEW_DECIDED", "v17-staff")
+        assertThat(decision.get("actor").asString()).isEqualTo("front-desk");
+        assertThat(onlyDecisionAudit(opened.getPublicId(), "REVIEW_DECIDED", "front-desk")
                 .get("decision").asString()).isEqualTo("ACCEPT_SERVER");
         ackDesired(flaggedId);
         assertThat(deviceReviewItemRepository.findByPublicId(opened.getPublicId()).orElseThrow().isResolved())
@@ -378,7 +353,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void staffLinkAPendingEnrollmentToAnExistingMemberOnThatReaderOnly() throws Exception {
-        JsonNode existing = onlyOnReader("Ria", "Shah", "V17-LINK", "9202", sideId);
+        JsonNode existing = onlyOnReader("Ria", "Shah", "ROLE-LINK", "9202", sideId);
         String memberId = existing.get("id").asString();
         Long memberPk = memberRepository.findByPublicId(memberId).orElseThrow().getId();
         Long side = deviceRepository.findByPublicId(sideId).orElseThrow().getId();
@@ -405,7 +380,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
                 .andReturn().getResponse().getContentAsString());
 
         assertThat(decision.get("decision").asString()).isEqualTo("LINK");
-        assertThat(decision.get("actor").asString()).isEqualTo("v17-staff");
+        assertThat(decision.get("actor").asString()).isEqualTo("front-desk");
         assertThat(decision.get("chosenState").asString()).isEqualTo(memberId);
         assertThat(memberRepository.count()).isEqualTo(members);
         assertThat(mapping(memberId).getDeviceUserId()).isEqualTo("21");
@@ -421,14 +396,14 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         assertThat(pulled.get("deviceUserId").asString()).isEqualTo("21");
         assertThat(pulled.get("keepDeviceUserId").asBoolean()).isTrue();
 
-        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "v17-staff");
+        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "front-desk");
         assertThat(audited.get("decision").asString()).isEqualTo("LINK");
         assertThat(audited.get("memberId").asString()).isEqualTo(memberId);
         assertThat(audited.get("deviceId").asString()).isEqualTo(flaggedId);
         assertThat(audited.get("deviceUserId").asString()).isEqualTo("21");
         assertThat(audited.get("revision").asLong()).isEqualTo(decision.get("revision").asLong());
 
-        assertWaitsForTheReader(enrollment.getPublicId(), decision.get("revision").asLong(), "v17-staff");
+        assertWaitsForTheReader(enrollment.getPublicId(), decision.get("revision").asLong(), "front-desk");
         postJson(link, body).andExpect(status().isConflict());
         assertThat(decisionAudits(enrollment.getPublicId())).isEqualTo(1);
 
@@ -443,7 +418,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         PendingEnrollment closed = pendingEnrollmentRepository.findByPublicId(enrollment.getPublicId()).orElseThrow();
         assertThat(closed.isResolved()).isTrue();
         assertThat(closed.getVerificationError()).isNull();
-        assertThat(closed.getActor()).isEqualTo("v17-staff");
+        assertThat(closed.getActor()).isEqualTo("front-desk");
         assertThat(readerRevisionRepository.findByDeviceId(flagged).orElseThrow().getAppliedRevision())
                 .isEqualTo(closed.getDecisionRevision());
         assertThat(memberRepository.count()).isEqualTo(members);
@@ -469,7 +444,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         JsonNode decision = decide(enrollment.getPublicId(), "create");
 
         assertThat(decision.get("decision").asString()).isEqualTo("CREATE");
-        assertThat(decision.get("actor").asString()).isEqualTo("v17-staff");
+        assertThat(decision.get("actor").asString()).isEqualTo("front-desk");
         String memberId = decision.get("chosenState").asString();
         Long memberPk = memberRepository.findByPublicId(memberId).orElseThrow().getId();
         assertThat(memberRepository.count()).isEqualTo(members + 1);
@@ -479,8 +454,8 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         assertThat(desiredMemberProjectionRepository.findByDeviceIdAndMemberId(side, memberPk)).isEmpty();
         assertThat(desiredMemberProjectionRepository.findByDeviceId(other)).isEmpty();
         assertThat(deviceSyncCommandRepository.count()).isEqualTo(commands);
-        assertMemberCreatedBy(memberId, "v17-staff");
-        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "v17-staff");
+        assertMemberCreatedBy(memberId, "front-desk");
+        JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "front-desk");
         assertThat(audited.get("decision").asString()).isEqualTo("CREATE");
         assertThat(audited.get("memberId").asString()).isEqualTo(memberId);
         assertThat(audited.get("deviceId").asString()).isEqualTo(flaggedId);
@@ -488,7 +463,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         assertThat(audited.get("revision").asLong()).isEqualTo(decision.get("revision").asLong());
         assertThat(pull(flaggedId).get("items").get(0).get("deviceUserId").asString()).isEqualTo("22");
 
-        assertWaitsForTheReader(enrollment.getPublicId(), decision.get("revision").asLong(), "v17-staff");
+        assertWaitsForTheReader(enrollment.getPublicId(), decision.get("revision").asLong(), "front-desk");
         postJson(create, "{}").andExpect(status().isConflict());
         assertThat(memberRepository.count()).isEqualTo(members + 1);
         assertThat(decisionAudits(enrollment.getPublicId())).isEqualTo(1);
@@ -503,7 +478,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
         ackDesired(flaggedId);
         PendingEnrollment closed = pendingEnrollmentRepository.findByPublicId(enrollment.getPublicId()).orElseThrow();
         assertThat(closed.isResolved()).isTrue();
-        assertThat(closed.getActor()).isEqualTo("v17-staff");
+        assertThat(closed.getActor()).isEqualTo("front-desk");
         assertThat(readerRevisionRepository.findByDeviceId(flagged).orElseThrow().getAppliedRevision())
                 .isEqualTo(closed.getDecisionRevision());
         postJson(create, "{}").andExpect(status().isConflict());
@@ -513,7 +488,7 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void aDecisionThatRollsBackWritesNoDecisionAudit() throws Exception {
-        String alreadyHere = onlyOnReader("Om", "Rao", "V17-HERE", "9203", flaggedId).get("id").asString();
+        String alreadyHere = onlyOnReader("Om", "Rao", "ROLE-HERE", "9203", flaggedId).get("id").asString();
         Long memberPk = memberRepository.findByPublicId(alreadyHere).orElseThrow().getId();
         long desired = readerRevisionRepository.findByDeviceId(flagged).orElseThrow().getDesiredRevision();
         postFace("23", "Door", uploadFace());
@@ -568,10 +543,10 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
     /** Creates staff and report-viewer users, switches the caller to staff, and returns the viewer token. */
     private String staffAndViewer() throws Exception {
         Long tenantId = deviceRepository.findById(flagged).orElseThrow().getTenantId();
-        createUser(tenantId, "v17-staff", "v17-staff@gym.local", "STAFF");
-        createUser(tenantId, "v17-viewer", "v17-viewer@gym.local", "REPORT_VIEWER");
-        String viewer = tokenFor("v17-viewer");
-        token = tokenFor("v17-staff");
+        createUser(tenantId, "front-desk", "front-desk@gym.local", "STAFF");
+        createUser(tenantId, "viewer", "viewer@gym.local", "REPORT_VIEWER");
+        String viewer = tokenFor("viewer");
+        token = tokenFor("front-desk");
         return viewer;
     }
 
@@ -621,10 +596,8 @@ class V14StaffDecisionIT extends AbstractIntegrationTest {
                 flagged, memberRepository.findByPublicId(memberPublicId).orElseThrow().getId()).orElseThrow();
     }
 
-    private long removeCommands() {
-        return deviceSyncCommandRepository.findAll().stream()
-                .filter(command -> command.getType() == SyncCommandType.REMOVE_USER)
-                .count();
+    private long commandCount() {
+        return deviceSyncCommandRepository.count();
     }
 
     private String uploadFace() throws Exception {

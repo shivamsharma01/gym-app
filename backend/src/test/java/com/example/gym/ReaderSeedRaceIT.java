@@ -28,11 +28,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 
 /**
- * V21: a reader-wide seed racing a deactivation or a membership freeze. Whichever commits last,
+ * A reader-wide seed racing a deactivation or a membership freeze. Whichever commits last,
  * the member must not stay enabled on the newly seeded reader. Each test holds the new reader's
  * lock in a controlling transaction so the interleaving is fixed rather than left to timing.
  */
-class V21SeedRaceIT extends AbstractIntegrationTest {
+class ReaderSeedRaceIT extends AbstractIntegrationTest {
 
     @Autowired
     private ReaderReconcileService reconcileService;
@@ -51,9 +51,9 @@ class V21SeedRaceIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         resetDatabase();
-        tenant = createTenant("V21 Race Gym", "v21-race");
-        createUser(tenant.getId(), "v21-race-admin", "v21-race-admin@gym.local", "GYM_ADMIN");
-        token = tokenFor("v21-race-admin");
+        tenant = createTenant("Seed Race Gym", "seed-race");
+        createUser(tenant.getId(), "seed-admin", "seed-admin@gym.local", "GYM_ADMIN");
+        token = tokenFor("seed-admin");
         JsonNode gateway = readJson(postJson("/api/v1/gateways", "{\"name\":\"LAN\"}")
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
         gatewayId = gateway.get("id").asString();

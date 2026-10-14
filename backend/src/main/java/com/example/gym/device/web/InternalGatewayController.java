@@ -40,7 +40,6 @@ import org.springframework.web.bind.annotation.RestController;
  * REST fallback of the gateway protocol (ingest + command poll) plus enrollment and credential
  * rotation. Live calls require the per-gateway operational credential. Enrollment exchanges a
  * one-time enrollment token; the gateway id on that request is not the identity. Never a user JWT.
- * There is no anonymous or shared-token path.
  */
 @RestController
 @RequestMapping("/internal/gateway")

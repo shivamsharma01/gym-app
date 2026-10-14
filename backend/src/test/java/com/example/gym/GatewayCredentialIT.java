@@ -85,28 +85,28 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
 
     @Test
     void rotateKeepsOldCredentialUntilNewOneIsUsed() throws Exception {
-        String credentialV1 = enroll(gatewayId, enrollmentToken);
+        String firstCredential = enroll(gatewayId, enrollmentToken);
 
         String rotated = mockMvc.perform(post("/internal/gateway/credentials/rotate")
-                        .header("Authorization", "Bearer " + credentialV1))
+                        .header("Authorization", "Bearer " + firstCredential))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.credential").isNotEmpty())
                 .andReturn().getResponse().getContentAsString();
-        String credentialV2 = readJson(rotated).get("credential").asString();
-        assertThat(credentialV2).isNotEqualTo(credentialV1);
+        String rotatedCredential = readJson(rotated).get("credential").asString();
+        assertThat(rotatedCredential).isNotEqualTo(firstCredential);
 
-        // V1 still works until V2 authenticates (promote).
+        // The first credential still works until the rotated one authenticates (promote).
         mockMvc.perform(get("/internal/gateway/devices")
-                        .header("Authorization", "Bearer " + credentialV1))
+                        .header("Authorization", "Bearer " + firstCredential))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/internal/gateway/devices")
-                        .header("Authorization", "Bearer " + credentialV2))
+                        .header("Authorization", "Bearer " + rotatedCredential))
                 .andExpect(status().isOk());
 
-        // After promote, V1 is rejected.
+        // After promote, the first credential is rejected.
         mockMvc.perform(get("/internal/gateway/devices")
-                        .header("Authorization", "Bearer " + credentialV1))
+                        .header("Authorization", "Bearer " + firstCredential))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -262,7 +262,7 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated());
 
         var foreignDevice = deviceRepository.findByPublicId(foreignDeviceId).orElseThrow();
-        deviceSyncService.enqueue(foreignDevice.getTenantId(), foreignDevice.getId(), null, null,
+        deviceSyncService.enqueue(foreignDevice.getTenantId(), foreignDevice.getId(),
                 SyncCommandType.OPEN_DOOR, Map.of("reason", "isolation"));
         Long foreignDevicePk = foreignDevice.getId();
         var foreignCommand = deviceSyncCommandRepository.findAll().stream()

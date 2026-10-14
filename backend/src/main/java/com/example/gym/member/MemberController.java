@@ -56,7 +56,6 @@ public class MemberController {
     public PageResponse<MemberResponse> list(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) MemberStatus status,
-            @RequestParam(required = false) MemberCreationSource creationSource,
             @RequestParam(required = false) DeviceAuthority deviceAuthority,
             @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "asc") String direction,
@@ -68,7 +67,6 @@ public class MemberController {
                 SecurityUtils.currentTenantId(),
                 q,
                 status,
-                creationSource,
                 deviceAuthority,
                 pageable
         );

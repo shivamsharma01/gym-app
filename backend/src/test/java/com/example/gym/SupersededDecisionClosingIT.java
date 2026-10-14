@@ -26,10 +26,10 @@ import org.springframework.test.web.servlet.ResultActions;
 import tools.jackson.databind.JsonNode;
 
 /**
- * V20: a staff decision closes once the reader confirms a later revision of the same user, even
+ * A staff decision closes once the reader confirms a later revision of the same user, even
  * when a member change replaced the decision revision before the gateway applied it.
  */
-class V20SupersededDecisionIT extends AbstractIntegrationTest {
+class SupersededDecisionClosingIT extends AbstractIntegrationTest {
 
     @Autowired
     private DesiredProjectionService desiredProjectionService;
@@ -51,9 +51,9 @@ class V20SupersededDecisionIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         resetDatabase();
-        Tenant tenant = createTenant("V20 Gym", "v20-gym");
-        createUser(tenant.getId(), "v20-admin", "v20-admin@gym.local", "GYM_ADMIN");
-        token = tokenFor("v20-admin");
+        Tenant tenant = createTenant("Superseded Gym", "superseded-gym");
+        createUser(tenant.getId(), "superseded-admin", "superseded-admin@gym.local", "GYM_ADMIN");
+        token = tokenFor("superseded-admin");
         JsonNode gateway = readJson(postJson("/api/v1/gateways", "{\"name\":\"LAN\"}")
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
         gatewayPublicId = gateway.get("id").asString();
@@ -66,7 +66,7 @@ class V20SupersededDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void aReviewDecisionReplacedByARenameClosesWhenTheReaderConfirmsTheRename() throws Exception {
-        String memberId = onlyOnReader("Asha", "V20-REV", "9301", entranceId);
+        String memberId = onlyOnReader("Asha", "SUPERSEDED-REV", "9301", entranceId);
         String userId = deviceUserId(memberId, entrance);
         postReaderEdit(entranceId, userId, "Left");
         DeviceReviewItem opened = reviewItem(entrance, userId);
@@ -88,7 +88,7 @@ class V20SupersededDecisionIT extends AbstractIntegrationTest {
         assertThat(closed.isResolved()).isTrue();
         assertThat(closed.getDecision()).isEqualTo("ACCEPT_SERVER");
         assertThat(closed.getDecisionRevision()).isEqualTo(decided);
-        assertThat(closed.getActor()).isEqualTo("v20-admin");
+        assertThat(closed.getActor()).isEqualTo("superseded-admin");
         assertThat(appliedRevision(entrance)).isEqualTo(renamed);
         assertThat(decisionAudits(opened.getPublicId())).isEqualTo(1);
         assertThat(openReviews()).noneMatch(id -> id.equals(opened.getPublicId()));
@@ -103,7 +103,7 @@ class V20SupersededDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void aLinkedEnrollmentReplacedByARenameClosesWhenTheReaderConfirmsTheRename() throws Exception {
-        String memberId = onlyOnReader("Ria", "V20-LINK", "9302", sideId);
+        String memberId = onlyOnReader("Ria", "SUPERSEDED-LINK", "9302", sideId);
         postFace(entranceId, "31", "Door", uploadFace());
         PendingEnrollment enrollment = pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(entrance, "31")
                 .orElseThrow();
@@ -133,7 +133,7 @@ class V20SupersededDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void aFailedReadBackOfTheNewerRevisionLeavesTheReplacedDecisionOpenWithTheError() throws Exception {
-        String memberId = onlyOnReader("Nila", "V20-FAIL", "9303", entranceId);
+        String memberId = onlyOnReader("Nila", "SUPERSEDED-FAIL", "9303", entranceId);
         String userId = deviceUserId(memberId, entrance);
         postReaderEdit(entranceId, userId, "Left");
         DeviceReviewItem opened = reviewItem(entrance, userId);
@@ -157,11 +157,11 @@ class V20SupersededDecisionIT extends AbstractIntegrationTest {
 
     @Test
     void anOpenDecisionForAnotherDeviceUserOrOnAnotherReaderStaysOpen() throws Exception {
-        String renamedMember = onlyOnReader("Asha", "V20-A", "9304", entranceId);
+        String renamedMember = onlyOnReader("Asha", "SUPERSEDED-A", "9304", entranceId);
         String renamedUser = deviceUserId(renamedMember, entrance);
-        String otherMember = onlyOnReader("Bina", "V20-B", "9305", entranceId);
+        String otherMember = onlyOnReader("Bina", "SUPERSEDED-B", "9305", entranceId);
         String otherUser = deviceUserId(otherMember, entrance);
-        String sideMember = onlyOnReader("Chitra", "V20-C", "9306", sideId);
+        String sideMember = onlyOnReader("Chitra", "SUPERSEDED-C", "9306", sideId);
         String sideUser = deviceUserId(sideMember, side);
         postReaderEdit(entranceId, renamedUser, "Left A");
         postReaderEdit(entranceId, otherUser, "Left B");

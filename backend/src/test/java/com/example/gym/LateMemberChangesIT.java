@@ -43,11 +43,11 @@ import org.springframework.test.web.servlet.ResultActions;
 import tools.jackson.databind.JsonNode;
 
 /**
- * V21: a member who becomes active or gets a face later, and a reader that joins with people on it,
+ * A member who becomes active or gets a face later, and a reader that joins with people on it,
  * reach every reader with a gateway without waiting for another roster. Existing mappings, staff
  * removals included, and people the server does not know stay as they are.
  */
-class V21LateChangesIT extends AbstractIntegrationTest {
+class LateMemberChangesIT extends AbstractIntegrationTest {
 
     @Autowired
     private AuditLogRepository auditLogRepository;
@@ -61,9 +61,9 @@ class V21LateChangesIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         resetDatabase();
-        tenant = createTenant("V21 Gym", "v21-gym");
-        createUser(tenant.getId(), "v21-admin", "v21-admin@gym.local", "GYM_ADMIN");
-        token = tokenFor("v21-admin");
+        tenant = createTenant("Late Changes Gym", "late-gym");
+        createUser(tenant.getId(), "late-admin", "late-admin@gym.local", "GYM_ADMIN");
+        token = tokenFor("late-admin");
         JsonNode gateway = readJson(postJson("/api/v1/gateways", "{\"name\":\"LAN\"}")
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
         gatewayId = gateway.get("id").asString();
@@ -80,7 +80,7 @@ class V21LateChangesIT extends AbstractIntegrationTest {
     void aMemberInactiveWhenAReaderWasSeededReachesEveryReaderOnReactivationWithoutARoster() throws Exception {
         String entranceId = createReader("Entrance");
         Long entrance = deviceId(entranceId);
-        Member ria = member(create("Ria", "V21-REACT", "2101"));
+        Member ria = member(create("Ria", "LATE-REACT", "2101"));
         deactivate(ria);
         String exitId = createReader("Exit");
         Long exit = deviceId(exitId);
@@ -110,7 +110,7 @@ class V21LateChangesIT extends AbstractIntegrationTest {
     @Test
     void aReactivatedMemberWithAFrozenMembershipIsWrittenDisabled() throws Exception {
         createReader("Entrance");
-        Member ria = member(create("Ria", "V21-FROZEN", "2111"));
+        Member ria = member(create("Ria", "LATE-FROZEN", "2111"));
         LocalDate today = LocalDate.now();
         String planId = readJson(postJson("/api/v1/plans",
                 "{\"name\":\"Monthly\",\"price\":1000.00,\"currency\":\"INR\",\"durationDays\":30}")
@@ -143,8 +143,8 @@ class V21LateChangesIT extends AbstractIntegrationTest {
         String exitId = createReader("Exit");
         Long entrance = deviceId(entranceId);
         Long exit = deviceId(exitId);
-        Member noor = saveMember(tenant.getId(), "V21-FACE", "Noor", "Shah", "2201");
-        Member inactive = saveMember(tenant.getId(), "V21-FACE-OFF", "Ina", "Shah", "2202");
+        Member noor = saveMember(tenant.getId(), "LATE-FACE", "Noor", "Shah", "2201");
+        Member inactive = saveMember(tenant.getId(), "LATE-FACE-OFF", "Ina", "Shah", "2202");
         deactivate(inactive);
 
         uploadFace(noor, faceJpeg());
@@ -171,7 +171,7 @@ class V21LateChangesIT extends AbstractIntegrationTest {
         String entranceId = createReader("Entrance");
         String exitId = createReader("Exit");
         Long exit = deviceId(exitId);
-        Member dev = member(create("Dev", "V21-REMOVED", "2301"));
+        Member dev = member(create("Dev", "LATE-REMOVED", "2301"));
         mockMvc.perform(post("/api/v1/members/" + dev.getPublicId() + "/device-sync/" + exitId + "/remove")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isAccepted());
@@ -199,7 +199,7 @@ class V21LateChangesIT extends AbstractIntegrationTest {
         postRoster(exitId, 1, """
                 [{"deviceUserId":"1","name":"Noor Shah","deleted":false}]
                 """);
-        Member noor = saveMember(tenant.getId(), "V21-UNKNOWN", "Noor", "Shah", "2401");
+        Member noor = saveMember(tenant.getId(), "LATE-UNKNOWN", "Noor", "Shah", "2401");
         long members = memberRepository.count();
 
         uploadFace(noor, faceJpeg());
@@ -220,7 +220,7 @@ class V21LateChangesIT extends AbstractIntegrationTest {
         String exitId = createReader("Exit");
         Long entrance = deviceId(entranceId);
         Long exit = deviceId(exitId);
-        Member noor = saveMember(tenant.getId(), "V21-OCC", "Noor", "Shah", "2501");
+        Member noor = saveMember(tenant.getId(), "LATE-OCC", "Noor", "Shah", "2501");
         uploadFace(noor, faceJpeg());
         long revision = projection(entrance, noor).getRevision();
         DesiredMemberProjection exitBefore = projection(exit, noor);
@@ -245,8 +245,8 @@ class V21LateChangesIT extends AbstractIntegrationTest {
     @Test
     void aReaderAddedWithPeopleOnItReceivesTheExistingMembersFromItsFirstList() throws Exception {
         createReader("Entrance");
-        Member asha = member(create("Asha", "V21-ADD-A", "2601"));
-        Member bina = member(create("Bina", "V21-ADD-B", "2602"));
+        Member asha = member(create("Asha", "LATE-ADD-A", "2601"));
+        Member bina = member(create("Bina", "LATE-ADD-B", "2602"));
         String lateId = createReader("Late");
         Long late = deviceId(lateId);
         assertThat(memberDeviceMappingRepository.findByDeviceId(late)).isEmpty();
@@ -268,9 +268,9 @@ class V21LateChangesIT extends AbstractIntegrationTest {
     @Test
     void runningTheReconcileTwiceWritesNothingTheSecondTime() throws Exception {
         createReader("Entrance");
-        member(create("Asha", "V21-TWICE-A", "2701"));
-        member(create("Bina", "V21-TWICE-B", "2702"));
-        saveMember(tenant.getId(), "V21-TWICE-NOFACE", "Noor", "Shah", "2703");
+        member(create("Asha", "LATE-TWICE-A", "2701"));
+        member(create("Bina", "LATE-TWICE-B", "2702"));
+        saveMember(tenant.getId(), "LATE-TWICE-NOFACE", "Noor", "Shah", "2703");
         String lateId = createReader("Late");
         Long late = deviceId(lateId);
 
@@ -292,8 +292,8 @@ class V21LateChangesIT extends AbstractIntegrationTest {
         String loose = readJson(postJson("/api/v1/devices",
                 "{\"name\":\"Loose\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.41\",\"port\":37777}")
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("id").asString();
-        createUser(tenant.getId(), "v21-staff", "v21-staff@gym.local", "STAFF");
-        String staff = tokenFor("v21-staff");
+        createUser(tenant.getId(), "late-staff", "late-staff@gym.local", "STAFF");
+        String staff = tokenFor("late-staff");
 
         mockMvc.perform(post("/api/v1/devices/" + loose + "/reconcile").header("Authorization", "Bearer " + token))
                 .andExpect(status().isBadRequest());
@@ -305,16 +305,16 @@ class V21LateChangesIT extends AbstractIntegrationTest {
     void reconcilesRacingCreatesAndLateChangesMapEachMemberOnceWithoutDeadlock() throws Exception {
         String entranceId = createReader("Entrance");
         Long entrance = deviceId(entranceId);
-        Member ria = member(create("Ria", "V21-RACE-R", "2801"));
+        Member ria = member(create("Ria", "LATE-RACE-R", "2801"));
         deactivate(ria);
-        Member noor = saveMember(tenant.getId(), "V21-RACE-F", "Noor", "Shah", "2802");
+        Member noor = saveMember(tenant.getId(), "LATE-RACE-F", "Noor", "Shah", "2802");
         String lateId = createReader("Late");
         Long late = deviceId(lateId);
         int creates = 5;
 
         List<Callable<Integer>> calls = new ArrayList<>();
         for (int i = 0; i < creates; i++) {
-            String code = "V21-RACE-" + i;
+            String code = "LATE-RACE-" + i;
             String serial = Integer.toString(2810 + i);
             calls.add(() -> createMemberWithFace(token, """
                     {"firstName":"Racer%s","lastName":"Shah","memberCode":"%s","serialNumber":"%s"}

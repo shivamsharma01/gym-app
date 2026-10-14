@@ -11,7 +11,7 @@ namespace Gym.Gateway.Tests;
 
 public sealed class LiveBootstrapTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-v15-live-" + Guid.NewGuid().ToString("N"));
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-live-bootstrap-" + Guid.NewGuid().ToString("N"));
     private static readonly DateTimeOffset ValidFrom = new(2026, 10, 8, 0, 0, 0, TimeSpan.FromHours(5.5));
     private static readonly DateTimeOffset ValidTo = new(2026, 10, 8, 23, 59, 59, TimeSpan.FromHours(5.5));
     private static readonly byte[] Face = [1, 2, 3, 4, 5];
@@ -105,14 +105,35 @@ public sealed class LiveBootstrapTests : IDisposable
 
         backend.Acks = true;
         await gateway.ScanReadersAsync(CancellationToken.None);
-        await gateway.ScanReadersAsync(CancellationToken.None);
-        Assert.Equal(new[] { (2, 2), (2, 2), (2, 2) }, backend.Rosters);
+        Assert.Equal(new[] { (2, 2), (2, 2) }, backend.Rosters);
         Assert.Equal(2, backend.UserMessages);
 
         backend.Acks = false;
+        reader.ReplaceUser(new ReaderUser("9", "Renamed", null, 0, ValidFrom, ValidTo, "Customer", 1, 1));
         await gateway.ScanReadersAsync(CancellationToken.None);
-        Assert.Equal(4, backend.UserMessages);
-        Assert.Empty(reader.Writes.Skip(2));
+        Assert.Equal(new[] { (2, 2), (2, 2), (2, 2) }, backend.Rosters);
+        Assert.Equal(3, backend.UserMessages);
+        Assert.Empty(reader.Writes.Skip(3));
+    }
+
+    [Fact]
+    public async Task A_scan_that_finds_what_the_server_acknowledged_sends_nothing()
+    {
+        var reader = new FakeReader();
+        reader.CreateUser(new ReaderUser("7", "Walk In", null, 0, ValidFrom, ValidTo, "Customer", 1, 1));
+        reader.InsertFace("7", [0xFF, 0xD8, 0x01]);
+        using var backend = new RosterBackend { Acks = true };
+        var desired = new SeededAfterRoster(() => false, "8");
+        using var gateway = Start(backend.BaseUrl, _ => reader, desired);
+
+        await gateway.ScanReadersAsync(CancellationToken.None);
+        var messages = backend.Messages;
+        await gateway.ScanReadersAsync(CancellationToken.None);
+        await gateway.ScanReadersAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { (1, 1) }, backend.Rosters);
+        Assert.Equal(messages, backend.Messages);
+        Assert.Equal(1, reader.Calls.Count(call => call == "GetFace"));
     }
 
     [Fact]

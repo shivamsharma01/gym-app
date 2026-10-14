@@ -46,12 +46,4 @@ public class MemberDeviceSyncController {
     public void remove(@PathVariable String id, @PathVariable String deviceId) {
         syncService.removeFromReader(id, deviceId, SecurityUtils.currentTenantId());
     }
-
-    @PostMapping("/{deviceId}/read")
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    @PreAuthorize("hasAuthority('DEVICE_SYNC')")
-    @Operation(summary = "Read this member's name, access and face fresh from one device")
-    public void read(@PathVariable String id, @PathVariable String deviceId) {
-        syncService.readFromDevice(id, deviceId, SecurityUtils.currentTenantId());
-    }
 }

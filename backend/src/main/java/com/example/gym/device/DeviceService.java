@@ -9,17 +9,12 @@ import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.domain.DeviceRole;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.Gateway;
-import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.device.dto.DeviceRequests.CreateDevice;
 import com.example.gym.device.dto.DeviceRequests.UpdateDevice;
 import com.example.gym.device.repo.DeviceRepository;
-import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.ReaderRevisionRepository;
-import com.example.gym.face.MemberFaceRepository;
-import com.example.gym.member.Member;
-import com.example.gym.member.MemberService;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
 import java.util.Map;
@@ -114,17 +109,6 @@ public class DeviceService {
         deviceRepository.save(device);
     }
 
-    /**
-     * Members are placed on a reader by a desired revision. This endpoint does not write a reader.
-     */
-    @Transactional
-    public MemberDeviceMapping createMapping(String devicePublicId, String memberPublicId,
-                                             String requestedDeviceUserId, Long tenantId) {
-        getByPublicId(devicePublicId, tenantId);
-        throw CommonExceptions.conflict(
-                "A member is placed on a reader by a desired revision, not by a mapping command");
-    }
-
     @Transactional
     public DeviceSyncCommand remoteDoor(String devicePublicId, String action, boolean confirmed,
                                         String reason, Long tenantId) {
@@ -137,11 +121,34 @@ public class DeviceService {
             default -> throw CommonExceptions.badRequest("action must be OPEN or CLOSE");
         };
         Device device = getByPublicId(devicePublicId, tenantId);
-        DeviceSyncCommand command = deviceSyncService.enqueue(tenantId, device.getId(), null, null,
+        DeviceSyncCommand command = deviceSyncService.enqueue(tenantId, device.getId(),
                 type, Map.of("action", action.toUpperCase(), "reason", reason == null ? "" : reason));
         auditService.record(AuditActions.DEVICE_REMOTE_DOOR, AuditActions.RESULT_SUCCESS,
                 "Device", device.getPublicId(),
                 Map.of("action", action.toUpperCase(), "reason", reason == null ? "" : reason));
+        return command;
+    }
+
+    /**
+     * Queues one reader read on the gateway, outside its regular interval. A read that is still
+     * queued or running is returned instead of queuing another. The read itself writes nothing to
+     * the reader; what it finds goes through the same trusted-list handling as a regular scan.
+     */
+    @Transactional
+    public DeviceSyncCommand scanReader(String devicePublicId, Long tenantId) {
+        Device device = getByPublicId(devicePublicId, tenantId);
+        if (device.getGatewayId() == null) {
+            throw CommonExceptions.badRequest("Reader has no gateway");
+        }
+        DeviceSyncCommand open = deviceSyncService.openCommand(device.getId(), SyncCommandType.SCAN_READER)
+                .orElse(null);
+        if (open != null) {
+            return open;
+        }
+        DeviceSyncCommand command = deviceSyncService.enqueue(tenantId, device.getId(),
+                SyncCommandType.SCAN_READER, Map.of());
+        auditService.record(AuditActions.DEVICE_SCAN_REQUESTED, AuditActions.RESULT_SUCCESS,
+                "Device", device.getPublicId(), Map.of("command", command.getPublicId()));
         return command;
     }
 

@@ -53,8 +53,8 @@ public class MemberDeviceSyncService {
     }
 
     /**
-     * Removes the member from this reader only. The member stays. A flagged reader gets a desired
-     * absence. An unflagged reader gets one remove command. No other reader is written.
+     * Removes the member from this reader only, as a desired absence. The member stays, and no other
+     * reader is written.
      */
     @Transactional
     public void removeFromReader(String memberPublicId, String devicePublicId, Long tenantId) {
@@ -123,20 +123,6 @@ public class MemberDeviceSyncService {
             return;
         }
         desired.republish(member, device);
-    }
-
-    /**
-     * Asks the gateway to read this member's name, access and photo fresh from one device. A device copy
-     * newer than the server's is applied; an older one is replaced by the server's.
-     */
-    @Transactional
-    public void readFromDevice(String memberPublicId, String devicePublicId, Long tenantId) {
-        Member member = memberService.getByPublicId(memberPublicId, tenantId);
-        Device device = deviceRepository.findByPublicId(devicePublicId)
-                .orElseThrow(() -> CommonExceptions.notFound("Device"));
-        TenantGuard.check(device.getTenantId(), tenantId, "Device");
-        mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())
-                .orElseThrow(() -> CommonExceptions.notFound("Member on this device"));
     }
 
     public record SyncStatus(FaceInfo face, List<DeviceRow> devices) {

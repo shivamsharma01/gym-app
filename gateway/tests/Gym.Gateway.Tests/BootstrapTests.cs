@@ -6,7 +6,7 @@ namespace Gym.Gateway.Tests;
 
 public class BootstrapTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-v15-" + Guid.NewGuid().ToString("N"));
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-bootstrap-" + Guid.NewGuid().ToString("N"));
 
     public BootstrapTests()
     {

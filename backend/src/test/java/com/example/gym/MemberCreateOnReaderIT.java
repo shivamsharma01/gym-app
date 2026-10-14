@@ -10,7 +10,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.MemberDeviceMapping;
-import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.support.AbstractIntegrationTest;
 import com.example.gym.tenant.Tenant;
 import java.awt.Color;
@@ -29,7 +28,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * V1: a member with a face reaches a reader from desired state. The old outbox does not also
+ * A member with a face reaches a reader from desired state. The old outbox does not also
  * create that user.
  */
 class MemberCreateOnReaderIT extends AbstractIntegrationTest {

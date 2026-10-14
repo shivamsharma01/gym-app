@@ -150,6 +150,23 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
             : ReaderFaceResult.NoPhoto();
     }
 
+    public FaceChecksumList ListFaceChecksums()
+    {
+        if (!Online(out var error))
+        {
+            return FaceChecksumList.Unavailable(error);
+        }
+
+        try
+        {
+            return _device.ListFaceChecksums();
+        }
+        catch (Exception ex)
+        {
+            return FaceChecksumList.Unavailable(ex.Message);
+        }
+    }
+
     public ReaderCallResult InsertFace(string deviceUserId, byte[]? jpeg)
     {
         if (jpeg is not { Length: > 0 })

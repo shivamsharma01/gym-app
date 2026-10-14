@@ -7,7 +7,7 @@ namespace Gym.Gateway.Tests;
 
 public class PendingEnrollmentTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-v8-" + Guid.NewGuid().ToString("N"));
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "gym-pending-" + Guid.NewGuid().ToString("N"));
     private static readonly DateTimeOffset ValidFrom = new(2026, 10, 8, 0, 0, 0, TimeSpan.FromHours(5.5));
     private static readonly DateTimeOffset ValidTo = new(2026, 10, 8, 23, 59, 59, TimeSpan.FromHours(5.5));
     private static readonly byte[] Face = [1, 2, 3, 4, 5];
@@ -278,6 +278,12 @@ public class PendingEnrollmentTests : IDisposable
 
         public List<string> Calls { get; } = [];
 
+        /// <summary>The face hashes each list carried, in upload order.</summary>
+        public List<Dictionary<string, string>> RosterHashes { get; } = [];
+
+        /// <summary>The next per-user upload throws something other than a network error.</summary>
+        public bool FailUsersOnce { get; set; }
+
         public Task UploadAsync(
             string deviceId,
             IReadOnlyList<ReaderUser> users,
@@ -287,6 +293,12 @@ public class PendingEnrollmentTests : IDisposable
             if (Offline)
             {
                 throw new HttpRequestException("unreachable");
+            }
+
+            if (FailUsersOnce)
+            {
+                FailUsersOnce = false;
+                throw new InvalidOperationException("users failed");
             }
 
             Calls.Add("users");
@@ -316,6 +328,7 @@ public class PendingEnrollmentTests : IDisposable
             }
 
             Calls.Add(awaitAcceptance ? "list-awaited" : "list");
+            RosterHashes.Add(new Dictionary<string, string>(faceHashes));
             TrustedRosterTotals.Add(announcedTotal);
             RosterIds.AddRange(users.Select(user => user.DeviceUserId));
             return Task.FromResult(awaitAcceptance && RosterAccepted);

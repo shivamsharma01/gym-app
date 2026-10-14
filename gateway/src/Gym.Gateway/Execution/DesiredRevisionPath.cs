@@ -17,13 +17,15 @@ public sealed class DesiredRevisionPath
     private readonly IReaderAdapter _reader;
     private readonly IDesiredStateClient _client;
     private readonly IReaderObservationUpload? _observations;
+    private readonly ReaderScanMemory _memory;
 
     public DesiredRevisionPath(
         string deviceId,
         ReaderWorker worker,
         IReaderAdapter reader,
         IDesiredStateClient client,
-        IReaderObservationUpload? observations = null)
+        IReaderObservationUpload? observations = null,
+        ReaderScanMemory? memory = null)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
         {
@@ -35,6 +37,7 @@ public sealed class DesiredRevisionPath
         _reader = reader ?? throw new ArgumentNullException(nameof(reader));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _observations = observations;
+        _memory = memory ?? ReaderScanMemory.InMemory();
     }
 
     public Task HandleAsync(DesiredRevisionNotice notice, CancellationToken cancellationToken)
@@ -59,7 +62,7 @@ public sealed class DesiredRevisionPath
             return;
         }
 
-        await UploadTrustedListAsync(observed, false, cancellationToken).ConfigureAwait(false);
+        await UploadTrustedListAsync(observed, false, false, cancellationToken).ConfigureAwait(false);
         await HandleAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -67,7 +70,15 @@ public sealed class DesiredRevisionPath
     /// One trusted read, then the whole list. The per-user observations follow only when the server
     /// did not acknowledge that list. A short list uploads nothing. Nothing is copied onto another reader.
     /// </summary>
-    public async Task<bool> BootstrapAsync(CancellationToken cancellationToken)
+    public Task<bool> BootstrapAsync(CancellationToken cancellationToken) => ScanAsync(false, cancellationToken);
+
+    /// <summary>
+    /// A scan staff asked for: the list is sent even when the server already acknowledged the same
+    /// one, so the server runs its list handling again. False when the reader gave no trusted list.
+    /// </summary>
+    public Task<bool> ScanNowAsync(CancellationToken cancellationToken) => ScanAsync(true, cancellationToken);
+
+    private async Task<bool> ScanAsync(bool force, CancellationToken cancellationToken)
     {
         var observed = _reader.ListUsers();
         if (!observed.Ok || !observed.CountMatchesAnnouncedTotal)
@@ -75,7 +86,7 @@ public sealed class DesiredRevisionPath
             return false;
         }
 
-        await UploadTrustedListAsync(observed, true, cancellationToken).ConfigureAwait(false);
+        await UploadTrustedListAsync(observed, true, force, cancellationToken).ConfigureAwait(false);
         if (observed.Users.Count == 0)
         {
             await HandleAsync(cancellationToken).ConfigureAwait(false);
@@ -103,36 +114,70 @@ public sealed class DesiredRevisionPath
     /// same per-user observation for every entry of a list it processes, so the per-user messages
     /// are sent only when that is not confirmed: always on reconnect, before the list, because the
     /// server's ACK cannot be read until the reconnect finishes; on a scan, after the list, when the
-    /// list was not acknowledged. An empty list is not treated as a removal. A short or mismatched
-    /// list uploads nothing.
+    /// list was not acknowledged, and then only users whose entry changed since they were last sent.
+    /// A scan that finds exactly what the server last acknowledged sends nothing until the refresh
+    /// period passes. An empty list is not treated as a removal. A short or mismatched list uploads
+    /// nothing.
     /// </summary>
     private async Task UploadTrustedListAsync(
-        ReaderListResult observed, bool awaitAcceptance, CancellationToken cancellationToken)
+        ReaderListResult observed, bool awaitAcceptance, bool force, CancellationToken cancellationToken)
     {
         if (_observations == null || !observed.CountMatchesAnnouncedTotal)
         {
             return;
         }
 
+        var uploads = _memory.Uploads;
+        var generation = uploads.Generation;
         var listed = Listed(observed);
         var hashes = FaceHashes(listed);
+        var missing = listed.Count > 0 ? Missing(listed) : [];
+        var entries = listed.ToDictionary(
+            user => user.DeviceUserId, user => ScanUploadState.Entry(user, hashes), StringComparer.Ordinal);
+        var list = ScanUploadState.List(observed.AnnouncedTotal, entries, missing);
+        if (awaitAcceptance && !force && uploads.AlreadyAccepted(list))
+        {
+            return;
+        }
+
         try
         {
-            if (listed.Count > 0)
+            if (!awaitAcceptance)
             {
-                if (!awaitAcceptance)
-                {
-                    await _observations.UploadAsync(_deviceId, listed, hashes, cancellationToken).ConfigureAwait(false);
-                }
+                uploads.Reconnecting();
+            }
 
-                await UploadAbsencesAsync(listed, cancellationToken).ConfigureAwait(false);
+            if (!awaitAcceptance && listed.Count > 0)
+            {
+                await _observations.UploadAsync(_deviceId, listed, hashes, cancellationToken).ConfigureAwait(false);
+                uploads.Sent(entries.Keys.ToHashSet(StringComparer.Ordinal), entries);
+            }
+
+            if (missing.Count > 0)
+            {
+                await _observations.UploadAbsencesAsync(_deviceId, missing, cancellationToken).ConfigureAwait(false);
             }
 
             var accepted = await UploadListAsync(observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
                 .ConfigureAwait(false);
-            if (awaitAcceptance && !accepted && listed.Count > 0)
+            if (!awaitAcceptance)
             {
-                await _observations.UploadAsync(_deviceId, listed, hashes, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (accepted)
+            {
+                uploads.Accepted(generation, list, entries);
+                return;
+            }
+
+            var unsent = uploads.Unsent(entries);
+            if (unsent.Count > 0)
+            {
+                await _observations.UploadAsync(
+                        _deviceId, listed.Where(user => unsent.Contains(user.DeviceUserId)).ToList(), hashes, cancellationToken)
+                    .ConfigureAwait(false);
+                uploads.Sent(unsent, entries);
             }
         }
         catch (OperationCanceledException)
@@ -182,7 +227,11 @@ public sealed class DesiredRevisionPath
         {
             await _observations.UploadAsync(_deviceId, listed, FaceHashes(listed), cancellationToken)
                 .ConfigureAwait(false);
-            await UploadAbsencesAsync(listed, cancellationToken).ConfigureAwait(false);
+            var missing = Missing(listed);
+            if (missing.Count > 0)
+            {
+                await _observations.UploadAbsencesAsync(_deviceId, missing, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -197,8 +246,51 @@ public sealed class DesiredRevisionPath
     private static List<ReaderUser> Listed(ReaderListResult observed) =>
         observed.Users.Where(user => !string.IsNullOrWhiteSpace(user.DeviceUserId)).ToList();
 
-    /// <summary>One hash per id. Equal hashes stay separate observations.</summary>
+    /// <summary>
+    /// One hash per id. Equal hashes stay separate observations. With the reader's photo checksum
+    /// list, a user it does not list has no photo, and only a photo whose checksum is not cached is
+    /// downloaded. Without that list every photo is downloaded.
+    /// </summary>
     private Dictionary<string, string> FaceHashes(IReadOnlyList<ReaderUser> listed)
+    {
+        var checksums = _reader.ListFaceChecksums();
+        if (!checksums.Ok)
+        {
+            return DownloadedFaceHashes(listed);
+        }
+
+        var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        var known = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var deviceUserId in listed.Select(user => user.DeviceUserId))
+        {
+            if (!checksums.ByUserId.TryGetValue(deviceUserId, out var checksum))
+            {
+                continue;
+            }
+
+            if (checksum.Length == 0 || !_memory.Faces.TryGet(checksum, out var hash))
+            {
+                var face = _reader.GetFace(deviceUserId);
+                if (!face.Ok || face.Bytes is not { Length: > 0 })
+                {
+                    continue;
+                }
+
+                hash = FaceHash.Sha256Hex(face.Bytes);
+            }
+
+            hashes[deviceUserId] = hash;
+            if (checksum.Length > 0)
+            {
+                known[checksum] = hash;
+            }
+        }
+
+        _memory.Faces.Replace(known);
+        return hashes;
+    }
+
+    private Dictionary<string, string> DownloadedFaceHashes(IReadOnlyList<ReaderUser> listed)
     {
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var deviceUserId in listed.Select(user => user.DeviceUserId))
@@ -217,16 +309,10 @@ public sealed class DesiredRevisionPath
     /// Mapped ids this gateway wrote that a trusted, non-empty list no longer contains.
     /// An empty list is not evidence that those people were removed.
     /// </summary>
-    private async Task UploadAbsencesAsync(IReadOnlyList<ReaderUser> listed, CancellationToken cancellationToken)
+    private List<string> Missing(IReadOnlyList<ReaderUser> listed)
     {
         var present = listed.Select(user => user.DeviceUserId).ToHashSet(StringComparer.Ordinal);
-        var missing = _worker.AppliedUserIds().Where(id => !present.Contains(id)).ToList();
-        if (missing.Count == 0)
-        {
-            return;
-        }
-
-        await _observations!.UploadAbsencesAsync(_deviceId, missing, cancellationToken).ConfigureAwait(false);
+        return _worker.AppliedUserIds().Where(id => !present.Contains(id)).ToList();
     }
 
     private enum ItemStep

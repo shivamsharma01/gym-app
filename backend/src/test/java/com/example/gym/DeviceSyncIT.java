@@ -1,7 +1,6 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -25,7 +24,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.ResultActions;
 
 /**
- * Phase 3: device domain, transactional outbox, gateway protocol, attendance ingest, and
+ * Device domain, transactional outbox, gateway protocol, attendance ingest, and
  * tenant isolation — driven through HTTP + the in-process protocol handler (no native SDK).
  */
 class DeviceSyncIT extends AbstractIntegrationTest {
@@ -92,8 +91,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
         var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())).isPresent();
         assertThat(desiredMemberProjectionRepository.findByDeviceIdAndMemberId(device.getId(), member.getId())).isPresent();
-        assertThat(deviceSyncCommandRepository.findAll()).extracting(c -> c.getType())
-                .doesNotContain(SyncCommandType.CREATE_USER, SyncCommandType.UPDATE_VALIDITY, SyncCommandType.UPSERT_FACE);
+        assertThat(deviceSyncCommandRepository.findAll()).isEmpty();
 
         mockMvc.perform(get("/api/v1/devices/" + deviceId + "/health")
                         .header("Authorization", "Bearer " + token))
@@ -103,20 +101,14 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.gatewaySessionOnline").value(false))
                 .andExpect(jsonPath("$.pendingCommandCount").value(greaterThanOrEqualTo(0)))
                 .andExpect(jsonPath("$.failedCommandCount").value(0))
-                .andExpect(jsonPath("$.lastPunchAt").value(org.hamcrest.Matchers.nullValue()))
-                .andExpect(jsonPath("$.reconciliationRequired").doesNotExist())
-                .andExpect(jsonPath("$.attendanceLastRecNo").doesNotExist());
-
-        // Mapping the same member again is a conflict, not a second device user.
-        postJson("/api/v1/devices/" + deviceId + "/mappings", "{\"memberId\":\"" + memberId + "\"}")
-                .andExpect(status().isConflict());
+                .andExpect(jsonPath("$.lastPunchAt").value(org.hamcrest.Matchers.nullValue()));
     }
 
     @Test
     void syncResultMarksSucceededAndDoesNotFabricateWithoutGatewayAck() throws Exception {
 
         var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
-        var create = deviceSyncService.enqueue(device.getTenantId(), device.getId(), null, null,
+        var create = deviceSyncService.enqueue(device.getTenantId(), device.getId(),
                 SyncCommandType.OPEN_DOOR, java.util.Map.of("reason", "ack"));
         assertThat(create).isNotNull();
         assertThat(create.getState()).isEqualTo(SyncCommandState.PENDING);
@@ -137,45 +129,16 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void aMemberCommandIsNotQueued() {
-        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
-        var member = memberRepository.findByPublicId(memberId).orElseThrow();
-        assertThatThrownBy(() -> deviceSyncService.enqueue(device.getTenantId(), device.getId(), member.getId(), null,
-                SyncCommandType.UPSERT_FACE, java.util.Map.of("deviceUserId", "1001")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("desired revision");
-        assertThat(deviceSyncCommandRepository.findAll()).extracting(c -> c.getType())
-                .doesNotContain(SyncCommandType.UPSERT_FACE, SyncCommandType.CREATE_USER);
-    }
-
-    @Test
-    void aMemberUpdateIsNotQueuedEither() {
-        var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
-        var member = memberRepository.findByPublicId(memberId).orElseThrow();
-        assertThatThrownBy(() -> deviceSyncService.enqueue(device.getTenantId(), device.getId(), member.getId(), null,
-                SyncCommandType.UPDATE_USER, java.util.Map.of("deviceUserId", "1001")))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> deviceSyncService.enqueue(device.getTenantId(), device.getId(), member.getId(), null,
-                SyncCommandType.DISABLE_USER, java.util.Map.of("deviceUserId", "1001")))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> deviceSyncService.enqueue(device.getTenantId(), device.getId(), member.getId(), null,
-                SyncCommandType.UPDATE_VALIDITY, java.util.Map.of("deviceUserId", "1001", "enabled", true)))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThat(deviceSyncCommandRepository.findAll()).extracting(c -> c.getType())
-                .doesNotContain(SyncCommandType.UPDATE_USER, SyncCommandType.DISABLE_USER, SyncCommandType.UPDATE_VALIDITY);
-    }
-
-    @Test
-    void listingSyncCommandsWithoutAMemberDoesNotFail() throws Exception {
+    void staffCommandsAreListed() throws Exception {
         deviceSyncCommandRepository.deleteAllInBatch();
         var device = deviceRepository.findAll().getFirst();
-        deviceSyncService.enqueue(device.getTenantId(), device.getId(), null, null,
+        deviceSyncService.enqueue(device.getTenantId(), device.getId(),
                 SyncCommandType.OPEN_DOOR, java.util.Map.of("reason", "manual"));
 
         mockMvc.perform(get("/api/v1/sync-commands").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1))
-                .andExpect(jsonPath("$.content[0].memberName").value(org.hamcrest.Matchers.nullValue()));
+                .andExpect(jsonPath("$.content[0].type").value("OPEN_DOOR"));
     }
 
     @Test
@@ -214,8 +177,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
 
         postJson("/api/v1/memberships/" + membershipId + "/freeze", null)
                 .andExpect(status().isOk());
-        assertThat(deviceSyncCommandRepository.findAll())
-                .noneMatch(c -> c.getType() == SyncCommandType.DISABLE_USER);
+        assertThat(deviceSyncCommandRepository.findAll()).isEmpty();
 
         postJson("/api/v1/devices/" + deviceId + "/door",
                 "{\"action\":\"OPEN\",\"confirmed\":false,\"reason\":\"test\"}")
@@ -231,7 +193,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     @Test
     void restPollClaimsCommandsWithPerGatewayTokenAndRejectsUserJwt() throws Exception {
         var device = deviceRepository.findByPublicId(deviceId).orElseThrow();
-        deviceSyncService.enqueue(device.getTenantId(), device.getId(), null, null,
+        deviceSyncService.enqueue(device.getTenantId(), device.getId(),
                 SyncCommandType.OPEN_DOOR, java.util.Map.of("reason", "poll"));
 
         mockMvc.perform(get("/internal/gateway/commands")
@@ -249,6 +211,65 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(envelope("HEARTBEAT", UUID.randomUUID().toString(), "{}")))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void staffCanAskOneReaderToBeReadNowAndARepeatedAskReusesTheOpenCommand() throws Exception {
+        long before = deviceSyncCommandRepository.count();
+        String first = postJson("/api/v1/devices/" + deviceId + "/scan", null)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("SCAN_READER"))
+                .andExpect(jsonPath("$.state").value("PENDING"))
+                .andReturn().getResponse().getContentAsString();
+        String again = postJson("/api/v1/devices/" + deviceId + "/scan", null)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(readJson(again).get("id").asString()).isEqualTo(readJson(first).get("id").asString());
+        assertThat(deviceSyncCommandRepository.count()).isEqualTo(before + 1);
+        assertThat(auditLogRepository.findAll())
+                .filteredOn(a -> "DEVICE_SCAN_REQUESTED".equals(a.getAction()))
+                .hasSize(1);
+
+        String claimed = mockMvc.perform(get("/internal/gateway/commands")
+                        .header("Authorization", "Bearer " + gatewayToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(claimed).contains("SCAN_READER");
+        var scan = deviceSyncCommandRepository.findAll().stream()
+                .filter(c -> c.getType() == SyncCommandType.SCAN_READER).findFirst().orElseThrow();
+        gatewayMessageService.process(envelope("SYNC_RESULT", scan.getCorrelationId(), "{\"ok\":true}"), gatewayId);
+        assertThat(deviceSyncCommandRepository.findById(scan.getId()).orElseThrow().getState())
+                .isEqualTo(SyncCommandState.SUCCEEDED);
+
+        postJson("/api/v1/devices/" + deviceId + "/scan", null)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("PENDING"));
+        assertThat(deviceSyncCommandRepository.count()).isEqualTo(before + 2);
+    }
+
+    @Test
+    void readingAReaderNowNeedsDeviceSyncAGatewayAndTheSameGym() throws Exception {
+        Long tenantId = deviceRepository.findByPublicId(deviceId).orElseThrow().getTenantId();
+        createUser(tenantId, "dev-staff", "dev-staff@device.local", "STAFF");
+        mockMvc.perform(post("/api/v1/devices/" + deviceId + "/scan")
+                        .header("Authorization", "Bearer " + tokenFor("dev-staff")))
+                .andExpect(status().isForbidden());
+
+        String loose = readJson(postJson("/api/v1/devices",
+                "{\"name\":\"Loose\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.11\",\"port\":37777}")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        postJson("/api/v1/devices/" + loose + "/scan", null).andExpect(status().isBadRequest());
+
+        Tenant other = createTenant("Other Gym", "other-scan-gym");
+        createUser(other.getId(), "other-scan", "other-scan@other.local", "GYM_ADMIN");
+        mockMvc.perform(post("/api/v1/devices/" + deviceId + "/scan")
+                        .header("Authorization", "Bearer " + tokenFor("other-scan")))
+                .andExpect(status().isNotFound());
+
+        assertThat(deviceSyncCommandRepository.findAll())
+                .noneMatch(c -> c.getType() == SyncCommandType.SCAN_READER);
     }
 
     @Test
@@ -300,9 +321,7 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.serialNumber").value("7"))
                 .andExpect(jsonPath("$.memberCode").value("1001"));
-        assertThat(deviceSyncCommandRepository.findAll())
-                .noneMatch(c -> c.getType() == SyncCommandType.CREATE_USER
-                        || c.getType() == SyncCommandType.REMOVE_USER);
+        assertThat(deviceSyncCommandRepository.findAll()).isEmpty();
     }
 
     // --- helpers ---------------------------------------------------------------------------------

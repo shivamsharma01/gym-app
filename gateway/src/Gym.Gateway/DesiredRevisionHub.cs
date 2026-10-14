@@ -11,6 +11,7 @@ public sealed class DesiredRevisionHub
     private readonly Dictionary<string, Func<DesiredRevisionNotice, CancellationToken, Task>> _paths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<CancellationToken, Task>> _reconnects = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<CancellationToken, Task>> _observations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Func<CancellationToken, Task<bool>>> _scansNow = new(StringComparer.Ordinal);
     private readonly ILogger<DesiredRevisionHub> _log;
 
     public DesiredRevisionHub(ILogger<DesiredRevisionHub> log)
@@ -22,7 +23,8 @@ public sealed class DesiredRevisionHub
         string deviceId,
         Func<DesiredRevisionNotice, CancellationToken, Task> handle,
         Func<CancellationToken, Task> reconnect,
-        Func<CancellationToken, Task>? observe = null)
+        Func<CancellationToken, Task>? observe = null,
+        Func<CancellationToken, Task<bool>>? scanNow = null)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
         {
@@ -37,6 +39,25 @@ public sealed class DesiredRevisionHub
         {
             _observations[deviceId] = observe;
         }
+
+        if (scanNow != null)
+        {
+            _scansNow[deviceId] = scanNow;
+        }
+    }
+
+    /// <summary>
+    /// One reader, now, for a staff request. Null when that reader has no worker; false when it gave
+    /// no trusted list.
+    /// </summary>
+    public async Task<bool?> ScanNowAsync(string deviceId, CancellationToken cancellationToken)
+    {
+        if (!_scansNow.TryGetValue(deviceId, out var scan))
+        {
+            return null;
+        }
+
+        return await scan(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Each flagged reader uploads a trusted list. A failed reader does not stop the next.</summary>

@@ -9,7 +9,7 @@ import jakarta.persistence.Table;
 
 /**
  * A gym organisation. Root of tenant isolation: every tenant-owned entity references
- * {@code tenant.id}. Includes minimal profile fields; richer {@code GymProfile} arrives in Phase 2.
+ * {@code tenant.id}. Holds minimal profile fields; the public profile is {@code GymProfile}.
  */
 @Entity
 @Table(name = "tenant")

@@ -12,7 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 
-class Phase9IT extends AbstractIntegrationTest {
+class SuperAdminGymEnrollmentIT extends AbstractIntegrationTest {
 
     private String superToken;
 

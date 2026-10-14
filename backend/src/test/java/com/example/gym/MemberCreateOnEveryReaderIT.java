@@ -31,11 +31,11 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * V18: creating a member with a face publishes one desired user to every reader of the gym that
+ * Creating a member with a face publishes one desired user to every reader of the gym that
  * has a gateway. Each reader allocates its own id and has its own revision. One reader's failure
  * does not undo the member or the other readers.
  */
-class V18EveryReaderCreateIT extends AbstractIntegrationTest {
+class MemberCreateOnEveryReaderIT extends AbstractIntegrationTest {
 
     @Autowired
     private DesiredProjectionService desiredProjectionService;
@@ -73,9 +73,9 @@ class V18EveryReaderCreateIT extends AbstractIntegrationTest {
 
     @Test
     void bothReadersGetTheUserAndFaceWithIndependentIds() throws Exception {
-        onlyOnEntrance("Ria", "V18-RIA", "1801");
+        onlyOnEntrance("Ria", "EVERY-RIA", "1801");
 
-        String publicId = create("Asha", "V18-ASHA", "1802");
+        String publicId = create("Asha", "EVERY-ASHA", "1802");
         Member asha = memberRepository.findByPublicId(publicId).orElseThrow();
 
         assertThat(memberRepository.findAll()).hasSize(2);
@@ -113,7 +113,7 @@ class V18EveryReaderCreateIT extends AbstractIntegrationTest {
 
     @Test
     void anOccupiedIdOnOneReaderRetriesThereOnly() throws Exception {
-        String publicId = create("Asha", "V18-OCC", "1803");
+        String publicId = create("Asha", "EVERY-OCC", "1803");
         Member asha = memberRepository.findByPublicId(publicId).orElseThrow();
         DesiredMemberProjection exitBefore = projection(exit, asha);
 
@@ -143,7 +143,7 @@ class V18EveryReaderCreateIT extends AbstractIntegrationTest {
 
     @Test
     void anOfflineReaderConvergesWhenItReturns() throws Exception {
-        String publicId = create("Asha", "V18-OFF", "1804");
+        String publicId = create("Asha", "EVERY-OFF", "1804");
         Member asha = memberRepository.findByPublicId(publicId).orElseThrow();
         ack(entranceId, latest(entranceId)).andExpect(status().isOk());
 
@@ -172,7 +172,7 @@ class V18EveryReaderCreateIT extends AbstractIntegrationTest {
 
     @Test
     void oneReaderFailingDoesNotUndoTheMemberOrTheOtherReader() throws Exception {
-        String publicId = create("Asha", "V18-FAIL", "1805");
+        String publicId = create("Asha", "EVERY-FAIL", "1805");
         Member asha = memberRepository.findByPublicId(publicId).orElseThrow();
         JsonNode onExit = latest(exitId);
 
@@ -254,7 +254,7 @@ class V18EveryReaderCreateIT extends AbstractIntegrationTest {
 
     @Test
     void theMemberPageShowsEachReadersAppliedOrPendingState() throws Exception {
-        String publicId = create("Asha", "V18-PAGE", "1806");
+        String publicId = create("Asha", "EVERY-PAGE", "1806");
 
         JsonNode before = deviceSync(publicId);
         assertThat(before.get("devices")).hasSize(2);

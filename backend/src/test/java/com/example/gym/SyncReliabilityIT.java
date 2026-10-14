@@ -88,7 +88,7 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
 
     @Test
     void commandsWaitForAnOfflineGatewayWithoutUsingUpAttemptsAndReconnectReleasesThem() throws Exception {
-        deviceSyncService.enqueue(tenant.getId(), device, null, null,
+        deviceSyncService.enqueue(tenant.getId(), device,
                 SyncCommandType.OPEN_DOOR, Map.of("reason", "wait"));
 
         // Far more delivery rounds than the 6 allowed attempts.
@@ -107,18 +107,6 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
         // Still due, so the first dispatch after the gateway connects sends them.
         assertThat(deviceSyncCommandRepository.findAll())
                 .allMatch(c -> !c.getNextAttemptAt().isAfter(Instant.now()));
-    }
-
-    @Test
-    void registeringAGatewayQueuesNoAttendanceCommand() {
-        assertThat(gatewayMessageService.process(envelope("REGISTER_GATEWAY", UUID.randomUUID().toString(),
-                "{\"agentVersion\":\"1\"}"), gatewayId).orElseThrow()).contains("REGISTERED");
-        assertThat(deviceSyncCommandRepository.findAll()).noneMatch(c -> c.getType() == SyncCommandType.RECONCILE_DEVICE
-                || c.getType() == SyncCommandType.REFRESH_DEVICE_USERS);
-        assertThatThrownBy(() -> deviceSyncService.enqueue(tenant.getId(), device, null, null,
-                SyncCommandType.RECONCILE_DEVICE, java.util.Map.of()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("gateway's poll");
     }
 
     @Test
@@ -209,17 +197,16 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
 
         assertThat(memberRepository.findAll()).isEmpty();
         assertThat(memberDeviceMappingRepository.findAll()).isEmpty();
-        assertThat(userCommands(exit)).isEmpty();
-        assertThat(userCommands(device)).isEmpty();
+        assertThat(commands(exit)).isEmpty();
+        assertThat(commands(device)).isEmpty();
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(device, "9300")).isPresent();
     }
 
     // --- helpers ---------------------------------------------------------------------------------
 
-    private List<DeviceSyncCommand> userCommands(Long deviceId) {
+    private List<DeviceSyncCommand> commands(Long deviceId) {
         return deviceSyncCommandRepository.findAll().stream()
                 .filter(c -> c.getDeviceId().equals(deviceId))
-                .filter(c -> c.getType() == SyncCommandType.CREATE_USER || c.getType() == SyncCommandType.UPDATE_USER)
                 .toList();
     }
 
@@ -230,7 +217,7 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
 
     @Test
     void commandsClaimedByOneDispatcherAreSkippedByAConcurrentOne() throws Exception {
-        deviceSyncService.enqueue(tenant.getId(), device, null, null,
+        deviceSyncService.enqueue(tenant.getId(), device,
                 SyncCommandType.OPEN_DOOR, Map.of("reason", "claim"));
         makeAllDue();
         CountDownLatch claimed = new CountDownLatch(1);

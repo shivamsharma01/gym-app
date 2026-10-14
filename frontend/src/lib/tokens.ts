@@ -9,11 +9,6 @@ export function setAccessToken(access: string | null) {
   accessToken = access
 }
 
-/** @deprecated Use setAccessToken — refresh is cookie-based. */
-export function setTokens(access: string | null, _refresh?: string | null) {
-  accessToken = access
-}
-
 export function clearTokens() {
   accessToken = null
 }

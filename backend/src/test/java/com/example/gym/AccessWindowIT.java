@@ -14,7 +14,6 @@ import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceReaderBaseline;
 import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.DeviceSyncCommand;
-import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.member.Member;
 import com.example.gym.membership.Membership;
 import com.example.gym.membership.MembershipStatus;
@@ -131,12 +130,12 @@ class AccessWindowIT extends AbstractIntegrationTest {
     void addingAFutureMembershipDoesNotTouchTheDevicesDuringTheRunningOne() throws Exception {
         String current = membership(today.minusDays(5), today.plusDays(25));
         pay(current);
-        assertThat(accessCommandsSince(0)).isEmpty();
+        assertThat(commandsSince(0)).isEmpty();
         assertThat(member().getDeviceEnabled()).isTrue();
 
         long before = deviceSyncCommandRepository.count();
         membership(today.plusDays(40), today.plusDays(70));
-        assertThat(accessCommandsSince(before)).isEmpty();
+        assertThat(commandsSince(before)).isEmpty();
         assertThat(member().getDeviceEnabled()).isTrue();
     }
 
@@ -153,7 +152,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
 
         long before = deviceSyncCommandRepository.count();
         assertThat(accessCheck.run()).isEqualTo(1);
-        assertThat(accessCommandsSince(before)).isEmpty();
+        assertThat(commandsSince(before)).isEmpty();
         assertThat(member().getDeviceValidFrom()).isEqualTo(today.plusDays(3));
         assertThat(member().getDeviceValidTo()).isEqualTo(today.plusDays(33));
         assertThat(member().getDeviceEnabled()).isTrue();
@@ -162,12 +161,12 @@ class AccessWindowIT extends AbstractIntegrationTest {
         // Running it again changes nothing.
         before = deviceSyncCommandRepository.count();
         assertThat(accessCheck.run()).isZero();
-        assertThat(accessCommandsSince(before)).isEmpty();
+        assertThat(commandsSince(before)).isEmpty();
 
         // Recording a payment does not send another access command.
         before = deviceSyncCommandRepository.count();
         pay(next);
-        assertThat(accessCommandsSince(before)).isEmpty();
+        assertThat(commandsSince(before)).isEmpty();
     }
 
     @Test
@@ -181,7 +180,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
 
         long before = deviceSyncCommandRepository.count();
         accessCheck.run();
-        assertThat(accessCommandsSince(before)).isEmpty();
+        assertThat(commandsSince(before)).isEmpty();
         assertThat(member().getDeviceEnabled()).isFalse();
         assertThat(member().getDeviceValidTo()).isEqualTo(today.minusDays(1));
         assertThat(member().getStatus().name()).isEqualTo("ACTIVE");
@@ -194,8 +193,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
 
         deviceUserChanged(access(false, today.minusDays(5), today.plusDays(25), true, false));
 
-        assertThat(accessCommandsSince(before))
-                .noneMatch(c -> c.getType() == SyncCommandType.DISABLE_USER);
+        assertThat(commandsSince(before)).isEmpty();
         assertThat(auditLogRepository.findAll()).noneMatch(a ->
                 a.getDetails() != null && a.getDetails().contains("membership is unpaid"));
         assertThat(authorizationService.window(member()).orElseThrow().enabled()).isTrue();
@@ -219,11 +217,10 @@ class AccessWindowIT extends AbstractIntegrationTest {
                 .containsExactly(null, false);
         assertThat(membershipRepository.findByPublicIdAndDeletedFalse(next).orElseThrow().getStartDate())
                 .isEqualTo(today.plusDays(15));
-        assertThat(reconciliationConflictRepository.findAll()).isEmpty();
         Long device = deviceRepository.findByPublicId(deviceId).orElseThrow().getId();
         assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(device, "8001").orElseThrow()
                 .getValidTo()).contains(today.plusDays(20).toString());
-        assertThat(accessCommandsSince(0)).isEmpty();
+        assertThat(commandsSince(0)).isEmpty();
     }
 
     @Test
@@ -245,7 +242,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
         Long device = deviceRepository.findByPublicId(deviceId).orElseThrow().getId();
         assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(device, "8001").orElseThrow()
                 .getValidTo()).contains(today.plusDays(40).toString());
-        assertThat(accessCommandsSince(0)).isEmpty();
+        assertThat(commandsSince(0)).isEmpty();
     }
 
     @Test
@@ -264,7 +261,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
         assertThat(item.getReaderValidFrom()).contains(today.minusDays(1).toString());
         assertThat(item.getServerValidFrom()).contains(today.minusDays(5).toString());
         assertThat(item.getReaderValidTo()).contains(today.plusDays(25).toString());
-        assertThat(accessCommandsSince(0)).isEmpty();
+        assertThat(commandsSince(0)).isEmpty();
     }
 
     @Test
@@ -283,7 +280,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
         assertThat(item.getReaderValidTo()).contains(today.plusDays(40).toString());
         assertThat(item.getServerValidTo()).contains(today.plusDays(25).toString());
         assertThat(item.getReaderValidFrom()).contains(today.minusDays(5).toString());
-        assertThat(accessCommandsSince(0)).isEmpty();
+        assertThat(commandsSince(0)).isEmpty();
     }
 
     @Test
@@ -301,7 +298,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
                 .extracting(DeviceReviewItem::getDecision, DeviceReviewItem::getReaderValidFrom,
                         DeviceReviewItem::getReaderValidTo)
                 .containsExactly(null, today.plusDays(1).toString(), today.plusDays(60).toString());
-        assertThat(accessCommandsSince(0)).isEmpty();
+        assertThat(commandsSince(0)).isEmpty();
     }
 
     @Test
@@ -335,7 +332,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
         assertThat(stored.getStartDate()).isEqualTo(today.minusDays(5));
         assertThat(stored.getEndDate()).isEqualTo(today.plusDays(25));
         assertThat(deviceReviewItemRepository.findAll()).isEmpty();
-        assertThat(accessCommandsSince(0)).isEmpty();
+        assertThat(commandsSince(0)).isEmpty();
     }
 
     @Test
@@ -358,7 +355,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
         assertThat(deviceReviewItemRepository.findAll()).singleElement()
                 .extracting(DeviceReviewItem::getReaderValidFrom)
                 .isEqualTo(today.minusDays(6) + "T18:29:59Z");
-        assertThat(accessCommandsSince(0)).isEmpty();
+        assertThat(commandsSince(0)).isEmpty();
     }
 
     // --- helpers ---------------------------------------------------------------------------------
@@ -406,23 +403,12 @@ class AccessWindowIT extends AbstractIntegrationTest {
                 .andExpect(status().isCreated());
     }
 
-    private List<DeviceSyncCommand> accessCommandsSince(long previousCount) {
+    /** Member state reaches readers as desired revisions, so no command is ever queued for it. */
+    private List<DeviceSyncCommand> commandsSince(long previousCount) {
         return deviceSyncCommandRepository.findAll().stream()
                 .sorted((a, b) -> a.getId().compareTo(b.getId()))
                 .skip(previousCount)
-                .filter(c -> memberDbId.equals(c.getMemberId()))
-                .filter(c -> c.getType() == SyncCommandType.UPDATE_VALIDITY || c.getType() == SyncCommandType.DISABLE_USER)
                 .toList();
-    }
-
-    private DeviceSyncCommand lastAccessCommand() {
-        List<DeviceSyncCommand> all = accessCommandsSince(0);
-        return all.getLast();
-    }
-
-    private static DeviceSyncCommand single(List<DeviceSyncCommand> commands) {
-        assertThat(commands).hasSize(1);
-        return commands.getFirst();
     }
 
     private String access(boolean frozen, LocalDate from, LocalDate to, boolean frozenChanged, boolean validityChanged) {

@@ -4,16 +4,13 @@ import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.domain.DeviceSyncCommand;
-import com.example.gym.device.domain.EnrollmentStatus;
 import com.example.gym.device.domain.Gateway;
-import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.SecurityEvent;
 import com.example.gym.device.protocol.GatewayMessage;
 import com.example.gym.device.protocol.GatewayMessageType;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.GatewayRepository;
-import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
 import com.example.gym.live.StaffLiveBroadcast;
 import java.time.Instant;
@@ -46,7 +43,6 @@ public class GatewayMessageService {
     private final DeviceSyncService deviceSyncService;
     private final GatewayMessageDedupeService dedupeService;
     private final SecurityEventRepository securityEventRepository;
-    private final MemberDeviceMappingRepository mappingRepository;
     private final JsonMapper jsonMapper;
     private final ApplicationEventPublisher events;
     private final DeviceUserChangeService deviceUserChangeService;
@@ -59,7 +55,6 @@ public class GatewayMessageService {
                                  DeviceSyncService deviceSyncService,
                                  GatewayMessageDedupeService dedupeService,
                                  SecurityEventRepository securityEventRepository,
-                                 MemberDeviceMappingRepository mappingRepository,
                                  JsonMapper jsonMapper,
                                  ApplicationEventPublisher events,
                                  DeviceUserChangeService deviceUserChangeService) {
@@ -72,7 +67,6 @@ public class GatewayMessageService {
         this.deviceSyncService = deviceSyncService;
         this.dedupeService = dedupeService;
         this.securityEventRepository = securityEventRepository;
-        this.mappingRepository = mappingRepository;
         this.jsonMapper = jsonMapper;
         this.events = events;
     }
@@ -168,11 +162,6 @@ public class GatewayMessageService {
                 }
                 yield ack(message);
             }
-            case DEVICE_EVENT, RECONCILIATION_RESULT -> {
-                // Attendance comes only from the gateway's poll of the reader log.
-                FlowLog.info("gateway", "ignored {} device={}: not an attendance source", type, message.deviceId());
-                yield ack(message);
-            }
             case DEVICE_ALARM -> {
                 Device device = ownedDevice(message);
                 if (device != null) {
@@ -192,22 +181,14 @@ public class GatewayMessageService {
                 if (!syncResultAllowed(message)) {
                     throw new ForeignDeviceRejected(message.correlationId());
                 }
-                boolean skipped = boolAt(message.payload(), "skipped");
                 deviceSyncService.handleResult(message.correlationId(), boolAt(message.payload(), "ok"),
-                        skipped ? text(message.payload(), "reason") : text(message.payload(), "error"), skipped);
+                        text(message.payload(), "error"));
                 yield ack(message);
             }
             case DEVICE_USER_CHANGED -> {
                 Device device = ownedDevice(message);
                 if (device != null) {
                     deviceUserChangeService.apply(device, message.payload());
-                }
-                yield ack(message);
-            }
-            case ENROLLMENT_RESULT -> {
-                Device device = ownedDevice(message);
-                if (device != null) {
-                    applyEnrollmentResult(device, message.payload());
                 }
                 yield ack(message);
             }
@@ -226,39 +207,13 @@ public class GatewayMessageService {
             return "";
         }
         return switch (type) {
-            case SYNC_RESULT -> " ok=" + text(payload, "ok") + " skipped=" + text(payload, "skipped")
-                    + " error=" + text(payload, "error") + " reason=" + text(payload, "reason");
+            case SYNC_RESULT -> " ok=" + text(payload, "ok") + " error=" + text(payload, "error");
             case DEVICE_USER_CHANGED -> " user=" + text(payload, "deviceUserId") + " isNew=" + text(payload, "isNew")
                     + " deleted=" + text(payload, "deleted") + " nameChanged=" + text(payload, "nameChanged")
                     + " accessChanged=" + text(payload, "frozenChanged") + "/" + text(payload, "validityChanged")
                     + " faceChanged=" + text(payload, "faceChanged") + " changedAt=" + text(payload, "deviceChangedAt");
             default -> "";
         };
-    }
-
-    private void applyEnrollmentResult(Device device, JsonNode payload) {
-        if (payload == null) {
-            return;
-        }
-        String deviceUserId = text(payload, "deviceUserId");
-        if (deviceUserId == null) {
-            return;
-        }
-        MemberDeviceMapping mapping = mappingRepository
-                .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null);
-        if (mapping == null) {
-            return;
-        }
-        String status = textOr(payload, "status", "FAILED");
-        if ("ENROLLED".equalsIgnoreCase(status)) {
-            mapping.setEnrollmentStatus(EnrollmentStatus.ENROLLED);
-            mapping.setEnrolledAt(Instant.now());
-        } else if ("GUIDED_PENDING".equalsIgnoreCase(status)) {
-            mapping.setEnrollmentStatus(EnrollmentStatus.GUIDED_PENDING);
-        } else {
-            mapping.setEnrollmentStatus(EnrollmentStatus.FAILED);
-        }
-        mappingRepository.save(mapping);
     }
 
     /**

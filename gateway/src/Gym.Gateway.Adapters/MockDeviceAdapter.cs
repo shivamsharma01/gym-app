@@ -157,6 +157,17 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
             : DeviceFaceRead.None();
     }
 
+    public FaceChecksumList ListFaceChecksums()
+    {
+        if (!EnsureConnected(out var err))
+        {
+            return FaceChecksumList.Unavailable(err);
+        }
+
+        return FaceChecksumList.Complete(_faces.ToDictionary(
+            face => face.Key, face => PhotoMd5.Hex(face.Value.Photo), StringComparer.Ordinal));
+    }
+
     public DeviceCommandResult DeleteFace(string deviceUserId)
     {
         if (!EnsureConnected(out var err))

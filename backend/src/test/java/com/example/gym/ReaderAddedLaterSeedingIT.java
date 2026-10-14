@@ -35,11 +35,11 @@ import org.springframework.test.web.servlet.ResultActions;
 import tools.jackson.databind.JsonNode;
 
 /**
- * V18: a reader added after members exist receives every active member it does not have yet,
+ * A reader added after members exist receives every active member it does not have yet,
  * through the desired-state writer, once it shows a complete list. Existing mappings and people
  * the server does not know stay as they are. A later list writes only what is still missing.
  */
-class V18ReaderAddedLaterIT extends AbstractIntegrationTest {
+class ReaderAddedLaterSeedingIT extends AbstractIntegrationTest {
 
     @Autowired
     private DesiredProjectionService desiredProjectionService;

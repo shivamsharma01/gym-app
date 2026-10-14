@@ -39,14 +39,14 @@ public class MemberService {
 
     @Transactional(readOnly = true)
     public Page<Member> search(Long tenantId, String query, MemberStatus status,
-                               MemberCreationSource creationSource,DeviceAuthority deviceAuthority, Pageable pageable) {
+                               DeviceAuthority deviceAuthority, Pageable pageable) {
         String trimmed = query == null ? "" : query.strip();
         if (trimmed.isEmpty()) {
-            return memberRepository.search(tenantId, null, null, status, creationSource, deviceAuthority,pageable);
+            return memberRepository.search(tenantId, null, null, status, deviceAuthority, pageable);
         }
         // Spaces are kept between words (and one at the end) so "kunal " narrows to that first name.
         String name = query.stripLeading().replaceAll("\\s+", " ");
-        return memberRepository.search(tenantId, trimmed, name, status, creationSource,deviceAuthority, pageable);
+        return memberRepository.search(tenantId, trimmed, name, status, deviceAuthority, pageable);
     }
 
     @Transactional(readOnly = true)
@@ -87,7 +87,6 @@ public class MemberService {
         member.setDateOfBirth(request.dateOfBirth());
         member.setGender(request.gender());
         member.setNotes(request.notes());
-        member.setCreationSource(MemberCreationSource.MANUAL);
         if (StringUtils.hasText(request.deviceAuthority())) {
             member.setDeviceAuthority(DeviceAuthority.fromString(request.deviceAuthority()));
         }

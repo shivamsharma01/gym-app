@@ -6,7 +6,7 @@ using Gym.Gateway;
 using Gym.Gateway.Adapters;
 using Gym.Gateway.Execution;
 
-namespace Gym.Gateway.V1Harness;
+namespace Gym.Gateway.ReaderHarness;
 
 internal static class Program
 {
@@ -78,13 +78,13 @@ internal static class Harness
         await Console.Out.FlushAsync().ConfigureAwait(false);
         var noticeJson = await receiving.ConfigureAwait(false);
 
-        var legacy = false;
+        var commandDispatched = false;
         var executedAgain = false;
         long applied;
         int pending;
         using (var first = Start(arguments, reader))
         {
-            if (!await RouteAsync(noticeJson, arguments, first, reader, client, () => legacy = true, lifetime.Token)
+            if (!await RouteAsync(noticeJson, arguments, first, reader, client, () => commandDispatched = true, lifetime.Token)
                     .ConfigureAwait(false))
             {
                 throw new InvalidOperationException("The revision notice was not routed to the reader path");
@@ -105,7 +105,7 @@ internal static class Harness
         {
             var beforeRestart = reader.Writes.Count;
             using var restarted = Start(arguments, reader);
-            if (!await RouteAsync(noticeJson, arguments, restarted, reader, client, () => legacy = true, lifetime.Token)
+            if (!await RouteAsync(noticeJson, arguments, restarted, reader, client, () => commandDispatched = true, lifetime.Token)
                     .ConfigureAwait(false))
             {
                 throw new InvalidOperationException("The revision notice was not routed to the reader path");
@@ -117,7 +117,7 @@ internal static class Harness
         else
         {
             (applied, pending) = await DrainAsync(
-                socket, arguments, reader, client, () => legacy = true, (applied, pending), lifetime.Token)
+                socket, arguments, reader, client, () => commandDispatched = true, (applied, pending), lifetime.Token)
                 .ConfigureAwait(false);
         }
 
@@ -126,7 +126,7 @@ internal static class Harness
             reader,
             client,
             baseline,
-            new RunOutcome(applied, pending, executedAgain, legacy)).ConfigureAwait(false);
+            new RunOutcome(applied, pending, executedAgain, commandDispatched)).ConfigureAwait(false);
     }
 
     private static (long Applied, int Pending) Snapshot(ReaderWorker worker) =>
@@ -138,7 +138,7 @@ internal static class Harness
         ReaderWorker worker,
         FakeReader reader,
         DesiredStateClient client,
-        Action onLegacy,
+        Action onCommand,
         CancellationToken cancellationToken)
     {
         var path = new DesiredRevisionPath(arguments.DeviceId, worker, reader, client);
@@ -146,14 +146,14 @@ internal static class Harness
             json,
             _ =>
             {
-                onLegacy();
-                return Task.FromException(new InvalidOperationException("legacy command dispatcher received the revision"));
+                onCommand();
+                return Task.FromException(new InvalidOperationException("the staff command dispatcher received the revision"));
             },
             (notice, token) => path.HandleAsync(notice, token),
             cancellationToken).ConfigureAwait(false);
     }
 
-    private readonly record struct RunOutcome(long Applied, int Pending, bool ExecutedAgain, bool Legacy);
+    private readonly record struct RunOutcome(long Applied, int Pending, bool ExecutedAgain, bool CommandDispatched);
 
     private static async Task<int> Finish(
         Arguments arguments,
@@ -192,7 +192,7 @@ internal static class Harness
         var acked = client.AcknowledgementPosts > 0;
         var ok = arguments.Mode switch
         {
-            "face" => !acked && outcome.Applied == 0 && outcome.Pending == 0 && !publicIdLeaked && !outcome.Legacy,
+            "face" => !acked && outcome.Applied == 0 && outcome.Pending == 0 && !publicIdLeaked && !outcome.CommandDispatched,
             "occupied" => acked
                 && client.OccupiedIds.Count == 1
                 && client.OccupiedIds[0] == arguments.Occupy
@@ -201,8 +201,8 @@ internal static class Harness
                 && createdId != arguments.PublicId
                 && !publicIdLeaked
                 && !outcome.ExecutedAgain
-                && !outcome.Legacy,
-            _ => acked && !publicIdLeaked && !outcome.ExecutedAgain && !outcome.Legacy
+                && !outcome.CommandDispatched,
+            _ => acked && !publicIdLeaked && !outcome.ExecutedAgain && !outcome.CommandDispatched
         };
         var report = JsonSerializer.Serialize(new
         {
@@ -212,7 +212,7 @@ internal static class Harness
             publicIdLeaked,
             pullTranscript = client.PullTranscript,
             executedAgain = outcome.ExecutedAgain,
-            legacyDispatched = outcome.Legacy,
+            commandDispatched = outcome.CommandDispatched,
             occupiedId = client.OccupiedIds.FirstOrDefault(),
             createdId,
             appliedLocal = outcome.Applied,
@@ -263,7 +263,7 @@ internal static class Harness
         Arguments arguments,
         FakeReader reader,
         DesiredStateClient client,
-        Action onLegacy,
+        Action onCommand,
         (long Applied, int Pending) cursor,
         CancellationToken cancellationToken)
     {
@@ -285,11 +285,11 @@ internal static class Harness
             }
 
             using var worker = Start(arguments, reader);
-            var handled = await RouteAsync(json, arguments, worker, reader, client, onLegacy, cancellationToken)
+            var handled = await RouteAsync(json, arguments, worker, reader, client, onCommand, cancellationToken)
                 .ConfigureAwait(false);
             if (!handled)
             {
-                onLegacy();
+                onCommand();
                 throw new InvalidOperationException("Follow-up frame was not a desired revision");
             }
 

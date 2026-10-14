@@ -155,11 +155,13 @@ function Overview({ device }: { device: Device }) {
   )
 }
 
-function Reconcile({ deviceId }: { deviceId: string }) {
+function Reconcile({ deviceId }: Readonly<{ deviceId: string }>) {
   const reconcile = useMutation({
     mutationFn: () =>
       api<{ deviceId: string; written: number }>(`/api/v1/devices/${deviceId}/reconcile`, { method: 'POST' }),
   })
+  const written = reconcile.data?.written ?? 0
+  const queuedMessage = `${written} member${written === 1 ? '' : 's'} queued for this reader. The reader confirms each one when the gateway applies it.`
   return (
     <Card className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Members on this reader</h2>
@@ -172,9 +174,7 @@ function Reconcile({ deviceId }: { deviceId: string }) {
       </Button>
       {reconcile.isSuccess ? (
         <p className="text-sm text-muted">
-          {reconcile.data.written === 0
-            ? 'Nothing was missing.'
-            : `${reconcile.data.written} member${reconcile.data.written === 1 ? '' : 's'} queued for this reader. The reader confirms each one when the gateway applies it.`}
+          {written === 0 ? 'Nothing was missing.' : queuedMessage}
         </p>
       ) : null}
       {reconcile.error ? <QueryError error={reconcile.error} /> : null}
@@ -183,9 +183,9 @@ function Reconcile({ deviceId }: { deviceId: string }) {
   )
 }
 
-const FINISHED_COMMAND_STATES = ['SUCCEEDED', 'DEAD_LETTER', 'CANCELLED']
+const FINISHED_COMMAND_STATES = new Set(['SUCCEEDED', 'DEAD_LETTER', 'CANCELLED'])
 
-function ScanNow({ deviceId }: { deviceId: string }) {
+function ScanNow({ deviceId }: Readonly<{ deviceId: string }>) {
   const scan = useMutation({
     mutationFn: () => api<SyncCommand>(`/api/v1/devices/${deviceId}/scan`, { method: 'POST' }),
   })
@@ -195,11 +195,11 @@ function ScanNow({ deviceId }: { deviceId: string }) {
     queryFn: () => api<SyncCommand>(`/api/v1/sync-commands/${commandId}`),
     enabled: !!commandId,
     refetchInterval: (query) =>
-      query.state.data && FINISHED_COMMAND_STATES.includes(query.state.data.state) ? false : 3000,
+      query.state.data && FINISHED_COMMAND_STATES.has(query.state.data.state) ? false : 3000,
   })
   const current = command.data ?? scan.data
   const state = current?.state
-  const running = scan.isPending || (!!state && !FINISHED_COMMAND_STATES.includes(state))
+  const running = scan.isPending || (!!state && !FINISHED_COMMAND_STATES.has(state))
   return (
     <div className="space-y-2 border-t border-line pt-3">
       <p className="text-sm text-muted">
@@ -212,7 +212,7 @@ function ScanNow({ deviceId }: { deviceId: string }) {
       {state === 'SUCCEEDED' ? (
         <p className="text-sm text-ok">The gateway read this reader and sent its user list to the server.</p>
       ) : null}
-      {state && !FINISHED_COMMAND_STATES.includes(state) ? (
+      {state && !FINISHED_COMMAND_STATES.has(state) ? (
         <p className="text-sm text-muted">
           Asked the gateway · {state}
           {current?.lastError ? ` · ${current.lastError}` : ''}

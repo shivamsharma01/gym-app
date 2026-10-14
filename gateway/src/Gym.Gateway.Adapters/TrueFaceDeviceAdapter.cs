@@ -1363,8 +1363,11 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
 
         var records = new List<DeviceAttendanceRecord>();
-        for (var pageNo = 1; ; pageNo++)
+        var pageNo = 0;
+        int rowsOnPage;
+        do
         {
+            pageNo++;
             var result = search.Next(page, out var rows, out var pageError);
             if (result < 0)
             {
@@ -1383,11 +1386,9 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 records.Add(ToAttendance(row, at));
             }
 
-            if (rows.Count < page)
-            {
-                break;
-            }
+            rowsOnPage = rows.Count;
         }
+        while (rowsOnPage >= page);
 
         return records
             .OrderBy(r => r.OccurredAt)

@@ -121,7 +121,7 @@ export function ReviewPage() {
   )
 }
 
-function Validity({ from, to }: { from: string | null; to: string | null }) {
+function Validity({ from, to }: Readonly<{ from: string | null; to: string | null }>) {
   if (!from && !to) return null
   return (
     <div className="font-mono text-xs text-zinc-500">

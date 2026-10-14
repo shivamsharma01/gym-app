@@ -267,7 +267,7 @@ function readerStateLabel(row: MemberDeviceSync['devices'][number]) {
   return { label: 'On reader', tone: 'ok' as const }
 }
 
-function DeviceSyncPanel({ memberId }: { memberId: string }) {
+function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
   const { has } = useAuth()
   const qc = useQueryClient()
   const [removeDevice, setRemoveDevice] = useState<MemberDeviceSync['devices'][number] | null>(null)

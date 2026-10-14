@@ -106,48 +106,11 @@ public sealed class DurableOutboundStore
     /// </summary>
     public IReadOnlyList<GatewayEnvelope> LoadPending()
     {
-        var list = new List<GatewayEnvelope>();
-        foreach (var file in Directory.EnumerateFiles(_directory, "*.json"))
-        {
-            try
-            {
-                var json = File.ReadAllText(file);
-                var envelope = JsonSerializer.Deserialize<GatewayEnvelope>(json, JsonOptions.Inbound);
-                if (envelope != null && !string.IsNullOrWhiteSpace(envelope.MessageId))
-                {
-                    list.Add(envelope);
-                }
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Skipping corrupt outbox file {File}", file);
-            }
-        }
-
-        var ordered = list.OrderBy(e => e.Timestamp, StringComparer.Ordinal).ToList();
+        var ordered = ReadFiles().OrderBy(e => e.Timestamp, StringComparer.Ordinal).ToList();
         var kept = new List<GatewayEnvelope>(ordered.Count);
         lock (_snapshotGate)
         {
-            var newest = new Dictionary<string, GatewayEnvelope>(StringComparer.Ordinal);
-            foreach (var envelope in ordered)
-            {
-                var key = SnapshotKey(envelope);
-                if (key != null)
-                {
-                    newest[key] = envelope;
-                }
-            }
-
-            foreach (var key in newest.Keys.ToList())
-            {
-                if (_latestSnapshot.TryGetValue(key, out var held)
-                    && _pending.ContainsKey(held.MessageId)
-                    && string.CompareOrdinal(held.Timestamp, newest[key].Timestamp) > 0)
-                {
-                    newest.Remove(key);
-                }
-            }
-
+            var newest = NewestListPerReader(ordered);
             foreach (var envelope in ordered)
             {
                 var key = SnapshotKey(envelope);
@@ -171,6 +134,55 @@ public sealed class DurableOutboundStore
         }
 
         return kept;
+    }
+
+    private List<GatewayEnvelope> ReadFiles()
+    {
+        var list = new List<GatewayEnvelope>();
+        foreach (var file in Directory.EnumerateFiles(_directory, "*.json"))
+        {
+            try
+            {
+                var json = File.ReadAllText(file);
+                var envelope = JsonSerializer.Deserialize<GatewayEnvelope>(json, JsonOptions.Inbound);
+                if (envelope != null && !string.IsNullOrWhiteSpace(envelope.MessageId))
+                {
+                    list.Add(envelope);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Skipping corrupt outbox file {File}", file);
+            }
+        }
+
+        return list;
+    }
+
+    /// <summary>The newest list per reader on disk, unless this process already queued a newer one. Caller holds the snapshot gate.</summary>
+    private Dictionary<string, GatewayEnvelope> NewestListPerReader(List<GatewayEnvelope> ordered)
+    {
+        var newest = new Dictionary<string, GatewayEnvelope>(StringComparer.Ordinal);
+        foreach (var envelope in ordered)
+        {
+            var key = SnapshotKey(envelope);
+            if (key != null)
+            {
+                newest[key] = envelope;
+            }
+        }
+
+        foreach (var key in newest.Keys.ToList())
+        {
+            if (_latestSnapshot.TryGetValue(key, out var held)
+                && _pending.ContainsKey(held.MessageId)
+                && string.CompareOrdinal(held.Timestamp, newest[key].Timestamp) > 0)
+            {
+                newest.Remove(key);
+            }
+        }
+
+        return newest;
     }
 
     private string PathOf(string messageId) => Path.Combine(_directory, messageId + ".json");

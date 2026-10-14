@@ -146,12 +146,10 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             return;
         }
 
-        foreach (var awaited in _awaited.Values)
+        foreach (var awaited in _awaited.Values.Where(
+                     awaited => string.Equals(awaited.CorrelationId, correlationId, StringComparison.Ordinal)))
         {
-            if (string.Equals(awaited.CorrelationId, correlationId, StringComparison.Ordinal))
-            {
-                awaited.Outcome.TrySetResult(false);
-            }
+            awaited.Outcome.TrySetResult(false);
         }
     }
 

@@ -300,9 +300,10 @@ public sealed class GatewayWorker : BackgroundService
             return;
         }
 
-        foreach (var device in _options.Devices.Where(device => !string.IsNullOrWhiteSpace(device.DeviceId)))
+        foreach (var deviceId in _options.Devices
+                     .Select(device => device.DeviceId)
+                     .Where(deviceId => !string.IsNullOrWhiteSpace(deviceId)))
         {
-            var deviceId = device.DeviceId;
             var opened = _readerFactory.Open(deviceId, OnlineAdapter(deviceId));
             if (opened == null)
             {

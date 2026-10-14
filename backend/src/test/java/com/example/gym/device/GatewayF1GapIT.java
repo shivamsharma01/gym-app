@@ -175,8 +175,9 @@ class GatewayF1GapIT extends AbstractIntegrationTest {
         uploadPhoto(memberOnA, jpeg(Color.BLUE, 400));
         var member = memberRepository.findByPublicId(memberOnA).orElseThrow();
         var device = deviceRepository.findByPublicId(deviceA).orElseThrow();
-        memberDeviceMappingRepository.save(new com.example.gym.device.domain.MemberDeviceMapping(
-                member.getTenantId(), member.getId(), device.getId(), "9102"));
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId()))
+                .as("the first face seeds the member onto the gateway's reader")
+                .isPresent();
         mockMvc.perform(get("/internal/gateway/faces/" + memberOnA + "/1")
                         .header("Authorization", "Bearer " + credential))
                 .andExpect(status().isOk());

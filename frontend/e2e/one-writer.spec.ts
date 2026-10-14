@@ -77,14 +77,31 @@ const membership = {
   netAmount: 1000,
 }
 
-test('a reader shows its last stored punch and offers no reconcile or member import', async ({ page }) => {
+test('a reader shows its last stored punch and offers no attendance reconcile or member import', async ({ page }) => {
   await mockStaff(page)
   await page.goto('/app/devices/dev-1')
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
   await expect(page.getByText(/Last punch stored/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Sync Now' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Import device users' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: /reconcile/i })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /reconcile/i })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Reconcile members' })).toBeVisible()
+})
+
+test('reconciling a reader sends one request and reports what was written', async ({ page }) => {
+  const reconciles: string[] = []
+  await mockStaff(page, [], user, reconciles)
+  await page.goto('/app/devices/dev-1')
+  await page.getByRole('button', { name: 'Reconcile members' }).click()
+  await expect(page.getByText(/2 members queued for this reader/)).toBeVisible()
+  expect(reconciles).toEqual(['/api/v1/devices/dev-1/reconcile'])
+})
+
+test('staff without device sync see no reconcile action', async ({ page }) => {
+  await mockStaff(page, [], { ...user, roles: ['STAFF'], permissions: ['DEVICE_VIEW', 'MEMBER_VIEW'] })
+  await page.goto('/app/devices/dev-1')
+  await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reconcile members' })).toHaveCount(0)
 })
 
 test('a punch stored by the gateway appears once in the attendance list without a reload', async ({ page }) => {
@@ -181,6 +198,8 @@ test('creating a member sends one request with a face and no reader choice', asy
 async function mockStaff(
   page: import('@playwright/test').Page,
   created: { contentType: string; body: string }[] = [],
+  who: typeof user = user,
+  reconciles: string[] = [],
 ) {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
@@ -188,12 +207,12 @@ async function mockStaff(
     const method = route.request().method()
     if (path === '/api/v1/auth/refresh' && method === 'POST') {
       await route.fulfill({
-        json: { accessToken: 'token', tokenType: 'Bearer', expiresInSeconds: 900, user },
+        json: { accessToken: 'token', tokenType: 'Bearer', expiresInSeconds: 900, user: who },
       })
       return
     }
     if (path === '/api/v1/me') {
-      await route.fulfill({ json: user })
+      await route.fulfill({ json: who })
       return
     }
     if (path === '/api/v1/settings') {
@@ -210,6 +229,11 @@ async function mockStaff(
     }
     if (path === '/api/v1/devices/dev-1/health') {
       await route.fulfill({ json: health })
+      return
+    }
+    if (path === '/api/v1/devices/dev-1/reconcile' && method === 'POST') {
+      reconciles.push(path)
+      await route.fulfill({ json: { deviceId: 'dev-1', written: 2 } })
       return
     }
     if (path.startsWith('/api/v1/devices/dev-1/conflicts')) {

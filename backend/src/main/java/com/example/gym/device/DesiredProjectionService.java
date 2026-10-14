@@ -28,10 +28,13 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Supplier;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -120,6 +123,11 @@ public class DesiredProjectionService {
         if (mappings.countLocked(device.getId(), member.getId()) > 0) {
             return null;
         }
+        if (!revisions.unchangedSince(member)) {
+            FlowLog.info("device", "seed deferred reader={} member={}: member changed meanwhile",
+                    device.getPublicId(), member.getPublicId());
+            return null;
+        }
         write(member, device, face);
         return mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
                 .map(MemberDeviceMapping::getDeviceUserId)
@@ -171,19 +179,11 @@ public class DesiredProjectionService {
         String nameEx = szNameEx(fullName);
         LocalDate today = LocalDate.now(READER_ZONE);
         var window = authorization.window(member, today);
-        for (var found : inReaderOrder(member)) {
-            Device device = devices.findById(found.getDeviceId()).orElse(null);
-            if (device == null || device.getGatewayId() == null) {
-                continue;
-            }
-            DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
-                    .orElse(null);
-            if (row == null) {
-                continue;
-            }
-            ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
-            revisions.reload(row);
-            MemberDeviceMapping mapping = revisions.reload(found);
+        for (Held held : inReaderOrder(member)) {
+            Device device = held.device();
+            ReaderRevision cursor = held.cursor();
+            DesiredMemberProjection row = held.row();
+            MemberDeviceMapping mapping = held.mapping();
             String from = window.map(access -> at(access.validFrom(), LocalTime.MIN)).orElse(row.getValidFrom());
             String to = window.map(access -> at(access.validTo(), LocalTime.of(23, 59, 59))).orElse(row.getValidTo());
             if (row.getUserStatus() == status
@@ -219,19 +219,11 @@ public class DesiredProjectionService {
         if (face == null || face.getSha256() == null || face.getSha256().isBlank()) {
             return;
         }
-        for (var found : inReaderOrder(member)) {
-            Device device = devices.findById(found.getDeviceId()).orElse(null);
-            if (device == null || device.getGatewayId() == null) {
-                continue;
-            }
-            DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
-                    .orElse(null);
-            if (row == null) {
-                continue;
-            }
-            ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
-            revisions.reload(row);
-            MemberDeviceMapping mapping = revisions.reload(found);
+        for (Held held : inReaderOrder(member)) {
+            Device device = held.device();
+            ReaderRevision cursor = held.cursor();
+            DesiredMemberProjection row = held.row();
+            MemberDeviceMapping mapping = held.mapping();
             boolean sameFace = face.getSha256().equalsIgnoreCase(row.getFaceSha256()) && row.isFacePresent();
             if (!row.isPresentOnReader() || sameFace) {
                 continue;
@@ -255,18 +247,11 @@ public class DesiredProjectionService {
      */
     @Transactional
     public void publishFaceCleared(Member member) {
-        for (var mapping : inReaderOrder(member)) {
-            Device device = devices.findById(mapping.getDeviceId()).orElse(null);
-            if (device == null || device.getGatewayId() == null) {
-                continue;
-            }
-            DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
-                    .orElse(null);
-            if (row == null) {
-                continue;
-            }
-            ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
-            revisions.reload(row);
+        for (Held held : inReaderOrder(member)) {
+            Device device = held.device();
+            ReaderRevision cursor = held.cursor();
+            DesiredMemberProjection row = held.row();
+            MemberDeviceMapping mapping = held.mapping();
             if (!row.isPresentOnReader() || !row.isFacePresent()) {
                 continue;
             }
@@ -494,11 +479,40 @@ public class DesiredProjectionService {
         return new RevisionNotice(device.getPublicId(), revision);
     }
 
-    /** One reader at a time, lowest device id first, so two multi-reader writers cannot deadlock. */
-    private List<MemberDeviceMapping> inReaderOrder(Member member) {
-        return mappings.findByMemberId(member.getId()).stream()
-                .sorted(Comparator.comparing(MemberDeviceMapping::getDeviceId))
+    private record Held(Device device, ReaderRevision cursor, DesiredMemberProjection row,
+                        MemberDeviceMapping mapping) {
+    }
+
+    /**
+     * The member's rows on each reader of the gym with a gateway, lowest device id first, each read
+     * under that reader's lock. Every such reader is locked, not only the ones this transaction's
+     * snapshot shows the member on: a seed that is writing the member to another reader holds that
+     * reader's lock until it commits, and the locking reads then see its rows.
+     */
+    private List<Held> inReaderOrder(Member member) {
+        List<Device> readers = devices.findByTenantId(member.getTenantId()).stream()
+                .filter(device -> device.getGatewayId() != null)
+                .sorted(Comparator.comparing(Device::getId))
                 .toList();
+        List<Held> held = new ArrayList<>();
+        for (Device device : readers) {
+            ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+            MemberDeviceMapping mapping = current(
+                    mappings.findByDeviceIdAndMemberId(device.getId(), member.getId()),
+                    () -> mappings.lockByDeviceIdAndMemberId(device.getId(), member.getId()));
+            DesiredMemberProjection row = current(
+                    projections.findByDeviceIdAndMemberId(device.getId(), member.getId()),
+                    () -> projections.lockByDeviceIdAndMemberId(device.getId(), member.getId()));
+            if (mapping != null && row != null) {
+                held.add(new Held(device, cursor, row, mapping));
+            }
+        }
+        return held;
+    }
+
+    /** A row this transaction's snapshot shows is reread under the lock; otherwise a locking read finds it. */
+    private <T> T current(Optional<T> seen, Supplier<Optional<T>> locked) {
+        return seen.map(revisions::reload).or(locked).orElse(null);
     }
 
     /**
@@ -560,7 +574,7 @@ public class DesiredProjectionService {
         row.setPresentOnReader(true);
         row.setReaderName(szName(fullName));
         row.setReaderNameEx(szNameEx(fullName));
-        row.setUserStatus(USER_STATUS);
+        row.setUserStatus(readerStatus(member));
         row.setValidFrom(at(from, LocalTime.MIN));
         row.setValidTo(at(to, LocalTime.of(23, 59, 59)));
         row.setAuthority(AUTHORITY);

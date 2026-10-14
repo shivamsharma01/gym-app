@@ -44,7 +44,7 @@ public class BootstrapReportService {
     private final MemberDeviceMappingRepository mappings;
     private final DeviceReviewItemRepository reviews;
     private final PendingEnrollmentRepository enrollments;
-    private final DesiredProjectionService desired;
+    private final ReaderReconcileService reconcile;
 
     public BootstrapReportService(DeviceRepository devices,
                                   MemberRepository members,
@@ -52,14 +52,14 @@ public class BootstrapReportService {
                                   MemberDeviceMappingRepository mappings,
                                   DeviceReviewItemRepository reviews,
                                   PendingEnrollmentRepository enrollments,
-                                  DesiredProjectionService desired) {
+                                  ReaderReconcileService reconcile) {
         this.devices = devices;
         this.members = members;
         this.observedUsers = observedUsers;
         this.mappings = mappings;
         this.reviews = reviews;
         this.enrollments = enrollments;
-        this.desired = desired;
+        this.reconcile = reconcile;
     }
 
     @Transactional
@@ -71,7 +71,7 @@ public class BootstrapReportService {
         List<Member> people = members.findByTenantIdAndStatus(tenantId, MemberStatus.ACTIVE);
         List<Row> rows = new ArrayList<>();
         for (Device reader : readers) {
-            rows.addAll(seed(reader, people));
+            rows.addAll(seed(reader));
             rows.addAll(classify(reader, people, runId));
         }
         rows.addAll(collisions(readers));
@@ -84,7 +84,7 @@ public class BootstrapReportService {
      */
     @Transactional
     public void lockForRoster(Device reader) {
-        desired.lockReader(reader);
+        reconcile.lockReader(reader);
     }
 
     /**
@@ -95,24 +95,15 @@ public class BootstrapReportService {
      */
     @Transactional
     public void seedFromTrustedRoster(Device reader) {
-        if (reader == null) {
-            return;
-        }
-        seedMissing(reader, members.findByTenantIdAndStatus(reader.getTenantId(), MemberStatus.ACTIVE));
+        reconcile.reconcile(reader);
     }
 
-    private List<Row> seed(Device reader, List<Member> people) {
+    private List<Row> seed(Device reader) {
         if (!reader.isRosterTrustedEmpty() || !observedUsers.findByDeviceId(reader.getId()).isEmpty()) {
             return List.of();
         }
-        seedMissing(reader, people);
+        reconcile.reconcile(reader);
         return seededRows(reader);
-    }
-
-    private void seedMissing(Device reader, List<Member> people) {
-        for (Member member : people) {
-            desired.seedIfAbsent(member, reader);
-        }
     }
 
     private List<Row> seededRows(Device reader) {

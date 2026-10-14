@@ -163,6 +163,7 @@ function Overview({ device }: { device: Device }) {
           </Card>
         </div>
       ) : null}
+      {has('DEVICE_SYNC') && device.gatewayAssigned ? <Reconcile deviceId={device.id} /> : null}
       {conflicts.data && conflicts.data.content.length > 0 ? (
         <Card className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
@@ -199,6 +200,33 @@ function Overview({ device }: { device: Device }) {
         reconciliation conflicts are separate facts.
       </p>
     </div>
+  )
+}
+
+function Reconcile({ deviceId }: { deviceId: string }) {
+  const reconcile = useMutation({
+    mutationFn: () =>
+      api<{ deviceId: string; written: number }>(`/api/v1/devices/${deviceId}/reconcile`, { method: 'POST' }),
+  })
+  return (
+    <Card className="space-y-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Members on this reader</h2>
+      <p className="text-sm text-muted">
+        Writes every active member with a photo that this reader does not have yet. People already on the reader,
+        members removed from it, and people the server does not know are left as they are.
+      </p>
+      <Button size="sm" variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
+        Reconcile members
+      </Button>
+      {reconcile.isSuccess ? (
+        <p className="text-sm text-muted">
+          {reconcile.data.written === 0
+            ? 'Nothing was missing.'
+            : `${reconcile.data.written} member${reconcile.data.written === 1 ? '' : 's'} queued for this reader. The reader confirms each one when the gateway applies it.`}
+        </p>
+      ) : null}
+      {reconcile.error ? <QueryError error={reconcile.error} /> : null}
+    </Card>
   )
 }
 

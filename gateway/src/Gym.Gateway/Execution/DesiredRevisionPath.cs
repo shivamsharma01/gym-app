@@ -7,7 +7,8 @@ namespace Gym.Gateway.Execution;
 /// Pulls one reader's desired member, writes it through <see cref="ReaderWorker"/>, and posts the
 /// acknowledgement only after the user and face read back. An occupied id is reported as that id.
 /// Reconnect reads the reader before that pull. A silent reader is not written.
-/// A trusted list uploads reader-created ids. It does not copy them to another reader.
+/// A trusted list uploads reader-created ids and the whole list with its announced total. It does
+/// not copy anyone to another reader.
 /// </summary>
 public sealed class DesiredRevisionPath
 {
@@ -58,21 +59,13 @@ public sealed class DesiredRevisionPath
             return;
         }
 
-        if (observed.CountMatchesAnnouncedTotal && observed.Users.Count == 0)
-        {
-            await UploadTrustedEmptyAsync(observed, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
-        }
-
+        await UploadTrustedListAsync(observed, false, cancellationToken).ConfigureAwait(false);
         await HandleAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// One trusted read, then the existing observation upload. A short list uploads nothing.
-    /// An empty trusted list is reported empty. Nothing is copied onto another reader.
+    /// One trusted read, then the whole list. The per-user observations follow only when the server
+    /// did not acknowledge that list. A short list uploads nothing. Nothing is copied onto another reader.
     /// </summary>
     public async Task<bool> BootstrapAsync(CancellationToken cancellationToken)
     {
@@ -82,14 +75,12 @@ public sealed class DesiredRevisionPath
             return false;
         }
 
+        await UploadTrustedListAsync(observed, true, cancellationToken).ConfigureAwait(false);
         if (observed.Users.Count == 0)
         {
-            await UploadTrustedEmptyAsync(observed, cancellationToken).ConfigureAwait(false);
             await HandleAsync(cancellationToken).ConfigureAwait(false);
-            return true;
         }
 
-        await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -107,21 +98,71 @@ public sealed class DesiredRevisionPath
         await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>A complete empty list is uploaded. It is not treated as a removal.</summary>
-    private async Task UploadTrustedEmptyAsync(ReaderListResult observed, CancellationToken cancellationToken)
+    /// <summary>
+    /// The absences and the whole list with its announced total, empty or not. The server runs the
+    /// same per-user observation for every entry of a list it processes, so the per-user messages
+    /// are sent only when that is not confirmed: always on reconnect, before the list, because the
+    /// server's ACK cannot be read until the reconnect finishes; on a scan, after the list, when the
+    /// list was not acknowledged. An empty list is not treated as a removal. A short or mismatched
+    /// list uploads nothing.
+    /// </summary>
+    private async Task UploadTrustedListAsync(
+        ReaderListResult observed, bool awaitAcceptance, CancellationToken cancellationToken)
     {
-        if (_observations == null)
+        if (_observations == null || !observed.CountMatchesAnnouncedTotal)
         {
             return;
         }
 
-        await _observations.UploadTrustedRosterAsync(
-                _deviceId,
-                observed.AnnouncedTotal,
-                [],
-                new Dictionary<string, string>(),
-                cancellationToken)
-            .ConfigureAwait(false);
+        var listed = Listed(observed);
+        var hashes = FaceHashes(listed);
+        try
+        {
+            if (listed.Count > 0)
+            {
+                if (!awaitAcceptance)
+                {
+                    await _observations.UploadAsync(_deviceId, listed, hashes, cancellationToken).ConfigureAwait(false);
+                }
+
+                await UploadAbsencesAsync(listed, cancellationToken).ConfigureAwait(false);
+            }
+
+            var accepted = await UploadListAsync(observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
+                .ConfigureAwait(false);
+            if (awaitAcceptance && !accepted && listed.Count > 0)
+            {
+                await _observations.UploadAsync(_deviceId, listed, hashes, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // The people stay on this reader. Nothing is copied to another reader.
+        }
+    }
+
+    /// <summary>Any failure of the list counts as not accepted, so the per-user messages still go.</summary>
+    private async Task<bool> UploadListAsync(
+        int announcedTotal,
+        IReadOnlyList<ReaderUser> listed,
+        IReadOnlyDictionary<string, string> hashes,
+        bool awaitAcceptance,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _observations!.UploadTrustedRosterAsync(
+                    _deviceId, announcedTotal, listed, hashes, awaitAcceptance, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return false;
+        }
     }
 
     private async Task UploadNewPeopleAsync(ReaderListResult observed, CancellationToken cancellationToken)
@@ -131,9 +172,7 @@ public sealed class DesiredRevisionPath
             return;
         }
 
-        var listed = observed.Users
-            .Where(user => !string.IsNullOrWhiteSpace(user.DeviceUserId))
-            .ToList();
+        var listed = Listed(observed);
         if (listed.Count == 0)
         {
             return;
@@ -154,6 +193,9 @@ public sealed class DesiredRevisionPath
             // The person stays on this reader. Nothing is copied to another reader.
         }
     }
+
+    private static List<ReaderUser> Listed(ReaderListResult observed) =>
+        observed.Users.Where(user => !string.IsNullOrWhiteSpace(user.DeviceUserId)).ToList();
 
     /// <summary>One hash per id. Equal hashes stay separate observations.</summary>
     private Dictionary<string, string> FaceHashes(IReadOnlyList<ReaderUser> listed)

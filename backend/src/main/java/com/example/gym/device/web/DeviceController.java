@@ -4,6 +4,8 @@ import com.example.gym.common.web.PageResponse;
 import com.example.gym.device.DeviceReadService;
 import com.example.gym.device.DeviceService;
 import com.example.gym.device.DeviceUserImportService;
+import com.example.gym.device.ReaderReconcileService;
+import com.example.gym.device.ReaderReconcileService.Reconciled;
 import com.example.gym.device.ReconciliationConflictService;
 import com.example.gym.device.dto.DeviceRequests.CreateDevice;
 import com.example.gym.device.dto.DeviceRequests.CreateMapping;
@@ -45,15 +47,18 @@ public class DeviceController {
     private final DeviceReadService deviceReadService;
     private final ReconciliationConflictService conflictService;
     private final DeviceUserImportService importService;
+    private final ReaderReconcileService reconcileService;
 
     public DeviceController(DeviceService deviceService,
                             DeviceReadService deviceReadService,
                             ReconciliationConflictService conflictService,
-                            DeviceUserImportService importService) {
+                            DeviceUserImportService importService,
+                            ReaderReconcileService reconcileService) {
         this.deviceService = deviceService;
         this.deviceReadService = deviceReadService;
         this.conflictService = conflictService;
         this.importService = importService;
+        this.reconcileService = reconcileService;
     }
 
     @GetMapping
@@ -112,6 +117,13 @@ public class DeviceController {
     @Operation(summary = "Rejected. A reader list does not create members.")
     public ImportUsersResult importUsers(@PathVariable String id) {
         return ImportUsersResult.from(importService.importUsers(id, SecurityUtils.currentTenantId()));
+    }
+
+    @PostMapping("/{id}/reconcile")
+    @PreAuthorize("hasAuthority('DEVICE_SYNC')")
+    @Operation(summary = "Write every active member with a face that this reader has no mapping for")
+    public Reconciled reconcile(@PathVariable String id) {
+        return reconcileService.reconcile(id, SecurityUtils.currentTenantId());
     }
 
     @GetMapping("/{id}/conflicts")

@@ -52,7 +52,8 @@ public class BootstrapTests : IDisposable
 
         Assert.True(trusted);
         Assert.Equal(new[] { "7" }, sink.Ids);
-        Assert.Empty(sink.TrustedRosterTotals);
+        Assert.Equal(new[] { 1 }, sink.TrustedRosterTotals);
+        Assert.Equal(new[] { "7" }, sink.RosterIds);
         Assert.Equal(0, client.Pulls);
         Assert.Equal(new[] { "CreateUser 7" }, reader.Writes);
         Assert.Empty(sibling.Writes);

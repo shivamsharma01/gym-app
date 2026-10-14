@@ -73,5 +73,18 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
     long countLocked(@org.springframework.data.repository.query.Param("deviceId") Long deviceId,
                      @org.springframework.data.repository.query.Param("memberId") Long memberId);
 
+    @org.springframework.data.jpa.repository.Query(value = """
+            SELECT member_id FROM member_device_mapping WHERE device_id = :deviceId FOR SHARE
+            """, nativeQuery = true)
+    List<Long> lockMemberIdsByDeviceId(@org.springframework.data.repository.query.Param("deviceId") Long deviceId);
+
     Optional<MemberDeviceMapping> findByDeviceIdAndMemberId(Long deviceId, Long memberId);
+
+    /** A locking read: sees a mapping another transaction committed after this one's snapshot. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query(
+            "select m from MemberDeviceMapping m where m.deviceId = :deviceId and m.memberId = :memberId")
+    Optional<MemberDeviceMapping> lockByDeviceIdAndMemberId(
+            @org.springframework.data.repository.query.Param("deviceId") Long deviceId,
+            @org.springframework.data.repository.query.Param("memberId") Long memberId);
 }

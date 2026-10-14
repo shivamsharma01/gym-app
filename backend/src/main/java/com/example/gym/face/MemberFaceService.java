@@ -5,13 +5,13 @@ import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.DesiredProjectionService;
+import com.example.gym.device.ReaderReconcileService;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
-import com.example.gym.member.MemberService;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -31,7 +31,7 @@ public class MemberFaceService {
     private final MemberFaceRepository faceRepository;
     private final GatewayFaceUploadRepository uploadRepository;
     private final FaceStorageService storage;
-    private final MemberService memberService;
+    private final ReaderReconcileService readers;
     private final MemberRepository memberRepository;
     private final AuditService auditService;
     private final DeviceRepository deviceRepository;
@@ -41,7 +41,7 @@ public class MemberFaceService {
     public MemberFaceService(MemberFaceRepository faceRepository,
                              GatewayFaceUploadRepository uploadRepository,
                              FaceStorageService storage,
-                             MemberService memberService,
+                             ReaderReconcileService readers,
                              MemberRepository memberRepository,
                              AuditService auditService,
                              DeviceRepository deviceRepository,
@@ -50,7 +50,7 @@ public class MemberFaceService {
         this.faceRepository = faceRepository;
         this.uploadRepository = uploadRepository;
         this.storage = storage;
-        this.memberService = memberService;
+        this.readers = readers;
         this.memberRepository = memberRepository;
         this.auditService = auditService;
         this.deviceRepository = deviceRepository;
@@ -61,13 +61,16 @@ public class MemberFaceService {
     /** Staff upload (React). Returns the current face (unchanged when the image is identical). */
     @Transactional
     public MemberFace upload(String memberPublicId, byte[] raw, Long tenantId) {
-        Member member = memberService.getByPublicId(memberPublicId, tenantId);
+        Member member = member(memberPublicId, tenantId);
         Optional<MemberFace> existing = faceRepository.findByMemberId(member.getId());
         String previousSha = existing.map(MemberFace::getSha256).orElse(null);
         int previousVersion = existing.map(MemberFace::getFaceVersion).orElse(-1);
         MemberFace face = storeUploaded(member, raw);
         boolean unchanged = previousSha != null && previousSha.equals(face.getSha256()) && previousVersion == face.getFaceVersion();
         if (!unchanged) {
+            if (previousSha == null) {
+                readers.reconcile(member);
+            }
             desiredProjection.publishFace(member);
         }
         return face;
@@ -117,7 +120,7 @@ public class MemberFaceService {
 
     @Transactional(readOnly = true)
     public Optional<FaceImage> image(String memberPublicId, Long tenantId) {
-        Member member = memberService.getByPublicId(memberPublicId, tenantId);
+        Member member = member(memberPublicId, tenantId);
         return faceRepository.findByMemberId(member.getId())
                 .filter(f -> storage.exists(f.getObjectKey()))
                 .map(f -> new FaceImage(storage.read(f.getObjectKey()), f.getSha256(), f.getFaceVersion()));
@@ -125,7 +128,7 @@ public class MemberFaceService {
 
     @Transactional
     public void delete(String memberPublicId, Long tenantId) {
-        Member member = memberService.getByPublicId(memberPublicId, tenantId);
+        Member member = member(memberPublicId, tenantId);
         MemberFace face = faceRepository.findByMemberId(member.getId()).orElse(null);
         if (face == null) {
             return;
@@ -138,6 +141,13 @@ public class MemberFaceService {
         FlowLog.info("face", "photo removed member={}", member.getPublicId());
         auditService.record(AuditActions.MEMBER_FACE_DELETED, AuditActions.RESULT_SUCCESS,
                 "Member", member.getPublicId(), serialDetails(member, null, null));
+    }
+
+    private Member member(String publicId, Long tenantId) {
+        Member member = memberRepository.findByPublicId(publicId)
+                .orElseThrow(() -> CommonExceptions.notFound("Member"));
+        TenantGuard.check(member.getTenantId(), tenantId, "Member");
+        return member;
     }
 
     private static Map<String, Object> serialDetails(Member member, String key, Object value) {

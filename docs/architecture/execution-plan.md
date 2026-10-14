@@ -1,6 +1,6 @@
 # Execution plan
 
-Status: F1–F3 and V1–V20 are implemented. Their automated tests passed on the fake reader and the test database. V21 is not built. Section E has not been run on a physical reader.
+Status: F1–F3 and V1–V21 are implemented. Their automated tests passed on the fake reader and the test database. Section E has not been run on a physical reader.
 Architecture: [device-sync-architecture.md](device-sync-architecture.md).
 Open questions: [open-questions.md](open-questions.md).
 Evidence: [device-poc-results.md](device-poc-results.md), reader serial `TW30000005250265`.
@@ -494,7 +494,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Acceptance criteria.** Every active reader's applied revision reaches its desired revision for the new member.
 
-**Done.** Automated tests passed on the fake reader and test database: `V18EveryReaderCreateIT` (two readers with independent ids and the same face, an occupied id retried on one reader only, an offline reader converging after reconnect, one reader's failed read-back leaving the member and the other reader applied, a gym with no reader publishing nothing, no create without a face, and the per-reader applied or pending state); `ReaderConcurrencyIT.concurrentCreatesFanOutToEveryReaderWithoutDeadlockAlongsideAReverseOrderRename`; and the create form and member page cases in `e2e/one-writer.spec.ts`. An "active reader" is a reader of the gym with a gateway; there is no separate active flag. The server seeds a reader added later with the existing active members once it receives a trusted roster, empty or not: each active member with a face that has no mapping on that reader is written through the desired-state writer and the reader's allocator, which now also treats every id seen on a reader list as taken. Existing mappings, staff removals, and unknown people stay as they are; nobody is linked. A later trusted roster writes only what is still missing. The roster is recorded under the reader lock, so it cannot deadlock with a create on the same reader. A trusted roster no longer reports a member as missing when the reader never showed or verified that id, so a member published before the reader's first roster does not open a review item. `V18ReaderAddedLaterIT` covers members created before the first roster, a partially mapped reader, a non-empty roster with unknown users, and rosters racing creates; `ReaderConcurrencyIT` and `V18ReaderAddedLaterIT` passed in 5 repeated runs. These tests post the roster to the server directly. The gateway today sends a complete list as one message only when the reader is empty; a non-empty reader's users arrive one at a time, and those do not trigger the seed. So on the live path, a reader added with people already on it does not yet receive the existing members, and a member who becomes active or gets a photo later does not reach a reader that lacks them. Both are V21. The membership row on the member page no longer shows the old device sync state. The faceless JSON create was removed. The member page reads applied and pending state from the desired revision and the reader's applied revision instead of the per-reader command and sync-state fields that the desired path never wrote. No physical-reader check applies beyond Section E.
+**Done.** Automated tests passed on the fake reader and test database: `V18EveryReaderCreateIT` (two readers with independent ids and the same face, an occupied id retried on one reader only, an offline reader converging after reconnect, one reader's failed read-back leaving the member and the other reader applied, a gym with no reader publishing nothing, no create without a face, and the per-reader applied or pending state); `ReaderConcurrencyIT.concurrentCreatesFanOutToEveryReaderWithoutDeadlockAlongsideAReverseOrderRename`; and the create form and member page cases in `e2e/one-writer.spec.ts`. An "active reader" is a reader of the gym with a gateway; there is no separate active flag. The server seeds a reader added later with the existing active members once it receives a trusted roster, empty or not: each active member with a face that has no mapping on that reader is written through the desired-state writer and the reader's allocator, which now also treats every id seen on a reader list as taken. Existing mappings, staff removals, and unknown people stay as they are; nobody is linked. A later trusted roster writes only what is still missing. The roster is recorded under the reader lock, so it cannot deadlock with a create on the same reader. A trusted roster no longer reports a member as missing when the reader never showed or verified that id, so a member published before the reader's first roster does not open a review item. `V18ReaderAddedLaterIT` covers members created before the first roster, a partially mapped reader, a non-empty roster with unknown users, and rosters racing creates; `ReaderConcurrencyIT` and `V18ReaderAddedLaterIT` passed in 5 repeated runs. These tests post the roster to the server directly. The gateway today sends a complete list as one message only when the reader is empty; a non-empty reader's users arrive one at a time, and those do not trigger the seed. So on the live path, a reader added with people already on it does not yet receive the existing members, and a member who becomes active or gets a photo later does not reach a reader that lacks them. Both are V21, now built. The membership row on the member page no longer shows the old device sync state. The faceless JSON create was removed. The member page reads applied and pending state from the desired revision and the reader's applied revision instead of the per-reader command and sync-state fields that the desired path never wrote. No physical-reader check applies beyond Section E.
 
 ### V19 — Attendance poll
 
@@ -564,7 +564,7 @@ Limitations:
 
 **Acceptance criteria.** No decision stays in applying state after the reader has confirmed a revision that replaced it.
 
-**Done.** Complete, on automated tests (12 October 2026). That is not physical-reader evidence; Section E still applies. Automated tests passed on the test database. `V20SupersededDecisionIT` (4) covers the following:
+**Done.** Complete, on automated tests (12 October 2026), for decisions acknowledged after V20; decisions stuck before it are not closed retroactively (see below). That is not physical-reader evidence; Section E still applies. Automated tests passed on the test database. `V20SupersededDecisionIT` (4) covers the following:
 - An accept-server decision replaced by a rename: an acknowledgement of the decision revision is refused with 409 and leaves the item applying with no error. The acknowledgement of the rename closes the item, applied equals the rename revision, and the decision, actor, decision revision, and single decision audit row are unchanged. A repeated acknowledgement leaves the closed item untouched (same row version).
 - The same for a linked pending enrollment.
 - A failed read-back of the rename revision leaves the replaced decision open with the verification error. A later matching acknowledgement closes it.
@@ -586,7 +586,27 @@ Legacy behavior checked against this slice:
 - A resolved enrollment does not reopen.
 - No gateway, adapter, frontend, or schema change was made, and no review or conflict behavior was added.
 
+Decisions already stuck in applying state before V20:
+- V20 closes a decision only when an acknowledgement arrives after it is deployed. A decision whose superseding revision the reader confirmed before V20 stays in applying state.
+- No one-time cleanup was written, because the server keeps no record that proves a given user's superseding revision was acknowledged. Checked on 12 October 2026:
+  - `reader_revision.applied_revision` is one number per reader. It does not say which user's row was confirmed, so it is not used.
+  - `desired_member_projection` holds only the current desired revision. It records no applied revision per row. `observed_face_sha256` is overwritten without a revision, and `updated_at` also changes on every new publish.
+  - `device_reader_baseline` holds field values with no revision. It is also written when a reader report already agrees with the desired record, which is not an acknowledgement, and `updated_at` moves only when the values change.
+  - `audit_log` has the staff decision rows (`REVIEW_DECIDED`, `ENROLLMENT_DECIDED`) and nothing for acknowledgements.
+  - `verification_error` records only failed read-backs. Request access logs name the endpoint and status, not the revision or user.
+
+  Inferring closure from any of these could close a decision the reader never confirmed, so nothing is bulk-closed.
+- The gateway's own journal on the gateway host was not inspected; it is not server data.
+- Safe staff path:
+  1. A stuck item shows as applying with no verification error in the open review list.
+  2. It cannot be decided again. The decision endpoints answer 409 "Decision is waiting for the reader", and that is intended.
+  3. It closes, with its decision, actor, and audit row unchanged, once a real change to that member reaches that reader and the reader confirms it. For example: a name, membership date, status, or photo change.
+  4. Saving the member with no change publishes nothing and does not help.
+  5. A rejected enrollment (an absence with no member) has no member change to make, so it stays applying until that device user id is published again.
+- Operators can list candidates read-only. These are open decisions on a reader whose user now has a later desired revision: `device_review_item` or `pending_enrollment` rows with `resolved = 0`, `decision_revision IS NOT NULL`, and `verification_error IS NULL`, joined to `desired_member_projection` on `device_id` and `device_user_id` where `revision > decision_revision`. The query shows that the decision was superseded, not that the reader confirmed the newer revision, so it is not a reason to close anything.
+
 Limitations:
+- Decisions stuck before V20 are not closed retroactively (above).
 - Decisions are matched by device user id. A decision whose row later moved to another id (only the occupied-id retry does that, and decisions keep the reader's existing id) would not be closed by acknowledgements of the new id.
 - No physical reader was used.
 
@@ -610,7 +630,112 @@ Limitations:
 
 **Acceptance criteria.** After a late activation or photo, every reader with a gateway reaches that member's desired revision without a new roster. A reader added with people on it reaches the existing active members after one reconnect.
 
-**Done.** Not built.
+**Done.** Complete, on automated tests (14 October 2026). That is not physical-reader evidence; Section E still applies.
+
+Tests:
+- `V21LateChangesIT` (10):
+  - A member who was inactive when a second reader was seeded is reactivated. That reader gets the member with no roster message, and both readers converge.
+  - A member reactivated with a frozen membership is written disabled, with the membership dates.
+  - A member without a face gets one and reaches both readers; an inactive member who gets a face reaches none. A later photo change publishes a face revision and creates no new mapping.
+  - A staff-removed member is not written again by the staff action, an empty roster, or a photo change.
+  - An unknown user's id on a reader is not reused and the person is not linked.
+  - An unseen id that turns out to be occupied is retried on that reader only.
+  - A reader added with people on it receives the existing members from its first list, above the ids it showed, and converges.
+  - Running the staff action twice writes nothing the second time; each run is audited.
+  - The staff action needs a reader with a gateway and `DEVICE_SYNC`. Staff without it get 403.
+  - Five creates, three staff reconciles, a reactivation, a first photo, and a roster, all at once, map each member once per reader with distinct ids and revisions.
+- Gateway: `LiveBootstrapTests` covers a reader with people on it that uploads its whole list on one reconnect and applies the member the server seeded, and a list over the server's message limit that is not queued. `BootstrapTests` and `PendingEnrollmentTests` check that a trusted list is uploaded as one list and per user.
+- `e2e/one-writer.spec.ts`: the reader page offers "Reconcile members" and reports what was written; staff without `DEVICE_SYNC` do not see it.
+
+How it is built:
+- `ReaderReconcileService` is the one reconcile operation per reader. Under that reader's lock it runs every active member through `seedIfAbsent`.
+- The bootstrap report, a trusted list, and the staff action use it.
+- Reactivation and a member's first photo lock every reader of the gym with a gateway, lowest device id first, then seed that member on the readers that lack them. The access or face publish for readers that already have the member follows in the same transaction.
+- The staff action is `POST /api/v1/devices/{id}/reconcile` with the existing `DEVICE_SYNC` permission. It is audited as `DEVICE_RECONCILE_REQUESTED`, an action that had no remaining caller.
+- The gateway uploads every trusted list, empty or not, as one `DEVICE_USER_CHANGED` message with `announcedTotal`, on reconnect and on each roster scan. On reconnect the per-user observations and absences are sent before it. On a scan the absences are sent first, then the list, and the per-user observations only when the server did not acknowledge the list (see the follow-up below). A short or mismatched list uploads nothing.
+- A seeded member is written with the same reader status the access publish computes. Before this, the seed always wrote enabled, so a reactivated member with a frozen or ended membership would have been let in until the next access change.
+- A lock-helper fix: `ReaderRevisions.reload` no longer refreshes a row this transaction already holds the lock on. A second refresh is read without the lock, from the transaction's older snapshot, and replaced the current revision with an earlier one. The concurrent-trigger test failed every run with a concurrent-modification 409 before this fix and passed three runs after it.
+
+Legacy behavior checked against this slice:
+- Reader user import (`POST /devices/{id}/import-users`) and manual mapping (`POST /devices/{id}/mappings`) already refuse. Kept as refusals.
+- The gateway-connected listener only releases door and clock commands. Member state is not copied there.
+- The outbox does not send member writes to a reader that uses desired state.
+- The per-member "read from device" is a no-op.
+- None of these compete with the reconcile, and nothing was removed.
+- Two older tests assumed the removed V19 behavior. `DeviceRosterImportIT` checked that `POST /devices/{id}/reconcile` no longer existed. That path now belongs to the V21 staff action, so the test checks that it queues no reader command. `GatewayF1GapIT` added a reader mapping by hand after a first face. The first face now seeds that mapping, so the test checks that it exists.
+
+Follow-up after review (14 October 2026, uncommitted at the time of writing):
+- Seed race. `V21SeedRaceIT` (7) holds a seed or a member change open at a fixed point and checks the reader afterwards. Before the fix, five of its race cases failed. A deactivation or freeze that committed while a seed waited for the reader, or ran during an uncommitted seed, left the member enabled on that reader. A rename during a seed did not reach it. Two causes:
+  - The seed wrote from a member read before it held the reader.
+  - The access and face publishes found readers through mappings read from the transaction's snapshot, so they missed a mapping the seed had just committed.
+- The fix:
+  - The seed rechecks the member's version under the reader lock with `FOR SHARE SKIP LOCKED`. If the member changed, or a change still holds it, the seed leaves that member for the next trigger and logs "seed deferred".
+  - Access, face, and face-cleared publishes lock every gateway reader of the gym, lowest device id first, then read the mapping and desired row as current or locking reads.
+  - The lock order is unchanged: readers by ascending device id, then member rows. All 7 race tests pass, and `ReaderConcurrencyIT` and the V21 concurrency test still pass.
+- Outbound journal coalescing (gateway).
+  - The journal keeps only the newest unsent whole list per reader. A newer list replaces the older one on disk and in memory, and a list replaced during replay is not sent.
+  - On restart, the newest list per reader wins and older ones are deleted. Per-user observations, absences, and every other message are never coalesced. An acknowledgement for a list that was already replaced leaves the newer list queued, and a message the server rejects stays queued.
+  - `OutboundSnapshotTests` (7) covers this, including a one-hour outage: 240 scans, 2 readers, every per-user message delivered once, one final list per reader, and an empty journal afterwards. Four of these tests failed against the previous journal.
+- `DeviceRosterImportIT` now checks that the staff reconcile returns 200 with `written` = 0. `/sync-now` still refuses.
+- Scan load, measured on the test database (Testcontainers MySQL 8.4 on a developer machine). `V21RosterLoadIT` is opt-in (`-Dgym.measure=true`). It uses one reader with 1,200 mapped members with faces and posts a matching trusted list, so nothing is seeded:
+
+  | Step | Before | After the reconcile prefilter |
+  |---|---|---|
+  | One 1,200-user list (steady state, 5 rounds) | about 19 s, 9,631 statements | about 8.2 s, 6,032 statements |
+  | Staff reconcile, nothing to write | about 5.2 s, 3,615 statements | about 26 ms, 16 statements |
+  | 1,200 per-user messages (the scan sends these before the list) | about 43 s, 31,204 statements | unchanged |
+
+  - With 300 users, a list took about 2.2 s and the per-user messages about 7 s. Cost grows faster than the user count.
+  - The prefilter: the per-reader reconcile reads the ids of members already mapped on that reader once, with `FOR SHARE`, after taking the reader lock. It then calls `seedIfAbsent` only for the others. Mappings are never deleted and are only added under the reader lock, so this skips exactly the members the per-member locked count skipped and holds the same share locks. Seeding rules are unchanged; the existing V18, V21, and race tests pass.
+- List-only scan (approved and built 14 October 2026, uncommitted). A scan no longer sends the per-user observations when the server acknowledged that scan's whole list.
+  - Protocol trace. Every `DEVICE_USER_CHANGED` message goes through `GatewayMessageService` (duplicate message ids are acknowledged without processing), then `DeviceUserChangeService.apply` in one transaction, then `PendingEnrollmentService.observe`. A per-user message runs `observeOne`: save the reader snapshot; for an id the server allocated, record review differences; for any other id, a pending enrollment. For each entry, the list runs the same `observeOne`. Differences, all on the list side:
+    - Its announced total must match its entries, or no entry is processed. The gateway sends neither the list nor the per-user messages for a mismatched read.
+    - It takes the reader lock before the first entry and holds it to commit. Per-user messages take no reader lock.
+    - It also stores whether the trusted list was empty, records absences for desired rows missing from it that were seen or verified before, and seeds missing active members.
+    - It is one transaction, so one failing entry rejects the whole list. Per-user failures are isolated.
+    - The gateway's absence messages use a different rule: ids its journal applied that the list lacks, checked on the server against every server-allocated id. They are still sent on every scan.
+  - Acceptance means the server's ACK naming the list's message id. The server sends it only after the list's transaction committed. A REST response counts only if its body is that ACK. Writing the frame, a REST 2xx without an ACK body, or a durable copy in the outbox is not acceptance. Acceptance says nothing about the reader: reader application and its read-back acknowledgement go through desired revisions as before.
+  - Fallback. The per-user messages are sent after the list, as before, in each of these cases:
+    - the list was not sent because it is over the size limit;
+    - the server rejected the list (ERROR, matched by correlation id) or returned a non-2xx status;
+    - the reply was a 2xx without an ACK;
+    - the server was unreachable;
+    - the connection closed before the ACK;
+    - a newer list of the same reader replaced this one in the outbox;
+    - no ACK arrived within 60 seconds;
+    - the upload failed in any other way.
+
+    The list itself stays under the existing outbox and retry rules.
+  - Reconnect always sends the per-user messages first, then the list, as before, because the gateway reads the ACK only after the reconnect step and the replay finish. Acceptance is per scan and in memory only, so after a restart nothing is skipped until a new list is acknowledged. Absences are always sent.
+  - Tests:
+    - `RosterAcceptanceTests` (17, gateway) covers the scan path, every fallback case above, a restart, and over a real WebSocket: an ACK, a timeout, a rejection, a replaced list, and a dropped connection followed by replay.
+    - The gateway end-to-end test in `LiveBootstrapTests` uses an acknowledging and a non-acknowledging backend.
+    - `V21ListOnlyIT` (5, backend):
+      - The same reader report sent as per-user messages and as one list leaves identical rows in every observation table, from snapshots and pending enrollments to review items, baselines, mappings, desired rows, the reader cursor, and members.
+      - Unknown users stay unlinked, a staff removal stays removed, a frozen member stays disabled, and a different name opens a review item.
+      - A rename racing a list, in either order, is kept and not flagged; a deactivation racing a list leaves the member disabled.
+  - Measured on the test database, 1,200 mapped users, 3 rounds. The reader lock is the time some transaction held a row lock on `reader_revision`, sampled every 5 ms:
+
+    | Scan | Server time | Statements | Reader lock held |
+    |---|---|---|---|
+    | Before: 1,200 per-user messages, then the list | 45.9–52.5 s | 37,236–37,240 | 8.7–14.0 s (the list only; per-user messages took no reader lock) |
+    | After: the list only | 8.2–8.7 s | 6,036 | 8.2–8.7 s |
+
+    The reader-lock hold is the list's own and is unchanged. Staff reconcile with nothing to write: about 40 ms, 20 statements (the sampler's connection adds a few).
+- Optimizations proposed, not made:
+  - Load the reader's snapshots, mappings, desired rows, and baselines once per list instead of once per user. This would shorten the 8 s list and its reader-lock hold.
+  - Do not rewrite a snapshot whose fields are unchanged; today `observed_at` changes it on every scan.
+
+Limitations:
+- A trusted list over about 1 MB (roughly 3,000 ASCII users at the measured field sizes; fewer with non-ASCII names, which the gateway escapes) is not uploaded as one list. The server closes the gateway socket on larger messages. Such a reader is not seeded by its list; the staff action still works. The measured reader holds about 1,200 users.
+- Scan load. At 1,200 users, a scan whose list is acknowledged costs the server about 8.5 s on the test database, against a 15-second interval. The list holds that reader's lock for that time, so a member change that publishes to that reader waits up to that long. Any scan that falls back costs about 50 s again. So does every reconnect. Production database speed was not measured, and neither was a physical reader.
+- During an outage nothing is acknowledged, so per-user observations still queue on every scan (one per user per reader every 15 seconds); only the whole list is coalesced. After reconnect, the queued per-user messages replay after the fresh list.
+- A REST reply that is a 2xx with an ERROR body clears that message from the outbox. This was already the case before V21. For a list, the per-user fallback covers it; for other messages it is unchanged.
+- Acceptance waits up to 60 seconds per reader, one reader after another, so a slow server delays the next reader's scan by up to that long.
+- A reader created while a deactivation is in progress is not locked by that deactivation, because the reader list is read from the transaction's snapshot. No test covers this case.
+- A member created from a pending enrollment, or linked to one, is written only to that reader by the decision. The next trusted list from another reader, or the staff action, now seeds that member there too, from the server's photo.
+- Membership changes alone do not seed a reader. Seeding follows the member's status and face, not the membership.
+- No physical reader was used.
 
 ### Deferred — offline copy to another reader
 
@@ -670,8 +795,9 @@ These are not defined tightly enough to pretend they are already specified.
 | Cross-reader lock order | An operation that touches several readers (a member change on every mapped reader, the bootstrap report) takes the reader locks in ascending device id order, then rereads the projection row and mapping under the lock. Before this, renames of two members mapped in opposite reader order failed with a MySQL deadlock. `ReaderConcurrencyIT.renamesOfMembersMappedInOppositeReaderOrderDoNotDeadlockOrLoseUpdates` runs 10 concurrent rename rounds per member across two readers and checks every final name and a gap-free revision count on both readers. |
 | Rename against an older acknowledgement | An acknowledgement takes the reader lock first and rereads the revision under it. An acknowledgement of a revision that a rename has since replaced is refused with 409 "Revision is not the desired member" and leaves the applied revision unchanged; it never moves applied backward. A repeated acknowledgement of the current revision returns 200 each time. `aRenameRacingAnAckOfTheOlderRevisionNeverLosesOrRegressesState` races the two freely; `anAckBlockedBehindARenameOfTheSameRowIsRefusedAsSuperseded` forces the acknowledgement to wait behind the rename. Without the reread, that test got a generic concurrent-modification 409 instead. A decision whose revision a later revision of the same user replaced now closes when the reader confirms that later revision (V20). |
 | `publicId` as `szUserID` | Not supported here. UUID form was never written to this reader, and the face user-id type is a 32-character buffer. |
-| Bootstrap report scope | Intentional, as V15 defined it. The report classifies a trusted roster into matching, different, unlinked, and collision rows for staff, and seeds only a reader whose last list was trusted and empty. Seeding a reader that already holds people, and late activations or photos, belong to the V21 reconcile, not the report. The report does not trigger V21. |
-| Which readers receive a new member | Every reader of the gym that has a gateway (V18). The create flow does not ask for a reader. A pending enrollment and a review decision still write only their own reader. |
+| Bootstrap report scope | Intentional, as V15 defined it. The report classifies a trusted roster into matching, different, unlinked, and collision rows for staff, and seeds only a reader whose last list was trusted and empty. Seeding a reader that already holds people, and late activations or photos, belong to the V21 reconcile. The report's seed goes through the same per-reader reconcile operation; the report does not add rows for readers that already hold people. |
+| Which readers receive a new member | Every reader of the gym that has a gateway (V18). The create flow does not ask for a reader. A pending enrollment and a review decision write only their own reader; since V21, the next trusted list from another reader, or the staff reconcile, seeds that member there from the server's photo. |
+| Roster size and scan load | Since V21 a trusted list is sent as one message on every scan, and the per-user messages only when the server did not acknowledge it. A list over about 1 MB is not sent as one list. Measured on the test database with 1,200 users: about 8.5 s per acknowledged scan, holding that reader's lock throughout (about 50 s before this change, or on a fallback). Not measured on production hardware or a physical reader. |
 | Who may approve review items, and whether an enrollment expires | Gym admin and staff decide review items (V17). A pending person on a reader does not expire. The gateway enrollment token expires after 24 hours. |
 | Safety-scan interval | Not chosen. A safety scan is an occasional full user-list read for a missed alarm. The only measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds. |
 | Offline copy to a second reader | Not allowed. The server publishes desired state. The gateway does not copy an unlinked person or resolve that conflict while the server is down. |
@@ -679,6 +805,7 @@ These are not defined tightly enough to pretend they are already specified.
 | Door and time-section fields beyond the probe's create | V1 sends the same `nDoorNum=1` and `nTimeSectionNum=1` the probe used. Other schedules are not verified. |
 | SDK reconnect | One power cycle reconnected and one did not. V6 re-reads and pulls. It does not depend on the old login surviving. |
 | Attendance cursor across reboot or a full log | Unproven. V19 polls by time window from the last stored punch time, so it does not rely on record numbers, and its fingerprint does not trust a record number alone. Record-number survival across a reboot or a full log, and the reader's retention cap, are not measured. |
+| Decisions stuck in applying before V20 | Not closed retroactively. The server records no per-user acknowledged revision, so whether the reader confirmed a superseding revision before V20 cannot be proven. They close on the next confirmed change of that user on that reader. The evidence checked and the staff path are under V20. Recording the acknowledged revision per row would be needed to prove such cases in future; that is not built. |
 | Unreadable attendance record time | Tracked follow-up; the safety check stays. A record whose `stuTime` cannot be read fails every window that contains it, so that reader's attendance stalls with a warning naming the record. It is never skipped, and the current time is never substituted, because either could move the cursor past real punches. How staff recover from this (for example, an explicit, audited skip of one named record) is not decided. Whether this firmware can produce such a record has not been observed. |
 | `emAuthority` | The menu asks for the reader password. V1 sends `Customer`. Authority changes are observations later, not a projection. |
 
@@ -706,13 +833,13 @@ The 7 October 2026 probe measured related SDK behavior on serial `TW300000052502
 
 ## F. Fake reader only
 
-F1's credential tests, F2, F3, and V1 through V20 were accepted on the fake reader and the test database. That acceptance does not close section E.
+F1's credential tests, F2, F3, and V1 through V21 were accepted on the fake reader and the test database. That acceptance does not close section E.
 
 ## G. Remaining gates
 
-The slice checks through V20 are recorded as done on the fake reader and test database in each slice above. On 9 October 2026, before V18, `ReaderConcurrencyIT` (7 tests) passed in 5 repeated runs with no deadlock, then `mvn clean verify` passed (33 unit, 159 integration) and the gateway suite passed (129). After V18, including seeding readers added later, `mvn clean verify` passed (33 unit, 171 integration), the gateway suite passed (129), the frontend build passed, and Playwright passed (10 passed, 1 skipped that needs a live API). On 12 October 2026, after V19, `mvn clean verify` passed (33 unit, 179 integration), the gateway suite passed (139, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). Later on 12 October 2026, after the V19 fixes for batched uploads, future-dated punches, and live read failures, `mvn clean verify` passed (33 unit, 182 integration), the gateway suite passed (149, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). On 12 October 2026, after V20, `mvn clean verify` passed (33 unit, 186 integration), the gateway suite passed (149), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). This is test-database evidence only. What remains:
+The slice checks through V21 are recorded as done on the fake reader and test database in each slice above. On 9 October 2026, before V18, `ReaderConcurrencyIT` (7 tests) passed in 5 repeated runs with no deadlock, then `mvn clean verify` passed (33 unit, 159 integration) and the gateway suite passed (129). After V18, including seeding readers added later, `mvn clean verify` passed (33 unit, 171 integration), the gateway suite passed (129), the frontend build passed, and Playwright passed (10 passed, 1 skipped that needs a live API). On 12 October 2026, after V19, `mvn clean verify` passed (33 unit, 179 integration), the gateway suite passed (139, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). Later on 12 October 2026, after the V19 fixes for batched uploads, future-dated punches, and live read failures, `mvn clean verify` passed (33 unit, 182 integration), the gateway suite passed (149, three repeated runs), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). On 12 October 2026, after V20, `mvn clean verify` passed (33 unit, 186 integration), the gateway suite passed (149), the frontend build passed, and Playwright passed (11 passed, 1 skipped that needs a live API). On 14 October 2026, after V21, `mvn clean verify` passed (33 unit, 196 integration), the gateway suite passed (151), the frontend build passed, and Playwright passed (13 passed, 1 skipped that needs a live API). Later on 14 October 2026, after the V21 follow-up (seed race fix, journal coalescing, reconcile prefilter), `mvn clean verify` passed (33 unit, 204 integration, 1 skipped: the opt-in `V21RosterLoadIT`) and the gateway suite passed (158). `V21SeedRaceIT`, `ReaderConcurrencyIT`, and `V21LateChangesIT` (25 tests) passed in 3 repeated runs. The frontend and Playwright were not rerun because no frontend code changed. After the list-only scan, `mvn clean verify` passed (33 unit, 209 integration, 1 skipped: the opt-in `V21RosterLoadIT`), and the gateway suite passed (176) in 3 repeated runs. This is test-database evidence only. What remains:
 
 1. Section E, on a physical reader, before that reader is treated as validated.
 2. The remaining choices in [open-questions.md](open-questions.md): the safety-scan interval, door and time-section values other than 1, SDK reconnect as a guarantee, and attendance record-number survival and retention.
 3. A recovery policy for an attendance record whose time cannot be read (Section D). Until it is decided, such a record stalls that reader's attendance rather than being skipped.
-4. V21 late activations and photos, and readers added with people on them, reach every reader without a new roster.
+4. The roster size limit and the scan load from V21 (Section D). Measured on the test database only. The list-only scan is built, but not checked on a physical reader or production hardware.

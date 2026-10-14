@@ -59,7 +59,9 @@ The gateway therefore does not use live access events as attendance (V19). It re
 
 A trusted roster becomes a bootstrap report. A matching mapping stays on the desired projection. A different name becomes a review item. An unlinked person becomes a pending enrollment. The same device user id for different people on two readers is a collision report; the mappings stay separate. Two members with the same name are not linked automatically.
 
-A reader with a trusted roster is seeded with every active member it does not have yet, through the desired-state writer. The server allocates a new device user id on that reader, above every id the reader showed. It does not copy ids from another reader. People already on the reader stay as they are and are not linked to a member; the same person can therefore appear twice until staff decide the pending enrollment. A short or mismatched list creates nothing. The gateway sends a complete list as one message only for an empty reader today, so a reader added with people on it is not seeded until V21.
+A reader with a trusted roster is seeded with every active member it does not have yet, through the desired-state writer. The server allocates a new device user id on that reader, above every id the reader showed. It does not copy ids from another reader. People already on the reader stay as they are and are not linked to a member; the same person can therefore appear twice until staff decide the pending enrollment. A short or mismatched list creates nothing. The gateway sends every complete list as one message, so a reader added with people on it is seeded after one reconnect. A member who is reactivated, or gets a first photo, is written to every reader that lacks them without waiting for a list. Staff with device sync permission can also reconcile one reader from its page. A member deactivated, frozen, or renamed while a reader is being seeded ends up in their new state on that reader. While the server is unreachable, the gateway keeps only the newest whole list per reader; every other message is kept.
+
+Once the server confirms it has processed a scan's whole list, the gateway does not also send each person separately; if that is not confirmed, it still does. On the test database, a reader with 1,200 people now costs the server about 8.5 seconds per scan instead of about 50, and that reader stays locked for member changes for those 8.5 seconds. A reconnect, or a scan the server does not confirm, still costs about 50 seconds. Physical readers and production hardware were not measured.
 
 Staff link, create, accept the server value, reject, restore, or remove from this reader. Link and create keep the reader’s id. Reject does not create a member. None of these actions are finished until the reader read-back is acknowledged.
 
@@ -75,4 +77,4 @@ Members list **Source** is Manual or Device. SUPER_ADMIN CSV export has no face 
 - Super admin acting as a gym
 - Changing plan mid-cycle (dates can be edited; the plan cannot)
 - Member profile payments omit the paid-on date
-- Late activations, late photos, and readers added with people on them reaching every reader (V21), in [execution-plan.md](architecture/execution-plan.md)
+- Scan load for readers with many people, in [execution-plan.md](architecture/execution-plan.md) (V21)

@@ -89,10 +89,12 @@ class DeviceRosterImportIT extends AbstractIntegrationTest {
         postJson("/api/v1/devices/" + entranceId + "/import-users", null)
                 .andExpect(status().isBadRequest());
         assertThat(memberRepository.count()).isZero();
-        for (String removed : new String[] {"/reconcile", "/sync-now"}) {
-            int status = postJson("/api/v1/devices/" + entranceId + removed, null).andReturn().getResponse().getStatus();
-            assertThat(HttpStatus.valueOf(status).is2xxSuccessful()).isFalse();
-        }
+        int status = postJson("/api/v1/devices/" + entranceId + "/sync-now", null).andReturn().getResponse().getStatus();
+        assertThat(HttpStatus.valueOf(status).is2xxSuccessful()).isFalse();
+        String reconciled = postJson("/api/v1/devices/" + entranceId + "/reconcile", null)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(readJson(reconciled).get("written").asInt()).isZero();
         assertThat(deviceSyncCommandRepository.findAll()).isEmpty();
 
         String manual = createMemberWithFace(token, "{\"firstName\":\"Manual\",\"lastName\":\"User\"}")

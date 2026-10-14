@@ -32,6 +32,8 @@ public class PendingEnrollmentTests : IDisposable
         await path.ReconnectAsync(CancellationToken.None);
 
         Assert.Equal(new[] { "7", "7" }, sink.Ids);
+        Assert.Equal(new[] { 1, 1 }, sink.TrustedRosterTotals);
+        Assert.Equal(new[] { "7", "7" }, sink.RosterIds);
         Assert.Equal(writes, reader.Writes.Count);
         Assert.Empty(sibling.Writes);
         Assert.Empty(sibling.Calls);
@@ -264,7 +266,17 @@ public class PendingEnrollmentTests : IDisposable
 
         public List<int> TrustedRosterTotals { get; } = [];
 
+        public List<string> RosterIds { get; } = [];
+
         public bool Offline { get; set; }
+
+        /// <summary>What the server answers to an awaited list.</summary>
+        public bool RosterAccepted { get; set; }
+
+        /// <summary>The list upload throws something other than a network error.</summary>
+        public bool FailList { get; set; }
+
+        public List<string> Calls { get; } = [];
 
         public Task UploadAsync(
             string deviceId,
@@ -277,6 +289,7 @@ public class PendingEnrollmentTests : IDisposable
                 throw new HttpRequestException("unreachable");
             }
 
+            Calls.Add("users");
             Ids.AddRange(users.Select(user => user.DeviceUserId));
             Names.AddRange(users.Select(user => user.Name ?? ""));
             FaceHashes.AddRange(users.Select(user =>
@@ -284,11 +297,12 @@ public class PendingEnrollmentTests : IDisposable
             return Task.CompletedTask;
         }
 
-        public Task UploadTrustedRosterAsync(
+        public Task<bool> UploadTrustedRosterAsync(
             string deviceId,
             int announcedTotal,
             IReadOnlyList<ReaderUser> users,
             IReadOnlyDictionary<string, string> faceHashes,
+            bool awaitAcceptance,
             CancellationToken cancellationToken)
         {
             if (Offline)
@@ -296,9 +310,15 @@ public class PendingEnrollmentTests : IDisposable
                 throw new HttpRequestException("unreachable");
             }
 
+            if (FailList)
+            {
+                throw new InvalidOperationException("list failed");
+            }
+
+            Calls.Add(awaitAcceptance ? "list-awaited" : "list");
             TrustedRosterTotals.Add(announcedTotal);
-            Ids.AddRange(users.Select(user => user.DeviceUserId));
-            return Task.CompletedTask;
+            RosterIds.AddRange(users.Select(user => user.DeviceUserId));
+            return Task.FromResult(awaitAcceptance && RosterAccepted);
         }
 
         public Task UploadAbsencesAsync(
@@ -309,6 +329,7 @@ public class PendingEnrollmentTests : IDisposable
                 throw new HttpRequestException("unreachable");
             }
 
+            Calls.Add("absences");
             AbsentIds.AddRange(deviceUserIds);
             return Task.CompletedTask;
         }

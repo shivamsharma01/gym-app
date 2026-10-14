@@ -5,6 +5,7 @@ import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.DeviceAuthorizationService;
+import com.example.gym.device.ReaderReconcileService;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
 import com.example.gym.tenant.TenantGuard;
@@ -24,14 +25,16 @@ public class MemberService {
     private final AuditService auditService;
     private final DeviceAuthorizationService deviceAuthorizationService;
     private final MemberNumbers numbers;
+    private final ReaderReconcileService readers;
 
     public MemberService(MemberRepository memberRepository, AuditService auditService,
                          DeviceAuthorizationService deviceAuthorizationService,
-                         MemberNumbers numbers) {
+                         MemberNumbers numbers, ReaderReconcileService readers) {
         this.memberRepository = memberRepository;
         this.auditService = auditService;
         this.deviceAuthorizationService = deviceAuthorizationService;
         this.numbers = numbers;
+        this.readers = readers;
     }
 
     @Transactional(readOnly = true)
@@ -180,6 +183,7 @@ public class MemberService {
         member.setStatus(MemberStatus.ACTIVE);
         member.setAccessChangedAt(Instant.now());
         Member saved = memberRepository.save(member);
+        readers.reconcile(saved);
         deviceAuthorizationService.syncMember(saved);
         FlowLog.info("member", "reactivated id={}", saved.getPublicId());
         auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,

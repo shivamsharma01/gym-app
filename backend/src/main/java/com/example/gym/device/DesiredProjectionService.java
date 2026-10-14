@@ -123,7 +123,8 @@ public class DesiredProjectionService {
             return null;
         }
         revisions.lock(device.getTenantId(), device.getId());
-        if (mappings.countLocked(device.getId(), member.getId()) > 0) {
+        if (mappings.countLocked(device.getId(), member.getId()) > 0
+                || reviews.suspended(device.getId(), member.getId())) {
             return null;
         }
         if (!revisions.unchangedSince(member)) {
@@ -135,6 +136,14 @@ public class DesiredProjectionService {
         return mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
                 .map(MemberDeviceMapping::getDeviceUserId)
                 .orElse(null);
+    }
+
+    /** The id this reader holds the member under. */
+    @Transactional(readOnly = true)
+    public String mappedId(Device device, Member member) {
+        return mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .map(MemberDeviceMapping::getDeviceUserId)
+                .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing"));
     }
 
     /** Holds this reader's lock until the caller's transaction ends. */
@@ -161,6 +170,7 @@ public class DesiredProjectionService {
         DesiredMemberProjection row = new DesiredMemberProjection(
                 member.getTenantId(), device.getId(), member.getId());
         fill(row, revision, deviceUserId, member, face);
+        row.setExpected(ExpectedOccupant.ABSENT);
         projections.save(row);
         notifyAfterCommit(device, revision);
         FlowLog.info("device", "desired member reader={} revision={} user={}",
@@ -270,11 +280,21 @@ public class DesiredProjectionService {
     }
 
     /**
-     * Staff accepted the server record, or asked to restore it. This is the freeze/enable writer:
-     * one new revision of the current member, on this reader only. The device user id stays.
+     * One new revision of the current member, on this reader only. The device user id stays, and so
+     * does a hold: the reader still has to show what the gateway was told to expect.
      */
     @Transactional
     public long republish(Member member, Device device) {
+        return republish(member, device, null);
+    }
+
+    /**
+     * Staff accepted the server record, or asked to restore it, having seen {@code seen} on the
+     * reader. This is the freeze/enable writer. The gateway writes only while the reader still shows
+     * what staff saw, and the hold is released.
+     */
+    @Transactional
+    public long republish(Member member, Device device, ExpectedOccupant seen) {
         ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
         DesiredMemberProjection row = revisions.reload(
                 projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
@@ -284,6 +304,10 @@ public class DesiredProjectionService {
                         .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing")));
         MemberFace face = faces.findByMemberId(member.getId()).orElse(null);
         applyServer(row, member, mapping.getDeviceUserId(), face);
+        if (seen != null) {
+            row.setExpected(seen);
+            row.setHeld(false);
+        }
         long revision = cursor.bumpDesired();
         row.setRevision(revision);
         projections.save(row);
@@ -294,12 +318,13 @@ public class DesiredProjectionService {
     }
 
     /**
-     * Link or create keeps the id the reader already assigned. The next integer is not used.
+     * Link keeps the id the reader already assigned and writes the member over the reader person
+     * staff saw there. The next integer is not used. Someone else at the id is not written over.
      */
     @Transactional
-    public long writeKeepingId(Member member, Device device, MemberFace face, String deviceUserId,
-                               boolean keepDeviceUserId) {
-        return keepingId(member, device, deviceUserId, keepDeviceUserId,
+    public long writeKeepingId(Member member, Device device, MemberFace face, DeviceObservedUser observed) {
+        String deviceUserId = observed.getDeviceUserId();
+        return keepingId(member, device, observed,
                 (row, revision) -> fill(row, revision, deviceUserId, member, face));
     }
 
@@ -311,12 +336,13 @@ public class DesiredProjectionService {
      */
     @Transactional
     public long adoptFromReader(Member member, Device device, MemberFace face, DeviceObservedUser observed) {
-        return keepingId(member, device, observed.getDeviceUserId(), false,
+        return keepingId(member, device, observed,
                 (row, revision) -> adopt(row, revision, member, face, observed));
     }
 
-    private long keepingId(Member member, Device device, String deviceUserId, boolean keepDeviceUserId,
+    private long keepingId(Member member, Device device, DeviceObservedUser observed,
                            ObjLongConsumer<DesiredMemberProjection> filler) {
+        String deviceUserId = observed.getDeviceUserId();
         if (device.getGatewayId() == null) {
             throw CommonExceptions.badRequest("Reader has no gateway");
         }
@@ -337,7 +363,7 @@ public class DesiredProjectionService {
         DesiredMemberProjection row = new DesiredMemberProjection(
                 member.getTenantId(), device.getId(), member.getId());
         filler.accept(row, revision);
-        row.setKeepDeviceUserId(keepDeviceUserId);
+        row.setExpected(ExpectedOccupant.of(observed));
         projections.save(row);
         notifyAfterCommit(device, revision);
         FlowLog.info("device", "desired member reader={} revision={} user={}",
@@ -346,12 +372,16 @@ public class DesiredProjectionService {
     }
 
     /**
-     * Reject removes this device user and does not attach a member. The gateway's existing
-     * absence apply is the writer.
+     * Reject removes the reader person staff saw at this id and does not attach a member. The
+     * gateway's existing absence apply is the writer. Someone else at the id is not removed.
      */
     @Transactional
-    public long publishAbsence(Device device, String deviceUserId, String name,
-                               String validFrom, String validTo, String faceSha256) {
+    public long publishAbsence(Device device, DeviceObservedUser observed) {
+        String deviceUserId = observed.getDeviceUserId();
+        String name = ReaderReviewService.shown(observed.getReaderName(), observed.getReaderNameEx());
+        String validFrom = observed.getValidFrom();
+        String validTo = observed.getValidTo();
+        String faceSha256 = observed.getFaceSha256();
         if (deviceUserId == null || deviceUserId.isBlank()) {
             throw CommonExceptions.badRequest("Device user id is required");
         }
@@ -379,6 +409,7 @@ public class DesiredProjectionService {
         row.setValidTo(blank(validTo) ? at(today, LocalTime.of(23, 59, 59)) : cut(validTo, 40));
         row.setAuthority(AUTHORITY);
         row.setFaceSha256(faceSha256 != null && faceSha256.length() == 64 ? faceSha256 : "0".repeat(64));
+        row.setExpected(ExpectedOccupant.of(observed));
         projections.save(row);
         notifyAfterCommit(device, revision);
         FlowLog.info("device", "desired absence reader={} revision={} user={}",
@@ -392,6 +423,15 @@ public class DesiredProjectionService {
      */
     @Transactional
     public long publishRemoval(Member member, Device device) {
+        return publishRemoval(member, device, null);
+    }
+
+    /**
+     * Staff removed the member having seen {@code seen} on the reader. The gateway removes the id
+     * only while the reader still shows it, and the hold is released. A held removal is published again.
+     */
+    @Transactional
+    public long publishRemoval(Member member, Device device, ExpectedOccupant seen) {
         DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
                 .orElse(null);
         if (row == null) {
@@ -399,12 +439,17 @@ public class DesiredProjectionService {
         }
         ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
         revisions.reload(row);
-        if (!row.isPresentOnReader()) {
+        boolean release = seen != null && row.isHeld();
+        if (!row.isPresentOnReader() && !release) {
             return 0;
         }
         long revision = cursor.bumpDesired();
         row.setRevision(revision);
         row.setPresentOnReader(false);
+        if (seen != null) {
+            row.setExpected(seen);
+            row.setHeld(false);
+        }
         projections.save(row);
         notifyAfterCommit(device, revision);
         FlowLog.info("device", "desired absence reader={} revision={} user={}",
@@ -434,7 +479,8 @@ public class DesiredProjectionService {
         long applied = cursor == null ? 0 : cursor.getAppliedRevision();
         int page = Math.min(Math.max(limit, 1), PAGE_LIMIT);
         List<DesiredItem> items = projections
-                .findByDeviceIdAndRevisionGreaterThanOrderByRevisionAsc(device.getId(), after, PageRequest.of(0, page))
+                .findByDeviceIdAndHeldFalseAndRevisionGreaterThanOrderByRevisionAsc(
+                        device.getId(), after, PageRequest.of(0, page))
                 .stream()
                 .map(this::item)
                 .toList();
@@ -451,18 +497,20 @@ public class DesiredProjectionService {
             if (ack.failCode() != null && !ack.failCode().isBlank()) {
                 error = error + ": " + ack.failCode();
             }
-            reviews.noteVerificationFailure(device.getId(), row.getDeviceUserId(), ack.revision(), error);
+            reviews.noteVerificationFailure(device.getId(), row.getDeviceUserId(), row.getMemberId(),
+                    ack.revision(), error);
             throw CommonExceptions.conflict(error);
         }
         if (row.isPresentOnReader() && row.isFacePresent()
                 && ack.faceSha256() != null && !ack.faceSha256().isBlank()) {
             row.setObservedFaceSha256(ack.faceSha256());
-            projections.save(row);
         }
+        row.setExpected(null);
+        projections.save(row);
         if (row.isPresentOnReader()) {
             reviews.reconcile(row);
         }
-        reviews.settle(device.getId(), row.getDeviceUserId(), ack.revision());
+        reviews.settle(device.getId(), row.getDeviceUserId(), row.getMemberId(), ack.revision());
         if (ack.revision() > cursor.getAppliedRevision()) {
             cursor.setAppliedRevision(ack.revision());
         }
@@ -493,11 +541,37 @@ public class DesiredProjectionService {
         long revision = cursor.bumpDesired();
         row.setRevision(revision);
         row.setDeviceUserId(nextId);
+        row.setExpected(ExpectedOccupant.ABSENT);
         projections.save(row);
         notifyAfterCommit(device, revision);
         FlowLog.info("device", "occupied id {} on reader={}; retry revision={} user={}",
                 report.deviceUserId(), device.getPublicId(), revision, nextId);
         return new RevisionNotice(device.getPublicId(), revision);
+    }
+
+    /** A reader of this gateway and the row that still carries {@code revision}, with the reader locked. */
+    @Transactional
+    public Located locate(Gateway gateway, String devicePublicId, long revision) {
+        Device device = ownedReader(gateway, devicePublicId);
+        revisions.lock(device.getTenantId(), device.getId());
+        return new Located(device, currentAt(device, revision));
+    }
+
+    public record Located(Device device, DesiredMemberProjection row) {
+    }
+
+    /**
+     * What the gateway must find at the id before it writes or removes: the stored precondition,
+     * else the record this reader last verified there, else no one.
+     */
+    private ExpectedOccupant expected(DesiredMemberProjection row) {
+        ExpectedOccupant stored = row.getExpected();
+        if (stored != null) {
+            return stored;
+        }
+        return reviews.baseline(row.getDeviceId(), row.getDeviceUserId())
+                .map(ExpectedOccupant::of)
+                .orElse(ExpectedOccupant.ABSENT);
     }
 
     private record Held(Device device, ReaderRevision cursor, DesiredMemberProjection row,
@@ -641,6 +715,11 @@ public class DesiredProjectionService {
         row.setFaceSha256(face.getSha256());
     }
 
+    /** The reader's own time, in the form the gateway's read-back reports; null when unknown. */
+    static String readerTime(String observed) {
+        return readerTime(observed, null);
+    }
+
     /** The reader's own time, in the form the gateway's read-back reports. */
     private static String readerTime(String observed, String fallback) {
         if (blank(observed)) {
@@ -672,8 +751,8 @@ public class DesiredProjectionService {
                 showFace ? row.getFaceSha256() : "",
                 showFace ? faceBytes(row) : "",
                 row.isPresentOnReader(),
-                row.isKeepDeviceUserId(),
-                row.isFacePresent());
+                row.isFacePresent(),
+                expected(row));
     }
 
     private String faceBytes(DesiredMemberProjection row) {

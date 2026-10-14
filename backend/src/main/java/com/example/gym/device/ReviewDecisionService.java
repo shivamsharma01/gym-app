@@ -70,9 +70,12 @@ public class ReviewDecisionService {
     @Transactional
     public ReviewItemView acceptServer(String publicId, Long tenantId) {
         DeviceReviewItem item = openReview(publicId, tenantId);
+        if (item.isSuspended()) {
+            throw CommonExceptions.conflict("The reader holds someone else at this id; restore or remove the member");
+        }
         Member member = members.getById(item.getMemberId(), tenantId);
         Device device = device(item.getDeviceId(), tenantId);
-        long revision = desired.republish(member, device);
+        long revision = desired.republish(member, device, ExpectedOccupant.of(item));
         item.decide(ReviewDecisions.ACCEPT_SERVER, actor(), readerShown(item), serverShown(item), revision);
         return reviewView(reviews.save(item));
     }
@@ -82,7 +85,10 @@ public class ReviewDecisionService {
         DeviceReviewItem item = openReview(publicId, tenantId);
         Member member = members.getById(item.getMemberId(), tenantId);
         Device device = device(item.getDeviceId(), tenantId);
-        long revision = desired.republish(member, device);
+        if (item.isSuspended()) {
+            return restoreSuspended(item, member, device);
+        }
+        long revision = desired.republish(member, device, ExpectedOccupant.of(item));
         String prior = item.isReaderAbsent() ? "absent" : readerShown(item);
         item.decide(ReviewDecisions.RESTORE, actor(), prior, serverShown(item), revision);
         return reviewView(reviews.save(item));
@@ -91,9 +97,13 @@ public class ReviewDecisionService {
     @Transactional
     public ReviewItemView remove(String publicId, Long tenantId) {
         DeviceReviewItem item = openReview(publicId, tenantId);
+        if (item.isSuspended()) {
+            item.decideWithoutWrite(ReviewDecisions.REMOVE, actor(), readerShown(item), "removed");
+            return reviewView(reviews.save(item));
+        }
         Member member = members.getById(item.getMemberId(), tenantId);
         Device device = device(item.getDeviceId(), tenantId);
-        long revision = desired.publishRemoval(member, device);
+        long revision = desired.publishRemoval(member, device, ExpectedOccupant.of(item));
         if (revision == 0) {
             throw CommonExceptions.conflict("Member is already absent from this reader");
         }
@@ -108,7 +118,13 @@ public class ReviewDecisionService {
         MemberFace face = faces.find(member.getId())
                 .orElseThrow(() -> CommonExceptions.conflict("Member has no face"));
         Device device = device(enrollment.getDeviceId(), tenantId);
-        long revision = desired.writeKeepingId(member, device, face, enrollment.getDeviceUserId(), true);
+        long revision = desired.writeKeepingId(member, device, face, requireObserved(enrollment));
+        for (DeviceReviewItem suspended : reviews.findByDeviceIdAndMemberIdAndKindAndResolvedFalse(
+                device.getId(), member.getId(), DeviceReviewItem.SUSPENDED)) {
+            suspended.decideWithoutWrite(ReviewDecisions.LINK, actor(),
+                    "someone else at " + suspended.getDeviceUserId(), "linked at " + enrollment.getDeviceUserId());
+            reviews.save(suspended);
+        }
         enrollment.decide(ReviewDecisions.LINK, actor(), "PENDING", member.getPublicId(), revision);
         return enrollmentView(enrollments.save(enrollment));
     }
@@ -135,20 +151,25 @@ public class ReviewDecisionService {
     @Transactional
     public ReviewItemView reject(String publicId, Long tenantId) {
         PendingEnrollment enrollment = openEnrollment(publicId, tenantId);
-        DeviceObservedUser observed = observations.snapshot(enrollment.getDeviceId(), enrollment.getDeviceUserId());
+        DeviceObservedUser observed = requireObserved(enrollment);
         Device device = device(enrollment.getDeviceId(), tenantId);
-        String name = observed == null
-                ? enrollment.getDeviceUserId()
-                : ReaderReviewService.shown(observed.getReaderName(), observed.getReaderNameEx());
-        long revision = desired.publishAbsence(
-                device,
-                enrollment.getDeviceUserId(),
-                name,
-                observed == null ? null : observed.getValidFrom(),
-                observed == null ? null : observed.getValidTo(),
-                observed == null ? null : observed.getFaceSha256());
+        long revision = desired.publishAbsence(device, observed);
         enrollment.decide(ReviewDecisions.REJECT, actor(), "PENDING", "removed", revision);
         return enrollmentView(enrollments.save(enrollment));
+    }
+
+    /**
+     * The member was taken off this reader because someone else holds the old id. Restoring writes
+     * the member under a new id the server allocates; the old id stays with the reader person.
+     */
+    private ReviewItemView restoreSuspended(DeviceReviewItem item, Member member, Device device) {
+        MemberFace face = faces.find(member.getId())
+                .orElseThrow(() -> CommonExceptions.conflict("Member has no face"));
+        long revision = desired.write(member, device, face);
+        String previous = item.getDeviceUserId();
+        item.setDeviceUserId(desired.mappedId(device, member));
+        item.decide(ReviewDecisions.RESTORE, actor(), "someone else at " + previous, serverShown(item), revision);
+        return reviewView(reviews.save(item));
     }
 
     private DeviceReviewItem openReview(String publicId, Long tenantId) {
@@ -194,7 +215,7 @@ public class ReviewDecisionService {
     private ReviewItemView reviewView(DeviceReviewItem item) {
         return new ReviewItemView(
                 item.getPublicId(),
-                ReviewDecisions.REVIEW,
+                item.isSuspended() ? ReviewDecisions.SUSPENDED : ReviewDecisions.REVIEW,
                 devicePublicId(item.getDeviceId()),
                 item.getDeviceUserId(),
                 serverShown(item),

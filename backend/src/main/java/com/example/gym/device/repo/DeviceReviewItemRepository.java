@@ -9,7 +9,15 @@ public interface DeviceReviewItemRepository extends JpaRepository<DeviceReviewIt
 
     Optional<DeviceReviewItem> findByPublicId(String publicId);
 
+    /** Fails when more than one member has an item at this id. */
     Optional<DeviceReviewItem> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
+
+    Optional<DeviceReviewItem> findByDeviceIdAndDeviceUserIdAndMemberId(Long deviceId, String deviceUserId,
+                                                                        Long memberId);
+
+    boolean existsByDeviceIdAndMemberIdAndKind(Long deviceId, Long memberId, String kind);
+
+    List<DeviceReviewItem> findByDeviceIdAndMemberIdAndKindAndResolvedFalse(Long deviceId, Long memberId, String kind);
 
     List<DeviceReviewItem> findByDeviceId(Long deviceId);
 

@@ -116,6 +116,16 @@ public class DeviceReviewItem extends TenantAwareEntity {
     @Column(name = "bootstrap_run_id", length = 36)
     private String bootstrapRunId;
 
+    /**
+     * CONFLICT: the reader shows this member differently. SUSPENDED: the reader shows someone else
+     * at the id, so the member was taken off this reader and the id released.
+     */
+    @Column(name = "kind", nullable = false, length = 16)
+    private String kind = CONFLICT;
+
+    public static final String CONFLICT = "CONFLICT";
+    public static final String SUSPENDED = "SUSPENDED";
+
     protected DeviceReviewItem() {
     }
 
@@ -136,6 +146,23 @@ public class DeviceReviewItem extends TenantAwareEntity {
 
     public String getDeviceUserId() {
         return deviceUserId;
+    }
+
+    /** A restored member gets a new id; the item follows it so that id's read-back closes it. */
+    public void setDeviceUserId(String deviceUserId) {
+        this.deviceUserId = deviceUserId;
+    }
+
+    public String getKind() {
+        return kind;
+    }
+
+    public void setKind(String kind) {
+        this.kind = kind;
+    }
+
+    public boolean isSuspended() {
+        return SUSPENDED.equals(kind);
     }
 
     public String getBaselineName() {
@@ -321,6 +348,17 @@ public class DeviceReviewItem extends TenantAwareEntity {
         this.decisionRevision = revision;
         this.verificationError = null;
         this.resolved = false;
+    }
+
+    /** A decision that writes nothing to the reader is final when it is made. */
+    public void decideWithoutWrite(String decision, String actor, String priorState, String chosenState) {
+        this.decision = decision;
+        this.actor = actor;
+        this.priorState = priorState;
+        this.chosenState = chosenState;
+        this.decisionRevision = null;
+        this.verificationError = null;
+        this.resolved = true;
     }
 
     public void clearDecision() {

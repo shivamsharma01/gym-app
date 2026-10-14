@@ -12,6 +12,7 @@ public final class ReviewDecisions {
 
     public static final String REVIEW = "REVIEW";
     public static final String ENROLLMENT = "ENROLLMENT";
+    public static final String SUSPENDED = "SUSPENDED";
 
     private ReviewDecisions() {
     }

@@ -116,7 +116,8 @@ public class MemberCreateWorkerTests : IDisposable
             1,
             1,
             Face,
-            true);
+            Expected: new ExpectedOccupant(true, "Door", null, 0, ReaderLocalTime.Format(ValidFrom),
+                ReaderLocalTime.Format(ValidTo), "Customer", ""));
         var result = worker.ApplyMember(linked);
 
         Assert.Equal(MemberApplyKind.Applied, result.Kind);
@@ -400,7 +401,10 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
         reader.ScriptFaceReadBack([4, 4, 4, 4]);
 
-        var next = Member("1", null) with { Revision = 2, Face = [9, 8, 7, 6, 5] };
+        var next = Member("1", null) with
+        {
+            Revision = 2, Face = [9, 8, 7, 6, 5], Expected = Shown(Member("1", null), [4, 4, 4, 4])
+        };
         Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(next).Kind);
         Assert.Equal(1, worker.AppliedRevision);
         Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
@@ -423,7 +427,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(MemberApplyKind.Applied, worker.ApplyRemoval(3, "1").Kind);
         Assert.Equal(3, worker.AppliedRevision);
         Assert.Equal(FakeReader.FailNoRecord, reader.GetUser("1").FailCode);
-        Assert.Equal(["CreateUser 1", "InsertFace 1", "RemoveUser 1", "RemoveUser 1"], reader.Writes);
+        Assert.Equal(["CreateUser 1", "InsertFace 1", "RemoveUser 1"], reader.Writes);
         Assert.DoesNotContain(reader.Writes, line => line.StartsWith("ReplaceUser ", StringComparison.Ordinal));
     }
 
@@ -436,7 +440,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.True(reader.RemoveFace("1").Ok);
         reader.ScriptRemoveKeepsUser();
 
-        Assert.Equal(MemberApplyKind.Failed, worker.ApplyRemoval(2, "1").Kind);
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyRemoval(2, "1", Shown(Member("1", null), null)).Kind);
         Assert.Equal(1, worker.AppliedRevision);
         Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
         Assert.Equal("user still present", worker.Retry!.LastError);
@@ -503,20 +507,37 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(2, worker.AppliedRevision);
         Assert.True(reader.GetUser("1").Ok);
         Assert.Equal(FakeReader.FailUnknown, reader.GetFace("1").FailCode);
-        Assert.Equal(2, reader.Writes.Count(write => write == "RemoveFace 1"));
+        Assert.Equal(1, reader.Writes.Count(write => write == "RemoveFace 1"));
     }
 
     [Fact]
-    public void A_missing_user_is_not_created_in_order_to_clear_a_face()
+    public void A_missing_user_the_server_expects_is_reported_and_not_created_to_clear_a_face()
     {
         var reader = new FakeReader();
         using var worker = Start(Path.Combine(_directory, "clear-absent-user.sqlite"), reader);
 
-        Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(Cleared(1)).Kind);
+        var result = worker.ApplyMember(Cleared(1) with { Expected = Shown(Member("1", null), Face) });
 
+        Assert.Equal(MemberApplyKind.OccupantChanged, result.Kind);
+        Assert.False(result.Occupant!.Present);
         Assert.Equal(0, worker.AppliedRevision);
+        Assert.Null(worker.Retry);
         Assert.Empty(reader.ListUsers().Users);
-        Assert.DoesNotContain(reader.Writes, write => write.StartsWith("CreateUser") || write.StartsWith("RemoveFace"));
+        Assert.Empty(reader.Writes);
+    }
+
+    [Fact]
+    public void An_id_the_server_expects_empty_gets_the_user_without_a_photo()
+    {
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "clear-new-id.sqlite"), reader);
+
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Cleared(1)).Kind);
+
+        Assert.Equal(1, worker.AppliedRevision);
+        Assert.Equal("Asha", reader.GetUser("1").User!.Name);
+        Assert.Equal(FakeReader.FailUnknown, reader.GetFace("1").FailCode);
+        Assert.Equal(["CreateUser 1"], reader.Writes);
     }
 
     [Fact]
@@ -588,6 +609,17 @@ public class MemberCreateWorkerTests : IDisposable
             Face);
     }
 
+    /// <summary>What the server expects at the id: this record, with this photo or none.</summary>
+    private static ExpectedOccupant Shown(DesiredMember member, byte[]? face) => new(
+        true,
+        member.Name,
+        member.NameEx,
+        member.UserStatus,
+        ReaderLocalTime.Format(member.ValidFrom!.Value),
+        ReaderLocalTime.Format(member.ValidTo!.Value),
+        member.Authority,
+        face == null ? "" : FaceHash.Sha256Hex(face));
+
     private static DesiredMember Cleared(long revision) =>
         Member("1", null) with { Revision = revision, Face = [], FacePresent = false };
 
@@ -604,7 +636,6 @@ public class MemberCreateWorkerTests : IDisposable
         1,
         [],
         true,
-        false,
         false);
 
     private sealed class RecordingDesired(DesiredPullItem item) : IDesiredStateClient
@@ -626,5 +657,9 @@ public class MemberCreateWorkerTests : IDisposable
         public Task ReportOccupiedAsync(
             string deviceId, long revision, string deviceUserId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected occupant at " + deviceUserId);
     }
 }

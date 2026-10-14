@@ -278,7 +278,7 @@ Specified in full in section C. This is the first vertical slice.
 
 **Prerequisites.** V9.
 
-**Backend.** One conflict, two observations.
+**Backend.** One conflict per reader. A decision on one reader does not decide the other (changed in the remediation below).
 
 **Gateway.** Send both. No cross-write.
 
@@ -286,9 +286,9 @@ Specified in full in section C. This is the first vertical slice.
 
 **Frontend.** None until V13.
 
-**Database.** One review item, two snapshots.
+**Database.** One review item per reader, each with its own snapshot.
 
-**Tests.** Canonical name unchanged. A late second observation joins the same conflict.
+**Tests.** Canonical name unchanged. A late second observation opens the second reader's own item.
 
 **Failure scenarios.** The second observation arrives after the first is stored.
 
@@ -852,6 +852,21 @@ The first install starts with an empty server and readers that already hold peop
 - A member without a membership keeps the dates a reader already holds for them when they are linked or seeded to another reader, instead of today only. A staff edit writes the change and keeps those dates until a membership exists.
 - A person on both readers is imported from one reader and linked on the other with Link, under that reader's own id; `member_device_mapping` holds one row per reader. While a reader has undecided people, the automatic seed after its trusted list skips members created from another reader's people, so an imported member is not copied onto it under a second id; server-created members are seeded as before. Once staff have decided on everyone that reader showed, imported members it still lacks are seeded with the dates they already hold. Staff Reconcile is unchanged.
 - A reader-side change of enabled/disabled or of the photo on a mapped member opens a review item, as name and date changes already did. The review page shows both.
+
+## Remediation slice 1: stale destructive writes and id reuse (15 October 2026, uncommitted)
+
+The gateway used to write or remove a reader id after checking only whether the name matched, or whether this gateway had written that id before. A stale removal or rename could therefore delete or overwrite a different person who now held the id. Now:
+- Every pulled write or removal carries `expected`, the record the reader must still show (architecture section 9). The gateway goes ahead only if the reader shows the desired record, the expected record, or the record it last wrote and verified at that id. That last-written fingerprint is in the gateway journal (`applied_user`); an older journal gains the columns on start. Otherwise it reports the occupant to `POST /internal/gateway/desired/occupant` and leaves the reader alone.
+- A link, create or reject whose person changed before it was written is undone, and the enrollment reopens with an error.
+- A mapped id that now shows someone else (name and photo both differ) suspends the member on that reader only. The person becomes a pending enrollment. The review page offers "Restore under a new id" and "Keep off this reader". Linking that person back to the member closes the suspension. Seeding and Reconcile skip a suspended member.
+- Any other change at the id opens a review item and holds the revision. Held revisions are not pulled until a staff decision, which writes against the record staff saw.
+- Review items are per reader, per id, per member. A conflict on one reader no longer reuses or decides another reader's item.
+- A gateway acknowledgement still waiting for a row the server has since dropped is discarded instead of stopping the reader.
+- Removed: `keep_device_user_id`, and the gateway's name-match and "written before" checks.
+
+Compatibility: the backend and gateway must be upgraded together. An older gateway ignores `expected` and keeps the unsafe behaviour. `V1__baseline.sql` was edited in place (new `desired_member` and `device_review_item` columns, review-item unique key on device, id and member), so a database from the previous baseline must be recreated. Rollback is the previous build of both, with a recreated database.
+
+Not covered by this slice: a failed revision blocking newer ones, retry limits, stale observations (slice 2); grouping review items by member in the UI, duplicate import and seeding safeguards (slice 3). Door and time section are not part of the comparison. The reader page does not yet show held or suspended members. Not run on a physical reader.
 
 ## F. Fake reader only
 

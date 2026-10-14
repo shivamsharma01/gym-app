@@ -213,9 +213,20 @@ The gym owner may edit a user on a reader. Reader-menu administration is the rea
 |------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
 | Name/validity/access edit on one reader              | Detect via snapshot diff, report to server, create review if it conflicts with canonical desired state.                             | Do not silently discard or choose by timestamp.                                           |
 | Authority field change on reader                     | Report the observation. Do not treat `emAuthority` as menu permission or as a change to other readers.                              | Do not invent cryptographic proof of who made the change if the device cannot provide it. |
-| Different edits on two readers while gateway offline | Preserve both observations and create one review item.                                                                 | Do not copy either edit onto the other reader, and do not pick a winner from the clock.   |
+| Different edits on two readers while gateway offline | Preserve both observations. Each reader gets its own review item; the review page groups them by member.                          | Do not copy either edit onto the other reader, and do not pick a winner from the clock.   |
 | Same result independently on two readers             | Accept as converged after comparison; audit evidence.                                                                               | Do not require manual review for identical resulting state unless policy requires it.     |
 | Reader-side deletion                                 | Record device deletion/drift; keep canonical member. Admin may restore or approve global deprovisioning.                            | Do not delete the backend member because a projection disappeared.                        |
+| Member's id now holds a different person             | Suspend the member on that reader only: drop the mapping, desired row and baseline, open a SUSPENDED review item, and make the person at that id a pending enrollment. Staff restore under a new id or keep the member off that reader. Seeding skips a suspended member. | Do not overwrite, remove, or link the person now at that id. Do not change other readers. |
+
+**Review items.** One item per reader, per id, per member. A conflict on one reader never reuses or decides another reader's item. `kind` is `CONFLICT` or `SUSPENDED`.
+
+**Expected occupant.** Every pulled member write or removal carries `expected`: the record the server last verified at that id (the reader baseline), or the record staff saw when they decided (link, create, reject, accept-server, restore, remove), or absent for a new id. The gateway writes or removes only if the reader shows the desired record, the expected record, or the record this gateway itself last wrote and verified at that id. Name, name extension, status, validity, authority and face hash are compared; door and time section are not. Otherwise the gateway does not touch the reader and reports the occupant to `POST /internal/gateway/desired/occupant`. The server then:
+
+- undoes a link, create or reject whose person changed, and reopens the enrollment;
+- suspends the member when both name and face differ from what was known and desired;
+- otherwise opens a review and holds the revision. Held rows are not pulled until a staff decision, which republishes against the record staff saw.
+
+Identity is never inferred from the id, the name alone, or which gateway wrote the id before.
 
 # 10. Desired-state propagation and command execution
 
@@ -355,7 +366,7 @@ Attendance is intentionally isolated from member synchronization. The reader sto
 | Stale desired revision arrives | Gateway ignores stale revision and requests/uses newer state.                                                                           | No rollback to old member state.                          |
 | Two readers diverge offline    | If both changed differently from the same baseline, preserve both and create conflict.                                                  | No silent overwrite.                                      |
 | Reader user deleted            | Observation is recorded as device drift. Backend member remains.                                                                        | No automatic business deletion.                           |
-| Reader factory reset           | Reader becomes empty/partial. Server desired projection rebuilds it from canonical state; face data comes from server.                  | Recovery possible because server stores face.             |
+| Reader factory reset           | Deferred for V1. Reset detection and automatic rebuild are not implemented. A short or empty list is treated as a bad read, not a reset. | No automatic rebuild claim. The stored photo keeps a manual rebuild possible later. |
 | Face write fails               | Do not claim projection fully applied. Retry and surface error.                                                                         | Member record may converge later; audit remains explicit. |
 
 # 17. Operational observability
@@ -426,7 +437,7 @@ The acceptance suite should test state transitions rather than individual method
 | Backend receives duplicate event                                | Idempotent handling; no duplicate member/enrollment/attendance effect.                                                                             |
 | Stale server revision arrives after newer revision              | Ignored; newer revision remains desired.                                                                                                           |
 | Reader has unexpected deviceUserId collision                    | No overwrite; create mapping conflict / alternate device-local ID.                                                                                 |
-| Reader factory reset                                            | Server desired projection rebuilds users and faces without manual full re-enrollment.                                                              |
+| Reader factory reset                                            | Deferred for V1: not detected and not rebuilt automatically. An empty or short list creates no disappearance and no member change.                 |
 
 # 21. Review UI requirements
 
@@ -530,7 +541,7 @@ These choices come from the Phase 0 stack note (2026-09-10). Member sync in this
 | Cloud link | The gateway opens an authenticated outbound WebSocket. The gym network does not accept inbound connections to readers. A cloud service cannot open TCP/37777 to a reader. The socket carries the desired-revision wake-up (section 10) and events. REST remains a fallback for ingest. Delivery is idempotent or revision-scoped, with durable retry and backoff. Not an in-memory queue and not a sleep loop. |
 | Attendance vs access | Attendance stays append-only and outside member reconciliation (section 14). A business change and the desired projection it produces are written in the same database transaction. |
 | Adapter boundary | Reader access goes through one adapter interface, with mock, simulator, and TrueFace implementations. The mock and simulator cover online and offline, events, denied access, delayed or failed acknowledgements, duplicates, and gap recovery, so development does not require hardware. |
-| Biometrics | Recognition templates stay on the reader. The server stores one resized JPEG per member so a replaced or reset reader can be rebuilt (section 16). Face bytes are encrypted at rest and are never written to logs (section 15). |
+| Biometrics | Recognition templates stay on the reader. The server stores one resized JPEG per member so members can be written to a new reader. Automatic rebuild of a reset reader is deferred for V1 (section 16). Face bytes are encrypted at rest and are never written to logs (section 15). |
 | Face-write evidence | On 2026-09-13, unit `TW30000005250265` accepted a remote JPEG insert and operators saw the door open. That is one unit, not a proof for every firmware. |
 | Gateway credential | A gateway enrolls once with a token, then uses a rotating operational credential. mTLS is unused. A connection with no credential is refused (section 15). |
 | Frontend | React 19.3, TypeScript, Vite 8, React Router 7, and TanStack Query for server state. Tailwind v4 with shadcn/Radix, Recharts, Lucide, date-fns, and Motion with reduced motion. Do not store JWTs in `localStorage`. Use an httpOnly cookie, or an in-memory token with rotation. |

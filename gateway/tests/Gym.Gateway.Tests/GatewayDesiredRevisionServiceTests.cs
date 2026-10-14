@@ -218,5 +218,9 @@ public class GatewayDesiredRevisionServiceTests : IDisposable
             Occupied.Add(deviceUserId);
             return Task.CompletedTask;
         }
+
+        public Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected occupant at " + deviceUserId);
     }
 }

@@ -25,7 +25,7 @@ export type BootstrapRow = {
 
 export type ReviewItem = {
   id: string
-  kind: 'REVIEW' | 'ENROLLMENT'
+  kind: 'REVIEW' | 'ENROLLMENT' | 'SUSPENDED'
   deviceId: string
   deviceUserId: string
   serverName: string | null

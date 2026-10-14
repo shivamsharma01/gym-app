@@ -5,7 +5,8 @@ namespace Gym.Gateway.Execution;
 
 /// <summary>
 /// Pulls one reader's desired member, writes it through <see cref="ReaderWorker"/>, and posts the
-/// acknowledgement only after the user and face read back. An occupied id is reported as that id.
+/// acknowledgement only after the user and face read back. An occupied id is reported as that id;
+/// a record other than the expected one is reported as what the reader shows, and not written.
 /// Reconnect reads the reader before that pull. A silent reader is not written.
 /// A trusted list uploads reader-created ids and the whole list with its announced total. It does
 /// not copy anyone to another reader.
@@ -367,9 +368,14 @@ public sealed class DesiredRevisionPath
 
         var result = item.Present
             ? _worker.ApplyMember(item.ToMember())
-            : _worker.ApplyRemoval(item.Revision, item.DeviceUserId);
+            : _worker.ApplyRemoval(item.Revision, item.DeviceUserId, item.Expected);
         switch (result.Kind)
         {
+            case MemberApplyKind.OccupantChanged:
+                await _client.ReportOccupantAsync(
+                        _deviceId, item.Revision, item.DeviceUserId, result.Occupant ?? ReaderOccupant.Nobody, cancellationToken)
+                    .ConfigureAwait(false);
+                return ItemStep.PullAgain;
             case MemberApplyKind.Occupied:
                 var occupiedId = result.Detail;
                 if (string.IsNullOrWhiteSpace(occupiedId))
@@ -397,7 +403,8 @@ public sealed class DesiredRevisionPath
             var item = page.Items.FirstOrDefault(candidate => candidate.Revision == revision);
             if (item == null)
             {
-                if (page.DesiredRevision > revision)
+                // The server replaced the row, or dropped it after finding someone else at the id.
+                if (page.DesiredRevision >= revision)
                 {
                     _worker.MarkAckDelivered(revision);
                     continue;

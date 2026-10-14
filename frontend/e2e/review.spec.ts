@@ -241,6 +241,16 @@ test('a reader-side disable and photo change are shown against the server', asyn
   await expect(page.getByText('Photo differs from the server photo')).toBeVisible()
 })
 
+test('a suspended member offers restore under a new id or keep off, and no accept server', async ({ page }) => {
+  await routeReviews(page, [{ ...openItem, kind: 'SUSPENDED', readerName: 'Bob Stranger' }])
+
+  await page.goto('/app/review')
+  await expect(page.getByText('Someone else holds this id; the member is off this reader')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Restore under a new id' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Keep off this reader' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Accept server' })).toHaveCount(0)
+})
+
 test('the bootstrap suggestion fills in the member to link', async ({ page }) => {
   await routeReviews(
     page,

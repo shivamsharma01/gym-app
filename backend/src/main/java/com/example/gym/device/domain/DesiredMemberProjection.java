@@ -1,6 +1,7 @@
 package com.example.gym.device.domain;
 
 import com.example.gym.common.domain.TenantAwareEntity;
+import com.example.gym.device.ExpectedOccupant;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
@@ -28,10 +29,6 @@ public class DesiredMemberProjection extends TenantAwareEntity {
 
     @Column(name = "present_on_reader", nullable = false)
     private boolean presentOnReader;
-
-    /** A staff link keeps this reader id and replaces the user already stored there. */
-    @Column(name = "keep_device_user_id", nullable = false)
-    private boolean keepDeviceUserId;
 
     @Column(name = "reader_name", nullable = false, length = 31)
     private String readerName;
@@ -66,6 +63,42 @@ public class DesiredMemberProjection extends TenantAwareEntity {
 
     @Column(name = "observed_face_sha256", length = 64)
     private String observedFaceSha256;
+
+    /**
+     * False: the gateway is sent the reader's verified baseline for this id, or no one. True: the
+     * columns below are what the reader must still show, set by a new id or a staff decision and
+     * kept until the reader verifies a revision of this row.
+     */
+    @Column(name = "expected_set", nullable = false)
+    private boolean expectedSet;
+
+    @Column(name = "expected_present", nullable = false)
+    private boolean expectedPresent;
+
+    @Column(name = "expected_name", length = 127)
+    private String expectedName;
+
+    @Column(name = "expected_name_ex", length = 127)
+    private String expectedNameEx;
+
+    @Column(name = "expected_user_status")
+    private Integer expectedUserStatus;
+
+    @Column(name = "expected_valid_from", length = 40)
+    private String expectedValidFrom;
+
+    @Column(name = "expected_valid_to", length = 40)
+    private String expectedValidTo;
+
+    @Column(name = "expected_authority", length = 32)
+    private String expectedAuthority;
+
+    @Column(name = "expected_face_sha256", length = 64)
+    private String expectedFaceSha256;
+
+    /** The reader showed something other than the expected record. Not pulled until staff decide. */
+    @Column(name = "held", nullable = false)
+    private boolean held;
 
     protected DesiredMemberProjection() {
     }
@@ -106,14 +139,6 @@ public class DesiredMemberProjection extends TenantAwareEntity {
 
     public void setPresentOnReader(boolean presentOnReader) {
         this.presentOnReader = presentOnReader;
-    }
-
-    public boolean isKeepDeviceUserId() {
-        return keepDeviceUserId;
-    }
-
-    public void setKeepDeviceUserId(boolean keepDeviceUserId) {
-        this.keepDeviceUserId = keepDeviceUserId;
     }
 
     public String getReaderName() {
@@ -202,5 +227,38 @@ public class DesiredMemberProjection extends TenantAwareEntity {
 
     public void setObservedFaceSha256(String observedFaceSha256) {
         this.observedFaceSha256 = observedFaceSha256;
+    }
+
+    /** The stored precondition, or null when the verified baseline is the precondition. */
+    public ExpectedOccupant getExpected() {
+        if (!expectedSet) {
+            return null;
+        }
+        return new ExpectedOccupant(expectedPresent, expectedName, expectedNameEx,
+                expectedUserStatus, expectedValidFrom, expectedValidTo, expectedAuthority, expectedFaceSha256);
+    }
+
+    public void setExpected(ExpectedOccupant expected) {
+        expectedSet = expected != null;
+        expectedPresent = expected != null && expected.present();
+        expectedName = expected == null ? null : cut(expected.name(), 127);
+        expectedNameEx = expected == null ? null : cut(expected.nameEx(), 127);
+        expectedUserStatus = expected == null ? null : expected.userStatus();
+        expectedValidFrom = expected == null ? null : cut(expected.validFrom(), 40);
+        expectedValidTo = expected == null ? null : cut(expected.validTo(), 40);
+        expectedAuthority = expected == null ? null : cut(expected.authority(), 32);
+        expectedFaceSha256 = expected == null ? null : cut(expected.faceSha256(), 64);
+    }
+
+    public boolean isHeld() {
+        return held;
+    }
+
+    public void setHeld(boolean held) {
+        this.held = held;
+    }
+
+    private static String cut(String value, int max) {
+        return value == null || value.length() <= max ? value : value.substring(0, max);
     }
 }

@@ -112,6 +112,11 @@ export function ReviewPage() {
                       {item.readerPhotoDiffers ? (
                         <div className="text-xs text-warn">Photo differs from the server photo</div>
                       ) : null}
+                      {item.kind === 'SUSPENDED' ? (
+                        <div className="text-xs text-warn">
+                          Someone else holds this id; the member is off this reader
+                        </div>
+                      ) : null}
                     </Td>
                     <Td>
                       <div>{item.baselineName || '—'}</div>
@@ -213,6 +218,18 @@ function RowActions({
           onClick={() => onDecide('link', { memberId: memberId.trim() })}
         >
           Link
+        </Button>
+      </div>
+    )
+  }
+  if (item.kind === 'SUSPENDED') {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" size="sm" disabled={pending} onClick={() => onDecide('restore')}>
+          Restore under a new id
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => onDecide('remove')}>
+          Keep off this reader
         </Button>
       </div>
     )

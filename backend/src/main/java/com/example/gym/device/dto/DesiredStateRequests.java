@@ -1,5 +1,6 @@
 package com.example.gym.device.dto;
 
+import com.example.gym.device.ExpectedOccupant;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -31,6 +32,28 @@ public final class DesiredStateRequests {
             @NotBlank String deviceUserId) {
     }
 
+    /**
+     * The gateway found someone other than the expected record at the id, or no one, and wrote
+     * nothing. {@code present} false means the reader has no user there. Dates are reader-local
+     * and an empty photo hash means no photo.
+     */
+    public record ReportOccupant(
+            @NotBlank String deviceId,
+            @NotNull @Positive Long revision,
+            @NotBlank String deviceUserId,
+            @NotNull Boolean present,
+            @Size(max = 127) String name,
+            @Size(max = 127) String nameEx,
+            Integer userStatus,
+            @Size(max = 40) String validFrom,
+            @Size(max = 40) String validTo,
+            @Size(max = 32) String authority,
+            Integer doorNum,
+            Integer timeSectionNum,
+            @Size(max = 64) String faceSha256) {
+    }
+
+    /** {@code expected} is what the reader must still show at the id before it is written or removed. */
     public record DesiredItem(
             long revision,
             String deviceUserId,
@@ -45,8 +68,8 @@ public final class DesiredStateRequests {
             String faceSha256,
             String faceBase64,
             boolean present,
-            boolean keepDeviceUserId,
-            boolean facePresent) {
+            boolean facePresent,
+            ExpectedOccupant expected) {
     }
 
     public record DesiredPage(long desiredRevision, long appliedRevision, java.util.List<DesiredItem> items) {

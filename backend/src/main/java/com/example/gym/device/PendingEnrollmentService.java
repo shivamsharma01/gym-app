@@ -112,16 +112,81 @@ public class PendingEnrollmentService {
             return;
         }
         saveSnapshot(device, payload, deviceUserId);
-        if (serverAllocated(device.getId(), deviceUserId)) {
+        if (serverAllocated(device.getId(), deviceUserId)
+                && !reviews.releaseIfReplaced(device, deviceUserId, payload)) {
             reviews.record(device, payload, deviceUserId);
             return;
         }
+        enroll(device, deviceUserId);
+    }
 
-        Instant observedAt = Instant.now();
-
+    /**
+     * The reader holds someone the server has not attached to a member at this id. An earlier
+     * decision about the id was about someone else, so it is reopened.
+     */
+    private void enroll(Device device, String deviceUserId) {
+        if (serverAllocated(device.getId(), deviceUserId)) {
+            return;
+        }
         PendingEnrollment enrollment = enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElseGet(() -> new PendingEnrollment(device.getTenantId(), device.getId(), deviceUserId));
-        enrollment.setObservedAt(observedAt);
+        if (enrollment.isResolved()) {
+            enrollment.clearDecision();
+        }
+        enrollment.setObservedAt(Instant.now());
+        enrollments.save(enrollment);
+    }
+
+    /**
+     * The gateway found someone at an id other than the member it expected, and wrote nothing.
+     * Someone else entirely suspends that member here and makes the person an enrollment; a change
+     * to the member's own record opens the member's review. The row is held either way until staff decide.
+     */
+    @Transactional
+    public void occupantChanged(Device device, DesiredMemberProjection desired, ExpectedOccupant known,
+                                JsonNode payload) {
+        String deviceUserId = desired.getDeviceUserId();
+        saveSnapshot(device, payload, deviceUserId);
+        if (known != null && ReaderReviewService.replaced(known, desired, payload)) {
+            reviews.suspend(device, desired, payload);
+            enroll(device, deviceUserId);
+            return;
+        }
+        reviews.recordChange(device, desired, payload);
+        desired.setHeld(true);
+        desiredMembers.save(desired);
+    }
+
+    /** The gateway found no one at a member's id it expected to hold someone. */
+    @Transactional
+    public void occupantGone(Device device, DesiredMemberProjection desired) {
+        reviews.recordAbsence(device, desired.getDeviceUserId());
+        desired.setHeld(true);
+        desiredMembers.save(desired);
+    }
+
+    /**
+     * A staff decision about a reader person (link, create or reject) found someone else at the id,
+     * or no one. The decision is undone and the enrollment reopens with what the reader shows now.
+     */
+    @Transactional
+    public void decisionOvertaken(Device device, DesiredMemberProjection desired, JsonNode payload) {
+        String deviceUserId = desired.getDeviceUserId();
+        if (desired.getMemberId() != null) {
+            mappings.findByDeviceIdAndMemberId(device.getId(), desired.getMemberId()).ifPresent(mappings::delete);
+        }
+        desiredMembers.delete(desired);
+        desiredMembers.flush();
+        if (payload != null) {
+            saveSnapshot(device, payload, deviceUserId);
+        }
+        PendingEnrollment enrollment = enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElseGet(() -> new PendingEnrollment(device.getTenantId(), device.getId(), deviceUserId));
+        enrollment.clearDecision();
+        enrollment.noteVerificationError(payload == null
+                ? "The reader no longer has this person"
+                : "The reader record changed before the decision was applied");
+        enrollment.setObservedAt(Instant.now());
         enrollments.save(enrollment);
     }
 

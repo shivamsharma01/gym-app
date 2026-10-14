@@ -139,6 +139,18 @@ public class PendingEnrollment extends TenantAwareEntity {
         this.resolved = false;
     }
 
+    /** The reader holds someone the earlier decision was not about. */
+    public void clearDecision() {
+        this.decision = null;
+        this.actor = null;
+        this.priorState = null;
+        this.chosenState = null;
+        this.decisionRevision = null;
+        this.verificationError = null;
+        this.resolved = false;
+        this.reviewStatus = PENDING;
+    }
+
     public void resolve() {
         this.resolved = true;
         this.verificationError = null;

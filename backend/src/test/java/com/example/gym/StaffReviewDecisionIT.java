@@ -203,7 +203,9 @@ class StaffReviewDecisionIT extends AbstractIntegrationTest {
         JsonNode pulled = pull(flaggedId).get("items").get(0);
         assertThat(pulled.get("deviceUserId").asString()).isEqualTo("12");
         assertThat(pulled.get("name").asString()).isEqualTo("Ria Shah");
-        assertThat(pulled.get("keepDeviceUserId").asBoolean()).isTrue();
+        assertThat(pulled.get("expected").get("present").asBoolean()).isTrue();
+        assertThat(pulled.get("expected").get("name").asString())
+                .as("the link writes only over the person staff saw").isEqualTo("Door");
         JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "review-admin");
         assertThat(audited.get("decision").asString()).isEqualTo("LINK");
         assertThat(audited.get("memberId").asString()).isEqualTo(memberId);
@@ -394,7 +396,7 @@ class StaffReviewDecisionIT extends AbstractIntegrationTest {
         assertThat(deviceSyncCommandRepository.count()).isEqualTo(commands);
         JsonNode pulled = pull(flaggedId).get("items").get(0);
         assertThat(pulled.get("deviceUserId").asString()).isEqualTo("21");
-        assertThat(pulled.get("keepDeviceUserId").asBoolean()).isTrue();
+        assertThat(pulled.get("expected").get("name").asString()).isEqualTo("Door");
 
         JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "front-desk");
         assertThat(audited.get("decision").asString()).isEqualTo("LINK");

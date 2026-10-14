@@ -19,8 +19,8 @@ public sealed record DesiredPullItem(
     int TimeSectionNum,
     byte[] Face,
     bool Present,
-    bool KeepDeviceUserId = false,
-    bool FacePresent = true)
+    bool FacePresent = true,
+    ExpectedOccupant? Expected = null)
 {
     public DesiredMember ToMember() => new(
         Revision,
@@ -34,8 +34,8 @@ public sealed record DesiredPullItem(
         DoorNum,
         TimeSectionNum,
         Face,
-        KeepDeviceUserId,
-        FacePresent);
+        FacePresent,
+        Expected);
 }
 
 public interface IDesiredStateClient
@@ -45,6 +45,10 @@ public interface IDesiredStateClient
     Task AcknowledgeAsync(DesiredAcknowledgement ack, CancellationToken cancellationToken);
 
     Task ReportOccupiedAsync(string deviceId, long revision, string deviceUserId, CancellationToken cancellationToken);
+
+    /// <summary>The id holds something other than the expected record, or no one; nothing was written.</summary>
+    Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,
+        CancellationToken cancellationToken);
 }
 
 public sealed record DesiredAcknowledgement(
@@ -160,6 +164,34 @@ public sealed class DesiredStateClient : IDesiredStateClient
         _occupiedIds.Add(deviceUserId);
     }
 
+    public async Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,
+        CancellationToken cancellationToken)
+    {
+        var user = occupant.User;
+        var json = JsonSerializer.Serialize(new
+        {
+            deviceId,
+            revision,
+            deviceUserId,
+            present = occupant.Present,
+            name = user?.Name,
+            nameEx = user?.NameEx,
+            userStatus = user?.UserStatus,
+            validFrom = user?.ValidFrom is { } from ? ReaderLocalTime.Format(from) : null,
+            validTo = user?.ValidTo is { } to ? ReaderLocalTime.Format(to) : null,
+            authority = user?.Authority,
+            doorNum = user?.DoorNum,
+            timeSectionNum = user?.TimeSectionNum,
+            faceSha256 = occupant.Present ? occupant.FaceSha256 : null
+        }, Json);
+        using var response = await PostAsync("/internal/gateway/desired/occupant", json, cancellationToken).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Occupant report failed HTTP {(int)response.StatusCode}: {body}");
+        }
+    }
+
     private async Task<HttpResponseMessage> PostAsync(string path, string json, CancellationToken cancellationToken)
     {
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -211,8 +243,34 @@ public sealed class DesiredStateClient : IDesiredStateClient
             item.GetProperty("timeSectionNum").GetInt32(),
             face,
             present,
-            item.TryGetProperty("keepDeviceUserId", out var keep) && keep.ValueKind == JsonValueKind.True,
-            facePresent);
+            facePresent,
+            ParseExpected(item));
+    }
+
+    /// <summary>A missing precondition is no one: the gateway then writes only an empty id.</summary>
+    private static ExpectedOccupant ParseExpected(JsonElement item)
+    {
+        if (!item.TryGetProperty("expected", out var expected) || expected.ValueKind != JsonValueKind.Object)
+        {
+            return ExpectedOccupant.Absent;
+        }
+
+        if (!expected.TryGetProperty("present", out var present) || present.ValueKind != JsonValueKind.True)
+        {
+            return ExpectedOccupant.Absent;
+        }
+
+        return new ExpectedOccupant(
+            true,
+            Optional(expected, "name"),
+            Optional(expected, "nameEx"),
+            expected.TryGetProperty("userStatus", out var status) && status.ValueKind == JsonValueKind.Number
+                ? status.GetInt32()
+                : null,
+            Optional(expected, "validFrom"),
+            Optional(expected, "validTo"),
+            Optional(expected, "authority"),
+            Optional(expected, "faceSha256"));
     }
 
     private static string Required(JsonElement item, string name)

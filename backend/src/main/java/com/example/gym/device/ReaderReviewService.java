@@ -1,5 +1,6 @@
 package com.example.gym.device;
 
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceReaderBaseline;
@@ -9,13 +10,14 @@ import com.example.gym.device.repo.DesiredMemberProjectionRepository;
 import com.example.gym.device.repo.DeviceReaderBaselineRepository;
 import com.example.gym.device.repo.DeviceReviewItemRepository;
 import com.example.gym.device.repo.DeviceReviewSnapshotRepository;
+import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.PendingEnrollmentRepository;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
-import java.util.List;
+import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,8 +25,8 @@ import tools.jackson.databind.JsonNode;
 
 /**
  * Compares one reader's observation with the desired record and the last reconciled baseline.
- * A difference is one review item. A second reader joins that same item and keeps its own snapshot.
- * The member row is left as it is, and {@code emAuthority} is stored and not written back.
+ * A difference is one review item for that member on that reader; another reader's difference is
+ * its own item. The member row is left as it is, and {@code emAuthority} is stored and not written back.
  */
 @Service
 public class ReaderReviewService {
@@ -36,17 +38,20 @@ public class ReaderReviewService {
     private final DeviceReviewItemRepository reviews;
     private final DeviceReviewSnapshotRepository snapshots;
     private final PendingEnrollmentRepository enrollments;
+    private final MemberDeviceMappingRepository mappings;
 
     public ReaderReviewService(DesiredMemberProjectionRepository desiredMembers,
                                DeviceReaderBaselineRepository baselines,
                                DeviceReviewItemRepository reviews,
                                DeviceReviewSnapshotRepository snapshots,
-                               PendingEnrollmentRepository enrollments) {
+                               PendingEnrollmentRepository enrollments,
+                               MemberDeviceMappingRepository mappings) {
         this.desiredMembers = desiredMembers;
         this.baselines = baselines;
         this.reviews = reviews;
         this.snapshots = snapshots;
         this.enrollments = enrollments;
+        this.mappings = mappings;
     }
 
     @Transactional
@@ -70,17 +75,109 @@ public class ReaderReviewService {
         if (baseline != null && agrees(payload, held(baseline))) {
             return;
         }
+        open(device, desired, baseline, payload);
+    }
 
-        DeviceReviewItem item = conflictFor(device, deviceUserId, desired.getMemberId());
-        boolean thisReader = item.getId() == null || device.getId().equals(item.getDeviceId());
-        if (thisReader && item.isResolved()) {
+    /**
+     * The gateway found this record at the id instead of the one it was told to expect, and wrote
+     * nothing. The member's item on this reader opens even when the record matches the baseline.
+     */
+    @Transactional
+    public void recordChange(Device device, DesiredMemberProjection desired, JsonNode payload) {
+        DeviceReaderBaseline baseline = baselines
+                .findByDeviceIdAndDeviceUserId(device.getId(), desired.getDeviceUserId())
+                .orElse(null);
+        open(device, desired, baseline, payload);
+    }
+
+    private void open(Device device, DesiredMemberProjection desired, DeviceReaderBaseline baseline,
+                      JsonNode payload) {
+        String deviceUserId = desired.getDeviceUserId();
+        DeviceReviewItem item = itemFor(device, deviceUserId, desired.getMemberId());
+        if (item.isResolved()) {
             item.clearDecision();
         }
-        if (thisReader) {
-            describe(item, desired, baseline, payload);
-        }
+        item.setKind(DeviceReviewItem.CONFLICT);
+        item.setReaderAbsent(false);
+        describe(item, desired, baseline, payload);
         item = reviews.save(item);
         rememberSnapshot(item, device, deviceUserId, payload);
+    }
+
+    /**
+     * An observation of a member's id shows someone else: the shown name and the photo both differ
+     * from what this reader last verified there, and from the desired record. The member is
+     * suspended on this reader and the id released. False when that is not shown.
+     */
+    @Transactional
+    public boolean releaseIfReplaced(Device device, String deviceUserId, JsonNode payload) {
+        DesiredMemberProjection desired = desiredMembers
+                .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElse(null);
+        if (desired == null || desired.getMemberId() == null) {
+            return false;
+        }
+        DeviceReaderBaseline baseline = baselines
+                .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElse(null);
+        if (baseline == null || !replaced(ExpectedOccupant.of(baseline), desired, payload)) {
+            return false;
+        }
+        suspend(device, desired, payload);
+        return true;
+    }
+
+    /** Someone other than {@code known} and other than the desired record. */
+    public static boolean replaced(ExpectedOccupant known, DesiredMemberProjection desired, JsonNode payload) {
+        String name = text(payload, "name");
+        String nameEx = text(payload, "nameEx");
+        String face = face(payload);
+        if (!known.isSomeoneElseThan(name, nameEx, face)) {
+            return false;
+        }
+        return !desired.isPresentOnReader() || !desired.isFacePresent()
+                || new ExpectedOccupant(true, desired.getReaderName(), desired.getReaderNameEx(), null, null, null,
+                        null, desired.getFaceSha256()).isSomeoneElseThan(name, nameEx, face);
+    }
+
+    /**
+     * The reader holds someone else at this member's id. The member comes off this reader: the
+     * mapping, the desired row and the baseline for the id go, so the id is the reader's to review
+     * as an enrollment and no later revision writes or removes it. The member's item on this
+     * reader records what the reader showed. Nothing is written to the reader.
+     */
+    @Transactional
+    public void suspend(Device device, DesiredMemberProjection desired, JsonNode payload) {
+        Long memberId = desired.getMemberId();
+        String deviceUserId = desired.getDeviceUserId();
+        DeviceReaderBaseline baseline = baselines
+                .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElse(null);
+        DeviceReviewItem item = itemFor(device, deviceUserId, memberId);
+        item.clearDecision();
+        item.setKind(DeviceReviewItem.SUSPENDED);
+        item.setReaderAbsent(false);
+        describe(item, desired, baseline, payload);
+        item = reviews.save(item);
+        rememberSnapshot(item, device, deviceUserId, payload);
+        mappings.findByDeviceIdAndMemberId(device.getId(), memberId).ifPresent(mappings::delete);
+        if (baseline != null) {
+            baselines.delete(baseline);
+        }
+        desiredMembers.delete(desired);
+        desiredMembers.flush();
+        FlowLog.info("device", "member suspended reader={} user={}: the reader shows someone else",
+                device.getPublicId(), deviceUserId);
+    }
+
+    /** Taken off this reader because the reader showed someone else; staff have not restored them. */
+    public boolean suspended(Long deviceId, Long memberId) {
+        return reviews.existsByDeviceIdAndMemberIdAndKind(deviceId, memberId, DeviceReviewItem.SUSPENDED)
+                && !mappings.existsByDeviceIdAndMemberId(deviceId, memberId);
+    }
+
+    public Optional<DeviceReaderBaseline> baseline(Long deviceId, String deviceUserId) {
+        return baselines.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId);
     }
 
     private static void describe(DeviceReviewItem item, DesiredMemberProjection desired,
@@ -140,12 +237,11 @@ public class ReaderReviewService {
         if (desired == null || !desired.isPresentOnReader()) {
             return;
         }
-        DeviceReviewItem item = reviews.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                .orElseGet(() -> new DeviceReviewItem(
-                        device.getTenantId(), device.getId(), desired.getMemberId(), deviceUserId));
+        DeviceReviewItem item = itemFor(device, deviceUserId, desired.getMemberId());
         if (item.isResolved()) {
             item.clearDecision();
         }
+        item.setKind(DeviceReviewItem.CONFLICT);
         if (item.getId() == null || item.getBaselineName() == null) {
             item.setBaselineName(desired.getReaderName());
             item.setBaselineNameEx(desired.getReaderNameEx());
@@ -159,18 +255,10 @@ public class ReaderReviewService {
         reviews.save(item);
     }
 
-    /** The first reader opens the conflict. A later reader keeps a second snapshot on that same item. */
-    private DeviceReviewItem conflictFor(Device device, String deviceUserId, Long memberId) {
-        DeviceReviewItem onThisReader = reviews.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                .orElse(null);
-        if (onThisReader != null) {
-            return onThisReader;
-        }
-        List<DeviceReviewItem> shared = reviews.findByMemberId(memberId);
-        if (!shared.isEmpty()) {
-            return shared.get(0);
-        }
-        return new DeviceReviewItem(device.getTenantId(), device.getId(), memberId, deviceUserId);
+    /** This member's item at this id on this reader. Another reader's item is never reused. */
+    private DeviceReviewItem itemFor(Device device, String deviceUserId, Long memberId) {
+        return reviews.findByDeviceIdAndDeviceUserIdAndMemberId(device.getId(), deviceUserId, memberId)
+                .orElseGet(() -> new DeviceReviewItem(device.getTenantId(), device.getId(), memberId, deviceUserId));
     }
 
     private void rememberSnapshot(DeviceReviewItem item, Device device, String deviceUserId, JsonNode payload) {
@@ -195,8 +283,8 @@ public class ReaderReviewService {
      * itself is left as recorded. Call inside the acknowledgement's reader lock.
      */
     @Transactional
-    public void settle(Long deviceId, String deviceUserId, long revision) {
-        reviews.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId)
+    public void settle(Long deviceId, String deviceUserId, Long memberId, long revision) {
+        memberItem(deviceId, deviceUserId, memberId)
                 .filter(item -> awaiting(item.isResolved(), item.getDecisionRevision(), revision))
                 .ifPresent(item -> {
                     item.resolve();
@@ -216,9 +304,10 @@ public class ReaderReviewService {
      * so the error survives the rejected acknowledgement.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void noteVerificationFailure(Long deviceId, String deviceUserId, long revision, String error) {
+    public void noteVerificationFailure(Long deviceId, String deviceUserId, Long memberId, long revision,
+                                        String error) {
         String stored = cut(error, 255);
-        reviews.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId)
+        memberItem(deviceId, deviceUserId, memberId)
                 .filter(item -> awaiting(item.isResolved(), item.getDecisionRevision(), revision))
                 .ifPresent(item -> {
                     item.noteVerificationError(stored);
@@ -230,6 +319,12 @@ public class ReaderReviewService {
                     enrollment.noteVerificationError(stored);
                     enrollments.save(enrollment);
                 });
+    }
+
+    private Optional<DeviceReviewItem> memberItem(Long deviceId, String deviceUserId, Long memberId) {
+        return memberId == null
+                ? Optional.empty()
+                : reviews.findByDeviceIdAndDeviceUserIdAndMemberId(deviceId, deviceUserId, memberId);
     }
 
     private static boolean awaiting(boolean resolved, Long decisionRevision, long revision) {

@@ -76,7 +76,9 @@ class ReaderImportIT extends AbstractReaderIT {
             assertThat(item.get("authority").asString()).isEqualTo("Customer");
             assertThat(item.get("doorNum").asInt()).isEqualTo(1);
             assertThat(item.get("timeSectionNum").asInt()).isEqualTo(1);
-            assertThat(item.get("keepDeviceUserId").asBoolean()).isFalse();
+            assertThat(item.get("expected").get("present").asBoolean())
+                    .as("the reader person is the only record the gateway may find at the id").isTrue();
+            assertThat(item.get("expected").get("name").asString()).isEqualTo(item.get("name").asString());
         }
         ackEverything(entranceId);
         assertThat(enrollment(entranceId, "11").isResolved()).isTrue();

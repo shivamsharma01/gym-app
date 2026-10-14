@@ -590,7 +590,7 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void twoReadersKeepBothNamesOnOneConflict() throws Exception {
+    void twoReadersOpenOneConflictEach() throws Exception {
         JsonNode created = createOnReader("Asha", "Shah", "TWO-READERS", "8001");
         String memberId = created.get("id").asString();
         Member member = memberRepository.findByPublicId(memberId).orElseThrow();
@@ -605,19 +605,19 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
         long sideRevision = projection(side.getId(), memberId).getRevision();
 
         postReaderEdit(flaggedId, onEntrance, "Left", "Customer");
-        DeviceReviewItem opened = deviceReviewItemRepository.findByMemberId(member.getId()).get(0);
-
         postReaderEdit(sideId, onSide, "Right", "Customer");
 
-        assertThat(deviceReviewItemRepository.findByMemberId(member.getId())).singleElement()
-                .extracting(DeviceReviewItem::getPublicId, DeviceReviewItem::getBaselineName,
-                        DeviceReviewItem::getServerName)
-                .containsExactly(opened.getPublicId(), "Asha Shah", "Asha Shah");
-        assertThat(deviceReviewSnapshotRepository.findByReviewItemId(opened.getId()))
-                .extracting(DeviceReviewSnapshot::getDeviceId, DeviceReviewSnapshot::getReaderName)
+        assertThat(deviceReviewItemRepository.findByMemberId(member.getId()))
+                .extracting(DeviceReviewItem::getDeviceId, DeviceReviewItem::getDeviceUserId,
+                        DeviceReviewItem::getReaderName, DeviceReviewItem::getServerName)
                 .containsExactlyInAnyOrder(
-                        org.assertj.core.groups.Tuple.tuple(flagged, "Left"),
-                        org.assertj.core.groups.Tuple.tuple(side.getId(), "Right"));
+                        org.assertj.core.groups.Tuple.tuple(flagged, onEntrance, "Left", "Asha Shah"),
+                        org.assertj.core.groups.Tuple.tuple(side.getId(), onSide, "Right", "Asha Shah"));
+        for (DeviceReviewItem item : deviceReviewItemRepository.findByMemberId(member.getId())) {
+            assertThat(deviceReviewSnapshotRepository.findByReviewItemId(item.getId()))
+                    .extracting(DeviceReviewSnapshot::getDeviceId)
+                    .containsExactly(item.getDeviceId());
+        }
         assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("Asha Shah");
         assertThat(projection(flagged, memberId).getReaderName()).isEqualTo("Asha Shah");
         assertThat(projection(side.getId(), memberId).getReaderName()).isEqualTo("Asha Shah");

@@ -165,7 +165,8 @@ public class BootstrapReportService {
         if (readerName.equals(serverName)) {
             return row(MATCHING, reader, mapping.getDeviceUserId(), member.getPublicId(), readerName, serverName, null);
         }
-        reviews.findByDeviceIdAndDeviceUserId(reader.getId(), mapping.getDeviceUserId()).ifPresent(item -> {
+        reviews.findByDeviceIdAndDeviceUserIdAndMemberId(reader.getId(), mapping.getDeviceUserId(),
+                mapping.getMemberId()).ifPresent(item -> {
             item.assignBootstrapRun(runId);
             reviews.save(item);
         });

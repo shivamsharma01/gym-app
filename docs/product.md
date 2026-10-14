@@ -65,7 +65,7 @@ Once the server confirms it has processed a scan's whole list, the gateway does 
 
 Staff link, create, accept the server value, reject, restore, or remove from this reader. Link and create keep the reader’s id. Reject does not create a member. None of these actions are finished until the reader read-back is acknowledged.
 
-Face templates stay on the reader. The server stores one photo per member so a reader can be rebuilt from desired state.
+Face templates stay on the reader. The server stores one photo per member so members can be written to a reader. Detecting a reset reader and rebuilding it automatically is deferred for V1.
 
 Members list **Source** is Manual or Device. SUPER_ADMIN CSV export has no face data.
 

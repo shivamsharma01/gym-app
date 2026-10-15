@@ -269,6 +269,33 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
     }
 
+    public async Task<IReadOnlyList<string>> WantedFacesAsync(string deviceId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await _http.GetAsync(
+                    new Uri(HttpBase, $"internal/gateway/faces/wanted?deviceId={Uri.EscapeDataString(deviceId)}"),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                _log.LogWarning("Reader {DeviceId}: asking which photos the server needs failed HTTP {Status}",
+                    deviceId, (int)response.StatusCode);
+                return [];
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            return JsonSerializer.Deserialize<List<string>>(body) ?? [];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException
+                                       && !cancellationToken.IsCancellationRequested)
+        {
+            _log.LogInformation("Reader {DeviceId}: asking which photos the server needs deferred: {Message}",
+                deviceId, ex.Message);
+            return [];
+        }
+    }
+
     public async Task<FaceUpload> UploadFaceAsync(byte[] jpegBytes, CancellationToken cancellationToken)
     {
         try

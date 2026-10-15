@@ -148,6 +148,7 @@ public sealed class DesiredRevisionPath
         }
 
         await UploadTrustedListAsync(scan, true, force, cancellationToken).ConfigureAwait(false);
+        await UploadWantedPhotosAsync(scan, cancellationToken).ConfigureAwait(false);
         if (scan.Observed.Users.Count == 0)
         {
             await SerializedAsync(ct => HandleCoreAsync(false, ct), cancellationToken).ConfigureAwait(false);
@@ -166,6 +167,7 @@ public sealed class DesiredRevisionPath
         if (scan != null)
         {
             await UploadNewPeopleAsync(scan, cancellationToken).ConfigureAwait(false);
+            await UploadWantedPhotosAsync(scan, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -193,16 +195,87 @@ public sealed class DesiredRevisionPath
         var before = Gate;
         var observation = _observations == null ? 0 : BeginObservation();
         var listed = Listed(observed);
-        return new ReaderScan(observed, listed, FaceHashes(listed), stamp, observation, before);
+        var photos = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        return new ReaderScan(observed, listed, FaceHashes(listed, photos), stamp, observation, before, photos);
     }
 
+    /// <param name="Photos">Photos downloaded by this scan, by SHA-256; others stay on the reader.</param>
     private sealed record ReaderScan(
         ReaderListResult Observed,
         List<ReaderUser> People,
         Dictionary<string, string> Hashes,
         ScanStamp Stamp,
         long Observation,
-        ObservationGate Before);
+        ObservationGate Before,
+        Dictionary<string, byte[]> Photos);
+
+    /// <summary>
+    /// Uploads the photos the server asks for: those of people on this reader nobody has decided on,
+    /// which the server needs to create them as members. A photo this scan did not download is read
+    /// from the reader again. A photo not uploaded is asked for again on the next scan.
+    /// </summary>
+    private async Task UploadWantedPhotosAsync(ReaderScan scan, CancellationToken cancellationToken)
+    {
+        if (_observations == null || scan.Hashes.Count == 0)
+        {
+            return;
+        }
+
+        var wanted = await _observations.WantedFacesAsync(_deviceId, cancellationToken).ConfigureAwait(false);
+        if (wanted.Count == 0)
+        {
+            return;
+        }
+
+        var holders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (deviceUserId, hash) in scan.Hashes)
+        {
+            holders.TryAdd(hash, deviceUserId);
+        }
+
+        var started = Stopwatch.GetTimestamp();
+        var uploaded = 0;
+        var failed = 0;
+        _log.LogInformation("Reader {DeviceId}: uploading {Count} photos the server needs", _deviceId, wanted.Count);
+        foreach (var hash in wanted)
+        {
+            if (!holders.TryGetValue(hash, out var deviceUserId))
+            {
+                continue;
+            }
+
+            var bytes = scan.Photos.GetValueOrDefault(hash)
+                ?? await SerializedAsync(_ => Task.FromResult(ReadPhoto(deviceUserId, hash)), cancellationToken)
+                    .ConfigureAwait(false);
+            if (bytes != null && await _observations.UploadFaceAsync(bytes, cancellationToken).ConfigureAwait(false))
+            {
+                uploaded++;
+            }
+            else
+            {
+                failed++;
+            }
+
+            if ((uploaded + failed) % 100 == 0)
+            {
+                _log.LogInformation("Reader {DeviceId}: uploaded {Done}/{Total} photos ({Seconds:0} s)",
+                    _deviceId, uploaded + failed, wanted.Count, Stopwatch.GetElapsedTime(started).TotalSeconds);
+            }
+        }
+
+        _log.LogInformation("Reader {DeviceId}: photos uploaded, {Uploaded} stored, {Failed} retried next scan, in {Seconds:0} s",
+            _deviceId, uploaded, failed, Stopwatch.GetElapsedTime(started).TotalSeconds);
+    }
+
+    /// <summary>The reader photo of this user when it is still the photo the scan hashed.</summary>
+    private byte[]? ReadPhoto(string deviceUserId, string hash)
+    {
+        var face = _reader.GetFace(deviceUserId);
+        return face.Ok && face.Bytes is { Length: > 0 }
+               && string.Equals(FaceHash.Sha256Hex(face.Bytes), hash, StringComparison.OrdinalIgnoreCase)
+            ? face.Bytes
+            : null;
+    }
 
     /// <summary>A read that is not uploaded leaves desired state as it was before the read.</summary>
     private void NotUploaded(ReaderScan scan)
@@ -599,12 +672,12 @@ public sealed class DesiredRevisionPath
     /// list, a user it does not list has no photo, and only a photo whose checksum is not cached is
     /// downloaded. Without that list every photo is downloaded.
     /// </summary>
-    private Dictionary<string, string> FaceHashes(IReadOnlyList<ReaderUser> listed)
+    private Dictionary<string, string> FaceHashes(IReadOnlyList<ReaderUser> listed, Dictionary<string, byte[]> photos)
     {
         var checksums = _reader.ListFaceChecksums();
         if (!checksums.Ok)
         {
-            return DownloadedFaceHashes(listed);
+            return DownloadedFaceHashes(listed, photos);
         }
 
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -629,6 +702,7 @@ public sealed class DesiredRevisionPath
                 }
 
                 hash = FaceHash.Sha256Hex(face.Bytes);
+                photos[hash] = face.Bytes;
             }
 
             hashes[deviceUserId] = hash;
@@ -643,7 +717,7 @@ public sealed class DesiredRevisionPath
         return hashes;
     }
 
-    private Dictionary<string, string> DownloadedFaceHashes(IReadOnlyList<ReaderUser> listed)
+    private Dictionary<string, string> DownloadedFaceHashes(IReadOnlyList<ReaderUser> listed, Dictionary<string, byte[]> photos)
     {
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
         var downloads = new DownloadProgress(_log, _deviceId, listed.Count);
@@ -653,7 +727,9 @@ public sealed class DesiredRevisionPath
             downloads.One();
             if (face.Ok && face.Bytes is { Length: > 0 })
             {
-                hashes[deviceUserId] = FaceHash.Sha256Hex(face.Bytes);
+                var hash = FaceHash.Sha256Hex(face.Bytes);
+                hashes[deviceUserId] = hash;
+                photos[hash] = face.Bytes;
             }
         }
 

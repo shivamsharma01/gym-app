@@ -114,7 +114,7 @@ public class AttendancePollTests
     }
 
     [Fact]
-    public async Task A_window_of_more_than_500_punches_is_uploaded_oldest_first_in_batches_of_500()
+    public async Task A_large_window_is_uploaded_oldest_first_in_batches_of_100()
     {
         var reader = new FakeReader();
         foreach (var punch in Window(1201).Reverse())
@@ -127,7 +127,7 @@ public class AttendancePollTests
         var result = await Poll(reader, server).PollOnceAsync(CancellationToken.None);
 
         Assert.True(result.Ok);
-        Assert.Equal([500, 500, 201], server.Posts.Select(p => p.Count));
+        Assert.Equal(Enumerable.Repeat(100, 12).Append(1), server.Posts.Select(p => p.Count));
         var sent = server.Posts.SelectMany(p => p).Select(p => p.OccurredAtUtc).ToArray();
         Assert.Equal(sent.Order(), sent);
         Assert.Equal(1201, server.Stored.Count);
@@ -150,17 +150,17 @@ public class AttendancePollTests
         var failed = await poll.PollOnceAsync(CancellationToken.None);
 
         Assert.False(failed.Ok);
-        Assert.Equal(500, failed.Sent);
-        Assert.Equal(punches[499].OccurredAtUtc, server.LastEventAt);
-        Assert.Equal(punches[499].OccurredAtUtc, poll.LastStored);
-        Assert.True(poll.LastStored < punches[500].OccurredAtUtc);
+        Assert.Equal(100, failed.Sent);
+        Assert.Equal(punches[99].OccurredAtUtc, server.LastEventAt);
+        Assert.Equal(punches[99].OccurredAtUtc, poll.LastStored);
+        Assert.True(poll.LastStored < punches[100].OccurredAtUtc);
 
         var retried = await poll.PollOnceAsync(CancellationToken.None);
 
         Assert.True(retried.Ok);
-        Assert.True(retried.FromUtc <= punches[500].OccurredAtUtc);
-        Assert.Equal(701, retried.Sent);
-        Assert.Equal([500, 500, 201], server.Posts.Select(p => p.Count));
+        Assert.True(retried.FromUtc <= punches[100].OccurredAtUtc);
+        Assert.Equal(1101, retried.Sent);
+        Assert.Equal(Enumerable.Repeat(100, 12).Append(1), server.Posts.Select(p => p.Count));
         Assert.Equal(1201, server.Stored.Count);
         Assert.Equal(punches[^1].OccurredAtUtc, server.LastEventAt);
     }

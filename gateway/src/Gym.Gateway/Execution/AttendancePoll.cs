@@ -32,6 +32,9 @@ public sealed class AttendancePoll
     /// <summary>The most punches the server accepts in one upload.</summary>
     public const int MaxBatch = 500;
 
+    /// <summary>Punches per upload, small enough that the server stores them well inside the HTTP timeout.</summary>
+    public const int UploadBatch = 100;
+
     private readonly string _deviceId;
     private readonly IReaderAdapter _reader;
     private readonly IAttendanceClient _client;
@@ -98,7 +101,7 @@ public sealed class AttendancePoll
 
         var sent = 0;
         var stored = 0;
-        foreach (var batch in fresh.Chunk(MaxBatch))
+        foreach (var batch in fresh.Chunk(UploadBatch))
         {
             AttendanceStored result;
             try

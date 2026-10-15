@@ -36,6 +36,16 @@ public interface IReaderObservationUpload
         IReadOnlyDictionary<string, string> faceHashes,
         bool awaitAcceptance,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// SHA-256 of the reader photos the server needs to create members from this reader's undecided
+    /// people. Empty when the server needs none or cannot be asked.
+    /// </summary>
+    Task<IReadOnlyList<string>> WantedFacesAsync(string deviceId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<string>>([]);
+
+    /// <summary>Uploads one reader photo. False when it was not stored; it is offered again on a later scan.</summary>
+    Task<bool> UploadFaceAsync(byte[] jpegBytes, CancellationToken cancellationToken) => Task.FromResult(false);
 }
 
 public sealed record RosterUpload(bool Accepted, string? MessageId)

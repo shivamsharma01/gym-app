@@ -498,7 +498,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         try
         {
             var start = 0;
-            for (var call = 0; call <= total / FacePage + 1; call++)
+            for (var call = 0; call <= total / FacePage + 1 && start < total; call++)
             {
                 var findIn = new NET_IN_FACEINFO_DO_FIND
                 {
@@ -518,7 +518,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                     return (byUserId, SdkError($"DoFindFaceInfo at {start} failed"));
                 }
 
-                var returned = Math.Min(findOut.nRetNum, FacePage);
+                // Asked past the announced total, the reader repeats earlier entries instead of returning none.
+                var returned = Math.Min(Math.Min(findOut.nRetNum, FacePage), total - start);
                 if (returned <= 0)
                 {
                     return (byUserId, null);

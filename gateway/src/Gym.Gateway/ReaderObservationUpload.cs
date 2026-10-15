@@ -84,6 +84,12 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         return sent;
     }
 
+    public Task<IReadOnlyList<string>> WantedFacesAsync(string deviceId, CancellationToken cancellationToken) =>
+        _link.WantedFacesAsync(deviceId, cancellationToken);
+
+    public async Task<bool> UploadFaceAsync(byte[] jpegBytes, CancellationToken cancellationToken) =>
+        (await _link.UploadFaceAsync(jpegBytes, cancellationToken).ConfigureAwait(false)).UploadId != null;
+
     public async Task<RosterUpload> UploadTrustedRosterAsync(
         string deviceId,
         ScanStamp scan,

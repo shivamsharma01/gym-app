@@ -12,7 +12,6 @@ import com.example.gym.device.domain.SecurityEvent;
 import com.example.gym.device.repo.AttendanceEventRepository;
 import com.example.gym.device.repo.AttendanceSyncCursorRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
-import com.example.gym.device.repo.SecurityEventRepository;
 import com.example.gym.live.StaffLiveBroadcast;
 import java.time.Instant;
 import java.util.List;
@@ -34,20 +33,17 @@ public class AttendanceIngestionService {
     private final AttendanceEventRepository attendanceRepository;
     private final AttendanceSyncCursorRepository cursorRepository;
     private final MemberDeviceMappingRepository mappingRepository;
-    private final SecurityEventRepository securityEventRepository;
     private final ApplicationEventPublisher events;
     private final AttendanceEventWriter writer;
 
     public AttendanceIngestionService(AttendanceEventRepository attendanceRepository,
                                       AttendanceSyncCursorRepository cursorRepository,
                                       MemberDeviceMappingRepository mappingRepository,
-                                      SecurityEventRepository securityEventRepository,
                                       ApplicationEventPublisher events,
                                       AttendanceEventWriter writer) {
         this.attendanceRepository = attendanceRepository;
         this.cursorRepository = cursorRepository;
         this.mappingRepository = mappingRepository;
-        this.securityEventRepository = securityEventRepository;
         this.events = events;
         this.writer = writer;
     }
@@ -67,8 +63,10 @@ public class AttendanceIngestionService {
      *
      * <p>A punch dated after the server's clock is stored but does not move the cursor: the next
      * window would start after it and skip real punches until that time arrives.
+     *
+     * <p>Not one transaction: each punch commits on its own with its security event, then the
+     * cursor. A window cut short leaves the cursor where it was, and the resent punches are skipped.
      */
-    @Transactional
     public WindowResult storeWindow(Device device, List<Punch> punches) {
         if (punches.isEmpty()) {
             return new WindowResult(0, lastEventAt(device));
@@ -124,14 +122,13 @@ public class AttendanceIngestionService {
                 punch.occurredAt(), directionFor(device.getRole()), punch.method(), result, punch.recNo(),
                 fingerprint, denyReason);
         try {
-            event = writer.insert(event);
+            event = writer.insert(event, securityEvent(tenantId, device.getId(), punch.granted(), memberId,
+                    deviceUserId, punch.occurredAt(), denyReason));
         } catch (DataIntegrityViolationException dup) {
             // Stored by a concurrent copy of the same window.
             return Optional.empty();
         }
 
-        maybeRaiseSecurityEvent(tenantId, device.getId(), punch.granted(), memberId, deviceUserId,
-                punch.occurredAt(), denyReason);
         events.publishEvent(new StaffLiveBroadcast(tenantId, punch.granted() ? "ATTENDANCE" : "ACCESS_DENIED",
                 Map.of(
                         "deviceId", device.getPublicId(),
@@ -168,28 +165,27 @@ public class AttendanceIngestionService {
     }
 
     private Instant advanceCursor(Device device, Instant latest) {
-        AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(device.getId())
-                .orElseGet(() -> new AttendanceSyncCursor(device.getTenantId(), device.getId()));
-        if (cursor.getLastEventAt() == null || latest.isAfter(cursor.getLastEventAt())) {
-            cursor.setLastEventAt(latest);
-            cursorRepository.save(cursor);
+        try {
+            return writer.advanceCursor(device.getTenantId(), device.getId(), latest);
+        } catch (DataIntegrityViolationException firstCursorRace) {
+            return writer.advanceCursor(device.getTenantId(), device.getId(), latest);
         }
-        return cursor.getLastEventAt();
     }
 
-    private void maybeRaiseSecurityEvent(Long tenantId, Long deviceId, boolean granted, Long memberId,
-                                         String deviceUserId, Instant occurredAt, String denyReason) {
+    private static SecurityEvent securityEvent(Long tenantId, Long deviceId, boolean granted, Long memberId,
+                                               String deviceUserId, Instant occurredAt, String denyReason) {
         if (!granted) {
             String details = "Access denied for deviceUserId=" + deviceUserId;
             if (denyReason != null) {
                 details = details + " reason=" + denyReason;
             }
-            securityEventRepository.save(new SecurityEvent(tenantId, deviceId, "ACCESS_DENIED",
-                    occurredAt, details));
-        } else if (memberId == null) {
-            securityEventRepository.save(new SecurityEvent(tenantId, deviceId, "UNKNOWN_CREDENTIAL",
-                    occurredAt, "Granted access for unmapped deviceUserId=" + deviceUserId));
+            return new SecurityEvent(tenantId, deviceId, "ACCESS_DENIED", occurredAt, details);
         }
+        if (memberId == null) {
+            return new SecurityEvent(tenantId, deviceId, "UNKNOWN_CREDENTIAL",
+                    occurredAt, "Granted access for unmapped deviceUserId=" + deviceUserId);
+        }
+        return null;
     }
 
     private AccessDirection directionFor(DeviceRole role) {

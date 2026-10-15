@@ -62,6 +62,31 @@ public class PendingEnrollmentTests : IDisposable
     }
 
     [Fact]
+    public async Task Only_the_photos_the_server_asks_for_are_uploaded_even_when_cached()
+    {
+        var reader = new FakeReader();
+        byte[] other = [9, 8, 7];
+        reader.CreateUser(Person("7", "Walk In"));
+        reader.UpdateFace("7", Face);
+        reader.CreateUser(Person("8", "Other"));
+        reader.UpdateFace("8", other);
+        var writes = reader.Writes.Count;
+        var sink = new RecordingUpload();
+        using var worker = new ReaderWorker("reader-a", reader, Path.Combine(_directory, "photos.sqlite"));
+        var path = new DesiredRevisionPath("reader-a", worker, reader, new EmptyPull(), sink);
+
+        await path.ObserveAsync(CancellationToken.None);
+        Assert.Empty(sink.Photos);
+
+        sink.Wanted.Add(FaceHash.Sha256Hex(Face));
+        await path.ObserveAsync(CancellationToken.None);
+        await path.ObserveAsync(CancellationToken.None);
+
+        Assert.Equal(Face, Assert.Single(sink.Photos));
+        Assert.Equal(writes, reader.Writes.Count);
+    }
+
+    [Fact]
     public async Task A_renamed_mapped_user_is_uploaded_and_not_written_back()
     {
         var reader = new FakeReader();
@@ -289,6 +314,21 @@ public class PendingEnrollmentTests : IDisposable
 
         /// <summary>Every message id handed out, in order.</summary>
         public List<string> MessageIds { get; } = [];
+
+        /// <summary>The photo hashes the server answers it still needs.</summary>
+        public List<string> Wanted { get; } = [];
+
+        public List<byte[]> Photos { get; } = [];
+
+        public Task<IReadOnlyList<string>> WantedFacesAsync(string deviceId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<string>>(Wanted.ToList());
+
+        public Task<bool> UploadFaceAsync(byte[] jpegBytes, CancellationToken cancellationToken)
+        {
+            Photos.Add(jpegBytes);
+            Wanted.Remove(FaceHash.Sha256Hex(jpegBytes));
+            return Task.FromResult(true);
+        }
 
         private string NextId(string kind)
         {

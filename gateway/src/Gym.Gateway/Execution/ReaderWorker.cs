@@ -741,12 +741,37 @@ public sealed class ReaderWorker : IDisposable
             return WriteStep.Fail(readUser.Error ?? readFace.Error ?? "read-back failed");
         }
 
-        if (!SameUser(readUser.User, desired) || !SameHash(readFace.Bytes, desired.Face))
+        var differs = Differences(readUser.User, desired);
+        if (!SameHash(readFace.Bytes, desired.Face))
         {
-            return WriteStep.Fail("read-back mismatch");
+            differs.Add($"photo ({readFace.Bytes.Length} bytes back, {desired.Face?.Length ?? 0} sent)");
         }
 
-        return WriteStep.Done();
+        return differs.Count == 0
+            ? WriteStep.Done()
+            : WriteStep.Fail("read-back mismatch: " + string.Join(", ", differs));
+    }
+
+    private static List<string> Differences(ReaderUser user, DesiredMember desired)
+    {
+        var differs = new List<string>();
+        Compare(differs, "name", user.Name, desired.Name);
+        Compare(differs, "nameEx", user.NameEx, desired.NameEx);
+        Compare(differs, "userStatus", user.UserStatus, desired.UserStatus);
+        Compare(differs, "validFrom", user.ValidFrom, desired.ValidFrom);
+        Compare(differs, "validTo", user.ValidTo, desired.ValidTo);
+        Compare(differs, "authority", user.Authority, desired.Authority);
+        Compare(differs, "doorNum", user.DoorNum, desired.DoorNum);
+        Compare(differs, "timeSectionNum", user.TimeSectionNum, desired.TimeSectionNum);
+        return differs;
+    }
+
+    private static void Compare<T>(List<string> differs, string field, T read, T sent)
+    {
+        if (!EqualityComparer<T>.Default.Equals(read, sent))
+        {
+            differs.Add($"{field} '{read}' != '{sent}'");
+        }
     }
 
     private static ReaderUser Record(DesiredMember desired) => new(

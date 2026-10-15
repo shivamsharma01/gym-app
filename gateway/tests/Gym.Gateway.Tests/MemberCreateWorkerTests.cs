@@ -138,7 +138,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(MemberApplyKind.Failed, result.Kind);
         Assert.Equal(0, worker.AppliedRevision);
         Assert.Empty(worker.PendingAcks);
-        Assert.Equal("read-back mismatch", worker.Retry!.LastError);
+        Assert.StartsWith("read-back mismatch", worker.Retry!.LastError, StringComparison.Ordinal);
         Assert.Equal(new[] { "CreateUser 1", "InsertFace 1" }, reader.Writes);
     }
 
@@ -330,7 +330,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(1, worker.AppliedRevision);
         Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
         Assert.Equal(2, worker.Retry!.Revision);
-        Assert.Equal("read-back mismatch", worker.Retry.LastError);
+        Assert.StartsWith("read-back mismatch", worker.Retry.LastError, StringComparison.Ordinal);
         Assert.Equal(face, reader.GetFace("1").Bytes);
         Assert.DoesNotContain(reader.Writes, line => line.Contains("SynchronizeTime", StringComparison.Ordinal));
 
@@ -408,7 +408,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(next).Kind);
         Assert.Equal(1, worker.AppliedRevision);
         Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
-        Assert.Equal("read-back mismatch", worker.Retry!.LastError);
+        Assert.StartsWith("read-back mismatch", worker.Retry!.LastError, StringComparison.Ordinal);
     }
 
     [Fact]

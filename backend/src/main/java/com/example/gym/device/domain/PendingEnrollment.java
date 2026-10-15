@@ -14,6 +14,7 @@ import java.time.Instant;
 public class PendingEnrollment extends TenantAwareEntity {
 
     public static final String PENDING = "PENDING";
+    public static final String GONE = "GONE";
 
     @Column(name = "device_id", nullable = false)
     private Long deviceId;
@@ -155,6 +156,13 @@ public class PendingEnrollment extends TenantAwareEntity {
         this.verificationError = null;
         this.resolved = false;
         this.reviewStatus = PENDING;
+    }
+
+    /** The reader no longer shows the person, so there is nothing to decide. Someone at the id later reopens it. */
+    public void leftReader() {
+        this.resolved = true;
+        this.verificationError = null;
+        this.reviewStatus = GONE;
     }
 
     public void resolve() {

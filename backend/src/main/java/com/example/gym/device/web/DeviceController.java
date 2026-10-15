@@ -5,6 +5,9 @@ import com.example.gym.device.DeviceReadService;
 import com.example.gym.device.DeviceService;
 import com.example.gym.device.ReaderImportService;
 import com.example.gym.device.ReaderImportService.Imported;
+import com.example.gym.device.ReaderLinkMatches.Match;
+import com.example.gym.device.ReaderLinkService;
+import com.example.gym.device.ReaderLinkService.Linked;
 import com.example.gym.device.ReaderReconcileService;
 import com.example.gym.device.ReaderReconcileService.Reconciled;
 import com.example.gym.device.dto.DeviceRequests.CreateDevice;
@@ -13,10 +16,12 @@ import com.example.gym.device.dto.DeviceRequests.UpdateDevice;
 import com.example.gym.device.dto.DeviceResponses.DeviceHealth;
 import com.example.gym.device.dto.DeviceResponses.DeviceView;
 import com.example.gym.device.dto.DeviceResponses.SyncCommandView;
+import com.example.gym.device.dto.LinkMatchesRequest;
 import com.example.gym.security.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
@@ -42,15 +47,18 @@ public class DeviceController {
     private final DeviceReadService deviceReadService;
     private final ReaderReconcileService reconcileService;
     private final ReaderImportService importService;
+    private final ReaderLinkService linkService;
 
     public DeviceController(DeviceService deviceService,
                             DeviceReadService deviceReadService,
                             ReaderReconcileService reconcileService,
-                            ReaderImportService importService) {
+                            ReaderImportService importService,
+                            ReaderLinkService linkService) {
         this.deviceService = deviceService;
         this.deviceReadService = deviceReadService;
         this.reconcileService = reconcileService;
         this.importService = importService;
+        this.linkService = linkService;
     }
 
     @GetMapping
@@ -107,6 +115,20 @@ public class DeviceController {
     @Operation(summary = "Create a member for every undecided person this reader showed, keeping the reader's record")
     public Imported importPending(@PathVariable String id) {
         return importService.importPending(id, SecurityUtils.currentTenantId());
+    }
+
+    @GetMapping("/{id}/link-matches")
+    @PreAuthorize("hasAuthority('DEVICE_SYNC') and hasAuthority('REVIEW_DECIDE')")
+    @Operation(summary = "Undecided people on this reader who match exactly one member another reader holds")
+    public List<Match> linkMatches(@PathVariable String id) {
+        return linkService.preview(id, SecurityUtils.currentTenantId());
+    }
+
+    @PostMapping("/{id}/link-matches")
+    @PreAuthorize("hasAuthority('DEVICE_SYNC') and hasAuthority('REVIEW_DECIDE')")
+    @Operation(summary = "Link the confirmed matches that still match, keeping this reader's ids")
+    public Linked linkConfirmed(@PathVariable String id, @Valid @RequestBody LinkMatchesRequest request) {
+        return linkService.link(id, request, SecurityUtils.currentTenantId());
     }
 
     @PostMapping("/{id}/scan")

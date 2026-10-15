@@ -147,7 +147,10 @@ function Overview({ device }: { device: Device }) {
         </div>
       ) : null}
       {has('DEVICE_SYNC') && has('REVIEW_DECIDE') && device.gatewayAssigned ? (
-        <ImportPending deviceId={device.id} />
+        <>
+          <ImportPending deviceId={device.id} />
+          <LinkMatches deviceId={device.id} />
+        </>
       ) : null}
       {has('DEVICE_SYNC') && device.gatewayAssigned ? <Reconcile deviceId={device.id} /> : null}
       <p className="text-sm text-muted">
@@ -202,6 +205,98 @@ function ImportPending({ deviceId }: Readonly<{ deviceId: string }>) {
         </ul>
       ) : null}
       {run.error ? <QueryError error={run.error} /> : null}
+    </Card>
+  )
+}
+
+type LinkMatch = {
+  enrollmentId: string
+  deviceUserId: string
+  readerName: string
+  validFrom: string | null
+  validTo: string | null
+  memberId: string
+  memberCode: string
+  memberName: string
+  otherReaderName: string
+}
+
+function LinkMatches({ deviceId }: Readonly<{ deviceId: string }>) {
+  const qc = useQueryClient()
+  const preview = useMutation({
+    mutationFn: () => api<LinkMatch[]>(`/api/v1/devices/${deviceId}/link-matches`),
+  })
+  const link = useMutation({
+    mutationFn: (rows: LinkMatch[]) =>
+      api<{ linked: number; notLinked: string[] }>(`/api/v1/devices/${deviceId}/link-matches`, {
+        method: 'POST',
+        body: JSON.stringify({ links: rows.map((row) => ({ enrollmentId: row.enrollmentId, memberId: row.memberId })) }),
+      }),
+    onSuccess: () => {
+      preview.reset()
+      void qc.invalidateQueries({ queryKey: ['reviews'] })
+    },
+  })
+  const rows = preview.data ?? []
+  return (
+    <Card className="space-y-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Same people as another reader</h2>
+      <p className="text-sm text-muted">
+        Lists people on this reader who match exactly one member another reader already holds: same name, same dates and
+        same enabled state on both readers, and nobody else with that name. Check the list, then link. Each link writes
+        the member&apos;s server photo and details to this reader under this reader&apos;s id. Anyone not listed stays on
+        the Review page.
+      </p>
+      <Button size="sm" variant="outline" disabled={preview.isPending || link.isPending} onClick={() => preview.mutate()}>
+        Find exact matches
+      </Button>
+      {preview.isSuccess && rows.length === 0 ? <p className="text-sm text-muted">No exact matches.</p> : null}
+      {rows.length > 0 ? (
+        <>
+          <TableShell>
+            <Table>
+              <THead>
+                <Tr>
+                  <Th>Reader id</Th>
+                  <Th>On this reader</Th>
+                  <Th>Dates</Th>
+                  <Th>Member</Th>
+                  <Th>Already on</Th>
+                </Tr>
+              </THead>
+              <tbody>
+                {rows.map((row) => (
+                  <Tr key={row.enrollmentId}>
+                    <Td className="font-mono text-xs">{row.deviceUserId}</Td>
+                    <Td>{row.readerName}</Td>
+                    <Td className="font-mono text-xs">
+                      {row.validFrom ?? '…'} – {row.validTo ?? '…'}
+                    </Td>
+                    <Td>
+                      {row.memberName} <span className="text-xs text-muted">{row.memberCode}</span>
+                    </Td>
+                    <Td>{row.otherReaderName}</Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </TableShell>
+          <Button size="sm" disabled={link.isPending} onClick={() => link.mutate(rows)}>
+            Link these {rows.length}
+          </Button>
+        </>
+      ) : null}
+      {link.isSuccess ? (
+        <p className="text-sm text-muted">
+          {link.data.linked} linked
+          {link.data.notLinked.length > 0
+            ? ` · ${link.data.notLinked.length} no longer matched and stay on the Review page`
+            : ''}
+          .
+        </p>
+      ) : null}
+      {preview.error ? <QueryError error={preview.error} /> : null}
+      {link.error ? <QueryError error={link.error} /> : null}
     </Card>
   )
 }

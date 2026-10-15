@@ -95,6 +95,7 @@ public class PendingEnrollmentService {
                 present.add(deviceUserId);
             }
         }
+        closeLeft(device, scan, known, present);
         for (DesiredMemberProjection desired : desiredMembers.findByDeviceId(device.getId())) {
             if (desired.isPresentOnReader() && !present.contains(desired.getDeviceUserId())
                     && wasOnReader(device, desired.getDeviceUserId())
@@ -164,6 +165,29 @@ public class PendingEnrollmentService {
             bootstrap.withdrawUnservedSeeds(device, snapshot);
         }
         return true;
+    }
+
+    /**
+     * A person nobody decided on whom a complete list no longer shows has left the reader, and no
+     * longer holds back a member. A decision already made waits for the reader as before, and a later
+     * look at the person than this list keeps them.
+     */
+    private void closeLeft(Device device, ObservationOrder.Scan scan, Known known, Set<String> present) {
+        int closed = 0;
+        for (PendingEnrollment enrollment : known.enrollments().values()) {
+            String deviceUserId = enrollment.getDeviceUserId();
+            if (enrollment.isResolved() || enrollment.getDecision() != null || present.contains(deviceUserId)
+                    || scan.staleFor(deviceUserId, known.snapshots().get(deviceUserId),
+                    known.baselines().get(deviceUserId), enrollment)) {
+                continue;
+            }
+            enrollment.leftReader();
+            enrollments.save(enrollment);
+            closed++;
+        }
+        if (closed > 0) {
+            FlowLog.info("device", "reader={} no longer shows {} undecided people", device.getPublicId(), closed);
+        }
     }
 
     /**

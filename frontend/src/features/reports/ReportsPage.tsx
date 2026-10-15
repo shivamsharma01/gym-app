@@ -1,6 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router";
 import { Pager } from "@/components/Pager";
 import { QueryError } from "@/components/QueryError";
 import {
@@ -224,13 +223,6 @@ export function ReportsPage() {
         <PageHeader
             title="Reports"
             description="Day-to-day gym operations: collections, dues, memberships, attendance and member activity."
-            actions={
-              <Link to="/app/reports/devices">
-                <Button variant="outline" size="sm">
-                  Device health
-                </Button>
-              </Link>
-            }
         />
 
         <Card>
@@ -739,59 +731,5 @@ function ReportSection({
         </div>
         {children}
       </section>
-  );
-}
-
-export function DeviceReportPage() {
-  const summary = useQuery({
-    queryKey: ["reports", "summary"],
-    queryFn: () =>
-        api<{ devices: { id: string; name: string; connectionState: string }[] }>(
-            "/api/v1/reports/summary"
-        ),
-  });
-  return (
-      <div>
-        <PageHeader
-            title="Device report"
-            description="Connection state at query time — not a live status lamp."
-        />
-        {summary.isLoading ? <Skeleton className="h-32" /> : null}
-        {summary.error ? (
-            <QueryError
-                error={summary.error}
-                onRetry={() => void summary.refetch()}
-            />
-        ) : null}
-        {summary.data ? (
-            <PagedTable
-                rows={summary.data.devices ?? []}
-                resetKey="devices"
-                empty={
-                  <EmptyState
-                      title="No devices"
-                      body="Register a gateway and TrueFace terminal to see health here."
-                  />
-                }
-            >
-              {(devices) => (
-                  <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-panel shadow-[var(--shadow-panel)]">
-                    {devices.map((d) => (
-                        <Link
-                            key={d.id}
-                            to={`/app/devices/${d.id}`}
-                            className="flex items-center justify-between gap-3 px-4 py-3.5 text-sm transition hover:bg-raised/50"
-                        >
-                          <span className="font-medium">{d.name}</span>
-                          <Badge tone={statusTone(d.connectionState)}>
-                            {d.connectionState}
-                          </Badge>
-                        </Link>
-                    ))}
-                  </div>
-              )}
-            </PagedTable>
-        ) : null}
-      </div>
   );
 }

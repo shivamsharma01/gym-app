@@ -86,7 +86,7 @@ export function DeviceDetailPage() {
         ))}
       </nav>
       {tab === 'overview' ? <Overview device={d} /> : null}
-      {tab === 'events' ? <Events /> : null}
+      {tab === 'events' ? <Events deviceId={d.id} /> : null}
       {tab === 'sync' ? <Sync deviceId={d.id} /> : null}
       {tab === 'settings' ? <Settings device={d} /> : null}
       {has('DEVICE_REMOTE_CONTROL') && (tab === 'overview' || tab === 'settings') ? <DoorControl deviceId={d.id} /> : null}
@@ -287,12 +287,13 @@ function ScanNow({ deviceId }: Readonly<{ deviceId: string }>) {
   )
 }
 
-function Events() {
+function Events({ deviceId }: Readonly<{ deviceId: string }>) {
   const { has } = useAuth()
   const [page, setPage] = useState(0)
   const events = useQuery({
-    queryKey: ['security-events', page],
-    queryFn: () => api<PageResponse<SecurityEvent>>(`/api/v1/security-events?page=${page}&size=30`),
+    queryKey: ['security-events', deviceId, page],
+    queryFn: () =>
+      api<PageResponse<SecurityEvent>>(`/api/v1/security-events?deviceId=${deviceId}&page=${page}&size=30`),
     enabled: has('SECURITY_ALERT_VIEW'),
     placeholderData: keepPreviousData,
   })

@@ -11,4 +11,6 @@ public interface SecurityEventRepository extends JpaRepository<SecurityEvent, Lo
     Optional<SecurityEvent> findByPublicId(String publicId);
 
     Page<SecurityEvent> findByTenantIdOrderByOccurredAtDesc(Long tenantId, Pageable pageable);
+
+    Page<SecurityEvent> findByTenantIdAndDeviceIdOrderByOccurredAtDesc(Long tenantId, Long deviceId, Pageable pageable);
 }

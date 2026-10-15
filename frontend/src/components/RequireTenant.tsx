@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Navigate, Outlet } from 'react-router'
 import { useAuth } from '@/lib/auth'
 import { isPlatformSuperAdmin, platformHomePath } from '@/lib/platform'
@@ -9,6 +10,15 @@ export function RequireGymTenant() {
     return <Navigate to={platformHomePath()} replace />
   }
   return <Outlet />
+}
+
+/** Pages the signed-in user may open only with one of these permissions; others go to the dashboard. */
+export function RequirePermission({ anyOf, children }: Readonly<{ anyOf: string[]; children: ReactNode }>) {
+  const { user, has } = useAuth()
+  if (isPlatformSuperAdmin(user) || anyOf.some(has)) {
+    return <>{children}</>
+  }
+  return <Navigate to="/app/dashboard" replace />
 }
 
 /** Platform-only routes. */

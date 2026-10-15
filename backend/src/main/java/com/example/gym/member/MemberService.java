@@ -8,6 +8,7 @@ import com.example.gym.device.DeviceAuthorizationService;
 import com.example.gym.device.ReaderReconcileService;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
+import com.example.gym.security.SecurityUtils;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -88,7 +89,11 @@ public class MemberService {
         member.setGender(request.gender());
         member.setNotes(request.notes());
         if (StringUtils.hasText(request.deviceAuthority())) {
-            member.setDeviceAuthority(DeviceAuthority.fromString(request.deviceAuthority()));
+            DeviceAuthority authority = DeviceAuthority.fromString(request.deviceAuthority());
+            if (authority != member.getDeviceAuthority()) {
+                requireAuthorityManager();
+            }
+            member.setDeviceAuthority(authority);
         }
         Member saved = memberRepository.save(member);
         FlowLog.info("member", "created id={} code={} serial={}", saved.getPublicId(), saved.getMemberCode(), serial);
@@ -119,6 +124,7 @@ public class MemberService {
         if (StringUtils.hasText(request.deviceAuthority())) {
             DeviceAuthority newAuth = DeviceAuthority.fromString(request.deviceAuthority());
             if (newAuth != member.getDeviceAuthority()) {
+                requireAuthorityManager();
                 member.setDeviceAuthority(newAuth);
                 authorityChanged = true;
             }
@@ -188,6 +194,15 @@ public class MemberService {
         auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), serialDetails(saved));
         return saved;
+    }
+
+    /** Reader authority is changed only by those who may change it on its own endpoint. */
+    private static void requireAuthorityManager() {
+        boolean allowed = SecurityUtils.currentPrincipal().getAuthorities().stream()
+                .anyMatch(a -> "USER_MANAGE".equals(a.getAuthority()) || "ROLE_GYM_ADMIN".equals(a.getAuthority()));
+        if (!allowed) {
+            throw CommonExceptions.forbidden("Only a gym admin can change a member's terminal authority");
+        }
     }
 
     @Transactional

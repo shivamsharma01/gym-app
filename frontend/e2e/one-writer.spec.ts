@@ -145,7 +145,7 @@ function scanCommand(state: string) {
 
 test('a punch stored by the gateway appears once in the attendance list without a reload', async ({ page }) => {
   await page.clock.install()
-  await mockStaff(page)
+  await mockStaff(page, [], { ...user, permissions: [...user.permissions, 'ATTENDANCE_VIEW'] })
   const rows: object[] = []
   await page.route('**/api/v1/attendance?**', async (route) => {
     await route.fulfill({ json: { content: rows, totalElements: rows.length, totalPages: 1, number: 0, size: 30 } })

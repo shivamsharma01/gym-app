@@ -28,6 +28,8 @@ backend/target/
 !gateway/native/win-x64/*.dll
 
 # ---- Logs / runtime ------------------------------------------------------------------------------
+# Member photos written by a local backend (dev profile: app.faces.dir=./data/faces)
+backend/data/
 *.log
 **/sdk_log/
 *.cache

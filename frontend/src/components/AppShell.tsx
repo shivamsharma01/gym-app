@@ -86,7 +86,7 @@ export function AppShell() {
   const gateways = useQuery({
     queryKey: ['gateways', 'shell'],
     queryFn: () => api<PageResponse<Gateway>>('/api/v1/gateways?size=20'),
-    enabled: Boolean(user?.tenantId) && !isPlatform,
+    enabled: Boolean(user?.tenantId) && !isPlatform && has('DEVICE_VIEW'),
     refetchInterval: 30_000,
   })
   const gatewayState = gatewayConnectionState(gateways.isSuccess, gateways.data?.content[0])
@@ -124,7 +124,7 @@ export function AppShell() {
     return (
       <div className="flex flex-wrap items-center gap-3">
         <LiveDot state={live} labelPrefix="Server" />
-        {!isPlatform ? <LiveDot state={gatewayState} labelPrefix="Gateway" /> : null}
+        {!isPlatform && has('DEVICE_VIEW') ? <LiveDot state={gatewayState} labelPrefix="Gateway" /> : null}
       </div>
     )
   }

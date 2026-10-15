@@ -18,6 +18,7 @@ import {
   Tr,
 } from '@/components/ui'
 import { api } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { formatDate, money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
 import type { PageResponse } from '@/lib/types'
@@ -102,6 +103,7 @@ export function MembershipsPage() {
 
 export function MembershipPlanMembersPage() {
   const { planId } = useParams()
+  const canViewMembers = useAuth().has('MEMBER_VIEW')
   const [page, setPage] = useState(0)
   const plans = useQuery({
     queryKey: ['membership-plans-roster'],
@@ -158,9 +160,13 @@ export function MembershipPlanMembersPage() {
                 {members.data.content.map((row) => (
                   <Tr key={`${row.memberId}-${row.endDate}`}>
                     <Td className="font-medium">
-                      <Link className="hover:underline" to={`/app/members/${row.memberId}`}>
-                        {row.fullName}
-                      </Link>
+                      {canViewMembers ? (
+                        <Link className="hover:underline" to={`/app/members/${row.memberId}`}>
+                          {row.fullName}
+                        </Link>
+                      ) : (
+                        row.fullName
+                      )}
                       {row.expiringWithin7Days ? <Badge tone="warn">Expiring</Badge> : null}
                     </Td>
                     <Td className="text-muted">{row.memberCode}</Td>

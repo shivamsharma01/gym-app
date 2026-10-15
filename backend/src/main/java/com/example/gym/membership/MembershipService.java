@@ -528,10 +528,13 @@ public class MembershipService {
             );
         }
 
-        BigDecimal discount = validateAndAuthorizeDiscount(
-                request.discountAmount(),
-                plan.getPrice()
-        );
+        BigDecimal discount = requestedDiscount(request.discountAmount());
+        boolean discountChanged = discount.compareTo(requestedDiscount(membership.getDiscountAmount())) != 0;
+        if (discountChanged) {
+            validateAndAuthorizeDiscount(discount, plan.getPrice());
+        } else {
+            validateDiscount(discount, plan.getPrice());
+        }
 
         membership.setPlanId(plan.getId());
         membership.setPlanName(plan.getName());
@@ -540,7 +543,9 @@ public class MembershipService {
         membership.setStartDate(start);
         membership.setEndDate(end);
         membership.setDiscountAmount(discount);
-        recordDiscountApproval(membership, discount);
+        if (discountChanged) {
+            recordDiscountApproval(membership, discount);
+        }
 
         LocalDate today = LocalDate.now();
         if (start.isAfter(today)) {
@@ -629,25 +634,15 @@ public class MembershipService {
         return start.plusDays(Math.max(plan.getDurationDays() - 1, 0));
     }
 
+    private static BigDecimal requestedDiscount(BigDecimal discountAmount) {
+        return discountAmount == null ? BigDecimal.ZERO : discountAmount;
+    }
+
     private BigDecimal validateAndAuthorizeDiscount(
             BigDecimal discountAmount,
             BigDecimal planPrice
     ) {
-        BigDecimal discount = discountAmount == null
-                ? BigDecimal.ZERO
-                : discountAmount;
-
-        if (discount.compareTo(BigDecimal.ZERO) < 0) {
-            throw CommonExceptions.badRequest(
-                    "Discount cannot be negative"
-            );
-        }
-
-        if (discount.compareTo(planPrice) > 0) {
-            throw CommonExceptions.badRequest(
-                    "Discount cannot be greater than the plan amount"
-            );
-        }
+        BigDecimal discount = validateDiscount(discountAmount, planPrice);
 
         if (discount.compareTo(BigDecimal.ZERO) > 0) {
             boolean authorized = SecurityUtils.currentPrincipal()

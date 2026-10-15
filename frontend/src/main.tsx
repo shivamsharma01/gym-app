@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { StrictMode } from 'react'
+import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router'
 import { AppShell } from '@/components/AppShell'
 import { RequireAuth } from '@/components/RequireAuth'
-import { RequireGymTenant, RequirePlatform } from '@/components/RequireTenant'
+import { RequireGymTenant, RequirePermission, RequirePlatform } from '@/components/RequireTenant'
 import { AuditPage } from '@/features/audit/AuditPage'
 import { AttendanceLivePage } from '@/features/attendance/AttendanceLivePage'
 import { AttendancePage } from '@/features/attendance/AttendancePage'
@@ -28,7 +28,7 @@ import { PlatformActuatorPage } from '@/features/platform/PlatformActuatorPage'
 import { PlatformGymsPage } from '@/features/platform/PlatformGymsPage'
 import { PlatformStaffPasswordPage } from '@/features/platform/PlatformStaffPasswordPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
-import { DeviceReportPage, ReportsPage } from '@/features/reports/ReportsPage'
+import { ReportsPage } from '@/features/reports/ReportsPage'
 import { ReviewPage } from '@/features/reviews/ReviewPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { RolesPage } from '@/features/users/RolesPage'
@@ -59,6 +59,10 @@ const queryClient = new QueryClient({
   },
 })
 
+function needs(anyOf: string[], page: ReactNode) {
+  return <RequirePermission anyOf={anyOf}>{page}</RequirePermission>
+}
+
 function AppIndexRedirect() {
   const { user } = useAuth()
   if (isPlatformSuperAdmin(user)) {
@@ -78,36 +82,36 @@ const publicChildren = [
 
 const gymChildren = [
   { path: 'dashboard', element: <DashboardPage /> },
-  { path: 'members', element: <MembersPage /> },
-  { path: 'members/new', element: <MemberNewPage /> },
-  { path: 'members/:id', element: <MemberDetailPage /> },
-  { path: 'members/:id/edit', element: <MemberEditPage /> },
-  { path: 'plans', element: <PlansPage /> },
-  { path: 'memberships', element: <MembershipsPage /> },
-  { path: 'memberships/:planId', element: <MembershipPlanMembersPage /> },
-  { path: 'payments', element: <PaymentsPage /> },
-  { path: 'attendance', element: <AttendancePage /> },
-  { path: 'attendance/live', element: <AttendanceLivePage /> },
-  { path: 'devices', element: <DevicesPage /> },
-  { path: 'review', element: <ReviewPage /> },
-  { path: 'devices/new', element: <DeviceNewPage /> },
-  { path: 'devices/:id', element: <DeviceDetailPage /> },
-  { path: 'devices/:id/:section', element: <DeviceDetailPage /> },
-  ...(FEATURES.enquiries ? [{ path: 'enquiries', element: <EnquiriesPage /> }] : []),
-  { path: 'reports', element: <ReportsPage /> },
+  { path: 'members', element: needs(['MEMBER_VIEW'], <MembersPage />) },
+  { path: 'members/new', element: needs(['MEMBER_CREATE'], <MemberNewPage />) },
+  { path: 'members/:id', element: needs(['MEMBER_VIEW'], <MemberDetailPage />) },
+  { path: 'members/:id/edit', element: needs(['MEMBER_UPDATE'], <MemberEditPage />) },
+  { path: 'plans', element: needs(['MEMBERSHIP_VIEW'], <PlansPage />) },
+  { path: 'memberships', element: needs(['MEMBERSHIP_VIEW'], <MembershipsPage />) },
+  { path: 'memberships/:planId', element: needs(['MEMBERSHIP_VIEW'], <MembershipPlanMembersPage />) },
+  { path: 'payments', element: needs(['PAYMENT_VIEW'], <PaymentsPage />) },
+  { path: 'attendance', element: needs(['ATTENDANCE_VIEW'], <AttendancePage />) },
+  { path: 'attendance/live', element: needs(['ATTENDANCE_VIEW'], <AttendanceLivePage />) },
+  { path: 'devices', element: needs(['DEVICE_VIEW'], <DevicesPage />) },
+  { path: 'review', element: needs(['DEVICE_VIEW'], <ReviewPage />) },
+  { path: 'devices/new', element: needs(['DEVICE_MANAGE'], <DeviceNewPage />) },
+  { path: 'devices/:id', element: needs(['DEVICE_VIEW'], <DeviceDetailPage />) },
+  { path: 'devices/:id/:section', element: needs(['DEVICE_VIEW'], <DeviceDetailPage />) },
+  ...(FEATURES.enquiries ? [{ path: 'enquiries', element: needs(['ENQUIRY_VIEW'], <EnquiriesPage />) }] : []),
+  { path: 'reports', element: needs(['REPORT_VIEW'], <ReportsPage />) },
   { path: 'reports/attendance', element: <Navigate to="/app/attendance" replace /> },
   { path: 'reports/payments', element: <Navigate to="/app/payments" replace /> },
-  { path: 'reports/devices', element: <DeviceReportPage /> },
+  { path: 'reports/devices', element: <Navigate to="/app/devices" replace /> },
   ...(FEATURES.notifications
     ? [
-        { path: 'notifications', element: <NotificationsPage /> },
-        { path: 'notifications/templates', element: <NotificationTemplatesPage /> },
-        { path: 'announcements', element: <AnnouncementsPage /> },
+        { path: 'notifications', element: needs(['NOTIFICATION_SEND'], <NotificationsPage />) },
+        { path: 'notifications/templates', element: needs(['NOTIFICATION_SEND'], <NotificationTemplatesPage />) },
+        { path: 'announcements', element: needs(['NOTIFICATION_SEND'], <AnnouncementsPage />) },
       ]
     : []),
-  { path: 'users', element: <UsersPage /> },
-  { path: 'roles', element: <RolesPage /> },
-  { path: 'settings', element: <SettingsPage /> },
+  { path: 'users', element: needs(['USER_MANAGE'], <UsersPage />) },
+  { path: 'roles', element: needs(['ROLE_MANAGE', 'USER_MANAGE'], <RolesPage />) },
+  { path: 'settings', element: needs(['SETTINGS_MANAGE'], <SettingsPage />) },
 ]
 
 const router = createBrowserRouter([
@@ -143,7 +147,7 @@ const router = createBrowserRouter([
             ],
           },
           // Audit is useful for both platform (all tenants) and gym admins.
-          { path: 'audit', element: <AuditPage /> },
+          { path: 'audit', element: needs(['AUDIT_VIEW'], <AuditPage />) },
           { path: 'profile', element: <ProfilePage /> },
           {
             element: <RequireGymTenant />,

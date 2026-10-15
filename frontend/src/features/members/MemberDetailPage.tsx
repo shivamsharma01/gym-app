@@ -307,11 +307,16 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
           <Skeleton className="h-16" />
         ) : data.devices.length === 0 ? (
           <p className="text-sm text-muted">
-            No devices with a gateway yet.{' '}
-            <Link className="underline" to="/app/devices">
-              Set up a device
-            </Link>
-            .
+            No devices with a gateway yet.
+            {has('DEVICE_VIEW') ? (
+              <>
+                {' '}
+                <Link className="underline" to="/app/devices">
+                  Set up a device
+                </Link>
+                .
+              </>
+            ) : null}
           </p>
         ) : (
           <div className="divide-y divide-line">

@@ -169,6 +169,20 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].type").value("ACCESS_DENIED"));
+
+        String quiet = readJson(postJson("/api/v1/devices",
+                "{\"name\":\"Exit\",\"role\":\"EXIT\",\"host\":\"10.0.0.12\",\"port\":37777,"
+                        + "\"gatewayId\":\"" + gatewayId + "\"}")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString()).get("id").asString();
+        mockMvc.perform(get("/api/v1/security-events").param("deviceId", deviceId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1));
+        mockMvc.perform(get("/api/v1/security-events").param("deviceId", quiet)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0));
     }
 
     @Test

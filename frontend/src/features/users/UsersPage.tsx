@@ -27,7 +27,7 @@ function roleLabel(name: string) {
 }
 
 export function UsersPage() {
-  const { user: current } = useAuth()
+  const { user: current, has } = useAuth()
   const qc = useQueryClient()
   const [page, setPage] = useState(0)
   const users = useQuery({
@@ -158,9 +158,13 @@ export function UsersPage() {
           <h2 className="text-sm font-semibold tracking-tight">New staff login</h2>
           <p className="text-sm text-muted">
             To enrol someone on the door, create them as a{' '}
-            <Link className="font-medium text-accent hover:underline" to="/app/members/new">
-              member
-            </Link>
+            {has('MEMBER_CREATE') ? (
+              <Link className="font-medium text-accent hover:underline" to="/app/members/new">
+                member
+              </Link>
+            ) : (
+              'member'
+            )}
             , then map them on the member page.
           </p>
         <Label>Username</Label>

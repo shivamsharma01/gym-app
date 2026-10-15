@@ -72,9 +72,14 @@ public class DeviceReadService {
         return attendanceRepository.findByTenantIdAndMemberId(tenantId, member.getId(), pageable);
     }
 
+    /** The gym's security events, or one device's when {@code devicePublicId} is given. */
     @Transactional(readOnly = true)
-    public Page<SecurityEvent> securityEvents(Long tenantId, Pageable pageable) {
-        return securityEventRepository.findByTenantIdOrderByOccurredAtDesc(tenantId, pageable);
+    public Page<SecurityEvent> securityEvents(Long tenantId, String devicePublicId, Pageable pageable) {
+        if (devicePublicId == null) {
+            return securityEventRepository.findByTenantIdOrderByOccurredAtDesc(tenantId, pageable);
+        }
+        Device device = deviceService.getByPublicId(devicePublicId, tenantId);
+        return securityEventRepository.findByTenantIdAndDeviceIdOrderByOccurredAtDesc(tenantId, device.getId(), pageable);
     }
 
     /**

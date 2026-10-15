@@ -59,6 +59,7 @@ public class DesiredProjectionService {
     private static final DateTimeFormatter READER_TIME =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
     static final String AUTHORITY = "Customer";
+    static final String ADMIN = "ADMIN";
     static final int USER_STATUS = 0;
     static final int DOOR_NUM = 1;
     static final int TIME_SECTION_NUM = 1;
@@ -699,7 +700,7 @@ public class DesiredProjectionService {
         row.setUserStatus(status);
         row.setValidFrom(from);
         row.setValidTo(to);
-        row.setAuthority(AUTHORITY);
+        row.setAuthority(authority(member));
         row.setObservedFaceSha256(null);
         if (face == null) {
             row.setFacePresent(false);
@@ -707,6 +708,19 @@ public class DesiredProjectionService {
         }
         row.setFacePresent(true);
         row.setFaceSha256(face.getSha256());
+    }
+
+    /**
+     * A member a reader holds as an administrator stays one on every reader: the level comes only
+     * from a reader, and a server write does not take it away.
+     */
+    private String authority(Member member) {
+        if (member.getId() == null) {
+            return AUTHORITY;
+        }
+        boolean admin = projections.findByMemberId(member.getId()).stream()
+                .anyMatch(row -> ADMIN.equalsIgnoreCase(row.getAuthority()));
+        return admin ? ADMIN : AUTHORITY;
     }
 
     private static boolean blank(String value) {
@@ -738,7 +752,7 @@ public class DesiredProjectionService {
             row.setValidFrom(at(from, LocalTime.MIN));
             row.setValidTo(at(to, LocalTime.of(23, 59, 59)));
         }
-        row.setAuthority(AUTHORITY);
+        row.setAuthority(authority(member));
         row.setDoorNum(DOOR_NUM);
         row.setTimeSectionNum(TIME_SECTION_NUM);
         row.setFacePresent(true);

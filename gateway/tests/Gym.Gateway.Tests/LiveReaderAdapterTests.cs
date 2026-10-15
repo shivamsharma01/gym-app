@@ -116,6 +116,20 @@ public class LiveReaderAdapterTests : IDisposable
     }
 
     [Fact]
+    public void An_end_time_the_reader_stores_as_end_of_the_same_day_is_acknowledged()
+    {
+        var device = new StructReader();
+        var reader = new DeviceReaderAdapter(device);
+        using var worker = new ReaderWorker("reader", reader, Path.Combine(_directory, "reader.sqlite"), TimeSpan.Zero);
+
+        var result = worker.ApplyMember(new DesiredMember(
+            1, "1", "Asha Shah", null, 0, From, new DateTimeOffset(2026, 10, 8, 0, 0, 0, India), "Customer", 1, 1, Face));
+
+        Assert.Equal(MemberApplyKind.Applied, result.Kind);
+        Assert.Equal(23u, device.Stored("1").stuValidEndTime.dwHour);
+    }
+
+    [Fact]
     public void A_validity_read_back_that_differs_is_not_acknowledged()
     {
         var device = new StructReader { ReportedEnd = new DateTimeOffset(2026, 10, 7, 23, 59, 59, India) };

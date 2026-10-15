@@ -509,7 +509,9 @@ public sealed class ReaderWorker : IDisposable
         }
 
         var faceHash = FaceHash.Sha256Hex(desired.Face);
-        var refused = Precondition(now, desired, now.Present && SameUser(now.User!, desired) && now.FaceSha256 == faceHash);
+        // The desired record without its photo is this write's own earlier attempt: it is finished here,
+        // never moved to another id, which would leave a copy of the person behind.
+        var refused = Precondition(now, desired, now.Present && SameUser(now.User!, desired));
         if (refused != null)
         {
             return refused.Value;
@@ -758,12 +760,26 @@ public sealed class ReaderWorker : IDisposable
         Compare(differs, "name", user.Name, desired.Name);
         Compare(differs, "nameEx", user.NameEx, desired.NameEx);
         Compare(differs, "userStatus", user.UserStatus, desired.UserStatus);
-        Compare(differs, "validFrom", user.ValidFrom, desired.ValidFrom);
-        Compare(differs, "validTo", user.ValidTo, desired.ValidTo);
+        CompareDay(differs, "validFrom", user.ValidFrom, desired.ValidFrom);
+        CompareDay(differs, "validTo", user.ValidTo, desired.ValidTo);
         Compare(differs, "authority", user.Authority, desired.Authority);
         Compare(differs, "doorNum", user.DoorNum, desired.DoorNum);
         Compare(differs, "timeSectionNum", user.TimeSectionNum, desired.TimeSectionNum);
         return differs;
+    }
+
+    /// <summary>
+    /// Validity is a day on the reader clock: the adapter writes the end as 23:59:59 and a reader may
+    /// keep only the day, so the time of day is not part of the record.
+    /// </summary>
+    private static void CompareDay(List<string> differs, string field, DateTimeOffset? read, DateTimeOffset? sent)
+    {
+        var readDay = read.HasValue ? ReaderLocalClock.Wall(read.Value).Date : (DateTime?)null;
+        var sentDay = sent.HasValue ? ReaderLocalClock.Wall(sent.Value).Date : (DateTime?)null;
+        if (readDay != sentDay)
+        {
+            differs.Add($"{field} '{read:yyyy-MM-dd HH:mm:ss}' != '{sent:yyyy-MM-dd HH:mm:ss}'");
+        }
     }
 
     private static void Compare<T>(List<string> differs, string field, T read, T sent)
@@ -785,18 +801,8 @@ public sealed class ReaderWorker : IDisposable
         desired.DoorNum,
         desired.TimeSectionNum);
 
-    private static bool SameUser(ReaderUser user, DesiredMember desired)
-    {
-        return user.DeviceUserId == desired.DeviceUserId
-            && user.Name == desired.Name
-            && user.NameEx == desired.NameEx
-            && user.UserStatus == desired.UserStatus
-            && user.ValidFrom == desired.ValidFrom
-            && user.ValidTo == desired.ValidTo
-            && user.Authority == desired.Authority
-            && user.DoorNum == desired.DoorNum
-            && user.TimeSectionNum == desired.TimeSectionNum;
-    }
+    private static bool SameUser(ReaderUser user, DesiredMember desired) =>
+        user.DeviceUserId == desired.DeviceUserId && Differences(user, desired).Count == 0;
 
     private static bool SameHash(byte[] readBack, byte[] sent)
     {

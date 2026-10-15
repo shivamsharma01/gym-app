@@ -128,6 +128,21 @@ public class MemberCreateWorkerTests : IDisposable
     }
 
     [Fact]
+    public void A_retry_after_a_failed_read_back_finishes_at_the_same_id_and_never_reports_it_occupied()
+    {
+        var reader = new FakeReader();
+        reader.ScriptFaceReadBack([9, 9, 9]);
+        using var worker = Start(Path.Combine(_directory, "retry.sqlite"), reader);
+
+        Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(Member("1", nameEx: null)).Kind);
+        var retried = worker.ApplyMember(Member("1", nameEx: null));
+
+        Assert.Equal(MemberApplyKind.Failed, retried.Kind);
+        Assert.StartsWith("read-back mismatch: photo", worker.Retry!.LastError, StringComparison.Ordinal);
+        Assert.DoesNotContain(reader.Writes, write => write.StartsWith("CreateUser 2", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Face_hash_mismatch_does_not_ack()
     {
         var reader = new FakeReader();

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Gym.Gateway.Adapters;
 
 namespace Gym.Gateway.Execution;
@@ -58,8 +59,12 @@ public sealed record ExpectedOccupant(
 
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
+    /// <summary>Validity is a day on the reader clock; the end is written as 23:59:59 of that day.</summary>
     private static bool SameTime(DateTimeOffset? read, string? expected) =>
-        expected is null || (read is not null && ReaderLocalTime.Format(read.Value) == expected);
+        expected is null
+        || (read is not null
+            && DateTimeOffset.TryParse(expected, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var sent)
+            && ReaderLocalClock.Wall(read.Value).Date == ReaderLocalClock.Wall(sent).Date);
 
     /// <summary>The reader reports an ordinary user as Customer or USER, or not at all.</summary>
     private static string NormalAuthority(string? value) =>

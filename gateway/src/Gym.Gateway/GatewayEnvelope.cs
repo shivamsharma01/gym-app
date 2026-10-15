@@ -68,11 +68,8 @@ public static class ProtocolTypes
     public const string Heartbeat = "HEARTBEAT";
     public const string DeviceStatus = "DEVICE_STATUS";
     public const string DeviceMetadata = "DEVICE_METADATA";
-    public const string DeviceEvent = "DEVICE_EVENT";
     public const string DeviceAlarm = "DEVICE_ALARM";
     public const string SyncResult = "SYNC_RESULT";
-    public const string ReconciliationResult = "RECONCILIATION_RESULT";
-    public const string EnrollmentResult = "ENROLLMENT_RESULT";
     public const string DeviceUserChanged = "DEVICE_USER_CHANGED";
     public const string Registered = "REGISTERED";
     public const string Ack = "ACK";

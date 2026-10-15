@@ -20,8 +20,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * REST fallback for gateways that cannot (yet) hold a WSS session — used by the Python simulator
- * and as a reconnect-safe ingest path. Claiming a command marks it DISPATCHED so the WSS
+ * REST fallback for a gateway that cannot hold a WSS session; it polls for its commands here. Claiming a command marks it DISPATCHED so the WSS
  * dispatcher does not also deliver it.
  */
 @Service

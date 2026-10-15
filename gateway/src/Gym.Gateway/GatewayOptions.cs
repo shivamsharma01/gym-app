@@ -23,7 +23,7 @@ public sealed class GatewayOptions
 
     public string? NativeDirectory { get; set; }
 
-    /// <summary>When the operational credential expires (UTC). Null when using env-only / permanent legacy tokens.</summary>
+    /// <summary>When the operational credential expires (UTC). Null when the credential has no expiry (set only through the environment).</summary>
     public DateTimeOffset? CredentialExpiresAt { get; set; }
 
     /// <summary>Renew when now &gt; expiresAt - renewBefore. Default 7 days.</summary>
@@ -31,13 +31,28 @@ public sealed class GatewayOptions
 
     public List<DeviceEndpointOptions> Devices { get; set; } = [];
 
-    /// <summary>How often each device's user list is compared for local changes. Face import does not use this wait.</summary>
-    public int RosterPollSeconds { get; set; } = 15;
+    /// <summary>
+    /// How often each reader is read for observations. Staff can ask for one reader now from the app
+    /// (SCAN_READER), so this only bounds how long a change made at the reader goes unnoticed.
+    /// </summary>
+    public int RosterPollSeconds { get; set; } = 300;
 
-    /// <summary>How often every user's face is re-read to catch changes the device did not announce.</summary>
-    public int FaceSweepMinutes { get; set; } = 30;
+    /// <summary>
+    /// A scan that finds exactly what the server last acknowledged sends nothing; the list is sent
+    /// again anyway after this many minutes.
+    /// </summary>
+    public int RosterRefreshMinutes { get; set; } = 60;
 
-    /// <summary>How often the gateway logs a status summary (server link, queue, and each reader's progress).</summary>
+    /// <summary>How often each reader's attendance log is read, so admins see recent check-ins.</summary>
+    public int AttendancePollSeconds { get; set; } = 15;
+
+    /// <summary>How far before the last stored punch each attendance window starts.</summary>
+    public int AttendanceOverlapSeconds { get; set; } = 120;
+
+    /// <summary>How far back the first window of a reader with no stored punch reaches.</summary>
+    public int AttendanceFirstLookbackHours { get; set; } = 24;
+
+    /// <summary>How often the gateway logs a status summary.</summary>
     public int StatusLogSeconds { get; set; } = 60;
 
     /// <summary>Serilog level: Information (default) or Debug for per-command sync detail.</summary>

@@ -65,9 +65,8 @@ public class WebSocketGatewayCommandTransport implements GatewayCommandTransport
         }
         if (!registry.isOnline(gateway.getPublicId())) {
             if (throttle.allow("offline:" + device.getId())) {
-                log.info("Commands for device {} wait: it is assigned to gateway {}, which is not connected. "
-                                + "Connected gateways: {}. If the device belongs to one of those, reassign it.",
-                        device.getPublicId(), gateway.getPublicId(), registry.connectedGateways());
+                log.info("Commands for device {} wait: its gateway {} is not connected.",
+                        device.getPublicId(), gateway.getPublicId());
             }
             return Outcome.NOT_CONNECTED;
         }

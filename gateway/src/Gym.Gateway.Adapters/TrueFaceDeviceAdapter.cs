@@ -16,6 +16,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     /// <summary>Larger pages were slower per call and timed out on a 1,200-user reader.</summary>
     private const int UserPage = 50;
     private const int AttendancePage = 20;
+    /// <summary>The page the gym probe measured for the photo index.</summary>
+    private const int FacePage = 50;
     private const int ListWaitMs = 10000;
     private const int PageAttempts = 3;
     private const int MaxFacePhotoBytes = 120 * 1024;
@@ -180,6 +182,17 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     public DeviceUserSnapshot? GetUser(string deviceUserId) =>
         LookUpUser(deviceUserId, out var user) == UserLookup.Found ? ToSnapshot(user) : null;
+
+    /// <summary>Missing is fail code NO_RECORD. Any other answer, including the shared SDK error, is not.</summary>
+    internal UserRead ReadUser(string deviceUserId)
+    {
+        var lookup = LookUpUser(deviceUserId, out var user);
+        return lookup == UserLookup.Found
+            ? new UserRead(lookup, ToSnapshot(user))
+            : new UserRead(lookup, null);
+    }
+
+    internal readonly record struct UserRead(UserLookup Lookup, DeviceUserSnapshot? User);
 
     public DeviceCommandResult UpsertFace(string deviceUserId, byte[] jpegBytes)
     {
@@ -425,6 +438,118 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             NETClient.StopFindFaceInfo(find);
         }
     }
+
+    /// <summary>
+    /// Pages through the photo index with an empty user id. Measured on the gym readers: 1,122 MD5s in
+    /// about 4 s, each equal to the MD5 of the photo GetFace returns. Anything short of exactly the
+    /// announced number of distinct users is unavailable, never a partial list.
+    /// </summary>
+    public FaceChecksumList ListFaceChecksums()
+    {
+        if (!EnsureLogin(out var err))
+        {
+            return FaceChecksumList.Unavailable(err);
+        }
+
+        var startIn = new NET_IN_FACEINFO_START_FIND
+        {
+            dwSize = (uint)Marshal.SizeOf<NET_IN_FACEINFO_START_FIND>(),
+            szUserID = ""
+        };
+        var startOut = new NET_OUT_FACEINFO_START_FIND
+        {
+            dwSize = (uint)Marshal.SizeOf<NET_OUT_FACEINFO_START_FIND>()
+        };
+        var find = NETClient.StartFindFaceInfo(_loginId, startIn, ref startOut, ListWaitMs);
+        if (find == IntPtr.Zero)
+        {
+            return FaceChecksumList.Unavailable(SdkError("StartFindFaceInfo failed"));
+        }
+
+        try
+        {
+            var total = (int)startOut.nTotalCount;
+            var read = ReadFacePages(find, total);
+            if (read.Error != null)
+            {
+                return FaceChecksumList.Unavailable(read.Error);
+            }
+
+            if (read.ByUserId.Count != total)
+            {
+                return FaceChecksumList.Unavailable(
+                    $"photo index listed {read.ByUserId.Count} user(s) of {total} announced");
+            }
+
+            Touch();
+            return FaceChecksumList.Complete(read.ByUserId);
+        }
+        finally
+        {
+            NETClient.StopFindFaceInfo(find);
+        }
+    }
+
+    private (Dictionary<string, string> ByUserId, string? Error) ReadFacePages(IntPtr find, int total)
+    {
+        var byUserId = new Dictionary<string, string>(StringComparer.Ordinal);
+        var size = Marshal.SizeOf<NET_FACEINFO>();
+        var buffer = Marshal.AllocHGlobal(size * FacePage);
+        try
+        {
+            var start = 0;
+            for (var call = 0; call <= total / FacePage + 1; call++)
+            {
+                var findIn = new NET_IN_FACEINFO_DO_FIND
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_IN_FACEINFO_DO_FIND>(),
+                    nStartNo = start,
+                    nCount = FacePage
+                };
+                var findOut = new NET_OUT_FACEINFO_DO_FIND
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_OUT_FACEINFO_DO_FIND>(),
+                    pstuInfo = buffer,
+                    nMaxNum = FacePage,
+                    byReserved = new byte[4]
+                };
+                if (!NETClient.DoFindFaceInfo(find, findIn, ref findOut, ListWaitMs))
+                {
+                    return (byUserId, SdkError($"DoFindFaceInfo at {start} failed"));
+                }
+
+                var returned = Math.Min(findOut.nRetNum, FacePage);
+                if (returned <= 0)
+                {
+                    return (byUserId, null);
+                }
+
+                for (var i = 0; i < returned; i++)
+                {
+                    var info = Marshal.PtrToStructure<NET_FACEINFO>(IntPtr.Add(buffer, size * i));
+                    var id = (info.szUserID ?? "").Trim();
+                    if (id.Length == 0 || !byUserId.TryAdd(id, JoinedMd5(info)))
+                    {
+                        return (byUserId, $"photo index repeated or blanked a user at {start + i}");
+                    }
+                }
+
+                start += returned;
+            }
+
+            return (byUserId, null);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private static string JoinedMd5(NET_FACEINFO info) =>
+        string.Join(",", (info.szMD5 ?? [])
+            .Take(Math.Clamp(info.nMD5, 0, 5))
+            .Select(m => (m.szDM5 ?? "").Trim().ToUpperInvariant())
+            .Where(m => m.Length > 0));
 
     /// <summary>False when the last SDK call failed in transport (timeout, lost login): the reader gave no answer.</summary>
     private static bool ReaderAnswered() =>
@@ -804,7 +929,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     {
         if (_loginId == IntPtr.Zero)
         {
-            return [];
+            throw new AttendanceReadException("Attendance search failed: the reader is not logged in");
         }
 
         return QueryAttendance(fromUtc, toUtc);
@@ -823,29 +948,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             return DeviceCommandResult.Fail(err);
         }
 
-        var local = utcNow.UtcDateTime;
-        var ok = NETClient.SetupDeviceTime(_loginId, NET_TIME.FromDateTime(local));
+        var ok = NETClient.SetupDeviceTime(_loginId, DeviceClock(utcNow));
         return ok ? DeviceCommandResult.Success() : DeviceCommandResult.Fail(SdkError("SetupDeviceTime failed"));
-    }
-
-    public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
-    {
-        if (!EnsureLogin(out var err))
-        {
-            return new DeviceReconciliationResult(false, err, [], []);
-        }
-
-        var from = fromUtc ?? DateTimeOffset.UtcNow.AddDays(-1);
-        var to = toUtc ?? DateTimeOffset.UtcNow.AddHours(1);
-        var events = QueryAttendance(from, to);
-        try
-        {
-            return new DeviceReconciliationResult(true, null, events, QueryUsers());
-        }
-        catch (DeviceReadException ex)
-        {
-            return new DeviceReconciliationResult(false, "User list could not be read: " + ex.Message, events, []);
-        }
     }
 
     public void Dispose()
@@ -1006,18 +1110,19 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(mutation.Name)
-            && !string.Equals(DeviceName(existing), Fit(mutation.Name, NameMax), StringComparison.Ordinal))
+        var desiredName = string.IsNullOrWhiteSpace(mutation.NameEx) ? mutation.Name : mutation.NameEx;
+        if (!string.IsNullOrWhiteSpace(desiredName)
+            && !string.Equals(DeviceName(existing), Fit(desiredName, NameMax), StringComparison.Ordinal))
         {
             return false;
         }
 
-        if (mutation.ValidFrom.HasValue && NetTimeOrNull(existing.stuValidBeginTime)?.Date != mutation.ValidFrom.Value.UtcDateTime.Date)
+        if (mutation.ValidFrom.HasValue && !SameLocalDate(existing.stuValidBeginTime, mutation.ValidFrom.Value))
         {
             return false;
         }
 
-        if (mutation.ValidTo.HasValue && NetTimeOrNull(existing.stuValidEndTime)?.Date != mutation.ValidTo.Value.UtcDateTime.Date)
+        if (mutation.ValidTo.HasValue && !SameLocalDate(existing.stuValidEndTime, mutation.ValidTo.Value))
         {
             return false;
         }
@@ -1027,7 +1132,13 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     internal static NET_ACCESS_USER_INFO ApplyMutation(NET_ACCESS_USER_INFO user, DeviceUserMutation mutation)
     {
-        if (!string.IsNullOrWhiteSpace(mutation.Name))
+        if (!string.IsNullOrWhiteSpace(mutation.NameEx))
+        {
+            user.szName = Fit(string.IsNullOrWhiteSpace(mutation.Name) ? mutation.NameEx : mutation.Name, ShortNameMax);
+            user.szNameEx = Fit(mutation.NameEx, NameMax);
+            user.bUseNameEx = true;
+        }
+        else if (!string.IsNullOrWhiteSpace(mutation.Name))
         {
             user = WithName(user, mutation.Name);
         }
@@ -1046,22 +1157,30 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
         if (mutation.ValidFrom.HasValue)
         {
-            user.stuValidBeginTime = NET_TIME.FromDateTime(mutation.ValidFrom.Value.UtcDateTime);
+            user.stuValidBeginTime = NET_TIME.FromDateTime(ReaderLocalClock.Wall(mutation.ValidFrom.Value));
         }
 
         if (mutation.ValidTo.HasValue)
         {
-            user.stuValidEndTime = NET_TIME.FromDateTime(EndOfDay(mutation.ValidTo.Value));
+            user.stuValidEndTime = NET_TIME.FromDateTime(ReaderLocalClock.EndOfDay(mutation.ValidTo.Value));
         }
 
         return user;
     }
 
     /// <summary>The earliest date these readers use; a validity on this day only grants no entry today.</summary>
-    internal static readonly DateTime NoAccessDay = new(2018, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    internal static readonly DateTime NoAccessDay = new(2018, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
 
-    /// <summary>The device compares against a time of day: the end date must stay valid until 23:59:59.</summary>
-    private static DateTime EndOfDay(DateTimeOffset date) => date.UtcDateTime.Date.AddDays(1).AddSeconds(-1);
+    /// <summary>The reader clock to send. Wall time in India, not the UTC instant.</summary>
+    internal static NET_TIME DeviceClock(DateTimeOffset instant) =>
+        NET_TIME.FromDateTime(ReaderLocalClock.Wall(instant));
+
+    /// <summary>The device compares against a time of day: the end date must stay valid until 23:59:59 reader-local.</summary>
+    private static bool SameLocalDate(NET_TIME stored, DateTimeOffset desired)
+    {
+        var read = ReaderValidity(stored);
+        return read?.DateTime.Date == ReaderLocalClock.Wall(desired).Date;
+    }
 
     private static string MapAuthority(EM_ATTENDANCE_AUTHORITY authority) =>
         authority switch
@@ -1078,6 +1197,45 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     internal static string? DeviceName(NET_ACCESS_USER_INFO user) =>
         user.bUseNameEx && !string.IsNullOrWhiteSpace(user.szNameEx) ? NullIfEmpty(user.szNameEx) : NullIfEmpty(user.szName);
 
+    /// <summary>The long name when it does not already fit in szName. A short name stores the same text in both fields.</summary>
+    internal static string? StoredNameEx(NET_ACCESS_USER_INFO user)
+    {
+        if (!user.bUseNameEx)
+        {
+            return null;
+        }
+
+        var extended = NullIfEmpty(user.szNameEx);
+        var shortName = NullIfEmpty(user.szName);
+        return extended == null || string.Equals(extended, shortName, StringComparison.Ordinal) ? null : extended;
+    }
+
+    /// <summary>A validity field read back on the reader clock, or null when the reader left it zero.</summary>
+    internal static DateTimeOffset? ReaderValidity(NET_TIME time)
+    {
+        if (time.dwYear == 0 || time.dwMonth == 0 || time.dwDay == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var wall = new DateTime(
+                (int)time.dwYear,
+                (int)time.dwMonth,
+                (int)time.dwDay,
+                (int)time.dwHour,
+                (int)time.dwMinute,
+                (int)time.dwSecond,
+                DateTimeKind.Unspecified);
+            return ReaderLocalClock.At(wall);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
     internal static NET_ACCESS_USER_INFO WithName(NET_ACCESS_USER_INFO user, string name)
     {
         user.szName = Fit(name, ShortNameMax);
@@ -1093,9 +1251,11 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             user.szUserID.Trim(),
             DeviceName(user),
             Frozen: user.nUserStatus != 0,
-            ValidFrom: NetTimeOrNull(user.stuValidBeginTime),
-            ValidTo: NetTimeOrNull(user.stuValidEndTime),
-            Authority: MapAuthority(user.emAuthority));
+            ValidFrom: ReaderValidity(user.stuValidBeginTime),
+            ValidTo: ReaderValidity(user.stuValidEndTime),
+            Authority: MapAuthority(user.emAuthority),
+            NameEx: StoredNameEx(user),
+            ShortName: NullIfEmpty(user.szName));
 
     internal static NET_ACCESS_USER_INFO BuildUser(DeviceUserMutation mutation, bool freeze)
     {
@@ -1114,14 +1274,24 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             nSpecialDaysSchedule = new int[128],
             nFirstEnterDoors = new int[32]
         };
-        user = WithName(user, string.IsNullOrWhiteSpace(mutation.Name) ? mutation.DeviceUserId : mutation.Name);
+        if (!string.IsNullOrWhiteSpace(mutation.NameEx))
+        {
+            user.szName = Fit(string.IsNullOrWhiteSpace(mutation.Name) ? mutation.NameEx : mutation.Name, ShortNameMax);
+            user.szNameEx = Fit(mutation.NameEx, NameMax);
+            user.bUseNameEx = true;
+        }
+        else
+        {
+            user = WithName(user, string.IsNullOrWhiteSpace(mutation.Name) ? mutation.DeviceUserId : mutation.Name);
+        }
+
         user.nDoors[0] = 0;
         user.nTimeSectionNo[0] = 0;
         // A zeroed validity shows as 0000-00-00 or NaN on the reader. Without dates the user gets a window that
         // ended long ago: no entry until a membership sends real dates.
-        var from = mutation.ValidFrom ?? new DateTimeOffset(NoAccessDay);
-        user.stuValidBeginTime = NET_TIME.FromDateTime(from.UtcDateTime);
-        user.stuValidEndTime = NET_TIME.FromDateTime(EndOfDay(mutation.ValidTo ?? from));
+        var from = mutation.ValidFrom ?? new DateTimeOffset(NoAccessDay, ReaderLocalClock.Offset);
+        user.stuValidBeginTime = NET_TIME.FromDateTime(ReaderLocalClock.Wall(from));
+        user.stuValidEndTime = NET_TIME.FromDateTime(ReaderLocalClock.EndOfDay(mutation.ValidTo ?? from));
         return user;
     }
 
@@ -1176,8 +1346,71 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
     private IReadOnlyList<DeviceAttendanceRecord> QueryAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc)
     {
-        var findId = IntPtr.Zero;
-        try
+        using var search = new SdkAttendanceSearch(_loginId, fromUtc, toUtc);
+        return ReadAttendance(search, AttendancePage);
+    }
+
+    /// <summary>
+    /// Every record of one search, oldest first. A failed search, a failed page, or a record whose time
+    /// cannot be read throws <see cref="AttendanceReadException"/>: a partial window is never returned
+    /// as complete. A search that finds nothing returns an empty list.
+    /// </summary>
+    internal static IReadOnlyList<DeviceAttendanceRecord> ReadAttendance(IAttendanceSearch search, int page)
+    {
+        if (!search.Start(out var startError))
+        {
+            throw new AttendanceReadException("Attendance search failed: " + startError);
+        }
+
+        var records = new List<DeviceAttendanceRecord>();
+        var pageNo = 0;
+        int rowsOnPage;
+        do
+        {
+            pageNo++;
+            var result = search.Next(page, out var rows, out var pageError);
+            if (result < 0)
+            {
+                throw new AttendanceReadException(
+                    $"Attendance page {pageNo} failed after {records.Count} record(s): {pageError}");
+            }
+
+            foreach (var row in rows)
+            {
+                if (!TryUtc(row.stuTime, out var at))
+                {
+                    throw new AttendanceReadException(
+                        $"Attendance record {row.nRecNo} has an unreadable time {Raw(row.stuTime)}");
+                }
+
+                records.Add(ToAttendance(row, at));
+            }
+
+            rowsOnPage = rows.Count;
+        }
+        while (rowsOnPage >= page);
+
+        return records
+            .OrderBy(r => r.OccurredAt)
+            .ThenBy(r => r.RecNo ?? long.MaxValue)
+            .ToArray();
+    }
+
+    /// <summary>One SDK attendance record search.</summary>
+    internal interface IAttendanceSearch
+    {
+        bool Start(out string error);
+
+        /// <returns>Negative when the page failed; otherwise the SDK result, with the page's records.</returns>
+        int Next(int max, out IReadOnlyList<NET_RECORDSET_ACCESS_CTL_CARDREC> records, out string error);
+    }
+
+    private sealed class SdkAttendanceSearch(IntPtr loginId, DateTimeOffset? fromUtc, DateTimeOffset? toUtc)
+        : IAttendanceSearch, IDisposable
+    {
+        private IntPtr _findId = IntPtr.Zero;
+
+        public bool Start(out string error)
         {
             var condition = new NET_FIND_RECORD_ACCESSCTLCARDREC_CONDITION_EX
             {
@@ -1196,57 +1429,53 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
 
             object boxed = condition;
             if (!NETClient.FindRecord(
-                    _loginId,
+                    loginId,
                     EM_NET_RECORD_TYPE.ACCESSCTLCARDREC_EX,
                     boxed,
                     typeof(NET_FIND_RECORD_ACCESSCTLCARDREC_CONDITION_EX),
-                    ref findId,
+                    ref _findId,
                     10000)
-                || findId == IntPtr.Zero)
+                || _findId == IntPtr.Zero)
             {
-                return [];
+                error = NETClient.GetLastError();
+                return false;
             }
 
-            const int page = AttendancePage;
-            var records = new List<DeviceAttendanceRecord>();
-            while (true)
-            {
-                var ls = new List<object>(page);
-                for (var i = 0; i < page; i++)
-                {
-                    var rec = new NET_RECORDSET_ACCESS_CTL_CARDREC
-                    {
-                        dwSize = (uint)Marshal.SizeOf<NET_RECORDSET_ACCESS_CTL_CARDREC>()
-                    };
-                    ls.Add(rec);
-                }
-
-                var retNum = 0;
-                NETClient.FindNextRecord(findId, page, ref retNum, ref ls, typeof(NET_RECORDSET_ACCESS_CTL_CARDREC), 10000);
-                if (retNum <= 0)
-                {
-                    break;
-                }
-
-                for (var i = 0; i < retNum && i < ls.Count; i++)
-                {
-                    var info = (NET_RECORDSET_ACCESS_CTL_CARDREC)ls[i];
-                    records.Add(ToAttendance(info));
-                }
-
-                if (retNum < page)
-                {
-                    break;
-                }
-            }
-
-            return records;
+            error = "";
+            return true;
         }
-        finally
+
+        public int Next(int max, out IReadOnlyList<NET_RECORDSET_ACCESS_CTL_CARDREC> records, out string error)
         {
-            if (findId != IntPtr.Zero)
+            var ls = new List<object>(max);
+            for (var i = 0; i < max; i++)
             {
-                NETClient.FindRecordClose(findId);
+                ls.Add(new NET_RECORDSET_ACCESS_CTL_CARDREC
+                {
+                    dwSize = (uint)Marshal.SizeOf<NET_RECORDSET_ACCESS_CTL_CARDREC>()
+                });
+            }
+
+            var retNum = 0;
+            var result = NETClient.FindNextRecord(_findId, max, ref retNum, ref ls, typeof(NET_RECORDSET_ACCESS_CTL_CARDREC), 10000);
+            if (result < 0)
+            {
+                records = [];
+                error = NETClient.GetLastError();
+                return result;
+            }
+
+            records = ls.Take(Math.Max(0, retNum)).Cast<NET_RECORDSET_ACCESS_CTL_CARDREC>().ToArray();
+            error = "";
+            return result;
+        }
+
+        public void Dispose()
+        {
+            if (_findId != IntPtr.Zero)
+            {
+                NETClient.FindRecordClose(_findId);
+                _findId = IntPtr.Zero;
             }
         }
     }
@@ -1493,9 +1722,30 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
     }
 
-    private static DeviceAttendanceRecord ToAttendance(NET_RECORDSET_ACCESS_CTL_CARDREC info) =>
-        new(NullIfEmpty(info.szUserID), ToUtc(info.stuTime), MapMethod(info.emMethod), info.bStatus,
+    private static DeviceAttendanceRecord ToAttendance(NET_RECORDSET_ACCESS_CTL_CARDREC info, DateTimeOffset occurredAt) =>
+        new(NullIfEmpty(info.szUserID), occurredAt, MapMethod(info.emMethod), info.bStatus,
             info.nRecNo, info.bStatus ? null : info.nErrorCode);
+
+    /// <summary>A record's <c>stuTime</c> as UTC, or false when it is not a valid date and time.</summary>
+    private static bool TryUtc(NET_TIME time, out DateTimeOffset value)
+    {
+        try
+        {
+            value = new DateTimeOffset(new DateTime(
+                (int)time.dwYear, (int)time.dwMonth, (int)time.dwDay,
+                (int)time.dwHour, (int)time.dwMinute, (int)time.dwSecond,
+                DateTimeKind.Utc));
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            value = default;
+            return false;
+        }
+    }
+
+    private static string Raw(NET_TIME time) =>
+        $"{time.dwYear:D4}-{time.dwMonth:D2}-{time.dwDay:D2} {time.dwHour:D2}:{time.dwMinute:D2}:{time.dwSecond:D2}";
 
     private static string MapMethod(EM_ACCESS_DOOROPEN_METHOD method) =>
         method == EM_ACCESS_DOOROPEN_METHOD.FACE_RECOGNITION ? "FACE" : method.ToString();

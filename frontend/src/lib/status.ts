@@ -33,7 +33,7 @@ export function statusTone(value?: string | null): Tone {
   if (['ACTIVE', 'ONLINE', 'SYNCED', 'GRANTED', 'SUCCEEDED', 'ENROLLED', 'PAID', 'COMPLETED'].some((x) => v.includes(x))) {
     return 'ok'
   }
-  if (['PENDING', 'RETRYING', 'DISPATCHED', 'UNKNOWN', 'GUIDED', 'UNPAID', 'FROZEN', 'EXPIRED'].some((x) => v.includes(x))) {
+  if (['PENDING', 'RETRYING', 'DISPATCHED', 'UNKNOWN', 'UNPAID', 'FROZEN', 'EXPIRED'].some((x) => v.includes(x))) {
     return 'warn'
   }
   if (['FAILED', 'DENIED', 'DEAD', 'CANCELLED', 'OFFLINE', 'INACTIVE'].some((x) => v.includes(x))) {

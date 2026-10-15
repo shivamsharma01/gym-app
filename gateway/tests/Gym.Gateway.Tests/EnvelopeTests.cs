@@ -8,17 +8,16 @@ public class EnvelopeTests
     [Fact]
     public void Create_matches_backend_field_names()
     {
-        var envelope = GatewayEnvelope.Create("gw-1", ProtocolTypes.DeviceEvent, new
+        var envelope = GatewayEnvelope.Create("gw-1", ProtocolTypes.DeviceUserChanged, new
         {
             deviceUserId = "1001",
-            granted = true,
-            recNo = 7
+            granted = true
         }, "dev-1", "corr-1");
 
         var json = JsonSerializer.Serialize(envelope, JsonOptions.Outbound);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
-        Assert.Equal("DEVICE_EVENT", root.GetProperty("type").GetString());
+        Assert.Equal("DEVICE_USER_CHANGED", root.GetProperty("type").GetString());
         Assert.Equal("gw-1", root.GetProperty("gatewayId").GetString());
         Assert.Equal("dev-1", root.GetProperty("deviceId").GetString());
         Assert.Equal("corr-1", root.GetProperty("correlationId").GetString());

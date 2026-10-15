@@ -128,12 +128,12 @@ public class PlatformTenantService {
         Tenant tenant = tenantRepository.findByPublicId(tenantPublicId)
                 .orElseThrow(() -> CommonExceptions.notFound("Tenant"));
         LocalDate today = LocalDate.now();
-        List<Member> members = memberRepository.search(tenant.getId(), null, null, null, null,null, Pageable.unpaged())
+        List<Member> members = memberRepository.search(tenant.getId(), null, null, null, null, Pageable.unpaged())
                 .getContent();
 
         StringBuilder csv = new StringBuilder();
-        csv.append("memberCode,firstName,lastName,status,creationSource,email,phone,")
-                .append("planName,startDate,endDate,endDateInferred,deviceUserIds\n");
+        csv.append("memberCode,firstName,lastName,status,email,phone,")
+                .append("planName,startDate,endDate,deviceUserIds\n");
 
         for (Member m : members) {
             Optional<Membership> current = membershipRepository
@@ -150,13 +150,11 @@ public class PlatformTenantService {
                     .append(csvEscape(m.getFirstName())).append(',')
                     .append(csvEscape(nullToEmpty(m.getLastName()))).append(',')
                     .append(csvEscape(m.getStatus().name())).append(',')
-                    .append(csvEscape(m.getCreationSource().name())).append(',')
                     .append(csvEscape(nullToEmpty(m.getEmail()))).append(',')
                     .append(csvEscape(nullToEmpty(m.getPhone()))).append(',')
                     .append(csvEscape(current.map(Membership::getPlanName).orElse(""))).append(',')
                     .append(csvEscape(current.map(ms -> ms.getStartDate().toString()).orElse(""))).append(',')
                     .append(csvEscape(current.map(ms -> ms.getEndDate().toString()).orElse(""))).append(',')
-                    .append(current.map(ms -> ms.isEndDateInferred() ? "true" : "false").orElse("")).append(',')
                     .append(csvEscape(deviceUserIds)).append('\n');
         }
         return csv.toString();

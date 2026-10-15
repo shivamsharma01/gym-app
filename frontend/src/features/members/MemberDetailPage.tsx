@@ -139,9 +139,6 @@ export function MemberDetailPage() {
             </Badge>
           </div>
         </div>
-        <Badge tone={m.creationSource === 'DEVICE_IMPORT' ? 'warn' : 'ok'}>
-          {m.creationSource === 'DEVICE_IMPORT' ? 'Created from device' : 'Created manually'}
-        </Badge>
         {access.data ? (
           <Badge tone={access.data.allowed ? 'ok' : 'danger'}>
             {access.data.allowed ? 'Access allowed' : `Denied: ${access.data.reason}`}
@@ -238,13 +235,13 @@ export function MemberDetailPage() {
         </section>
       ) : null}
 
-      <DeviceSyncPanel memberId={m.id} serialNumber={m.serialNumber} />
+      <DeviceSyncPanel memberId={m.id} />
 
       <ConfirmDialog
         open={confirmDeactivate}
         onClose={() => setConfirmDeactivate(false)}
         title="Deactivate this member?"
-        description="They lose app access immediately. Mapped devices get disable commands queued (check each device Sync tab until confirmed)."
+        description="They lose app access. The member stays. A reader using desired-state sync keeps this device user and freezes it. Other readers still get a disable command."
         confirmLabel="Deactivate"
         danger
         busy={deactivate.isPending}
@@ -254,7 +251,7 @@ export function MemberDetailPage() {
         open={confirmReactivate}
         onClose={() => setConfirmReactivate(false)}
         title="Reactivate this member?"
-        description="Restores the member to ACTIVE and queues device enable/sync for mapped terminals. Check device Sync tabs for pending work."
+        description="Restores access. A reader using desired-state sync enables the same device user. The member is not created again."
         confirmLabel="Reactivate"
         busy={reactivate.isPending}
         onConfirm={() => reactivate.mutate()}
@@ -263,29 +260,19 @@ export function MemberDetailPage() {
   )
 }
 
-const COMMAND_LABELS: Record<string, string> = {
-  CREATE_USER: 'Add user',
-  UPDATE_USER: 'Update name',
-  UPDATE_VALIDITY: 'Update access dates',
-  DISABLE_USER: 'Block access',
-  ENABLE_USER: 'Allow access',
-  REMOVE_USER: 'Remove user',
-  UPSERT_FACE: 'Send photo',
-  DELETE_FACE: 'Remove photo',
-  REPORT_DEVICE_USER: 'Read from device',
+function readerStateLabel(row: MemberDeviceSync['devices'][number]) {
+  if (row.revision == null) return { label: 'Not published', tone: 'muted' as const }
+  if (row.held) return { label: 'Held for review', tone: 'warn' as const }
+  if (!row.applied && row.applyError) return { label: 'Not applied', tone: 'danger' as const }
+  if (!row.applied) return { label: 'Waiting for reader', tone: 'warn' as const }
+  if (!row.present) return { label: 'Removed from reader', tone: 'muted' as const }
+  return { label: 'On reader', tone: 'ok' as const }
 }
 
-function faceStateLabel(row: MemberDeviceSync['devices'][number], face: MemberDeviceSync['face']) {
-  if (!face) return { label: 'No photo', tone: 'muted' as const }
-  if (row.faceSyncState === 'SYNCED' && row.faceVersionSynced === face.version) {
-    return { label: 'Photo on device', tone: 'ok' as const }
-  }
-  if (row.faceSyncState === 'FAILED') return { label: 'Photo failed', tone: 'danger' as const }
-  return { label: 'Photo waiting', tone: 'warn' as const }
-}
-
-function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialNumber: string | null }) {
+function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
   const { has } = useAuth()
+  const qc = useQueryClient()
+  const [removeDevice, setRemoveDevice] = useState<MemberDeviceSync['devices'][number] | null>(null)
   const sync = useQuery({
     queryKey: ['member-device-sync', memberId],
     queryFn: () => api<MemberDeviceSync>(`/api/v1/members/${memberId}/device-sync`),
@@ -295,35 +282,46 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
       api(`/api/v1/members/${memberId}/device-sync/${deviceId}/retry`, { method: 'POST' }),
     onSuccess: () => void sync.refetch(),
   })
-  const read = useMutation({
+  const remove = useMutation({
     mutationFn: (deviceId: string) =>
-      api(`/api/v1/members/${memberId}/device-sync/${deviceId}/read`, { method: 'POST' }),
-    onSuccess: () => void sync.refetch(),
+      api(`/api/v1/members/${memberId}/device-sync/${deviceId}/remove`, { method: 'POST' }),
+    onSuccess: () => {
+      setRemoveDevice(null)
+      void sync.refetch()
+      void qc.invalidateQueries({ queryKey: ['member', memberId] })
+    },
   })
   if (sync.error) return <QueryError error={sync.error} />
   const data = sync.data
+  const rows = data?.devices ?? []
+  if (data && rows.length === 0) return null
   return (
     <section>
-      <SectionTitle title="Device sync" />
+      <SectionTitle title="Readers" />
       <Card className="space-y-4">
         <p className="text-sm text-muted">
-          Saved on the server first, then sent to every device that has a gateway. A device shows “waiting” until it
-          confirms. Members and photos added on a device come back here and go to the other devices too.
+          Each reader has its own desired revision. Send again publishes that revision for this reader only.
+          A person added on a reader stays on that reader until staff review it.
         </p>
         {!data ? (
           <Skeleton className="h-16" />
         ) : data.devices.length === 0 ? (
           <p className="text-sm text-muted">
-            No devices with a gateway yet.{' '}
-            <Link className="underline" to="/app/devices">
-              Set up a device
-            </Link>
-            .
+            No devices with a gateway yet.
+            {has('DEVICE_VIEW') ? (
+              <>
+                {' '}
+                <Link className="underline" to="/app/devices">
+                  Set up a device
+                </Link>
+                .
+              </>
+            ) : null}
           </p>
         ) : (
           <div className="divide-y divide-line">
-            {data.devices.map((row) => {
-              const face = faceStateLabel(row, data.face)
+            {rows.map((row) => {
+              const state = readerStateLabel(row)
               return (
                 <div key={row.deviceId} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
                   <div className="space-y-1">
@@ -331,32 +329,31 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
                       {row.deviceName}{' '}
                       <span className="text-xs text-muted">· device user {row.deviceUserId}</span>
                     </div>
-                    {row.pendingDeviceUserId ? (
-                      <div className="text-xs text-warn">
-                        Moving to {row.pendingDeviceUserId}. Uses {row.deviceUserId} until the reader confirms.
-                      </div>
-                    ) : row.differsFromSerial ? (
-                      <div className="text-xs text-warn">
-                        This reader uses a different id than serial {serialNumber}. It is not changed
-                        automatically; saving a new serial moves it.
-                      </div>
-                    ) : null}
                     <div className="flex flex-wrap gap-2">
                       <Badge tone={statusTone(row.connectionState)}>{row.connectionState ?? 'UNKNOWN'}</Badge>
-                      <Badge tone={statusTone(row.userSyncState)}>
-                        {row.userSyncState === 'SYNCED' ? 'Details on device' : `Details ${row.userSyncState ?? 'pending'}`}
-                      </Badge>
-                      <Badge tone={face.tone}>{face.label}</Badge>
+                      <Badge tone={state.tone}>{state.label}</Badge>
+                      {row.present ? (
+                        <Badge tone={row.facePresent ? 'ok' : 'muted'}>{row.facePresent ? 'Photo' : 'No photo'}</Badge>
+                      ) : null}
                     </div>
-                    {row.openCommands.length ? (
+                    {row.revision != null ? (
                       <div className="text-xs text-muted">
-                        Waiting:{' '}
-                        {row.openCommands
-                          .map((c) => `${COMMAND_LABELS[c.type] ?? c.type}${c.attemptCount > 1 ? ` (try ${c.attemptCount})` : ''}`)
-                          .join(', ')}
+                        Revision {row.revision}
+                        {row.applied ? '; read back on the reader' : '; not yet read back on the reader'}
                       </div>
                     ) : null}
-                    {row.faceLastError ? <div className="text-xs text-danger">{row.faceLastError}</div> : null}
+                    {row.held ? (
+                      <div className="text-xs text-muted">
+                        The reader showed a different record at this id. Decide in Reviews before it is written.
+                      </div>
+                    ) : null}
+                    {!row.held && row.applyError ? (
+                      <div className="text-xs text-danger">
+                        {row.applyErrorPermanent
+                          ? `The reader cannot apply this change: ${row.applyError}`
+                          : `Not applied after ${row.applyAttempts ?? 0} attempts: ${row.applyError}. The gateway keeps retrying.`}
+                      </div>
+                    ) : null}
                   </div>
                   {has('DEVICE_SYNC') ? (
                     <div className="flex flex-wrap gap-2">
@@ -364,7 +361,7 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
                         size="sm"
                         variant="outline"
                         disabled={retry.isPending}
-                        title="Overwrite the device with what the server has"
+                        title="Publish this member's desired revision on this reader"
                         onClick={() => retry.mutate(row.deviceId)}
                       >
                         Send again
@@ -372,11 +369,11 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={read.isPending}
-                        title="Read name, access and photo fresh from the device. The newer copy wins."
-                        onClick={() => read.mutate(row.deviceId)}
+                        disabled={remove.isPending}
+                        title="Remove this device user from this reader only"
+                        onClick={() => setRemoveDevice(row)}
                       >
-                        Read from device
+                        Remove from reader
                       </Button>
                     </div>
                   ) : null}
@@ -386,8 +383,20 @@ function DeviceSyncPanel({ memberId, serialNumber }: { memberId: string; serialN
           </div>
         )}
         {retry.error instanceof ApiError ? <p className="text-sm text-danger">{retry.error.message}</p> : null}
-        {read.error instanceof ApiError ? <p className="text-sm text-danger">{read.error.message}</p> : null}
+        {remove.error instanceof ApiError ? <p className="text-sm text-danger">{remove.error.message}</p> : null}
       </Card>
+      <ConfirmDialog
+        open={removeDevice != null}
+        onClose={() => setRemoveDevice(null)}
+        title={removeDevice ? `Remove from ${removeDevice.deviceName}?` : 'Remove from this reader?'}
+        description="This device user is removed from this reader only. The member stays. No other reader is changed. This is separate from deactivating the member."
+        confirmLabel="Remove from reader"
+        danger
+        busy={remove.isPending}
+        onConfirm={() => {
+          if (removeDevice) remove.mutate(removeDevice.deviceId)
+        }}
+      />
     </section>
   )
 }

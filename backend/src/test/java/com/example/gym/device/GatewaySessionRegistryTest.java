@@ -2,8 +2,11 @@ package com.example.gym.device;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.concurrent.CountDownLatch;
@@ -34,7 +37,7 @@ class GatewaySessionRegistryTest {
             return null;
         }).when(session).sendMessage(any(WebSocketMessage.class));
 
-        GatewaySessionRegistry registry = new GatewaySessionRegistry();
+        GatewaySessionRegistry registry = new GatewaySessionRegistry(ignored -> true);
         registry.register("gw-1", session);
 
         ExecutorService pool = Executors.newFixedThreadPool(8);
@@ -55,5 +58,24 @@ class GatewaySessionRegistryTest {
 
         assertThat(maxInside.get()).isEqualTo(1);
         assertThat(written.get()).isEqualTo(8);
+    }
+
+    @Test
+    void invalidatedSessionReceivesNoCommand() throws Exception {
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.getId()).thenReturn("s1");
+        when(session.isOpen()).thenReturn(true);
+        java.util.concurrent.atomic.AtomicBoolean allow = new java.util.concurrent.atomic.AtomicBoolean(true);
+        GatewaySessionRegistry registry = new GatewaySessionRegistry(ignored -> allow.get());
+        registry.register("gw-1", session);
+
+        assertThat(registry.send("gw-1", "command")).isTrue();
+        verify(session, times(1)).sendMessage(any(WebSocketMessage.class));
+
+        allow.set(false);
+        assertThat(registry.send("gw-1", "later-command")).isFalse();
+        assertThat(registry.isOnline("gw-1")).isFalse();
+        verify(session, times(1)).sendMessage(any(WebSocketMessage.class));
+        verify(session, atLeastOnce()).close(org.springframework.web.socket.CloseStatus.POLICY_VIOLATION);
     }
 }

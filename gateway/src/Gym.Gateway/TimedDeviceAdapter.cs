@@ -8,7 +8,8 @@ namespace Gym.Gateway;
 /// Wraps every reader call. Logs how long each call takes (Debug; Information when slower than
 /// <see cref="SlowCall"/>) and watches for a broken SDK session: after several connection errors in a row
 /// the reader reports <see cref="Degraded"/> so the gateway stops sending it work, and
-/// <see cref="Reconnect"/> logs in again with a growing pause between attempts.
+/// <see cref="Reconnect"/> logs in again with a growing pause between attempts. A first login that
+/// fails is retried the same way, so a reader that was off when the gateway started is picked up.
 /// </summary>
 public sealed class TimedDeviceAdapter : IDeviceAdapter
 {
@@ -39,11 +40,13 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
     private DateTimeOffset? _degradedSince;
     private DateTimeOffset _nextReconnect;
     private string? _lastError;
+    private readonly Func<DateTimeOffset> _clock;
 
-    public TimedDeviceAdapter(IDeviceAdapter inner, ILogger log)
+    public TimedDeviceAdapter(IDeviceAdapter inner, ILogger log, Func<DateTimeOffset>? clock = null)
     {
         _inner = inner;
         _log = log;
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
     public string DeviceId => _inner.DeviceId;
@@ -66,7 +69,7 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
         {
             lock (_gate)
             {
-                return _degradedSince != null && DateTimeOffset.UtcNow >= _nextReconnect;
+                return _degradedSince != null && _clock() >= _nextReconnect;
             }
         }
     }
@@ -85,17 +88,32 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
                         : $"healthy, {_failuresInARow} connection error(s) in a row (last: {_lastError})";
                 }
 
-                var wait = Math.Max(0, (long)(_nextReconnect - DateTimeOffset.UtcNow).TotalSeconds);
-                return $"connection broken for {(long)(DateTimeOffset.UtcNow - _degradedSince.Value).TotalSeconds} s, "
+                var wait = Math.Max(0, (long)(_nextReconnect - _clock()).TotalSeconds);
+                return $"connection broken for {(long)(_clock() - _degradedSince.Value).TotalSeconds} s, "
                        + $"reconnect attempt {_reconnectAttempts + 1} in {wait} s (last error: {_lastError})";
             }
         }
     }
 
+    /// <summary>A failed first login leaves a reconnect due, as a broken session does.</summary>
     public DeviceConnectionStatus Connect(DeviceConnectionConfig config)
     {
         _config = config;
-        return Time(nameof(Connect), null, () => _inner.Connect(config));
+        var status = Time(nameof(Connect), null, () => _inner.Connect(config));
+        if (!status.Ok)
+        {
+            lock (_gate)
+            {
+                _lastError = status.Error;
+                if (_degradedSince == null)
+                {
+                    _degradedSince = _clock();
+                    _nextReconnect = _clock() + ReconnectPauses[0];
+                }
+            }
+        }
+
+        return status;
     }
 
     /// <summary>Logs out and in again. Clears <see cref="Degraded"/> on success, otherwise waits longer before the next try.</summary>
@@ -122,7 +140,7 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
 
             var pause = ReconnectPauses[Math.Min(_reconnectAttempts, ReconnectPauses.Length - 1)];
             _reconnectAttempts++;
-            _nextReconnect = DateTimeOffset.UtcNow + pause;
+            _nextReconnect = _clock() + pause;
             _lastError = status.Error;
             _log.LogWarning("Reader {DeviceId}: reconnect attempt {Attempt} failed ({Error}); next try in {Seconds} s",
                 DeviceId, _reconnectAttempts, status.Error, (long)pause.TotalSeconds);
@@ -199,6 +217,16 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
         return read;
     }
 
+    public FaceChecksumList ListFaceChecksums()
+    {
+        var sw = Stopwatch.StartNew();
+        var list = _inner.ListFaceChecksums();
+        Report(nameof(ListFaceChecksums),
+            list.Ok ? $"{list.ByUserId.Count} photo checksum(s)" : "unavailable: " + list.Error, sw.Elapsed);
+        Observe(list.Ok, list.Error);
+        return list;
+    }
+
     public DeviceCommandResult DeleteFace(string deviceUserId) =>
         Command(nameof(DeleteFace), deviceUserId, () => _inner.DeleteFace(deviceUserId));
 
@@ -221,15 +249,6 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
 
     public DeviceCommandResult SynchronizeTime(DateTimeOffset utcNow) =>
         Command(nameof(SynchronizeTime), null, () => _inner.SynchronizeTime(utcNow));
-
-    public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
-    {
-        var sw = Stopwatch.StartNew();
-        var result = _inner.Reconcile(fromUtc, toUtc);
-        Report(nameof(Reconcile), $"{result.Users.Count} user(s), {result.Events.Count} record(s), ok={result.Ok}", sw.Elapsed);
-        Observe(result.Ok, result.Error);
-        return result;
-    }
 
     public void Dispose() => _inner.Dispose();
 
@@ -286,8 +305,8 @@ public sealed class TimedDeviceAdapter : IDeviceAdapter
                 return;
             }
 
-            _degradedSince = DateTimeOffset.UtcNow;
-            _nextReconnect = DateTimeOffset.UtcNow + ReconnectPauses[0];
+            _degradedSince = _clock();
+            _nextReconnect = _clock() + ReconnectPauses[0];
             _log.LogWarning(
                 "Reader {DeviceId}: {Count} calls in a row failed with connection errors (last: {Error}). Pausing work on this reader and reconnecting in {Seconds} s.",
                 DeviceId, _failuresInARow, error, (long)ReconnectPauses[0].TotalSeconds);

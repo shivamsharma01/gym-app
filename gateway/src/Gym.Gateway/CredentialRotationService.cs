@@ -5,8 +5,8 @@ using Microsoft.Extensions.Logging;
 namespace Gym.Gateway;
 
 /// <summary>
-/// Renews the operational credential before expiry. Persists V2 to disk before swapping in-memory
-/// token / reconnecting so a crash mid-rotate never loses V1.
+/// Renews the operational credential before expiry. Saves the new credential to disk before
+/// switching to it and reconnecting, so a crash mid-rotation never loses the current one.
 /// </summary>
 public sealed class CredentialRotationService : BackgroundService
 {
@@ -78,7 +78,7 @@ public sealed class CredentialRotationService : BackgroundService
         var result = await _client.RotateAsync(_options.BackendUrl, _options.Token, cancellationToken)
             .ConfigureAwait(false);
 
-        // Persist V2 first — never delete V1 from disk until this succeeds.
+        // Save the new credential first; the current one stays on disk until this succeeds.
         var previous = _store.TryLoad();
         var toSave = new PersistedGatewayConfig
         {

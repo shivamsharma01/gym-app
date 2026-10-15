@@ -32,15 +32,14 @@ export function DevicesPage() {
   const { has } = useAuth()
   const qc = useQueryClient()
   const [devicePage, setDevicePage] = useState(0)
-  const [gatewayPage, setGatewayPage] = useState(0)
   const devices = useQuery({
     queryKey: ['devices', 'page', devicePage],
     queryFn: () => api<PageResponse<Device>>(`/api/v1/devices?page=${devicePage}&size=20`),
     placeholderData: keepPreviousData,
   })
   const gateways = useQuery({
-    queryKey: ['gateways', 'page', gatewayPage],
-    queryFn: () => api<PageResponse<Gateway>>(`/api/v1/gateways?page=${gatewayPage}&size=10`),
+    queryKey: ['gateways'],
+    queryFn: () => api<PageResponse<Gateway>>('/api/v1/gateways?size=1'),
     placeholderData: keepPreviousData,
   })
   const [gwName, setGwName] = useState('')
@@ -58,12 +57,13 @@ export function DevicesPage() {
       api<GatewayCreated>(`/api/v1/gateways/${id}/enrollment`, { method: 'POST' }),
     onSuccess: (created) => setIssued(created),
   })
+  const gateway = gateways.data?.content[0]
 
   return (
     <div className="space-y-10">
       <PageHeader
         title="Devices"
-        description="Register gateways and TrueFace terminals here. The Windows PC still runs the gateway agent with the one-time token."
+        description="This gym has one Windows gateway. Register TrueFace terminals against it. The PC runs the gateway agent with the one-time token."
         actions={
           has('DEVICE_MANAGE') ? (
             <Link to="/app/devices/new">
@@ -78,7 +78,7 @@ export function DevicesPage() {
       {devices.data && devices.data.content.length === 0 ? (
         <EmptyState
           title="No devices"
-          body="Create a gateway first, then register the TrueFace terminal against it."
+          body="Create the gym gateway first, then register the TrueFace terminal against it."
           icon={<MonitorSmartphone className="h-5 w-5" />}
         />
       ) : null}
@@ -120,37 +120,32 @@ export function DevicesPage() {
       ) : null}
 
       <section>
-        <SectionTitle title="Gateways" description="Windows agents that bridge tablets to this backend" />
+        <SectionTitle title="Gateway" description="The Windows agent that bridges this gym's readers to the backend" />
         {gateways.error ? <QueryError error={gateways.error} onRetry={() => void gateways.refetch()} /> : null}
-        <div className="grid gap-3 sm:grid-cols-2">
-          {gateways.data?.content.map((g) => (
-            <Card key={g.id} className="p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="font-semibold tracking-tight">{g.name}</div>
-                <Badge tone={statusTone(g.status)}>{g.status}</Badge>
-              </div>
-              <p className="mt-2 text-sm text-muted">Last heartbeat {formatDateTime(g.lastHeartbeatAt)}</p>
-              <p className="mt-2 font-mono text-[11px] text-muted">id {g.id}</p>
-              {has('DEVICE_MANAGE') ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-3"
-                  disabled={reissueEnrollment.isPending}
-                  onClick={() => reissueEnrollment.mutate(g.id)}
-                >
-                  Reissue enrollment
-                </Button>
-              ) : null}
-            </Card>
-          ))}
-        </div>
-        {gateways.data && gateways.data.content.length > 0 ? (
-          <PageNav data={gateways.data} onPageChange={setGatewayPage} />
+        {gateway ? (
+          <Card className="max-w-lg p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="font-semibold tracking-tight">{gateway.name}</div>
+              <Badge tone={statusTone(gateway.status)}>{gateway.status}</Badge>
+            </div>
+            <p className="mt-2 text-sm text-muted">Last heartbeat {formatDateTime(gateway.lastHeartbeatAt)}</p>
+            <p className="mt-2 font-mono text-[11px] text-muted">id {gateway.id}</p>
+            {has('DEVICE_MANAGE') ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                disabled={reissueEnrollment.isPending}
+                onClick={() => reissueEnrollment.mutate(gateway.id)}
+              >
+                Reissue enrollment
+              </Button>
+            ) : null}
+          </Card>
         ) : null}
-        {has('DEVICE_MANAGE') ? (
+        {has('DEVICE_MANAGE') && gateways.data?.content.length === 0 ? (
           <Card className="mt-4 max-w-lg space-y-3">
-            <h3 className="text-sm font-semibold tracking-tight">Create gateway</h3>
+            <h3 className="text-sm font-semibold tracking-tight">Create the gym gateway</h3>
             <p className="text-sm leading-relaxed text-muted">
               Issues a one-time enrollment token for the Windows Gateway Configurator. It is shown
               once, expires soon, and is not the long-lived credential the service stores.

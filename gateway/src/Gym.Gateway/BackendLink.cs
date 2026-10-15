@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
@@ -35,6 +36,9 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     }
 
     public bool WebSocketLive => _websocketLive;
+
+    /// <summary>See <see cref="DurableOutboundStore.DropObservations"/>.</summary>
+    public int DropObservations(string deviceId) => _outbox.DropObservations(deviceId);
 
     public void ApplyCredential(string credential)
     {
@@ -80,7 +84,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             {
                 Scheme = http.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws",
                 Path = "/gateway",
-                Query = "token=" + Uri.EscapeDataString(_options.Token)
+                Query = string.Empty
             };
             return builder.Uri;
         }
@@ -88,17 +92,84 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
 
     private readonly SemaphoreSlim _sendGate = new(1, 1);
 
+    private readonly ConcurrentDictionary<string, Awaited> _awaited = new(StringComparer.Ordinal);
+
+    private sealed record Awaited(string? CorrelationId, TaskCompletionSource<bool> Outcome);
+
     public async Task SendAsync(GatewayEnvelope envelope, CancellationToken cancellationToken)
     {
-        _outbox.Persist(envelope);
+        var replaced = _outbox.Persist(envelope);
+        if (replaced != null)
+        {
+            Resolve(replaced, false);
+        }
+
         await DeliverAsync(envelope, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Replay any envelopes that survived a crash without an ACK.</summary>
+    /// <summary>
+    /// Sends like <see cref="SendAsync"/>, then waits for the server's ACK naming this message,
+    /// which the server sends only after the message was processed and committed. Writing the frame
+    /// is not acceptance. A rejection, a newer list of the same reader replacing this one, a failed
+    /// delivery, or no ACK within <paramref name="timeout"/> returns false; the message itself stays
+    /// in the outbox under the usual retry rules either way.
+    /// </summary>
+    public async Task<bool> SendAndAwaitAckAsync(
+        GatewayEnvelope envelope, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var awaited = new Awaited(
+            envelope.CorrelationId, new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
+        _awaited[envelope.MessageId] = awaited;
+        try
+        {
+            await SendAsync(envelope, cancellationToken).ConfigureAwait(false);
+            var finished = await Task.WhenAny(awaited.Outcome.Task, Task.Delay(timeout, cancellationToken))
+                .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return finished == awaited.Outcome.Task && awaited.Outcome.Task.Result;
+        }
+        finally
+        {
+            _awaited.TryRemove(envelope.MessageId, out _);
+        }
+    }
+
+    private void Resolve(string messageId, bool accepted)
+    {
+        if (_awaited.TryGetValue(messageId, out var awaited))
+        {
+            awaited.Outcome.TrySetResult(accepted);
+        }
+    }
+
+    private void RejectByCorrelation(string? correlationId)
+    {
+        if (string.IsNullOrWhiteSpace(correlationId))
+        {
+            return;
+        }
+
+        foreach (var awaited in _awaited.Values.Where(
+                     awaited => string.Equals(awaited.CorrelationId, correlationId, StringComparison.Ordinal)))
+        {
+            awaited.Outcome.TrySetResult(false);
+        }
+    }
+
+    /// <summary>
+    /// Replay any envelopes that survived a crash without an ACK. One acknowledged, or replaced by a
+    /// newer list of the same reader, while the replay runs is skipped, so an older list is never
+    /// sent after the list that replaced it.
+    /// </summary>
     public async Task ReplayPendingAsync(CancellationToken cancellationToken)
     {
         foreach (var envelope in _outbox.LoadPending())
         {
+            if (!_outbox.IsPending(envelope.MessageId))
+            {
+                continue;
+            }
+
             try
             {
                 await DeliverAsync(envelope, cancellationToken).ConfigureAwait(false);
@@ -143,12 +214,14 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         {
             _log.LogWarning("REST ingest {Type} failed HTTP {Status}: {Body}", envelope.Type,
                 (int)response.StatusCode, body);
+            Resolve(envelope.MessageId, false);
             return;
         }
 
         // REST reply is the ACK — clear durable entry
         _outbox.Acknowledge(envelope.MessageId);
         TryAcknowledgeFromReply(body);
+        Resolve(envelope.MessageId, false);
     }
 
     public async Task<IReadOnlyList<GatewayEnvelope>> PollCommandsAsync(CancellationToken cancellationToken)
@@ -225,7 +298,14 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
     }
 
-    public async Task RunWebSocketAsync(Func<GatewayEnvelope, Task> onMessage, CancellationToken cancellationToken)
+    public Task RunWebSocketAsync(Func<GatewayEnvelope, Task> onMessage, CancellationToken cancellationToken) =>
+        RunWebSocketAsync(onMessage, null, null, cancellationToken);
+
+    public async Task RunWebSocketAsync(
+        Func<GatewayEnvelope, Task> onMessage,
+        Func<DesiredRevisionNotice, CancellationToken, Task>? onDesiredRevision,
+        Func<CancellationToken, Task>? onReconnect,
+        CancellationToken cancellationToken)
     {
         if (!_options.UseWebSocket)
         {
@@ -246,8 +326,9 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 _websocketLive = true;
                 _reconnectAttempt = 0;
                 _log.LogInformation("WebSocket connected");
+                await InvokeReconnectAsync(onReconnect, cancellationToken).ConfigureAwait(false);
                 await ReplayPendingAsync(cancellationToken).ConfigureAwait(false);
-                await ReceiveLoopAsync(socket, onMessage, cancellationToken).ConfigureAwait(false);
+                await ReceiveLoopAsync(socket, onMessage, onDesiredRevision, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -287,6 +368,24 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
     }
 
+    private async Task InvokeReconnectAsync(
+        Func<CancellationToken, Task>? onReconnect, CancellationToken cancellationToken)
+    {
+        if (onReconnect == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await onReconnect(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Reconnect read-before-write failed");
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         _websocketLive = false;
@@ -314,6 +413,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     private async Task ReceiveLoopAsync(
         ClientWebSocket socket,
         Func<GatewayEnvelope, Task> onMessage,
+        Func<DesiredRevisionNotice, CancellationToken, Task>? onDesiredRevision,
         CancellationToken cancellationToken)
     {
         var buffer = new byte[64 * 1024];
@@ -333,6 +433,23 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             } while (!result.EndOfMessage);
 
             var json = Encoding.UTF8.GetString(ms.ToArray());
+            try
+            {
+                if (await InboundDispatch.RouteAsync(
+                        json,
+                        _ => Task.CompletedTask,
+                        onDesiredRevision ?? ((_, _) => Task.CompletedTask),
+                        cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Desired revision failed; the WebSocket stays open");
+                continue;
+            }
+
             GatewayEnvelope? envelope;
             try
             {
@@ -387,6 +504,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 var id = mid.GetString();
                 if (!string.IsNullOrWhiteSpace(id))
                 {
+                    Resolve(id, envelope.Type == ProtocolTypes.Ack);
                     _outbox.Acknowledge(id);
                 }
             }
@@ -403,6 +521,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         var error = envelope.Payload.ValueKind == JsonValueKind.Object
                     && envelope.Payload.TryGetProperty("error", out var e) ? e.ToString() : "unknown";
         _log.LogWarning("Server rejected a gateway message corr={Corr}: {Error}", envelope.CorrelationId, error);
+        RejectByCorrelation(envelope.CorrelationId);
     }
 
     private void TryAcknowledgeFromReply(string body)
@@ -442,7 +561,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
 
     private static string Redact(Uri uri)
     {
-        var builder = new UriBuilder(uri) { Query = "token=***" };
+        var builder = new UriBuilder(uri) { Query = string.Empty };
         return builder.Uri.ToString();
     }
 }

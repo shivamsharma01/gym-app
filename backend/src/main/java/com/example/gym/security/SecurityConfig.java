@@ -52,8 +52,8 @@ public class SecurityConfig {
             "/actuator/health/**",
             "/actuator/prometheus",
             "/error",
-            // Device-gateway WSS + REST fallback authenticate with a per-gateway token
-            // (or optional deployment shared token), not the user JWT filter.
+            // Device-gateway WSS + REST fallback authenticate with a per-gateway credential
+            // inside those handlers, not the user JWT filter. There is no anonymous fallback.
             "/gateway",
             "/internal/gateway/**",
             "/api/v1/public/**",

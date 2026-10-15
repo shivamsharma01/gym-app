@@ -148,7 +148,6 @@ export function MembersPage() {
                 <Th>Code</Th>
                 <Th>Phone</Th>
                 <Th>Terminal Level</Th>
-                <Th>Source</Th>
                 <Th>Membership status</Th>
                 <Th>Account status</Th>
               </tr>
@@ -173,11 +172,6 @@ export function MembersPage() {
                   <Td>
                     <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>
                       {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'User'}
-                    </Badge>
-                  </Td>
-                  <Td>
-                    <Badge tone={m.creationSource === 'DEVICE_IMPORT' ? 'warn' : 'muted'}>
-                      {m.creationSource === 'DEVICE_IMPORT' ? 'Device' : 'Manual'}
                     </Badge>
                   </Td>
                   <Td>

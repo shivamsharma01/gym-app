@@ -20,8 +20,10 @@ internal static class UserFields
     }
 
     public static IEnumerable<string> NonEmpty(Dictionary<string, string> dump) =>
-        dump.Where(kv => !EmptyValues.Contains(kv.Value) && !kv.Value.EndsWith("_UNKNOWN", StringComparison.Ordinal))
-            .Select(kv => $"{kv.Key}={kv.Value}");
+        dump.Where(kv => !IsEmpty(kv.Value)).Select(kv => $"{kv.Key}={kv.Value}");
+
+    public static bool IsEmpty(string value) =>
+        EmptyValues.Contains(value) || value.EndsWith("_UNKNOWN", StringComparison.Ordinal);
 
     public static List<string> Diff(Dictionary<string, string> before, Dictionary<string, string> after, ICollection<string>? ignore = null) =>
         after.Where(kv => ignore?.Contains(kv.Key) != true && (!before.TryGetValue(kv.Key, out var old) || old != kv.Value))

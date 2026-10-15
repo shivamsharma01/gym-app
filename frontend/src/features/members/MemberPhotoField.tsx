@@ -8,7 +8,7 @@ const MAX_BYTES = 10 * 1024 * 1024
 const MIN_SIDE = 200
 const ACCEPTED = ['image/jpeg', 'image/png']
 
-/** Uploads a member photo; the server resizes it and pushes it to every device. */
+/** Uploads a member photo. The server stores it and publishes it to the gym's readers. */
 export function uploadMemberPhoto(memberId: string, file: File) {
   const body = new FormData()
   body.append('file', file)

@@ -11,6 +11,7 @@ import {
   Inbox,
   KeyRound,
   LayoutDashboard,
+  ListTodo,
   LogOut,
   Menu,
   MonitorSmartphone,
@@ -48,6 +49,7 @@ const operations: NavItem[] = [
 
 const facility: NavItem[] = [
   { to: '/app/devices', label: 'Devices', icon: MonitorSmartphone, perm: 'DEVICE_VIEW' },
+  { to: '/app/review', label: 'Review', icon: ListTodo, perm: 'DEVICE_VIEW' },
   ...(FEATURES.enquiries ? [{ to: '/app/enquiries', label: 'Enquiries', icon: Inbox, perm: 'ENQUIRY_VIEW' }] : []),
   ...(FEATURES.notifications
     ? [{ to: '/app/notifications', label: 'Notifications', icon: Bell, perm: 'NOTIFICATION_SEND' }]
@@ -84,10 +86,10 @@ export function AppShell() {
   const gateways = useQuery({
     queryKey: ['gateways', 'shell'],
     queryFn: () => api<PageResponse<Gateway>>('/api/v1/gateways?size=20'),
-    enabled: Boolean(user?.tenantId) && !isPlatform,
+    enabled: Boolean(user?.tenantId) && !isPlatform && has('DEVICE_VIEW'),
     refetchInterval: 30_000,
   })
-  const gatewayState = gatewayConnectionState(gateways.data?.content)
+  const gatewayState = gatewayConnectionState(gateways.isSuccess, gateways.data?.content[0])
   const brand = isPlatform ? 'Platform' : brandDisplayName(settings.data, 'Gym')
   const logo = isPlatform ? null : brandLogo(settings.data)
 
@@ -122,7 +124,7 @@ export function AppShell() {
     return (
       <div className="flex flex-wrap items-center gap-3">
         <LiveDot state={live} labelPrefix="Server" />
-        {!isPlatform ? <LiveDot state={gatewayState} labelPrefix="Gateway" /> : null}
+        {!isPlatform && has('DEVICE_VIEW') ? <LiveDot state={gatewayState} labelPrefix="Gateway" /> : null}
       </div>
     )
   }
@@ -233,13 +235,13 @@ export function AppShell() {
   )
 }
 
-function gatewayConnectionState(gateways: Gateway[] | undefined): 'live' | 'reconnecting' | 'offline' | 'off' {
-  if (!gateways) return 'off'
-  if (gateways.length === 0) return 'offline'
-  const online = gateways.filter((g) => g.status === 'ONLINE').length
-  if (online === gateways.length) return 'live'
-  if (online > 0) return 'reconnecting'
-  return 'offline'
+function gatewayConnectionState(
+  loaded: boolean,
+  gateway: Gateway | undefined,
+): 'live' | 'offline' | 'off' {
+  if (!loaded) return 'off'
+  if (!gateway) return 'offline'
+  return gateway.status === 'ONLINE' ? 'live' : 'offline'
 }
 
 function ThemeToggleButton({ theme, onToggle }: { theme: ThemeMode; onToggle: () => void }) {

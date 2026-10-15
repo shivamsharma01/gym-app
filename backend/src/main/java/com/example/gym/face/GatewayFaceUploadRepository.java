@@ -9,5 +9,8 @@ public interface GatewayFaceUploadRepository extends JpaRepository<GatewayFaceUp
 
     Optional<GatewayFaceUpload> findByPublicId(String publicId);
 
+    Optional<GatewayFaceUpload> findFirstByTenantIdAndSha256AndConsumedFalseOrderByIdDesc(
+            Long tenantId, String sha256);
+
     List<GatewayFaceUpload> findByCreatedAtBefore(Instant cutoff);
 }

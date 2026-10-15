@@ -5,6 +5,7 @@ import com.example.gym.member.dto.MemberRequests.CreateMember;
 import com.example.gym.member.dto.MemberRequests.UpdateMember;
 import com.example.gym.member.dto.MemberResponse;
 import com.example.gym.security.SecurityUtils;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.JpaSort;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,8 +26,10 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/members")
@@ -36,10 +40,13 @@ public class MemberController {
 
     private final MemberService memberService;
     private final MemberCoverage memberCoverage;
+    private final ReaderMemberCreate readerMemberCreate;
 
-    public MemberController(MemberService memberService, MemberCoverage memberCoverage) {
+    public MemberController(MemberService memberService, MemberCoverage memberCoverage,
+                            ReaderMemberCreate readerMemberCreate) {
         this.memberService = memberService;
         this.memberCoverage = memberCoverage;
+        this.readerMemberCreate = readerMemberCreate;
     }
 
     @GetMapping
@@ -49,7 +56,6 @@ public class MemberController {
     public PageResponse<MemberResponse> list(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) MemberStatus status,
-            @RequestParam(required = false) MemberCreationSource creationSource,
             @RequestParam(required = false) DeviceAuthority deviceAuthority,
             @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "asc") String direction,
@@ -61,7 +67,6 @@ public class MemberController {
                 SecurityUtils.currentTenantId(),
                 q,
                 status,
-                creationSource,
                 deviceAuthority,
                 pageable
         );
@@ -101,12 +106,15 @@ public class MemberController {
         return respond(memberService.getByPublicId(id, SecurityUtils.currentTenantId()));
     }
 
-    @PostMapping
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAuthority('MEMBER_CREATE')")
-    @Operation(summary = "Create a member")
-    public MemberResponse create(@Valid @RequestBody CreateMember request) {
-        return respond(memberService.create(request, SecurityUtils.currentTenantId()));
+    @Operation(summary = "Create a member with a face; every reader of the gym gets a desired user")
+    public MemberResponse create(@RequestPart("member") @Valid CreateMember request,
+                                 @RequestPart(name = "face", required = false) MultipartFile face)
+            throws IOException {
+        byte[] raw = face == null ? null : face.getBytes();
+        return respond(readerMemberCreate.create(request, SecurityUtils.currentTenantId(), raw));
     }
 
     @PutMapping("/{id}")

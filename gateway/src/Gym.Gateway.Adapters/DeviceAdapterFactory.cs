@@ -9,13 +9,6 @@ public static class DeviceAdapterFactory
             return new TrueFaceDeviceAdapter();
         }
 
-        if (adapterName.Equals("Remote", StringComparison.OrdinalIgnoreCase) ||
-            adapterName.Equals("Simulator", StringComparison.OrdinalIgnoreCase) ||
-            adapterName.Equals("Http", StringComparison.OrdinalIgnoreCase))
-        {
-            return new RemoteDeviceAdapter();
-        }
-
         return new MockDeviceAdapter();
     }
 }

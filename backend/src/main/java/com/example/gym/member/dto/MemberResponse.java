@@ -18,7 +18,6 @@ public record MemberResponse(
         String status,
         LocalDate joinedOn,
         String notes,
-        String creationSource,
         String deviceAuthority,
         Instant createdAt,
         String coverageStatus) {
@@ -38,7 +37,6 @@ public record MemberResponse(
                 m.getStatus().name(),
                 m.getJoinedOn(),
                 m.getNotes(),
-                m.getCreationSource().name(),
                 m.getDeviceAuthority() == null ? "USER" : m.getDeviceAuthority().name(),
                 m.getCreatedAt(),
                 coverageStatus);

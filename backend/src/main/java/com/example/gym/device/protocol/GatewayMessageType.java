@@ -7,11 +7,8 @@ public enum GatewayMessageType {
     HEARTBEAT,
     DEVICE_STATUS,
     DEVICE_METADATA,
-    DEVICE_EVENT,
     DEVICE_ALARM,
     SYNC_RESULT,
-    RECONCILIATION_RESULT,
-    ENROLLMENT_RESULT,
     /** A user (or their face) was created/changed directly on a device. */
     DEVICE_USER_CHANGED,
 
@@ -21,5 +18,5 @@ public enum GatewayMessageType {
     ERROR
 
     // Backend -> Gateway commands use SyncCommandType names in the same envelope
-    // (CREATE_USER, DISABLE_USER, UPDATE_VALIDITY, OPEN_DOOR, RECONCILE_DEVICE, ...).
+    // (OPEN_DOOR, CLOSE_DOOR, SCAN_READER).
 }

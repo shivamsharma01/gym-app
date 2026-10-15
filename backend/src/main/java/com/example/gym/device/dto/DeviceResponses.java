@@ -4,7 +4,6 @@ import com.example.gym.device.domain.AttendanceEvent;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.Gateway;
-import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.SecurityEvent;
 import java.time.Instant;
 
@@ -66,20 +65,6 @@ public final class DeviceResponses {
         }
     }
 
-    public record MappingView(
-            String id,
-            String deviceUserId,
-            String enrollmentStatus,
-            String syncState,
-            Instant enrolledAt,
-            Instant createdAt) {
-
-        public static MappingView from(MemberDeviceMapping m) {
-            return new MappingView(m.getPublicId(), m.getDeviceUserId(), m.getEnrollmentStatus().name(),
-                    m.getSyncState().name(), m.getEnrolledAt(), m.getCreatedAt());
-        }
-    }
-
     public record SyncCommandView(
             String id,
             String type,
@@ -92,19 +77,13 @@ public final class DeviceResponses {
             Instant dispatchedAt,
             Instant acknowledgedAt,
             Instant completedAt,
-            Instant createdAt,
-            String memberName,
-            String deviceUserId) {
+            Instant createdAt) {
 
         public static SyncCommandView from(DeviceSyncCommand c) {
-            return from(c, null, null);
-        }
-
-        public static SyncCommandView from(DeviceSyncCommand c, String memberName, String deviceUserId) {
             return new SyncCommandView(c.getPublicId(), c.getType().name(), c.getState().name(),
                     c.getAttemptCount(), c.getMaxAttempts(), c.getNextAttemptAt(), c.getLastError(),
                     c.getCorrelationId(), c.getDispatchedAt(), c.getAcknowledgedAt(),
-                    c.getCompletedAt(), c.getCreatedAt(), memberName, deviceUserId);
+                    c.getCompletedAt(), c.getCreatedAt());
         }
     }
 
@@ -117,41 +96,7 @@ public final class DeviceResponses {
             Instant lastSuccessfulSyncAt,
             long pendingCommandCount,
             long failedCommandCount,
-            boolean reconciliationRequired,
-            Instant lastAttendanceSyncAt,
-            long openConflictCount,
-            Long attendanceLastRecNo,
-            Instant attendanceLastEventAt) {
-    }
-
-    public record ConflictView(
-            String id,
-            String deviceUserId,
-            String conflictType,
-            String details,
-            String status,
-            Instant createdAt,
-            Instant resolvedAt) {
-
-        public static ConflictView from(com.example.gym.device.domain.ReconciliationConflict c) {
-            return new ConflictView(c.getPublicId(), c.getDeviceUserId(), c.getConflictType().name(),
-                    c.getDetails(), c.getStatus().name(), c.getCreatedAt(), c.getResolvedAt());
-        }
-    }
-
-    public record ImportUsersResult(
-            int created,
-            int mapped,
-            int skipped,
-            int inactiveFrozen,
-            int inferredEndDates,
-            int deviceUsersSeen) {
-
-        public static ImportUsersResult from(com.example.gym.device.DeviceUserImportService.ImportResult r) {
-            return new ImportUsersResult(
-                    r.created(), r.mapped(), r.skipped(), r.inactiveFrozen(),
-                    r.inferredEndDates(), r.deviceUsersSeen());
-        }
+            Instant lastPunchAt) {
     }
 
     public record AttendanceView(

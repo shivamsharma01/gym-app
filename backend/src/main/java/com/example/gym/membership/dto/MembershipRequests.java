@@ -30,14 +30,6 @@ public final class MembershipRequests {
             BigDecimal discountAmount) {
     }
 
-    /**
-     * Legacy dates-only payload retained for compatibility with older clients.
-     */
-    public record UpdateMembershipDates(
-            @NotNull LocalDate startDate,
-            @NotNull LocalDate endDate) {
-    }
-
     public record RenewMembership(
             /** Optional; reuse the current membership's plan when omitted. */
             @NotBlank String planId,

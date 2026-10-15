@@ -200,13 +200,13 @@ export function DashboardPage() {
             <SectionTitle title="Quick actions" />
             <div className="grid gap-2">
               <QuickLink to="/app/members" icon={Users} label="Browse members" show={has('MEMBER_VIEW')} />
-              <QuickLink to="/app/plans" icon={CreditCard} label="Manage plans" show={has('MEMBERSHIP_CREATE') || has('MEMBERSHIP_UPDATE')} />
-              <QuickLink to="/app/devices" icon={MonitorSmartphone} label="Devices & gateways" show={has('DEVICE_VIEW')} />
+              <QuickLink to="/app/plans" icon={CreditCard} label="Manage plans" show={has('MEMBERSHIP_VIEW') && (has('MEMBERSHIP_CREATE') || has('MEMBERSHIP_UPDATE'))} />
+              <QuickLink to="/app/devices" icon={MonitorSmartphone} label="Devices" show={has('DEVICE_VIEW')} />
               <QuickLink to="/app/reports" icon={Activity} label="Full reports" show={has('REPORT_VIEW')} />
             </div>
           </div>
 
-          {canReport && summary.data?.devices?.length ? (
+          {canReport && has('DEVICE_VIEW') && summary.data?.devices?.length ? (
             <div>
               <SectionTitle title="Devices" description="Connection at last report query" />
               <Card padded={false} className="divide-y divide-line overflow-hidden">

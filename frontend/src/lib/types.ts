@@ -8,6 +8,56 @@ export type PageResponse<T> = {
   last: boolean
 }
 
+export type BootstrapReport = {
+  runId: string
+  rows: BootstrapRow[]
+}
+
+export type BootstrapRow = {
+  outcome: string
+  deviceId: string
+  deviceUserId: string
+  memberId: string | null
+  readerName: string | null
+  serverName: string | null
+  suggestionMemberId: string | null
+}
+
+export type ReviewItem = {
+  id: string
+  kind: 'REVIEW' | 'ENROLLMENT' | 'SUSPENDED'
+  deviceId: string
+  deviceUserId: string
+  serverName: string | null
+  readerName: string | null
+  baselineName: string | null
+  readerAbsent: boolean
+  open: boolean
+  decision: string | null
+  actor: string | null
+  priorState: string | null
+  chosenState: string | null
+  revision: number | null
+  verificationError: string | null
+  serverValidFrom: string | null
+  serverValidTo: string | null
+  readerValidFrom: string | null
+  readerValidTo: string | null
+  baselineValidFrom: string | null
+  baselineValidTo: string | null
+  serverUserStatus: number | null
+  readerUserStatus: number | null
+  baselineUserStatus: number | null
+  readerPhotoDiffers: boolean
+  deviceName?: string | null
+  /** The member a review is about; groups one member's items across readers. */
+  memberId?: string | null
+  memberName?: string | null
+  /** A member an unknown reader person may already be. Never linked automatically. */
+  possibleMemberId?: string | null
+  possibleMemberName?: string | null
+}
+
 export type UserSummary = {
   id: string
   username: string
@@ -40,7 +90,6 @@ export type Member = {
   status: string
   joinedOn: string
   notes: string | null
-  creationSource: string
   deviceAuthority?: 'USER' | 'ADMIN'
   createdAt: string
   coverageStatus: string
@@ -64,12 +113,10 @@ export type Membership = {
   currency: string
   startDate: string
   endDate: string
-  endDateInferred: boolean
   status: string
   effectiveStatus: string
   paymentStatus: string
   amountPaid: number | string
-  deviceSyncState: string
   cancelledOn: string | null
   cancelReason: string | null
   createdAt: string
@@ -90,7 +137,6 @@ export type AccessStatus = {
   membershipStatus: string | null
   validUntil: string | null
   paymentStatus: string | null
-  deviceSyncState: string | null
 }
 
 export type Payment = {
@@ -145,30 +191,7 @@ export type DeviceHealth = {
   lastSuccessfulSyncAt: string | null
   pendingCommandCount: number
   failedCommandCount: number
-  reconciliationRequired: boolean
-  lastAttendanceSyncAt: string | null
-  openConflictCount: number
-  attendanceLastRecNo: number | null
-  attendanceLastEventAt: string | null
-}
-
-export type ReconciliationConflict = {
-  id: string
-  deviceUserId: string
-  conflictType: string
-  details: string | null
-  status: string
-  createdAt: string
-  resolvedAt: string | null
-}
-
-export type ImportUsersResult = {
-  created: number
-  mapped: number
-  skipped: number
-  inactiveFrozen: number
-  inferredEndDates: number
-  deviceUsersSeen: number
+  lastPunchAt: string | null
 }
 
 export type Gateway = {
@@ -199,17 +222,6 @@ export type SyncCommand = {
   acknowledgedAt: string | null
   completedAt: string | null
   createdAt: string
-  memberName: string | null
-  deviceUserId: string | null
-}
-
-export type Mapping = {
-  id: string
-  deviceUserId: string
-  enrollmentStatus: string
-  syncState: string
-  enrolledAt: string | null
-  createdAt: string
 }
 
 export type FaceView = {
@@ -232,13 +244,19 @@ export type MemberDeviceSync = {
     connectionState: string | null
     hasGateway: boolean
     deviceUserId: string
-    pendingDeviceUserId: string | null
-    differsFromSerial: boolean
-    userSyncState: string | null
-    faceSyncState: string | null
-    faceVersionSynced: number | null
-    faceLastError: string | null
-    openCommands: { type: string; state: string; attemptCount: number; lastError: string | null }[]
+    /** This member's desired revision on this reader; null when none was published. */
+    revision: number | null
+    appliedRevision: number
+    /** The gateway read back this row's current revision on the reader. */
+    applied: boolean
+    present: boolean
+    facePresent: boolean
+    /** The reader showed something else; nothing is written until staff decide in Reviews. */
+    held: boolean
+    /** Why the gateway has not applied the current revision; null when it reported nothing. */
+    applyError: string | null
+    applyAttempts: number | null
+    applyErrorPermanent: boolean
   }[]
 }
 

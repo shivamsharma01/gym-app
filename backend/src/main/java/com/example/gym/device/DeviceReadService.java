@@ -5,8 +5,6 @@ import com.example.gym.device.domain.AttendanceSyncCursor;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.Gateway;
-import com.example.gym.device.domain.ReconciliationConflict;
-import com.example.gym.device.domain.ReconciliationConflictStatus;
 import com.example.gym.device.domain.SecurityEvent;
 import com.example.gym.device.domain.SyncCommandState;
 import com.example.gym.device.dto.DeviceResponses.DeviceHealth;
@@ -14,7 +12,6 @@ import com.example.gym.device.repo.AttendanceEventRepository;
 import com.example.gym.device.repo.AttendanceSyncCursorRepository;
 import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.GatewayRepository;
-import com.example.gym.device.repo.ReconciliationConflictRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberService;
@@ -41,7 +38,6 @@ public class DeviceReadService {
     private final SecurityEventRepository securityEventRepository;
     private final DeviceSyncCommandRepository commandRepository;
     private final GatewayRepository gatewayRepository;
-    private final ReconciliationConflictRepository conflictRepository;
     private final DeviceService deviceService;
     private final GatewaySessionRegistry sessionRegistry;
     private final MemberService memberService;
@@ -51,7 +47,6 @@ public class DeviceReadService {
                              SecurityEventRepository securityEventRepository,
                              DeviceSyncCommandRepository commandRepository,
                              GatewayRepository gatewayRepository,
-                             ReconciliationConflictRepository conflictRepository,
                              DeviceService deviceService,
                              GatewaySessionRegistry sessionRegistry,
                              MemberService memberService) {
@@ -60,7 +55,6 @@ public class DeviceReadService {
         this.securityEventRepository = securityEventRepository;
         this.commandRepository = commandRepository;
         this.gatewayRepository = gatewayRepository;
-        this.conflictRepository = conflictRepository;
         this.deviceService = deviceService;
         this.sessionRegistry = sessionRegistry;
         this.memberService = memberService;
@@ -78,17 +72,14 @@ public class DeviceReadService {
         return attendanceRepository.findByTenantIdAndMemberId(tenantId, member.getId(), pageable);
     }
 
+    /** The gym's security events, or one device's when {@code devicePublicId} is given. */
     @Transactional(readOnly = true)
-    public Page<SecurityEvent> securityEvents(Long tenantId, Pageable pageable) {
-        return securityEventRepository.findByTenantIdOrderByOccurredAtDesc(tenantId, pageable);
-    }
-
-    @Transactional(readOnly = true)
-    public Page<ReconciliationConflict> conflicts(String devicePublicId, Long tenantId,
-                                                  Pageable pageable) {
+    public Page<SecurityEvent> securityEvents(Long tenantId, String devicePublicId, Pageable pageable) {
+        if (devicePublicId == null) {
+            return securityEventRepository.findByTenantIdOrderByOccurredAtDesc(tenantId, pageable);
+        }
         Device device = deviceService.getByPublicId(devicePublicId, tenantId);
-        return conflictRepository.findByTenantIdAndDeviceIdAndStatusOrderByCreatedAtDesc(
-                tenantId, device.getId(), ReconciliationConflictStatus.OPEN, pageable);
+        return securityEventRepository.findByTenantIdAndDeviceIdOrderByOccurredAtDesc(tenantId, device.getId(), pageable);
     }
 
     /**
@@ -114,10 +105,6 @@ public class DeviceReadService {
         long pending = commandRepository.countByDeviceIdAndStateIn(device.getId(), PENDING_STATES);
         long failed = commandRepository.countByDeviceIdAndStateIn(device.getId(), FAILED_STATES);
         AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(device.getId()).orElse(null);
-        long openConflicts = conflictRepository.countByDeviceIdAndStatus(
-                device.getId(), ReconciliationConflictStatus.OPEN);
-        boolean reconRequired = cursor != null && cursor.isReconciliationRequired();
-        Instant lastAttendanceSync = cursor == null ? null : cursor.getLastEventAt();
         return new DeviceHealth(
                 device.getPublicId(),
                 device.getConnectionState().name(),
@@ -127,10 +114,6 @@ public class DeviceReadService {
                 lastSync,
                 pending,
                 failed,
-                reconRequired || openConflicts > 0,
-                lastAttendanceSync,
-                openConflicts,
-                cursor == null ? null : cursor.getLastRecNo(),
                 cursor == null ? null : cursor.getLastEventAt());
     }
 }

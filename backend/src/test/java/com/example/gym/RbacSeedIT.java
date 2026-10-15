@@ -36,6 +36,20 @@ class RbacSeedIT extends AbstractIntegrationTest {
         assertThat(roleRepository.findByNameAndTenantIdIsNull("FRONT_DESK")).isEmpty();
     }
 
+    @Test
+    void staffDecideReviewsWithoutManagingDevices() {
+        Set<String> staff = permissionsOf("STAFF");
+        assertThat(staff).contains("REVIEW_DECIDE", "DEVICE_VIEW");
+        assertThat(staff).doesNotContain("DEVICE_MANAGE", "DEVICE_SYNC", "DEVICE_REMOTE_CONTROL");
+        assertThat(permissionsOf("REPORT_VIEWER")).doesNotContain("REVIEW_DECIDE");
+    }
+
+    private Set<String> permissionsOf(String roleName) {
+        return roleRepository.findByNameAndTenantIdIsNull(roleName).orElseThrow().getPermissions().stream()
+                .map(Permission::getName)
+                .collect(Collectors.toSet());
+    }
+
     private Set<String> roleRepositoryPermissions() {
         Role superAdmin = roleRepository.findByNameAndTenantIdIsNull("SUPER_ADMIN").orElseThrow();
         return superAdmin.getPermissions().stream()

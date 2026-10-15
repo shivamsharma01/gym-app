@@ -7,8 +7,8 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 /**
- * Per-device attendance watermark (§10). On reconnect/reconciliation the gateway queries device
- * records after this point, so no window is missed and none is re-processed.
+ * A reader's last stored punch time. The gateway's attendance poll starts its next window here, less
+ * a small overlap. It only moves forward. Record numbers are not a cursor.
  */
 @Entity
 @Table(name = "attendance_sync_cursor")
@@ -17,14 +17,8 @@ public class AttendanceSyncCursor extends TenantAwareEntity {
     @Column(name = "device_id", nullable = false, unique = true)
     private Long deviceId;
 
-    @Column(name = "last_rec_no")
-    private Long lastRecNo;
-
     @Column(name = "last_event_at")
     private Instant lastEventAt;
-
-    @Column(name = "reconciliation_required", nullable = false)
-    private boolean reconciliationRequired = false;
 
     protected AttendanceSyncCursor() {
     }
@@ -38,27 +32,11 @@ public class AttendanceSyncCursor extends TenantAwareEntity {
         return deviceId;
     }
 
-    public Long getLastRecNo() {
-        return lastRecNo;
-    }
-
-    public void setLastRecNo(Long lastRecNo) {
-        this.lastRecNo = lastRecNo;
-    }
-
     public Instant getLastEventAt() {
         return lastEventAt;
     }
 
     public void setLastEventAt(Instant lastEventAt) {
         this.lastEventAt = lastEventAt;
-    }
-
-    public boolean isReconciliationRequired() {
-        return reconciliationRequired;
-    }
-
-    public void setReconciliationRequired(boolean reconciliationRequired) {
-        this.reconciliationRequired = reconciliationRequired;
     }
 }

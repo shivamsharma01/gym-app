@@ -39,11 +39,11 @@ public class MemberDeviceSyncController {
         syncService.retry(id, deviceId, SecurityUtils.currentTenantId());
     }
 
-    @PostMapping("/{deviceId}/read")
+    @PostMapping("/{deviceId}/remove")
     @ResponseStatus(HttpStatus.ACCEPTED)
     @PreAuthorize("hasAuthority('DEVICE_SYNC')")
-    @Operation(summary = "Read this member's name, access and face fresh from one device")
-    public void read(@PathVariable String id, @PathVariable String deviceId) {
-        syncService.readFromDevice(id, deviceId, SecurityUtils.currentTenantId());
+    @Operation(summary = "Remove this member from one reader. The member stays, and no other reader is written")
+    public void remove(@PathVariable String id, @PathVariable String deviceId) {
+        syncService.removeFromReader(id, deviceId, SecurityUtils.currentTenantId());
     }
 }

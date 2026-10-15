@@ -12,7 +12,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Fails fast in {@code prod} if the JWT signing secret is missing, too short, or still the
- * documented local-dev default. Compose and real deploys must set {@code APP_SECURITY_JWT_SECRET}.
+ * documented local-dev default, or if the in-process gateway simulator is enabled. Compose and real
+ * deploys must set {@code APP_SECURITY_JWT_SECRET}.
  */
 @Component
 @Profile("prod")

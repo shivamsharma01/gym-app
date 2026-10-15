@@ -46,6 +46,7 @@ export function MembershipPanel({
   rows: Membership[];
 }) {
   const { has } = useAuth();
+  const canDiscount = has('MEMBERSHIP_DISCOUNT_APPROVE');
   const qc = useQueryClient();
 
   const plans = useQuery({
@@ -416,6 +417,7 @@ export function MembershipPanel({
                 </option>
               ))}
             </Select>
+            {canDiscount ? (
             <div>
               <Label htmlFor="membership-discount">Discount</Label>
               <Input
@@ -435,6 +437,7 @@ export function MembershipPanel({
                   </p>
               ) : null}
             </div>
+            ) : null}
             {planId ? (
                 <div className="rounded-lg border border-line bg-surface p-3">
                   <div className="flex justify-between text-sm">
@@ -575,8 +578,7 @@ export function MembershipPanel({
                           0,
                       ),
                       row.currency,
-                  )}{' '}
-                  · device {row.deviceSyncState}
+                  )}
                 </p>
 
 
@@ -628,6 +630,8 @@ export function MembershipPanel({
                   value={editDiscountAmount}
                   onChange={(e) => setEditDiscountAmount(e.target.value)}
                   aria-invalid={invalidEditDiscount}
+                  disabled={!canDiscount}
+                  title={canDiscount ? undefined : 'Only staff who can approve discounts can change it'}
                 />
                 {invalidEditDiscount ? (
                   <p className="mt-1 text-xs text-danger">Discount cannot be greater than the plan amount.</p>
@@ -857,6 +861,7 @@ export function MembershipPanel({
                     </option>
                   ))}
                 </Select>
+                {canDiscount ? (
                 <div>
                   <Label htmlFor="renew-discount">Discount</Label>
 
@@ -878,6 +883,7 @@ export function MembershipPanel({
                       </p>
                   ) : null}
                 </div>
+                ) : null}
               </div>
 
               {/* Dates */}

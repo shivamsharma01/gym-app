@@ -41,4 +41,8 @@ public class GatewayMessageDedupe {
     public Instant getExpiresAt() {
         return expiresAt;
     }
+
+    public Long getGatewayId() {
+        return gatewayId;
+    }
 }

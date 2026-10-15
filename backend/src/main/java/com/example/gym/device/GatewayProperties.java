@@ -7,12 +7,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.gateway")
 public class GatewayProperties {
 
-    /**
-     * Shared token a gateway must present during the WebSocket handshake. Empty disables the check
-     * (dev only) — production must set a strong value via the environment.
-     */
-    private String sharedToken = "";
-
     /** Minutes without a heartbeat after which a gateway is considered OFFLINE. */
     private long heartbeatTimeoutSeconds = 90;
 
@@ -43,14 +37,6 @@ public class GatewayProperties {
 
     public void setDevicesEnforceValidityDates(boolean devicesEnforceValidityDates) {
         this.devicesEnforceValidityDates = devicesEnforceValidityDates;
-    }
-
-    public String getSharedToken() {
-        return sharedToken;
-    }
-
-    public void setSharedToken(String sharedToken) {
-        this.sharedToken = sharedToken;
     }
 
     public long getHeartbeatTimeoutSeconds() {
@@ -170,22 +156,11 @@ public class GatewayProperties {
     /** How long gateway messageId entries are retained for replay dedupe. */
     private Duration messageDedupeTtl = Duration.ofHours(24);
 
-    /** Interval for automatic attendance/user reconcile enqueue (0 disables). */
-    private Duration autoReconcileInterval = Duration.ofMinutes(15);
-
     public Duration getMessageDedupeTtl() {
         return messageDedupeTtl;
     }
 
     public void setMessageDedupeTtl(Duration messageDedupeTtl) {
         this.messageDedupeTtl = messageDedupeTtl;
-    }
-
-    public Duration getAutoReconcileInterval() {
-        return autoReconcileInterval;
-    }
-
-    public void setAutoReconcileInterval(Duration autoReconcileInterval) {
-        this.autoReconcileInterval = autoReconcileInterval;
     }
 }

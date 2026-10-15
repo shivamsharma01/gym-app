@@ -3,15 +3,14 @@ package com.example.gym.device;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceConnectionState;
-import com.example.gym.device.domain.EnrollmentStatus;
+import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.Gateway;
-import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.SecurityEvent;
 import com.example.gym.device.protocol.GatewayMessage;
 import com.example.gym.device.protocol.GatewayMessageType;
 import com.example.gym.device.repo.DeviceRepository;
+import com.example.gym.device.repo.DeviceSyncCommandRepository;
 import com.example.gym.device.repo.GatewayRepository;
-import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.SecurityEventRepository;
 import com.example.gym.live.StaffLiveBroadcast;
 import java.time.Instant;
@@ -22,6 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -38,28 +38,23 @@ public class GatewayMessageService {
     private final GatewayService gatewayService;
     private final GatewayRepository gatewayRepository;
     private final DeviceRepository deviceRepository;
+    private final DeviceSyncCommandRepository commandRepository;
     private final DeviceService deviceService;
-    private final AttendanceIngestionService attendanceIngestionService;
     private final DeviceSyncService deviceSyncService;
-    private final DeviceReconciliationService reconciliationService;
     private final GatewayMessageDedupeService dedupeService;
     private final SecurityEventRepository securityEventRepository;
-    private final MemberDeviceMappingRepository mappingRepository;
     private final JsonMapper jsonMapper;
     private final ApplicationEventPublisher events;
     private final DeviceUserChangeService deviceUserChangeService;
-    private final LogThrottle assignmentWarnings = new LogThrottle(java.time.Duration.ofMinutes(10));
 
     public GatewayMessageService(GatewayService gatewayService,
                                  GatewayRepository gatewayRepository,
                                  DeviceRepository deviceRepository,
+                                 DeviceSyncCommandRepository commandRepository,
                                  DeviceService deviceService,
-                                 AttendanceIngestionService attendanceIngestionService,
                                  DeviceSyncService deviceSyncService,
-                                 DeviceReconciliationService reconciliationService,
                                  GatewayMessageDedupeService dedupeService,
                                  SecurityEventRepository securityEventRepository,
-                                 MemberDeviceMappingRepository mappingRepository,
                                  JsonMapper jsonMapper,
                                  ApplicationEventPublisher events,
                                  DeviceUserChangeService deviceUserChangeService) {
@@ -67,22 +62,23 @@ public class GatewayMessageService {
         this.gatewayService = gatewayService;
         this.gatewayRepository = gatewayRepository;
         this.deviceRepository = deviceRepository;
+        this.commandRepository = commandRepository;
         this.deviceService = deviceService;
-        this.attendanceIngestionService = attendanceIngestionService;
         this.deviceSyncService = deviceSyncService;
-        this.reconciliationService = reconciliationService;
         this.dedupeService = dedupeService;
         this.securityEventRepository = securityEventRepository;
-        this.mappingRepository = mappingRepository;
         this.jsonMapper = jsonMapper;
         this.events = events;
     }
 
-    public Optional<String> process(String raw) {
-        return process(raw, null);
-    }
-
+    /**
+     * Handles one gateway message as {@code boundGatewayId}, which the caller took from the
+     * operational credential. A gateway id in the JSON body is discarded. A blank bound id is rejected.
+     */
     public Optional<String> process(String raw, String boundGatewayId) {
+        if (!StringUtils.hasText(boundGatewayId)) {
+            return Optional.of(credentialRequiredError());
+        }
         GatewayMessage message;
         try {
             message = jsonMapper.readValue(raw, GatewayMessage.class);
@@ -90,11 +86,14 @@ public class GatewayMessageService {
             log.warn("Rejecting malformed gateway message: {}", ex.getMessage());
             return Optional.of(reply(GatewayMessageType.ERROR, null, Map.of("error", "malformed message")));
         }
-        if (boundGatewayId != null && message.gatewayId() != null
-                && !boundGatewayId.equals(message.gatewayId())) {
-            return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
-                    Map.of("error", "gateway identity mismatch")));
-        }
+        message = new GatewayMessage(
+                message.messageId(),
+                message.timestamp(),
+                boundGatewayId.trim(),
+                message.deviceId(),
+                message.type(),
+                message.correlationId(),
+                message.payload());
         if (dedupeService.alreadyProcessed(message.messageId())) {
             log.debug("Ignoring duplicate gateway messageId {}", message.messageId());
             return ack(message);
@@ -102,6 +101,15 @@ public class GatewayMessageService {
         Optional<String> reply;
         try {
             reply = handle(message);
+        } catch (ForeignDeviceRejected ex) {
+            log.warn("Rejecting gateway message for a device gateway {} does not own", boundGatewayId);
+            return Optional.of(reply(GatewayMessageType.ERROR, ex.correlationId,
+                    Map.of("error", "device is not owned by this gateway")));
+        } catch (ObservationOrder.Unordered ex) {
+            log.warn("Refusing gateway message {} ({}) for device {}: {}", message.type(), message.messageId(),
+                    message.deviceId(), ex.getMessage());
+            return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
+                    Map.of("error", "observation out of order")));
         } catch (RuntimeException ex) {
             // Not recorded as processed: the gateway keeps it (no ACK) and resends it on reconnect.
             log.error("Error handling gateway message {} ({})", message.type(), message.messageId(), ex);
@@ -144,8 +152,8 @@ public class GatewayMessageService {
                 yield ack(message);
             }
             case DEVICE_STATUS, DEVICE_METADATA -> {
-                resolveDevice(message).ifPresent(device -> {
-                    DeviceConnectionState previous = device.getConnectionState();
+                Device device = ownedDevice(message);
+                if (device != null) {
                     deviceService.updateConnection(device,
                             connectionState(message.payload()),
                             text(message.payload(), "firmware"),
@@ -156,24 +164,12 @@ public class GatewayMessageService {
                             Map.of(
                                     "deviceId", device.getPublicId(),
                                     "connectionState", state == null ? "" : state.name())));
-                    if (state == DeviceConnectionState.ONLINE
-                            && previous != DeviceConnectionState.ONLINE) {
-                        deviceService.enqueueReconcileIfAbsent(device);
-                    }
-                    String details = text(message.payload(), "details");
-                    if (details != null && details.toLowerCase().contains("reconnect")) {
-                        deviceService.enqueueReconcileIfAbsent(device);
-                    }
-                });
-                yield ack(message);
-            }
-            case DEVICE_EVENT -> {
-                resolveDevice(message).ifPresent(device -> ingestEvent(device, message.payload(),
-                        message.timestamp()));
+                }
                 yield ack(message);
             }
             case DEVICE_ALARM -> {
-                resolveDevice(message).ifPresent(device -> {
+                Device device = ownedDevice(message);
+                if (device != null) {
                     securityEventRepository.save(new SecurityEvent(
                             device.getTenantId(), device.getId(),
                             textOr(message.payload(), "type", "DEVICE_ALARM"),
@@ -183,50 +179,22 @@ public class GatewayMessageService {
                             Map.of(
                                     "deviceId", device.getPublicId(),
                                     "type", textOr(message.payload(), "type", "DEVICE_ALARM"))));
-                });
+                }
                 yield ack(message);
             }
             case SYNC_RESULT -> {
-                boolean skipped = boolAt(message.payload(), "skipped");
+                if (!syncResultAllowed(message)) {
+                    throw new ForeignDeviceRejected(message.correlationId());
+                }
                 deviceSyncService.handleResult(message.correlationId(), boolAt(message.payload(), "ok"),
-                        skipped ? text(message.payload(), "reason") : text(message.payload(), "error"), skipped);
-                yield ack(message);
-            }
-            case RECONCILIATION_RESULT -> {
-                resolveDevice(message).ifPresent(device -> {
-                    boolean ok = message.payload() == null || !message.payload().has("ok")
-                            || message.payload().get("ok").asBoolean();
-                    FlowLog.info("gateway", "reconcile result device={} ok={} users={} events={} error={}",
-                            device.getPublicId(), ok, arraySize(message.payload(), "deviceUsers"),
-                            arraySize(message.payload(), "events"), text(message.payload(), "error"));
-                    if (!ok) {
-                        attendanceIngestionService.markReconciliationRequired(
-                                device.getTenantId(), device.getId(), true);
-                    } else {
-                        // Users first, so punches by users this snapshot maps are credited on insert.
-                        reconciliationService.applyDeviceUserSnapshot(device, message.payload());
-                        JsonNode eventNodes = message.payload() == null ? null
-                                : message.payload().get("events");
-                        if (eventNodes != null && eventNodes.isArray()) {
-                            eventNodes.forEach(e -> ingestEvent(device, e, message.timestamp()));
-                        }
-                        attendanceIngestionService.markReconciliationRequired(
-                                device.getTenantId(), device.getId(), false);
-                    }
-                    // Complete the outbox command even when the gateway also sent SYNC_RESULT
-                    if (message.correlationId() != null) {
-                        deviceSyncService.handleResult(message.correlationId(), ok,
-                                text(message.payload(), "error"));
-                    }
-                });
+                        text(message.payload(), "error"));
                 yield ack(message);
             }
             case DEVICE_USER_CHANGED -> {
-                resolveDevice(message).ifPresent(device -> deviceUserChangeService.apply(device, message.payload()));
-                yield ack(message);
-            }
-            case ENROLLMENT_RESULT -> {
-                resolveDevice(message).ifPresent(device -> applyEnrollmentResult(device, message.payload()));
+                Device device = ownedDevice(message);
+                if (device != null) {
+                    deviceUserChangeService.apply(device, message.payload());
+                }
                 yield ack(message);
             }
             default -> Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
@@ -234,13 +202,8 @@ public class GatewayMessageService {
         };
     }
 
-    String impersonationError() {
-        return reply(GatewayMessageType.ERROR, null, Map.of("error", "gateway identity mismatch"));
-    }
-
-    private static int arraySize(JsonNode payload, String field) {
-        JsonNode node = payload == null ? null : payload.get(field);
-        return node != null && node.isArray() ? node.size() : 0;
+    String credentialRequiredError() {
+        return reply(GatewayMessageType.ERROR, null, Map.of("error", "gateway credential required"));
     }
 
     /** Short, safe summary of the fields that explain a message (no photos or credentials). */
@@ -249,97 +212,71 @@ public class GatewayMessageService {
             return "";
         }
         return switch (type) {
-            case SYNC_RESULT -> " ok=" + text(payload, "ok") + " skipped=" + text(payload, "skipped")
-                    + " error=" + text(payload, "error") + " reason=" + text(payload, "reason");
-            case DEVICE_EVENT -> " user=" + text(payload, "deviceUserId") + " granted=" + text(payload, "granted")
-                    + " recNo=" + text(payload, "recNo") + " at=" + text(payload, "occurredAt");
+            case SYNC_RESULT -> " ok=" + text(payload, "ok") + " error=" + text(payload, "error");
             case DEVICE_USER_CHANGED -> " user=" + text(payload, "deviceUserId") + " isNew=" + text(payload, "isNew")
                     + " deleted=" + text(payload, "deleted") + " nameChanged=" + text(payload, "nameChanged")
                     + " accessChanged=" + text(payload, "frozenChanged") + "/" + text(payload, "validityChanged")
                     + " faceChanged=" + text(payload, "faceChanged") + " changedAt=" + text(payload, "deviceChangedAt");
-            case RECONCILIATION_RESULT -> " users=" + arraySize(payload, "deviceUsers")
-                    + " events=" + arraySize(payload, "events");
             default -> "";
         };
     }
 
-    private void ingestEvent(Device device, JsonNode payload, Instant messageTimestamp) {
-        if (payload == null) {
-            return;
-        }
-        String deviceUserId = text(payload, "deviceUserId");
-        Instant occurredAt = instantOr(payload, "occurredAt", messageTimestamp);
-        String method = textOr(payload, "method", "UNKNOWN");
-        boolean granted = payload.has("granted") ? payload.get("granted").asBoolean()
-                : "GRANTED".equalsIgnoreCase(text(payload, "result"));
-        Long recNo = null;
-        if (payload.has("recNo") && !payload.get("recNo").isNull()) {
-            recNo = payload.get("recNo").asLong();
-        }
-        String denyReason = text(payload, "denyReason");
-        if (denyReason == null && payload.has("errorCode") && !payload.get("errorCode").isNull()) {
-            denyReason = mapErrorCode(payload.get("errorCode").asInt());
-        }
-        attendanceIngestionService.ingest(device, deviceUserId, occurredAt, method, granted, recNo,
-                denyReason);
-    }
-
-    private static String mapErrorCode(int code) {
-        return switch (code) {
-            case 0x00 -> null;
-            case 0x10 -> "UNAUTHORIZED";
-            case 0x14 -> "VALIDITY_PERIOD";
-            case 0x20, 0x21 -> "PERIOD_ERROR";
-            case 0x23 -> "OVERDUE";
-            default -> "ERR_0x" + Integer.toHexString(code).toUpperCase();
-        };
-    }
-
-    private void applyEnrollmentResult(Device device, JsonNode payload) {
-        if (payload == null) {
-            return;
-        }
-        String deviceUserId = text(payload, "deviceUserId");
-        if (deviceUserId == null) {
-            return;
-        }
-        MemberDeviceMapping mapping = mappingRepository
-                .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null);
-        if (mapping == null) {
-            return;
-        }
-        String status = textOr(payload, "status", "FAILED");
-        if ("ENROLLED".equalsIgnoreCase(status)) {
-            mapping.setEnrollmentStatus(EnrollmentStatus.ENROLLED);
-            mapping.setEnrolledAt(Instant.now());
-        } else if ("GUIDED_PENDING".equalsIgnoreCase(status)) {
-            mapping.setEnrollmentStatus(EnrollmentStatus.GUIDED_PENDING);
-        } else {
-            mapping.setEnrollmentStatus(EnrollmentStatus.FAILED);
-        }
-        mappingRepository.save(mapping);
-    }
-
-    private Optional<Device> resolveDevice(GatewayMessage message) {
-        if (message.deviceId() == null) {
-            return Optional.empty();
+    /**
+     * Device named on the message, when it belongs to the authenticated gateway. An unknown device
+     * id is ignored (the message is still acknowledged). A device owned by another gym's gateway is rejected.
+     */
+    private Device ownedDevice(GatewayMessage message) {
+        if (!StringUtils.hasText(message.deviceId())) {
+            return null;
         }
         Gateway gateway = gatewayRepository.findByPublicId(message.gatewayId()).orElse(null);
+        if (gateway == null) {
+            throw new ForeignDeviceRejected(message.correlationId());
+        }
         Device device = deviceRepository.findByPublicId(message.deviceId()).orElse(null);
-        if (gateway == null || device == null || !device.getTenantId().equals(gateway.getTenantId())) {
-            log.warn("Ignoring message for device {} not owned by gateway {}",
-                    message.deviceId(), message.gatewayId());
-            return Optional.empty();
+        if (device == null) {
+            log.warn("Ignoring message for unknown device {}", message.deviceId());
+            return null;
         }
-        if (!gateway.getId().equals(device.getGatewayId()) && assignmentWarnings.allow(device.getPublicId())) {
-            String assigned = device.getGatewayId() == null ? "no gateway"
-                    : gatewayRepository.findById(device.getGatewayId()).map(Gateway::getPublicId)
-                            .orElse("missing gateway row " + device.getGatewayId());
-            log.warn("Device {} reports through gateway {} but is assigned to {}. Its reports are accepted, "
-                            + "but commands for it go to the assigned gateway and will not reach this one.",
-                    device.getPublicId(), gateway.getPublicId(), assigned);
+        if (!gateway.getTenantId().equals(device.getTenantId())
+                || device.getGatewayId() == null
+                || !gateway.getId().equals(device.getGatewayId())) {
+            log.warn("Rejecting message for device {} not owned by gateway {}",
+                    device.getPublicId(), gateway.getPublicId());
+            throw new ForeignDeviceRejected(message.correlationId());
         }
-        return Optional.of(device);
+        return device;
+    }
+
+    /**
+     * A sync result may complete only a command for a device this gateway owns. An unknown
+     * correlation id stays a no-op, matching the existing result handler.
+     */
+    private boolean syncResultAllowed(GatewayMessage message) {
+        if (!StringUtils.hasText(message.correlationId())) {
+            return true;
+        }
+        DeviceSyncCommand command = commandRepository.findByCorrelationId(message.correlationId()).orElse(null);
+        if (command == null) {
+            return true;
+        }
+        Gateway gateway = gatewayRepository.findByPublicId(message.gatewayId()).orElse(null);
+        if (gateway == null) {
+            return false;
+        }
+        Device device = deviceRepository.findById(command.getDeviceId()).orElse(null);
+        return device != null
+                && gateway.getTenantId().equals(device.getTenantId())
+                && gateway.getId().equals(device.getGatewayId());
+    }
+
+    /** Raised when a gateway addresses a device it does not own. Not recorded as processed. */
+    private static final class ForeignDeviceRejected extends RuntimeException {
+        private final String correlationId;
+
+        private ForeignDeviceRejected(String correlationId) {
+            this.correlationId = correlationId;
+        }
     }
 
     private Optional<String> ack(GatewayMessage message) {

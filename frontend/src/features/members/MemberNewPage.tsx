@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router'
 import { Button, PageHeader } from '@/components/ui'
 import { MemberFormFields } from '@/features/members/MemberFormFields'
-import { MemberPhotoField, photoUploadError } from '@/features/members/MemberPhotoField'
+import { MemberPhotoField } from '@/features/members/MemberPhotoField'
 import { memberFormSchema, type MemberFormValues } from '@/features/members/memberFormSchema'
 import { ApiError, api } from '@/lib/api'
 import type { Member } from '@/lib/types'
@@ -38,26 +38,32 @@ export function MemberNewPage() {
   const [photo, setPhoto] = useState<File | null>(null)
   const mutation = useMutation({
     mutationFn: async (body: MemberFormValues) => {
-      const member = await api<Member>('/api/v1/members', {
-        method: 'POST',
-        body: JSON.stringify({
-          ...body,
-          email: body.email || null,
-          lastName: body.lastName || null,
-          phone: body.phone || null,
-          dateOfBirth: body.dateOfBirth || null,
-          serialNumber: body.serialNumber?.trim() || null,
-          memberCode: null,
-        }),
-      })
-      return { member, photoError: photo ? await photoUploadError(member.id, photo) : null }
+      if (!photo) {
+        throw new ApiError(400, 'A face photo is required')
+      }
+      const payload = {
+        ...body,
+        email: body.email || null,
+        lastName: body.lastName || null,
+        phone: body.phone || null,
+        dateOfBirth: body.dateOfBirth || null,
+        serialNumber: body.serialNumber?.trim() || null,
+        memberCode: null,
+      }
+      const formData = new FormData()
+      formData.append('member', new Blob([JSON.stringify(payload)], { type: 'application/json' }))
+      formData.append('face', photo)
+      return api<Member>('/api/v1/members', { method: 'POST', body: formData })
     },
-    onSuccess: ({ member, photoError }) => navigate(`/app/members/${member.id}`, { state: { photoError } }),
+    onSuccess: (member) => navigate(`/app/members/${member.id}`),
   })
 
   return (
     <div className="max-w-xl">
-      <PageHeader title="New member" description="The serial number starts at the next free number; change it if needed." />
+      <PageHeader
+        title="New member"
+        description="The serial number starts at the next free number; change it if needed. Every reader of the gym receives the member."
+      />
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => mutation.mutate(v))}>
         <MemberFormFields form={form} />
         <MemberPhotoField value={photo} onChange={setPhoto} />

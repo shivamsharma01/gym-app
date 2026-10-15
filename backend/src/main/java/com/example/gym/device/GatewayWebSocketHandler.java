@@ -4,16 +4,17 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Server side of the gateway WSS link. Delegates all message semantics to
- * {@link GatewayMessageService} and only manages session lifecycle/registration here.
+ * Server side of the gateway WSS link. The session is bound by
+ * {@link GatewayHandshakeInterceptor} to a gateway and a credential hash. Each message is accepted
+ * only while that credential is still current. Message bodies cannot register or rename the session.
+ * Delegates message semantics to {@link GatewayMessageService}.
  */
 @Component
 public class GatewayWebSocketHandler extends TextWebSocketHandler {
@@ -25,36 +26,41 @@ public class GatewayWebSocketHandler extends TextWebSocketHandler {
     private final GatewayMessageService messageService;
     private final GatewaySessionRegistry registry;
     private final GatewayService gatewayService;
-    private final JsonMapper jsonMapper;
+    private final GatewaySessionAuthorizer authorizer;
 
     public GatewayWebSocketHandler(GatewayMessageService messageService,
                                    GatewaySessionRegistry registry,
                                    GatewayService gatewayService,
-                                   JsonMapper jsonMapper) {
+                                   GatewaySessionAuthorizer authorizer) {
         this.messageService = messageService;
         this.registry = registry;
         this.gatewayService = gatewayService;
-        this.jsonMapper = jsonMapper;
+        this.authorizer = authorizer;
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         // Reconcile results carry full rosters; the container default (~8 KB) would close the socket.
         session.setTextMessageSizeLimit(MAX_TEXT_MESSAGE_BYTES);
+        if (!authorizer.allow(session)) {
+            registry.invalidate(session);
+            return;
+        }
         Object gatewayId = session.getAttributes().get(GATEWAY_ID_ATTR);
-        if (gatewayId != null) {
+        if (gatewayId != null && StringUtils.hasText(gatewayId.toString())) {
             registry.register(gatewayId.toString(), session);
         }
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-        String raw = message.getPayload();
-        if (!registerIfHandshake(session, raw)) {
-            registry.reply(session, messageService.impersonationError());
+        if (!authorizer.allow(session)) {
+            registry.invalidate(session);
             return;
         }
-        Optional<String> reply = messageService.process(raw);
+        String raw = message.getPayload();
+        Object bound = session.getAttributes().get(GATEWAY_ID_ATTR);
+        Optional<String> reply = messageService.process(raw, bound.toString());
         reply.ifPresent(text -> registry.reply(session, text));
     }
 
@@ -77,32 +83,4 @@ public class GatewayWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    /**
-     * On REGISTER_GATEWAY, bind the session to the gateway id for command delivery. Returns false
-     * when the message tries to impersonate a different gateway than the handshake bound.
-     */
-    private boolean registerIfHandshake(WebSocketSession session, String raw) {
-        try {
-            JsonNode node = jsonMapper.readTree(raw);
-            String gatewayId = text(node, "gatewayId");
-            Object bound = session.getAttributes().get(GATEWAY_ID_ATTR);
-            if (bound != null && gatewayId != null && !bound.toString().equals(gatewayId)) {
-                log.warn("Rejecting gateway message: session bound to a different gateway");
-                return false;
-            }
-            if (gatewayId != null && bound == null) {
-                session.getAttributes().put(GATEWAY_ID_ATTR, gatewayId);
-                registry.register(gatewayId, session);
-            }
-            return true;
-        } catch (RuntimeException ex) {
-            log.debug("Could not inspect message for registration: {}", ex.getMessage());
-            return true;
-        }
-    }
-
-    private String text(JsonNode node, String field) {
-        JsonNode v = node.get(field);
-        return v == null || v.isNull() ? null : v.asString();
-    }
 }

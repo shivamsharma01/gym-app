@@ -7,13 +7,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.AttendanceLinker;
 import com.example.gym.device.GatewayMessageService;
 import com.example.gym.device.domain.AttendanceEvent;
-import com.example.gym.device.domain.SyncCommandState;
-import com.example.gym.device.domain.SyncCommandType;
+import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.live.StaffLiveBroadcast;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractIntegrationTest;
+import com.example.gym.support.Scans;
 import com.example.gym.tenant.Tenant;
 import java.time.Instant;
 import java.util.List;
@@ -41,6 +42,9 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     private GatewayMessageService gatewayMessageService;
 
     @Autowired
+    private AttendanceLinker attendanceLinker;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     @Autowired
@@ -51,6 +55,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     private Tenant tenant;
     private String token;
     private String gatewayId;
+    private String gatewayToken;
     private String entranceId;
     private String exitId;
     private Long entrance;
@@ -68,11 +73,12 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         gatewayId = readJson(createdGateway).get("id").asString();
         String enrollmentToken = readJson(createdGateway).get("token").asString();
-        mockMvc.perform(post("/internal/gateway/enroll")
+        gatewayToken = readJson(mockMvc.perform(post("/internal/gateway/enroll")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"gatewayId\":\"" + gatewayId + "\",\"enrollmentToken\":\""
                                 + enrollmentToken + "\"}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString()).get("credential").asString();
 
         entranceId = createDevice("Entrance", "ENTRANCE", "10.0.0.20");
         exitId = createDevice("Exit", "EXIT", "10.0.0.21");
@@ -81,24 +87,18 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void reconcileMapsNewReaderUsersBeforeStoringTheirPunches() throws Exception {
-        gatewayMessageService.process(envelope(entranceId, "RECONCILIATION_RESULT", """
-                {"ok":true,
-                 "deviceUsers":[{"deviceUserId":"1114","name":"Ravi Kumar","frozen":false}],
-                 "events":[{"deviceUserId":"1114","occurredAt":"2026-10-02T06:00:00Z",
-                            "method":"FACE","granted":true,"recNo":501}]}
-                """));
+    void aPunchByAnUnmappedIdIsStoredUnlinkedAndCreatesNoMember() throws Exception {
+        postWindow(entranceId, """
+                [{"deviceUserId":"1114","occurredAt":"2026-10-02T06:00:00Z","method":"FACE","granted":true,"recNo":501}]
+                """);
 
-        Member ravi = memberBySerial("1114");
+        assertThat(memberRepository.findAll()).isEmpty();
+        assertThat(memberDeviceMappingRepository.findAll()).isEmpty();
         assertThat(attendanceEventRepository.findAll()).singleElement()
-                .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(ravi.getId()));
-        assertThat(securityEventRepository.findAll())
-                .noneMatch(s -> "UNKNOWN_CREDENTIAL".equals(s.getType()));
+                .satisfies(e -> assertThat(e.getMemberId()).isNull());
         mockMvc.perform(get("/api/v1/attendance").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].memberLinked").value(true))
-                .andExpect(jsonPath("$.content[0].memberName").value("Ravi Kumar"));
-        // Credited on insert, so there was nothing to relink.
+                .andExpect(jsonPath("$.content[0].memberLinked").value(false));
         assertThat(linkedBroadcasts()).isZero();
     }
 
@@ -114,20 +114,22 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].memberLinked").value(false))
                 .andExpect(jsonPath("$.content[0].memberName").doesNotExist());
 
-        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("792", "Meera Shah")));
+        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("792", "Meera Shah")), gatewayId);
+        assertThat(memberRepository.findAll()).isEmpty();
+        assertThat(eventsOn(entrance, "792")).allMatch(e -> e.getMemberId() == null);
 
-        Member meera = memberBySerial("792");
+        Member meera = createMember("Meera", "792");
+        link(meera, entrance, "792");
+
         assertThat(eventsOn(entrance, "792")).hasSize(2)
                 .allMatch(e -> meera.getId().equals(e.getMemberId()));
-        // The exit reader only got Meera from the server, so its earlier punch is not claimed.
         assertThat(eventsOn(exit, "792")).singleElement()
                 .satisfies(e -> assertThat(e.getMemberId()).isNull());
         mockMvc.perform(get("/api/v1/members/" + meera.getPublicId() + "/attendance")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(2))
-                .andExpect(jsonPath("$.content[0].memberName").value("Meera Shah"));
-        // Two rows linked in one transaction: one refresh for the UI.
+                .andExpect(jsonPath("$.content[0].memberName").value("Meera"));
         assertThat(linkedBroadcasts()).isEqualTo(1);
     }
 
@@ -135,6 +137,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     void aLinkedPunchIsNeverMovedToAnotherMember() throws Exception {
         Member asha = createMember("Asha", "1001");
         Member bina = createMember("Bina", "1002");
+        link(asha, entrance, "1001");
         punch(entranceId, "1001");
         AttendanceEvent event = attendanceEventRepository.findAll().getFirst();
         assertThat(event.getMemberId()).isEqualTo(asha.getId());
@@ -151,12 +154,8 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     void theSameDeviceUserIdOnTwoReadersStaysWithEachReadersMember() throws Exception {
         Member asha = createMember("Asha", "6001");
         Member bina = createMember("Bina", "6002");
-        // The exit reader holds Bina under 6001 and does not hold Asha.
-        memberDeviceMappingRepository.delete(
-                memberDeviceMappingRepository.findByDeviceIdAndMemberId(exit, asha.getId()).orElseThrow());
-        var binaOnExit = memberDeviceMappingRepository.findByDeviceIdAndMemberId(exit, bina.getId()).orElseThrow();
-        binaOnExit.setDeviceUserId("6001");
-        memberDeviceMappingRepository.save(binaOnExit);
+        link(asha, entrance, "6001");
+        link(bina, exit, "6001");
 
         punch(entranceId, "6001");
         punch(exitId, "6001");
@@ -168,11 +167,11 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         assertThat(eventsOn(exit, "6001")).singleElement()
                 .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(bina.getId()));
 
-        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("8001", "Esha Jain")));
+        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("8001", "Esha Jain")), gatewayId);
 
-        Member esha = memberBySerial("8001");
+        assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "8001")).isEmpty();
         assertThat(eventsOn(entrance, "8001")).singleElement()
-                .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(esha.getId()));
+                .satisfies(e -> assertThat(e.getMemberId()).isNull());
         assertThat(eventsOn(exit, "8001")).singleElement()
                 .satisfies(e -> assertThat(e.getMemberId()).isNull());
         assertThat(eventsOn(exit, "6001")).singleElement()
@@ -182,38 +181,40 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     @Test
     void changingTheSerialKeepsEarlierAttendanceWithTheMember() throws Exception {
         Member asha = createMember("Asha", "1001");
+        link(asha, entrance, "1001");
+        link(asha, exit, "1001");
         punch(entranceId, "1001");
         punch(exitId, "1001");
 
-        moveSerial(asha, "7");
-        Member bina = createMember("Bina", "1001");
+        mockMvc.perform(put("/api/v1/members/" + asha.getPublicId()).header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"firstName\":\"Asha\",\"serialNumber\":\"7\"}"))
+                .andExpect(status().isOk());
+        assertThat(memberDeviceMappingRepository.findByMemberId(asha.getId()))
+                .allMatch(m -> "1001".equals(m.getDeviceUserId()));
+
+        createMemberWithFace(token, "{\"firstName\":\"Bina\",\"serialNumber\":\"1001\"}")
+                .andExpect(status().isConflict());
         punch(entranceId, "1001");
         punch(entranceId, "7");
 
-        List<AttendanceEvent> under1001 = eventsOn(entrance, "1001");
-        assertThat(under1001).hasSize(2);
-        assertThat(under1001.get(0).getMemberId()).isEqualTo(asha.getId());
-        assertThat(under1001.get(1).getMemberId()).isEqualTo(bina.getId());
+        assertThat(eventsOn(entrance, "1001")).hasSize(2)
+                .allMatch(e -> asha.getId().equals(e.getMemberId()));
         assertThat(eventsOn(exit, "1001")).singleElement()
                 .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(asha.getId()));
         assertThat(eventsOn(entrance, "7")).singleElement()
-                .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(asha.getId()));
-        mockMvc.perform(get("/api/v1/members/" + asha.getPublicId() + "/attendance")
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements").value(3));
+                .satisfies(e -> assertThat(e.getMemberId()).isNull());
     }
 
     @Test
     void aReaderUserCreatedUnderTheOldIdDoesNotTakeOverItsHistory() throws Exception {
         Member asha = createMember("Asha", "1001");
+        link(asha, entrance, "1001");
         punch(entranceId, "1001");
-        moveSerial(asha, "7");
 
-        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("1001", "Kiran Das")));
+        gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("1001", "Kiran Das")), gatewayId);
 
-        Member kiran = memberBySerial("1001");
-        assertThat(kiran.getId()).isNotEqualTo(asha.getId());
+        assertThat(memberRepository.findAll()).hasSize(1);
         assertThat(eventsOn(entrance, "1001")).singleElement()
                 .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(asha.getId()));
         assertThat(linkedBroadcasts()).isZero();
@@ -224,9 +225,9 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         String sameTime = "2026-10-02T07:00:00Z";
         for (String user : List.of("a1", "a2", "a3")) {
             long n = recNo.getAndIncrement();
-            gatewayMessageService.process(envelope(entranceId, "DEVICE_EVENT", """
-                    {"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}
-                    """.formatted(user, sameTime, n)));
+            postWindow(entranceId, """
+                    [{"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}]
+                    """.formatted(user, sameTime, n));
         }
         punch(entranceId, "early");
 
@@ -246,31 +247,16 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
 
     // --- helpers ---------------------------------------------------------------------------------
 
-    private void moveSerial(Member member, String serial) throws Exception {
-        mockMvc.perform(put("/api/v1/members/" + member.getPublicId()).header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"firstName\":\"" + member.getFirstName() + "\",\"serialNumber\":\"" + serial + "\"}"))
-                .andExpect(status().isOk());
-        var creates = deviceSyncCommandRepository.findAll().stream()
-                .filter(c -> c.getType() == SyncCommandType.CREATE_USER
-                        && c.getState() != SyncCommandState.CANCELLED
-                        && c.getPayload().contains("\"deviceUserId\":\"" + serial + "\""))
-                .toList();
-        assertThat(creates).hasSize(2);
-        for (var create : creates) {
-            String deviceId = create.getDeviceId().equals(entrance) ? entranceId : exitId;
-            gatewayMessageService.process(envelope(deviceId, "SYNC_RESULT", create.getCorrelationId(), "{\"ok\":true}"));
-        }
-        assertThat(memberDeviceMappingRepository.findByMemberId(member.getId()))
-                .allMatch(m -> serial.equals(m.getDeviceUserId()) && m.getPendingDeviceUserId() == null);
+    private void link(Member member, Long deviceId, String deviceUserId) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            MemberDeviceMapping mapping = memberDeviceMappingRepository.save(
+                    new MemberDeviceMapping(member.getTenantId(), member.getId(), deviceId, deviceUserId));
+            attendanceLinker.linkEarlierEvents(mapping);
+        });
     }
 
-    private Member createMember(String firstName, String serial) throws Exception {
-        String id = readJson(postJson("/api/v1/members",
-                "{\"firstName\":\"" + firstName + "\",\"serialNumber\":\"" + serial + "\"}")
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-        return memberRepository.findByPublicId(id).orElseThrow();
+    private Member createMember(String firstName, String serial) {
+        return saveMember(tenant.getId(), "M-" + serial, firstName, null, serial);
     }
 
     private Member memberBySerial(String serial) {
@@ -290,11 +276,18 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
                 .count();
     }
 
-    private void punch(String devicePublicId, String deviceUserId) {
+    private void punch(String devicePublicId, String deviceUserId) throws Exception {
         long n = recNo.getAndIncrement();
-        gatewayMessageService.process(envelope(devicePublicId, "DEVICE_EVENT", """
-                {"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}
-                """.formatted(deviceUserId, Instant.parse("2026-10-02T05:00:00Z").plusSeconds(n), n)));
+        postWindow(devicePublicId, """
+                [{"deviceUserId":"%s","occurredAt":"%s","method":"FACE","granted":true,"recNo":%d}]
+                """.formatted(deviceUserId, Instant.parse("2026-10-02T05:00:00Z").plusSeconds(n), n));
+    }
+
+    private void postWindow(String devicePublicId, String punches) throws Exception {
+        mockMvc.perform(post("/internal/gateway/attendance").header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"deviceId\":\"" + devicePublicId + "\",\"punches\":" + punches + "}"))
+                .andExpect(status().isOk());
     }
 
     private static String newReaderUser(String deviceUserId, String name) {
@@ -331,6 +324,6 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"%s","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayId, devicePublicId, type,
-                correlationId, payloadJson);
+                correlationId, "DEVICE_USER_CHANGED".equals(type) ? Scans.stamp(payloadJson) : payloadJson);
     }
 }

@@ -34,8 +34,3 @@ export function cycleTheme(): ThemeMode {
   applyTheme(next)
   return next
 }
-
-/** @deprecated Prefer cycleTheme for three modes */
-export function toggleTheme(): ThemeMode {
-  return cycleTheme()
-}

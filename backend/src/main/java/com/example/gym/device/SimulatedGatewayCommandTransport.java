@@ -1,8 +1,6 @@
 package com.example.gym.device;
 
 import com.example.gym.device.domain.DeviceSyncCommand;
-import com.example.gym.device.domain.SyncCommandType;
-import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -12,10 +10,8 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
- * In-process stand-in for a LAN gateway. Applies commands to an in-memory mock device and, after
- * the outbox transaction commits, reports a {@code SYNC_RESULT}. Face enrolment is never reported
- * as {@code ENROLLED} — remote enrolment is UNVERIFIED on the real hardware, so the simulator
- * returns {@code GUIDED_PENDING} instead of faking biometric success.
+ * In-process stand-in for a LAN gateway. After the outbox transaction commits it reports a
+ * successful {@code SYNC_RESULT} for each command.
  */
 @Component
 @ConditionalOnProperty(prefix = "app.gateway", name = "simulator-enabled", havingValue = "true")
@@ -31,10 +27,8 @@ public class SimulatedGatewayCommandTransport implements GatewayCommandTransport
 
     @Override
     public Outcome dispatch(DeviceSyncCommand command) {
-        boolean enroll = command.getType() == SyncCommandType.ENROLL_FACE;
         log.info("Simulator applied {} correlationId={}", command.getType(), command.getCorrelationId());
-        events.publishEvent(new SimulatedSyncCompleted(command.getCorrelationId(), !enroll,
-                enroll ? "UNVERIFIED: remote face enrollment is not simulated as success" : null));
+        events.publishEvent(new SimulatedSyncCompleted(command.getCorrelationId(), true, null));
         return Outcome.SENT;
     }
 

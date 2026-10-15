@@ -24,8 +24,9 @@ public class SettingsController {
         this.settingsService = settingsService;
     }
 
+    /** The same profile the public site shows; every staff member's console uses its name and logo. */
     @GetMapping
-    @PreAuthorize("hasAuthority('SETTINGS_MANAGE')")
+    @PreAuthorize("isAuthenticated()")
     @Operation(summary = "Gym profile shown on the public site")
     public GymSettingsView get() {
         return settingsService.view(SecurityUtils.currentTenantId());

@@ -109,9 +109,6 @@ app:
     # Overridden by APP_CORS_ORIGINS. Dev profile (application-dev.yml) widens local origins.
     allowed-origins: ${APP_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:8088,http://127.0.0.1:8088}
   gateway:
-    # Per-deployment shared token the device gateway may present at the WSS handshake
-    # (optional; per-gateway operational credentials after enrollment are preferred).
-    shared-token: ${APP_GATEWAY_SHARED_TOKEN:}
     heartbeat-timeout-seconds: 90
     enrollment-ttl: ${APP_GATEWAY_ENROLLMENT_TTL:PT24H}
     credential-ttl: ${APP_GATEWAY_CREDENTIAL_TTL:P90D}
@@ -127,8 +124,7 @@ app:
       jitter: PT1S
       dispatch-timeout: PT2M
     message-dedupe-ttl: PT24H
-    auto-reconcile-interval: PT15M
-    auto-reconcile-interval-ms: 900000
+    dedupe-purge-interval-ms: 900000
   public:
     # Optional fallback when X-Gym-Slug / subdomain are absent. Leave empty — no gym is pre-seeded.
     tenant-slug: ${APP_PUBLIC_TENANT_SLUG:}
@@ -163,7 +159,7 @@ logging:
     #   gym.flow.device: WARN
     #   gym.flow.attendance: DEBUG
     # Device sync troubleshooting (env: LOGGING_LEVEL_GYM_FLOW_SYNC=DEBUG etc.):
-    #   gym.flow.sync: DEBUG       every outbox command (enqueue, supersede, dispatch, result + latency)
+    #   gym.flow.sync: DEBUG       every staff command (enqueue, dispatch, result + latency)
     #   gym.flow.gateway: DEBUG    every inbound gateway message with its key fields
     #   gym.flow.device: DEBUG     how a reader user was matched to a member, new mappings
     #   gym.flow.reconcile: DEBUG  per-user reconcile findings (INFO already logs a summary)

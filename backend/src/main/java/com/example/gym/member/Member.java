@@ -61,10 +61,6 @@ public class Member extends TenantAwareEntity {
     private String notes;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "creation_source", nullable = false, length = 16)
-    private MemberCreationSource creationSource = MemberCreationSource.MANUAL;
-
-    @Enumerated(EnumType.STRING)
     @Column(name = "device_authority", nullable = false, length = 32)
     private DeviceAuthority deviceAuthority = DeviceAuthority.USER;
 
@@ -90,7 +86,30 @@ public class Member extends TenantAwareEntity {
     @Column(name = "device_enabled")
     private Boolean deviceEnabled;
 
+    /**
+     * The reader-local validity a member created from a reader person kept from that reader. Used on
+     * every reader while the member has no membership; null for members created on the server.
+     */
+    @Column(name = "adopted_valid_from", length = 40)
+    private String adoptedValidFrom;
+
+    @Column(name = "adopted_valid_to", length = 40)
+    private String adoptedValidTo;
+
     protected Member() {
+    }
+
+    public String getAdoptedValidFrom() {
+        return adoptedValidFrom;
+    }
+
+    public String getAdoptedValidTo() {
+        return adoptedValidTo;
+    }
+
+    public void adoptReaderWindow(String validFrom, String validTo) {
+        this.adoptedValidFrom = validFrom;
+        this.adoptedValidTo = validTo;
     }
 
     public LocalDate getDeviceValidFrom() {
@@ -116,7 +135,6 @@ public class Member extends TenantAwareEntity {
         this.memberCode = memberCode;
         this.firstName = firstName;
         this.joinedOn = LocalDate.now();
-        this.creationSource = MemberCreationSource.MANUAL;
         this.profileChangedAt = micros(Instant.now());
         this.accessChangedAt = this.profileChangedAt;
         this.faceChangedAt = this.profileChangedAt;
@@ -237,14 +255,6 @@ public class Member extends TenantAwareEntity {
 
     public void setNotes(String notes) {
         this.notes = notes;
-    }
-
-    public MemberCreationSource getCreationSource() {
-        return creationSource;
-    }
-
-    public void setCreationSource(MemberCreationSource creationSource) {
-        this.creationSource = creationSource == null ? MemberCreationSource.MANUAL : creationSource;
     }
 
     public DeviceAuthority getDeviceAuthority() {

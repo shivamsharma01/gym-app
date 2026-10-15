@@ -10,7 +10,7 @@ import { useAuth } from '@/lib/auth'
 import { DEVICE_MODELS } from '@/lib/catalog'
 import { cn, formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
-import type { Device, DeviceHealth, Gateway, ImportUsersResult, PageResponse, ReconciliationConflict, SecurityEvent, SyncCommand } from '@/lib/types'
+import type { Device, DeviceHealth, Gateway, PageResponse, SecurityEvent, SyncCommand } from '@/lib/types'
 
 export function DeviceDetailPage() {
   const { id, section } = useParams()
@@ -86,7 +86,7 @@ export function DeviceDetailPage() {
         ))}
       </nav>
       {tab === 'overview' ? <Overview device={d} /> : null}
-      {tab === 'events' ? <Events /> : null}
+      {tab === 'events' ? <Events deviceId={d.id} /> : null}
       {tab === 'sync' ? <Sync deviceId={d.id} /> : null}
       {tab === 'settings' ? <Settings device={d} /> : null}
       {has('DEVICE_REMOTE_CONTROL') && (tab === 'overview' || tab === 'settings') ? <DoorControl deviceId={d.id} /> : null}
@@ -97,48 +97,9 @@ export function DeviceDetailPage() {
 function Overview({ device }: { device: Device }) {
   const { has } = useAuth()
   const navigate = useNavigate()
-  const qc = useQueryClient()
   const health = useQuery({
     queryKey: ['device-health', device.id],
     queryFn: () => api<DeviceHealth>(`/api/v1/devices/${device.id}/health`),
-  })
-  const [conflictPage, setConflictPage] = useState(0)
-  const conflicts = useQuery({
-    queryKey: ['device-conflicts', device.id, conflictPage],
-    queryFn: () =>
-      api<PageResponse<ReconciliationConflict>>(`/api/v1/devices/${device.id}/conflicts?page=${conflictPage}&size=20`),
-    placeholderData: keepPreviousData,
-  })
-  const reconcile = useMutation({
-    mutationFn: () => api<SyncCommand>(`/api/v1/devices/${device.id}/reconcile`, { method: 'POST' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['device-health', device.id] })
-      void qc.invalidateQueries({ queryKey: ['sync-commands', device.id] })
-    },
-  })
-  const syncNow = useMutation({
-    mutationFn: () => api<SyncCommand>(`/api/v1/devices/${device.id}/sync-now`, { method: 'POST' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['device-health', device.id] })
-      void qc.invalidateQueries({ queryKey: ['sync-commands', device.id] })
-    },
-  })
-  const importUsers = useMutation({
-    mutationFn: () => api<ImportUsersResult>(`/api/v1/devices/${device.id}/import-users`, { method: 'POST' }),
-    onSuccess: () => {
-      void health.refetch()
-      void conflicts.refetch()
-    },
-  })
-  const resolveConflict = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: string }) =>
-      api<ReconciliationConflict>(`/api/v1/devices/${device.id}/conflicts/${id}/resolve?action=${action}`, {
-        method: 'POST',
-      }),
-    onSuccess: () => {
-      void health.refetch()
-      void conflicts.refetch()
-    },
   })
 
   return (
@@ -178,119 +139,161 @@ function Overview({ device }: { device: Device }) {
           </Card>
           <Card>
             <div className="text-xs uppercase text-muted">Attendance</div>
-            <div className="mt-1 font-semibold">
-              cursor {health.data.attendanceLastRecNo ?? '—'}
-              {health.data.reconciliationRequired ? (
-                <span className="ml-2">
-                  <Badge tone="warn">Reconcile required</Badge>
-                </span>
-              ) : null}
-            </div>
+            <div className="mt-1 font-semibold">Last punch stored {formatDateTime(health.data.lastPunchAt)}</div>
             <p className="mt-2 text-sm text-muted">
-              Last sync {formatDateTime(health.data.lastAttendanceSyncAt ?? health.data.attendanceLastEventAt)} ·
-              conflicts {health.data.openConflictCount}
+              The gateway reads the reader log on a short interval
             </p>
           </Card>
         </div>
       ) : null}
-      {has('DEVICE_SYNC') ? (
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={syncNow.isPending} onClick={() => syncNow.mutate()}>
-            Sync Now
-          </Button>
-          <Button variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
-            Request attendance reconcile
-          </Button>
-          <span className="basis-full text-xs text-muted">
-            Sync Now re-reads users, attendance and every photo on this reader. Photos are read in the background
-            and only changed ones are sent.
-          </span>
-        </div>
+      {has('DEVICE_SYNC') && has('REVIEW_DECIDE') && device.gatewayAssigned ? (
+        <ImportPending deviceId={device.id} />
       ) : null}
-      {has('DEVICE_MANAGE') ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            disabled={importUsers.isPending}
-            onClick={() => importUsers.mutate()}
-          >
-            Import device users
-          </Button>
-          <span className="text-xs text-muted">
-            Creates Members from the last synced device roster (idempotent). Run Sync Now first if empty.
-          </span>
-        </div>
-      ) : null}
-      {syncNow.isSuccess ? (
-        <p className="text-sm text-ok">Queued {syncNow.data.type} · {syncNow.data.state}</p>
-      ) : null}
-      {reconcile.isSuccess ? (
-        <p className="text-sm text-ok">Queued {reconcile.data.type} · {reconcile.data.state}</p>
-      ) : null}
-      {importUsers.isSuccess ? (
-        <p className="text-sm text-ok">
-          Import: created {importUsers.data.created}, mapped {importUsers.data.mapped}, skipped{' '}
-          {importUsers.data.skipped}, frozen→inactive {importUsers.data.inactiveFrozen}, inferred end dates{' '}
-          {importUsers.data.inferredEndDates} (saw {importUsers.data.deviceUsersSeen} device users)
-        </p>
-      ) : null}
-      {syncNow.error ? <QueryError error={syncNow.error} /> : null}
-      {reconcile.error ? <QueryError error={reconcile.error} /> : null}
-      {importUsers.error ? <QueryError error={importUsers.error} /> : null}
-      {conflicts.data && conflicts.data.content.length > 0 ? (
-        <Card className="space-y-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-            Reconciliation conflicts ({conflicts.data.totalElements})
-          </h2>
-          <ul className="divide-y divide-line">
-            {conflicts.data.content.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-start justify-between gap-2 py-2 text-sm">
-                <div>
-                  <div className="font-semibold">
-                    {c.conflictType} · {c.deviceUserId}
-                  </div>
-                  <p className="text-muted">{c.details ?? '—'}</p>
-                </div>
-                {has('DEVICE_SYNC') ? (
-                  <div className="flex gap-2">
-                    {c.conflictType === 'EXTRA_DEVICE_USER' || c.conflictType === 'AUTH_MISMATCH' ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => resolveConflict.mutate({ id: c.id, action: 'REMOVE' })}
-                      >
-                        Remove from device
-                      </Button>
-                    ) : null}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => resolveConflict.mutate({ id: c.id, action: 'DISMISS' })}
-                    >
-                      Dismiss
-                    </Button>
-                  </div>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-          <PageNav data={conflicts.data} onPageChange={setConflictPage} />
-        </Card>
-      ) : null}
+      {has('DEVICE_SYNC') && device.gatewayAssigned ? <Reconcile deviceId={device.id} /> : null}
       <p className="text-sm text-muted">
-        Health is not a single online/offline lamp. Device, gateway session, last sync, pending/failed outbox, and
-        reconciliation conflicts are separate facts.
+        Health is not a single online/offline lamp. Device, gateway session, last sync, and pending/failed commands are
+        separate facts.
       </p>
     </div>
   )
 }
 
-function Events() {
+type ImportResult = {
+  deviceId: string
+  created: number
+  skipped: { deviceUserId: string; reason: string }[]
+}
+
+function ImportPending({ deviceId }: Readonly<{ deviceId: string }>) {
+  const qc = useQueryClient()
+  const run = useMutation({
+    mutationFn: () => api<ImportResult>(`/api/v1/devices/${deviceId}/import-pending`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['reviews'] })
+    },
+  })
+  const created = run.data?.created ?? 0
+  const skipped = run.data?.skipped ?? []
+  return (
+    <Card className="space-y-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">People already on this reader</h2>
+      <p className="text-sm text-muted">
+        Creates a member for every person this reader showed that nobody has decided on yet. Each member keeps the
+        reader&apos;s name, dates and photo, so nothing is written to the reader. Someone disabled on the reader
+        becomes an inactive member. Someone who may already be a member (same photo or same name) is left pending, so
+        staff link them or create them one by one on the Review page.
+      </p>
+      <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate()}>
+        Import pending people
+      </Button>
+      {run.isSuccess ? (
+        <p className="text-sm text-muted">
+          {created} member{created === 1 ? '' : 's'} created
+          {skipped.length > 0 ? ` · ${skipped.length} left pending` : ''}.
+        </p>
+      ) : null}
+      {skipped.length > 0 ? (
+        <ul className="space-y-1 text-sm text-muted">
+          {skipped.map((item) => (
+            <li key={item.deviceUserId}>
+              Reader id {item.deviceUserId}: {item.reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {run.error ? <QueryError error={run.error} /> : null}
+    </Card>
+  )
+}
+
+function Reconcile({ deviceId }: Readonly<{ deviceId: string }>) {
+  const reconcile = useMutation({
+    mutationFn: () =>
+      api<{ deviceId: string; written: number; held?: number }>(`/api/v1/devices/${deviceId}/reconcile`, {
+        method: 'POST',
+      }),
+  })
+  const written = reconcile.data?.written ?? 0
+  const held = reconcile.data?.held ?? 0
+  const queuedMessage = `${written} member${written === 1 ? '' : 's'} queued for this reader. The reader confirms each one when the gateway applies it.`
+  const heldMessage = ` ${held} member${held === 1 ? '' : 's'} held back: decide on this reader's undecided people first.`
+  return (
+    <Card className="space-y-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Members on this reader</h2>
+      <p className="text-sm text-muted">
+        Writes every active member with a photo that this reader does not have yet. People already on the reader,
+        members removed from it, and people the server does not know are left as they are. While this reader shows
+        people nobody has decided on, members who may be one of them are held back until staff decide on the Review
+        page.
+      </p>
+      <Button size="sm" variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
+        Reconcile members
+      </Button>
+      {reconcile.isSuccess ? (
+        <p className="text-sm text-muted">
+          {written === 0 && held === 0 ? 'Nothing was missing.' : null}
+          {written > 0 ? queuedMessage : null}
+          {held > 0 ? heldMessage : null}
+        </p>
+      ) : null}
+      {reconcile.error ? <QueryError error={reconcile.error} /> : null}
+      <ScanNow deviceId={deviceId} />
+    </Card>
+  )
+}
+
+const FINISHED_COMMAND_STATES = new Set(['SUCCEEDED', 'DEAD_LETTER', 'CANCELLED'])
+
+function ScanNow({ deviceId }: Readonly<{ deviceId: string }>) {
+  const scan = useMutation({
+    mutationFn: () => api<SyncCommand>(`/api/v1/devices/${deviceId}/scan`, { method: 'POST' }),
+  })
+  const commandId = scan.data?.id
+  const command = useQuery({
+    queryKey: ['sync-command', commandId],
+    queryFn: () => api<SyncCommand>(`/api/v1/sync-commands/${commandId}`),
+    enabled: !!commandId,
+    refetchInterval: (query) =>
+      query.state.data && FINISHED_COMMAND_STATES.has(query.state.data.state) ? false : 3000,
+  })
+  const current = command.data ?? scan.data
+  const state = current?.state
+  const running = scan.isPending || (!!state && !FINISHED_COMMAND_STATES.has(state))
+  return (
+    <div className="space-y-2 border-t border-line pt-3">
+      <p className="text-sm text-muted">
+        The gateway reads each reader every few minutes. Read this reader now to pick up people enrolled or
+        changed at the device without waiting.
+      </p>
+      <Button size="sm" variant="outline" disabled={running} onClick={() => scan.mutate()}>
+        Read reader now
+      </Button>
+      {state === 'SUCCEEDED' ? (
+        <p className="text-sm text-ok">The gateway read this reader and sent its user list to the server.</p>
+      ) : null}
+      {state && !FINISHED_COMMAND_STATES.has(state) ? (
+        <p className="text-sm text-muted">
+          Asked the gateway · {state}
+          {current?.lastError ? ` · ${current.lastError}` : ''}
+        </p>
+      ) : null}
+      {state === 'DEAD_LETTER' || state === 'CANCELLED' ? (
+        <p className="text-sm text-danger">
+          The reader was not read{current?.lastError ? `: ${current.lastError}` : '.'}
+        </p>
+      ) : null}
+      {scan.error ? <QueryError error={scan.error} /> : null}
+    </div>
+  )
+}
+
+function Events({ deviceId }: Readonly<{ deviceId: string }>) {
   const { has } = useAuth()
   const [page, setPage] = useState(0)
   const events = useQuery({
-    queryKey: ['security-events', page],
-    queryFn: () => api<PageResponse<SecurityEvent>>(`/api/v1/security-events?page=${page}&size=30`),
+    queryKey: ['security-events', deviceId, page],
+    queryFn: () =>
+      api<PageResponse<SecurityEvent>>(`/api/v1/security-events?deviceId=${deviceId}&page=${page}&size=30`),
     enabled: has('SECURITY_ALERT_VIEW'),
     placeholderData: keepPreviousData,
   })
@@ -374,7 +377,6 @@ function Sync({ deviceId }: { deviceId: string }) {
             <THead>
               <tr>
                 <Th>Type</Th>
-                <Th>Member</Th>
                 <Th>State</Th>
                 <Th>Attempts</Th>
                 <Th>When</Th>
@@ -388,10 +390,6 @@ function Sync({ deviceId }: { deviceId: string }) {
                 return (
                   <Tr key={c.id}>
                     <Td className="font-medium">{c.type}</Td>
-                    <Td>
-                      <div className="font-medium">{c.memberName ?? '—'}</div>
-                      <div className="font-mono text-[11px] text-muted">{c.deviceUserId ?? ''}</div>
-                    </Td>
                     <Td>
                       <Badge tone={statusTone(c.state)}>{c.state}</Badge>
                     </Td>
@@ -441,10 +439,8 @@ function Settings({ device }: { device: Device }) {
   const [port, setPort] = useState(device.port ? String(device.port) : '')
   const [model, setModel] = useState(device.model ?? '')
   const [serialNumber, setSerialNumber] = useState(device.serialNumber ?? '')
-  const [gatewayId, setGatewayId] = useState<string | undefined>(undefined)
-  const onlyGateway =
-    device.gatewayAssigned && gateways.data?.content.length === 1 ? gateways.data.content[0].id : ''
-  const effectiveGatewayId = gatewayId !== undefined ? gatewayId : onlyGateway
+  const gateway = gateways.data?.content[0]
+  const [assigned, setAssigned] = useState(device.gatewayAssigned)
   const save = useMutation({
     mutationFn: () =>
       api<Device>(`/api/v1/devices/${device.id}`, {
@@ -456,7 +452,7 @@ function Settings({ device }: { device: Device }) {
           port: port ? Number(port) : null,
           model: model || null,
           serialNumber: serialNumber || null,
-          gatewayId: effectiveGatewayId || null,
+          gatewayId: assigned && gateway ? gateway.id : null,
         }),
       }),
     onSuccess: () => {
@@ -514,15 +510,15 @@ function Settings({ device }: { device: Device }) {
         <Input value={serialNumber} onChange={(e) => setSerialNumber(e.target.value)} />
       </div>
       <div>
-        <Label>Assign gateway</Label>
-        <Select value={effectiveGatewayId} onChange={(e) => setGatewayId(e.target.value)}>
-          <option value="">Unassign gateway</option>
-          {gateways.data?.content.map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.name}
-            </option>
-          ))}
-        </Select>
+        <Label>Gateway</Label>
+        {gateway ? (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={assigned} onChange={(e) => setAssigned(e.target.checked)} />
+            <span>Assigned to {gateway.name}</span>
+          </label>
+        ) : (
+          <p className="text-sm text-muted">This gym has no gateway yet.</p>
+        )}
       </div>
       {save.error ? <QueryError error={save.error} /> : null}
       <Button type="submit" disabled={save.isPending}>

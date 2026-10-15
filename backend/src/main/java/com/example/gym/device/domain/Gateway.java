@@ -9,7 +9,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 /**
- * A device gateway process running on a gym LAN. It is the only component that speaks the native
+ * The gym's gateway process on the LAN. A gym has one. It is the only component that speaks the native
  * SDK; it connects outbound to the backend over WSS. The backend stores no device credentials —
  * those live with the gateway on the LAN.
  *

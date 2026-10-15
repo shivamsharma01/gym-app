@@ -50,12 +50,9 @@ public class Device extends TenantAwareEntity {
     @Column(name = "last_seen_at")
     private Instant lastSeenAt;
 
-    // Written only by DeviceRepository queries, so saving a Device loaded earlier never restores an old value.
-    @Column(name = "roster_digest", length = 80, insertable = false, updatable = false)
-    private String rosterDigest;
-
-    @Column(name = "roster_compared_at", insertable = false, updatable = false)
-    private Instant rosterComparedAt;
+    /** A trusted list whose announced total and count were both zero. A short list clears this. */
+    @Column(name = "roster_trusted_empty", nullable = false)
+    private boolean rosterTrustedEmpty;
 
     protected Device() {
     }
@@ -147,11 +144,11 @@ public class Device extends TenantAwareEntity {
         this.lastSeenAt = lastSeenAt;
     }
 
-    public String getRosterDigest() {
-        return rosterDigest;
+    public boolean isRosterTrustedEmpty() {
+        return rosterTrustedEmpty;
     }
 
-    public Instant getRosterComparedAt() {
-        return rosterComparedAt;
+    public void setRosterTrustedEmpty(boolean rosterTrustedEmpty) {
+        this.rosterTrustedEmpty = rosterTrustedEmpty;
     }
 }

@@ -14,9 +14,6 @@ import java.time.LocalDateTime;
 /**
  * A member's subscription for a period. Plan name/price/currency are snapshotted so later plan
  * edits never rewrite history; renewals create new rows rather than mutating past ones.
- *
- * <p>Business state ({@link MembershipStatus}) and device authorization state
- * ({@link DeviceSyncState}) are tracked independently, per §8 of the spec.
  */
 @Entity
 @Table(name = "membership")
@@ -44,10 +41,6 @@ public class Membership extends TenantAwareEntity {
     @Column(name = "end_date", nullable = false)
     private LocalDate endDate;
 
-    /** True when end_date was inferred (e.g. device validity missing → today+1y), not from device. */
-    @Column(name = "end_date_inferred", nullable = false)
-    private boolean endDateInferred = false;
-
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private MembershipStatus status;
@@ -58,10 +51,6 @@ public class Membership extends TenantAwareEntity {
 
     @Column(name = "amount_paid", nullable = false, precision = 12, scale = 2)
     private BigDecimal amountPaid = BigDecimal.ZERO;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "device_sync_state", nullable = false, length = 16)
-    private DeviceSyncState deviceSyncState = DeviceSyncState.NOT_SYNCED;
 
     @Column(name = "frozen_on")
     private LocalDate frozenOn;
@@ -141,7 +130,6 @@ public class Membership extends TenantAwareEntity {
         this.status = status;
         this.paymentStatus = MembershipPaymentStatus.UNPAID;
         this.amountPaid = BigDecimal.ZERO;
-        this.deviceSyncState = DeviceSyncState.NOT_SYNCED;
     }
 
     /**
@@ -214,14 +202,6 @@ public class Membership extends TenantAwareEntity {
         this.endDate = endDate;
     }
 
-    public boolean isEndDateInferred() {
-        return endDateInferred;
-    }
-
-    public void setEndDateInferred(boolean endDateInferred) {
-        this.endDateInferred = endDateInferred;
-    }
-
     public MembershipStatus getStatus() {
         return status;
     }
@@ -244,14 +224,6 @@ public class Membership extends TenantAwareEntity {
 
     public void setAmountPaid(BigDecimal amountPaid) {
         this.amountPaid = amountPaid;
-    }
-
-    public DeviceSyncState getDeviceSyncState() {
-        return deviceSyncState;
-    }
-
-    public void setDeviceSyncState(DeviceSyncState deviceSyncState) {
-        this.deviceSyncState = deviceSyncState;
     }
 
     public LocalDate getFrozenOn() {

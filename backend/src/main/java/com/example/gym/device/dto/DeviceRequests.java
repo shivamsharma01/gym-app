@@ -36,12 +36,6 @@ public final class DeviceRequests {
             String gatewayId) {
     }
 
-    public record CreateMapping(
-            @NotBlank String memberId,
-            /** Optional; defaults to the member code. */
-            @Size(max = 64) String deviceUserId) {
-    }
-
     public record RemoteDoor(
             /** OPEN or CLOSE. */
             @NotBlank String action,

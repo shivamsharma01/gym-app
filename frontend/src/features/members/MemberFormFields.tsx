@@ -2,8 +2,10 @@ import { Controller, type UseFormReturn } from 'react-hook-form'
 import { FieldError, Input, Label, Select, Textarea } from '@/components/ui'
 import { DateOfBirthField } from '@/features/members/DateOfBirthField'
 import type { MemberFormValues } from '@/features/members/memberFormSchema'
+import { useAuth } from '@/lib/auth'
 
 export function MemberFormFields({ form }: { form: UseFormReturn<MemberFormValues> }) {
+  const canSetAuthority = useAuth().has('USER_MANAGE')
   return (
     <>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -52,12 +54,11 @@ export function MemberFormFields({ form }: { form: UseFormReturn<MemberFormValue
           <option value="UNSPECIFIED">Unspecified</option>
           <option value="FEMALE">Female</option>
           <option value="MALE">Male</option>
-          <option value="OTHER">Other</option>
         </Select>
       </div>
       <div>
         <Label>Terminal Authority (Device User Level)</Label>
-        <Select {...form.register('deviceAuthority')}>
+        <Select {...form.register('deviceAuthority')} disabled={!canSetAuthority}>
           <option value="USER">Standard User (Member)</option>
           <option value="ADMIN">Terminal Admin (Staff / Owner)</option>
         </Select>

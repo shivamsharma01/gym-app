@@ -28,14 +28,15 @@ public class SecurityEventController {
 
     @GetMapping
     @PreAuthorize("hasAuthority('SECURITY_ALERT_VIEW')")
-    @Operation(summary = "List security events (denied access, unknown credentials, alarms)")
+    @Operation(summary = "List security events (denied access, unknown credentials, alarms), optionally for one device")
     public PageResponse<SecurityEventView> list(
+            @RequestParam(required = false) String deviceId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize);
         return PageResponse.from(
-                deviceReadService.securityEvents(SecurityUtils.currentTenantId(), pageable),
+                deviceReadService.securityEvents(SecurityUtils.currentTenantId(), deviceId, pageable),
                 SecurityEventView::from);
     }
 }

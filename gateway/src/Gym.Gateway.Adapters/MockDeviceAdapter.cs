@@ -18,6 +18,8 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
     private bool _connected;
     private DateTimeOffset? _lastSeen;
 
+    public DateTimeOffset? LastSynchronized { get; private set; }
+
     public string DeviceId => _config?.DeviceId ?? "";
 
     /// <summary>Tests: returns an error for photo reads of the given user, or null to read normally.</summary>
@@ -155,6 +157,17 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
             : DeviceFaceRead.None();
     }
 
+    public FaceChecksumList ListFaceChecksums()
+    {
+        if (!EnsureConnected(out var err))
+        {
+            return FaceChecksumList.Unavailable(err);
+        }
+
+        return FaceChecksumList.Complete(_faces.ToDictionary(
+            face => face.Key, face => PhotoMd5.Hex(face.Value.Photo), StringComparer.Ordinal));
+    }
+
     public DeviceCommandResult DeleteFace(string deviceUserId)
     {
         if (!EnsureConnected(out var err))
@@ -229,18 +242,9 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
 
     public DeviceCommandResult SynchronizeTime(DateTimeOffset utcNow)
     {
+        LastSynchronized = utcNow;
         Touch();
         return ConnectedOrFail();
-    }
-
-    public DeviceReconciliationResult Reconcile(DateTimeOffset? fromUtc = null, DateTimeOffset? toUtc = null)
-    {
-        if (!EnsureConnected(out var err))
-        {
-            return new DeviceReconciliationResult(false, err, [], []);
-        }
-
-        return new DeviceReconciliationResult(true, null, FetchAttendance(fromUtc, toUtc), ListUsers());
     }
 
     /// <summary>Test helper: emit a mock attendance event as if the terminal reported it.</summary>
@@ -299,6 +303,7 @@ public sealed class MockDeviceAdapter : IDeviceAdapter
             Enabled = incoming.Enabled ?? existing.Enabled,
             ValidFrom = incoming.ValidFrom ?? existing.ValidFrom,
             ValidTo = incoming.ValidTo ?? existing.ValidTo,
-            Authority = incoming.Authority ?? existing.Authority
+            Authority = incoming.Authority ?? existing.Authority,
+            NameEx = incoming.NameEx ?? existing.NameEx
         };
 }

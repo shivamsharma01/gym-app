@@ -34,7 +34,8 @@ public sealed record DeviceUserMutation(
     bool? Enabled = null,
     DateTimeOffset? ValidFrom = null,
     DateTimeOffset? ValidTo = null,
-    string? Authority = null);
+    string? Authority = null,
+    string? NameEx = null);
 
 public sealed record DeviceCommandResult(bool Ok, string? Error)
 {
@@ -57,6 +58,21 @@ public sealed record DeviceFaceRead(bool Ok, byte[]? Photo, DateTimeOffset? Upda
     public static DeviceFaceRead Fail(string error) => new(false, null, null, error);
 }
 
+/// <summary>
+/// The reader's MD5 of every stored photo, keyed by user id, read from its photo index without
+/// transferring any photo. Only a complete list is Ok; a user missing from it has no photo. A
+/// user with several photos has their MD5s joined in the reader's order.
+/// </summary>
+public sealed record FaceChecksumList(bool Ok, IReadOnlyDictionary<string, string> ByUserId, string? Error)
+{
+    private static readonly IReadOnlyDictionary<string, string> None =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    public static FaceChecksumList Complete(IReadOnlyDictionary<string, string> byUserId) => new(true, byUserId, null);
+
+    public static FaceChecksumList Unavailable(string error) => new(false, None, error);
+}
+
 public sealed record DeviceAttendanceRecord(
     string? DeviceUserId,
     DateTimeOffset OccurredAt,
@@ -65,11 +81,8 @@ public sealed record DeviceAttendanceRecord(
     long? RecNo,
     int? ErrorCode = null);
 
-public sealed record DeviceReconciliationResult(
-    bool Ok,
-    string? Error,
-    IReadOnlyList<DeviceAttendanceRecord> Events,
-    IReadOnlyList<DeviceUserSnapshot> Users);
+/// <summary>The attendance window could not be read completely. Nothing from it may be stored as complete.</summary>
+public sealed class AttendanceReadException(string message) : Exception(message);
 
 /// <summary>
 /// Kind is ACCESS, ALARM, STATUS or USER_CHANGED (a user or face was added/changed on the device;
@@ -93,7 +106,9 @@ public sealed record DeviceUserSnapshot(
     bool Frozen,
     DateTimeOffset? ValidFrom = null,
     DateTimeOffset? ValidTo = null,
-    string? Authority = null);
+    string? Authority = null,
+    string? NameEx = null,
+    string? ShortName = null);
 
 /// <summary>
 /// Raw evidence from a remote face INSERT attempt. Never treat as product success —

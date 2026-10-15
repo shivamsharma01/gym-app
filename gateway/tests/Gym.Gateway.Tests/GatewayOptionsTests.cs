@@ -52,7 +52,9 @@ public class GatewayOptionsTests
         var link = new BackendLink(options, NullLogger<BackendLink>.Instance, outbox);
         Assert.Equal("ws", link.WebSocketUri.Scheme);
         Assert.Equal("/gateway", link.WebSocketUri.AbsolutePath);
-        Assert.Contains("token=", link.WebSocketUri.Query);
+        Assert.Equal("ws://127.0.0.1:8080/gateway", link.WebSocketUri.ToString());
+        Assert.DoesNotContain("token", link.WebSocketUri.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret-token", link.WebSocketUri.ToString());
         Assert.Equal("http://127.0.0.1:8080/", link.HttpBase.ToString());
     }
 }

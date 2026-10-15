@@ -1,8 +1,5 @@
 package com.example.gym.device;
 
-import com.example.gym.device.domain.MemberDeviceMapping;
-import com.example.gym.device.domain.SyncCommandType;
-import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
@@ -11,17 +8,16 @@ import com.example.gym.membership.MembershipRepository;
 import com.example.gym.membership.MembershipStatus;
 import java.time.LocalDate;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Decides what a member's devices hold — one validity window (from / to) plus enabled or
- * disabled — and enqueues the commands. Does not talk to hardware.
+ * Decides what a member's readers should hold — one validity window plus enabled or
+ * disabled — and publishes that as a desired revision. Does not talk to hardware.
  * <p>
  * A device holds a single window, so it is taken from the membership that has not ended yet: the
  * one running today, else the next one. Memberships that run back to back (or overlap) and are
@@ -29,7 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
  * so gaps between memberships are closed without any command. Enabled means: member active, the
  * membership not frozen, and either started or the devices enforce the start date themselves.
  * Payment is bookkeeping and does not open or close the door. When the last membership has ended
- * the device is disabled and keeps its dates.
+ * the device is disabled and keeps its dates. A member whose every membership was cancelled is
+ * disabled with the latest one's dates. A member who never had a membership has no window: the
+ * readers keep them enabled with the dates adopted from the reader they came from, or today.
  */
 @Service
 public class DeviceAuthorizationService {
@@ -39,22 +37,19 @@ public class DeviceAuthorizationService {
                                boolean enabled) {
     }
 
-    private final MemberDeviceMappingRepository mappingRepository;
-    private final DeviceSyncService deviceSyncService;
     private final MemberRepository memberRepository;
     private final MembershipRepository membershipRepository;
     private final GatewayProperties properties;
+    private final ObjectProvider<DesiredProjectionService> desiredState;
 
-    public DeviceAuthorizationService(MemberDeviceMappingRepository mappingRepository,
-                                      DeviceSyncService deviceSyncService,
-                                      MemberRepository memberRepository,
+    public DeviceAuthorizationService(MemberRepository memberRepository,
                                       MembershipRepository membershipRepository,
-                                      GatewayProperties properties) {
-        this.mappingRepository = mappingRepository;
-        this.deviceSyncService = deviceSyncService;
+                                      GatewayProperties properties,
+                                      ObjectProvider<DesiredProjectionService> desiredState) {
         this.memberRepository = memberRepository;
         this.membershipRepository = membershipRepository;
         this.properties = properties;
+        this.desiredState = desiredState;
     }
 
     @Transactional(readOnly = true)
@@ -63,13 +58,15 @@ public class DeviceAuthorizationService {
     }
 
     public Optional<AccessWindow> window(Member member, LocalDate today) {
-        List<Membership> memberships = membershipRepository
+        List<Membership> all = membershipRepository
                 .findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId()).stream()
-                .filter(m -> m.getStatus() != MembershipStatus.CANCELLED)
                 .sorted(Comparator.comparing(Membership::getStartDate).thenComparing(Membership::getEndDate))
                 .toList();
+        List<Membership> memberships = all.stream()
+                .filter(m -> m.getStatus() != MembershipStatus.CANCELLED)
+                .toList();
         if (memberships.isEmpty()) {
-            return Optional.empty();
+            return all.isEmpty() ? Optional.empty() : Optional.of(cancelled(all.getLast()));
         }
         int start = -1;
         for (int i = 0; i < memberships.size(); i++) {
@@ -100,6 +97,11 @@ public class DeviceAuthorizationService {
         boolean enabled = member.getStatus() == MemberStatus.ACTIVE && usable
                 && (started || properties.isDevicesEnforceValidityDates());
         return Optional.of(new AccessWindow(first, last, first.getStartDate(), validTo, enabled));
+    }
+
+    /** Every membership was cancelled: disabled, with the dates of the latest one. */
+    private static AccessWindow cancelled(Membership last) {
+        return new AccessWindow(last, last, last.getStartDate(), last.getEndDate(), false);
     }
 
     /** Neither frozen, expired nor cancelled. Payment is not part of this decision. */
@@ -140,27 +142,10 @@ public class DeviceAuthorizationService {
         send(member, window(member));
     }
 
-    /** Sends the current window to one device (new device user, repair). */
+    /** A name change publishes the current desired user on each reader that already has this member. */
     @Transactional
-    public void enqueueFor(Member member, Long deviceId, String deviceUserId) {
-        enqueue(member, deviceId, deviceUserId, window(member));
-    }
-
-    /** The command payload for the current window, e.g. to compare with what a device reports. */
-    public static Map<String, Object> windowPayload(String deviceUserId, AccessWindow window) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("deviceUserId", deviceUserId);
-        payload.put("enabled", window.enabled());
-        payload.put("validFrom", window.validFrom().toString());
-        payload.put("validTo", window.validTo().toString());
-        return payload;
-    }
-
-    static Map<String, Object> disablePayload(String deviceUserId) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("deviceUserId", deviceUserId);
-        payload.put("enabled", false);
-        return payload;
+    public void publishProfile(Member member) {
+        desiredState.getObject().publishAccess(member);
     }
 
     private void send(Member member, Optional<AccessWindow> window) {
@@ -169,21 +154,7 @@ public class DeviceAuthorizationService {
                 window.map(AccessWindow::validTo).orElse(null),
                 window.map(AccessWindow::enabled).orElse(null));
         memberRepository.save(member);
-        for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(member.getId())) {
-            enqueue(member, mapping.getDeviceId(), mapping.getDeviceUserId(), window);
-        }
-    }
-
-    private void enqueue(Member member, Long deviceId, String deviceUserId, Optional<AccessWindow> window) {
-        if (window.isEmpty()) {
-            deviceSyncService.enqueue(member.getTenantId(), deviceId, member.getId(), null,
-                    SyncCommandType.DISABLE_USER, disablePayload(deviceUserId));
-            return;
-        }
-        AccessWindow w = window.get();
-        deviceSyncService.enqueue(member.getTenantId(), deviceId, member.getId(), w.first().getId(),
-                w.enabled() ? SyncCommandType.UPDATE_VALIDITY : SyncCommandType.DISABLE_USER,
-                windowPayload(deviceUserId, w));
+        desiredState.getObject().publishAccess(member);
     }
 
     private static boolean sameAsSent(Member member, Optional<AccessWindow> window) {

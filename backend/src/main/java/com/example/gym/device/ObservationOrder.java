@@ -121,20 +121,26 @@ public class ObservationOrder {
             if (stale) {
                 return true;
             }
-            DeviceObservedUser snapshot = observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                    .orElse(null);
+            return staleFor(deviceUserId,
+                    observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null),
+                    baselines.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null),
+                    enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null));
+        }
+
+        /** As {@link #staleFor(String)}, from the user's rows already read under the reader lock. */
+        public boolean staleFor(String deviceUserId, DeviceObservedUser snapshot, DeviceReaderBaseline baseline,
+                                PendingEnrollment enrollment) {
+            if (stale) {
+                return true;
+            }
             if (snapshot != null && (snapshot.isObservedByReadBack()
                     ? stamp.notAfter(snapshot.getObservedEpoch(), snapshot.getObservedSeq())
                     : stamp.before(snapshot.getObservedEpoch(), snapshot.getObservedSeq()))) {
                 return ignored(deviceUserId, "a later scan of this user was processed");
             }
-            DeviceReaderBaseline baseline = baselines.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                    .orElse(null);
             if (baseline != null && stamp.notAfter(baseline.getVerifiedEpoch(), baseline.getVerifiedSeq())) {
                 return ignored(deviceUserId, "the reader verified this user's record after this scan");
             }
-            PendingEnrollment enrollment = enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                    .orElse(null);
             if (enrollment != null && enrollment.isResolved()
                     && stamp.notAfter(enrollment.getSettledEpoch(), enrollment.getSettledSeq())) {
                 return ignored(deviceUserId, "the reader verified the decision about this person after this scan");

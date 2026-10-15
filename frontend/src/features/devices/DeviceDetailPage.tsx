@@ -216,6 +216,7 @@ function Reconcile({ deviceId }: Readonly<{ deviceId: string }>) {
   const written = reconcile.data?.written ?? 0
   const held = reconcile.data?.held ?? 0
   const queuedMessage = `${written} member${written === 1 ? '' : 's'} queued for this reader. The reader confirms each one when the gateway applies it.`
+  const heldMessage = ` ${held} member${held === 1 ? '' : 's'} held back: decide on this reader's undecided people first.`
   return (
     <Card className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Members on this reader</h2>
@@ -232,9 +233,7 @@ function Reconcile({ deviceId }: Readonly<{ deviceId: string }>) {
         <p className="text-sm text-muted">
           {written === 0 && held === 0 ? 'Nothing was missing.' : null}
           {written > 0 ? queuedMessage : null}
-          {held > 0
-            ? ` ${held} member${held === 1 ? '' : 's'} held back: decide on this reader's undecided people first.`
-            : null}
+          {held > 0 ? heldMessage : null}
         </p>
       ) : null}
       {reconcile.error ? <QueryError error={reconcile.error} /> : null}

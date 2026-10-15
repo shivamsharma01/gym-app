@@ -957,6 +957,17 @@ public sealed class ReaderWorker : IDisposable
         command.ExecuteNonQuery();
     }
 
+    private static readonly (string Column, string Statement)[] AppliedUserColumns =
+    [
+        ("name", "ALTER TABLE applied_user ADD COLUMN name TEXT"),
+        ("name_ex", "ALTER TABLE applied_user ADD COLUMN name_ex TEXT"),
+        ("user_status", "ALTER TABLE applied_user ADD COLUMN user_status INTEGER"),
+        ("valid_from", "ALTER TABLE applied_user ADD COLUMN valid_from TEXT"),
+        ("valid_to", "ALTER TABLE applied_user ADD COLUMN valid_to TEXT"),
+        ("authority", "ALTER TABLE applied_user ADD COLUMN authority TEXT"),
+        ("face_sha256", "ALTER TABLE applied_user ADD COLUMN face_sha256 TEXT")
+    ];
+
     /// <summary>A journal from before the written record was kept gets the columns, empty.</summary>
     private void AddWrittenRecordColumns()
     {
@@ -971,7 +982,7 @@ public sealed class ReaderWorker : IDisposable
             }
         }
 
-        foreach (var column in new[] { "name", "name_ex", "user_status", "valid_from", "valid_to", "authority", "face_sha256" })
+        foreach (var (column, statement) in AppliedUserColumns)
         {
             if (existing.Contains(column))
             {
@@ -979,7 +990,7 @@ public sealed class ReaderWorker : IDisposable
             }
 
             using var alter = _connection.CreateCommand();
-            alter.CommandText = $"ALTER TABLE applied_user ADD COLUMN {column} {(column == "user_status" ? "INTEGER" : "TEXT")}";
+            alter.CommandText = statement;
             alter.ExecuteNonQuery();
         }
     }
@@ -1075,9 +1086,16 @@ public sealed class ReaderWorker : IDisposable
     private RetryState RecordFailure(long revision, string? deviceUserId, RetryState? previous, string error, bool permanent)
     {
         var attempts = (previous?.AttemptCount ?? 0) + 1;
-        var state = permanent
-            ? AttemptState.Rejected
-            : attempts >= ExhaustAfter ? AttemptState.Exhausted : AttemptState.Retry;
+        var state = AttemptState.Retry;
+        if (permanent)
+        {
+            state = AttemptState.Rejected;
+        }
+        else if (attempts >= ExhaustAfter)
+        {
+            state = AttemptState.Exhausted;
+        }
+
         var next = state switch
         {
             AttemptState.Rejected => DateTimeOffset.MaxValue,

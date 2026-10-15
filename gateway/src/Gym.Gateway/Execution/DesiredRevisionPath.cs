@@ -139,12 +139,8 @@ public sealed class DesiredRevisionPath
 
     private async Task<bool> ScanAsync(bool force, CancellationToken cancellationToken)
     {
-        ReaderScan? scan = null;
-        await SerializedAsync(_ =>
-        {
-            scan = ReadScan(out ReaderListResult _);
-            return Task.CompletedTask;
-        }, cancellationToken).ConfigureAwait(false);
+        var scan = await SerializedAsync(_ => Task.FromResult(ReadScan(out ReaderListResult _)), cancellationToken)
+            .ConfigureAwait(false);
         if (scan == null)
         {
             return false;
@@ -164,12 +160,8 @@ public sealed class DesiredRevisionPath
     /// </summary>
     public async Task ObserveAsync(CancellationToken cancellationToken)
     {
-        ReaderScan? scan = null;
-        await SerializedAsync(_ =>
-        {
-            scan = ReadScan(out ReaderListResult _);
-            return Task.CompletedTask;
-        }, cancellationToken).ConfigureAwait(false);
+        var scan = await SerializedAsync(_ => Task.FromResult(ReadScan(out ReaderListResult _)), cancellationToken)
+            .ConfigureAwait(false);
         if (scan != null)
         {
             await UploadNewPeopleAsync(scan, cancellationToken).ConfigureAwait(false);
@@ -200,7 +192,7 @@ public sealed class DesiredRevisionPath
 
     private sealed record ReaderScan(
         ReaderListResult Observed,
-        List<ReaderUser> Listed,
+        List<ReaderUser> People,
         Dictionary<string, string> Hashes,
         ScanStamp Stamp,
         long Observation,
@@ -231,6 +223,19 @@ public sealed class DesiredRevisionPath
         }
     }
 
+    private async Task<T> SerializedAsync<T>(Func<CancellationToken, Task<T>> run, CancellationToken cancellationToken)
+    {
+        await _pass.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await run(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _pass.Release();
+        }
+    }
+
     /// <summary>
     /// The absences and the whole list with its announced total, empty or not. The server runs the
     /// same per-user observation for every entry of a list it processes, so the per-user messages
@@ -252,7 +257,7 @@ public sealed class DesiredRevisionPath
         var observed = scan.Observed;
         var uploads = _memory.Uploads;
         var generation = uploads.Generation;
-        var listed = scan.Listed;
+        var listed = scan.People;
         var hashes = scan.Hashes;
         var missing = listed.Count > 0 ? Missing(listed) : [];
         var entries = listed.ToDictionary(
@@ -267,7 +272,6 @@ public sealed class DesiredRevisionPath
         var observing = scan.Observation;
         var perUser = new List<string>();
         var absences = new List<string>();
-        var roster = RosterUpload.NotSent;
         try
         {
             if (!awaitAcceptance)
@@ -288,7 +292,7 @@ public sealed class DesiredRevisionPath
                     .ConfigureAwait(false));
             }
 
-            roster = await UploadListAsync(scan.Stamp, observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
+            var roster = await UploadListAsync(scan.Stamp, observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
                 .ConfigureAwait(false);
             if (awaitAcceptance && roster.Accepted)
             {
@@ -366,7 +370,7 @@ public sealed class DesiredRevisionPath
 
     private async Task UploadNewPeopleAsync(ReaderScan scan, CancellationToken cancellationToken)
     {
-        var listed = scan.Listed;
+        var listed = scan.People;
         if (_observations == null || listed.Count == 0)
         {
             NotUploaded(scan);
@@ -425,9 +429,14 @@ public sealed class DesiredRevisionPath
 
             _fence = fence;
             _fencedAt = _worker.Now;
-            _gate = accepted ? ObservationGate.Open
-                : fence.Count > 0 ? ObservationGate.Fenced
-                : ObservationGate.Unobserved;
+            if (accepted)
+            {
+                _gate = ObservationGate.Open;
+            }
+            else
+            {
+                _gate = fence.Count > 0 ? ObservationGate.Fenced : ObservationGate.Unobserved;
+            }
         }
     }
 
@@ -447,8 +456,40 @@ public sealed class DesiredRevisionPath
         var checks = reconnecting && _options.ReconnectPoll > TimeSpan.Zero
             ? 1 + (int)(_options.ReconnectWait / _options.ReconnectPoll)
             : 1;
-        for (var check = 1; ; check++)
+        var processed = await CheckProcessedAsync(checks, cancellationToken).ConfigureAwait(false);
+        if (processed != null)
         {
+            return processed.Value;
+        }
+
+        lock (_gateLock)
+        {
+            if (_gate == ObservationGate.Fenced && _worker.Now - _fencedAt >= _options.FenceTimeout)
+            {
+                _log.LogWarning(
+                    "Reader {DeviceId}: the server has not processed the reader observation after {Seconds}s; it is read and sent again",
+                    _deviceId, (int)_options.FenceTimeout.TotalSeconds);
+                _gate = ObservationGate.Unobserved;
+            }
+        }
+
+        _log.LogInformation("Reader {DeviceId}: desired state waits until the server has processed the reader observation", _deviceId);
+        return false;
+    }
+
+    /// <summary>
+    /// Asks the server up to <paramref name="checks"/> times, a poll apart. Null when the
+    /// observation is still waiting for the server after the last check.
+    /// </summary>
+    private async Task<bool?> CheckProcessedAsync(int checks, CancellationToken cancellationToken)
+    {
+        for (var check = 1; check <= checks; check++)
+        {
+            if (check > 1)
+            {
+                await Task.Delay(_options.ReconnectPoll, cancellationToken).ConfigureAwait(false);
+            }
+
             ObservationGate gate;
             IReadOnlyList<IReadOnlyList<string>> fence;
             long observation;
@@ -481,28 +522,9 @@ public sealed class DesiredRevisionPath
                     return _gate == ObservationGate.Open;
                 }
             }
-
-            if (check >= checks)
-            {
-                break;
-            }
-
-            await Task.Delay(_options.ReconnectPoll, cancellationToken).ConfigureAwait(false);
         }
 
-        lock (_gateLock)
-        {
-            if (_gate == ObservationGate.Fenced && _worker.Now - _fencedAt >= _options.FenceTimeout)
-            {
-                _log.LogWarning(
-                    "Reader {DeviceId}: the server has not processed the reader observation after {Seconds}s; it is read and sent again",
-                    _deviceId, (int)_options.FenceTimeout.TotalSeconds);
-                _gate = ObservationGate.Unobserved;
-            }
-        }
-
-        _log.LogInformation("Reader {DeviceId}: desired state waits until the server has processed the reader observation", _deviceId);
-        return false;
+        return null;
     }
 
     private async Task<bool> AnyProcessedAsync(IReadOnlyList<IReadOnlyList<string>> fence, CancellationToken cancellationToken)
@@ -775,7 +797,7 @@ public sealed class DesiredRevisionPath
         }
         catch (DesiredRefusedException ex)
         {
-            _log.LogInformation(
+            _log.LogInformation(ex,
                 "Reader {DeviceId}: revision {Revision} was replaced before its report ({Message})",
                 _deviceId, item.Revision, ex.Message);
         }
@@ -985,7 +1007,7 @@ public sealed class DesiredRevisionPath
             FakeReader.FailNoRecord) { ReadAfter = _worker.CurrentScan }, cancellationToken).ConfigureAwait(false);
     }
 
-    private sealed class ReadBackException(string message) : Exception(message);
+    public sealed class ReadBackException(string message) : Exception(message);
 }
 
 /// <summary>

@@ -301,8 +301,7 @@ public sealed class DesiredRevisionPath
             var roster = await UploadListAsync(scan.Stamp, observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
                 .ConfigureAwait(false);
             _log.LogInformation("Reader {DeviceId}: user list ({Count} users) {Outcome}", _deviceId, listed.Count,
-                roster.Accepted ? "processed by the server"
-                : roster.MessageId != null ? "sent to the server" : "not acknowledged; users are sent one by one");
+                RosterOutcome(roster));
             if (awaitAcceptance && roster.Accepted)
             {
                 uploads.Accepted(generation, list, entries);
@@ -333,6 +332,16 @@ public sealed class DesiredRevisionPath
             _log.LogWarning(ex, "Reader {DeviceId}: the observation was not uploaded; desired state waits", _deviceId);
             EndObservation(observing, [], false);
         }
+    }
+
+    private static string RosterOutcome(RosterUpload roster)
+    {
+        if (roster.Accepted)
+        {
+            return "processed by the server";
+        }
+
+        return roster.MessageId != null ? "sent to the server" : "not acknowledged; users are sent one by one";
     }
 
     /// <summary>

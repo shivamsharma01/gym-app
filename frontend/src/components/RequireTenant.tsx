@@ -15,7 +15,7 @@ export function RequireGymTenant() {
 /** Pages the signed-in user may open only with one of these permissions; others go to the dashboard. */
 export function RequirePermission({ anyOf, children }: Readonly<{ anyOf: string[]; children: ReactNode }>) {
   const { user, has } = useAuth()
-  if (isPlatformSuperAdmin(user) || anyOf.some(has)) {
+  if (isPlatformSuperAdmin(user) || anyOf.some((permission) => has(permission))) {
     return <>{children}</>
   }
   return <Navigate to="/app/dashboard" replace />

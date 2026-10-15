@@ -1,9 +1,11 @@
 package com.example.gym.device.dto;
 
 import com.example.gym.device.ExpectedOccupant;
+import com.example.gym.device.ScanStamp;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 /** Gateway pull and acknowledgement for one reader's desired member. No public id is carried. */
@@ -23,7 +25,9 @@ public final class DesiredStateRequests {
             String validTo,
             @Size(max = 64) String faceSha256,
             Boolean present,
-            String failCode) {
+            String failCode,
+            @Size(max = ScanStamp.MAX_EPOCH) String scanEpoch,
+            @PositiveOrZero Long scanSeq) {
     }
 
     public record ReportOccupied(
@@ -50,7 +54,9 @@ public final class DesiredStateRequests {
             @Size(max = 32) String authority,
             Integer doorNum,
             Integer timeSectionNum,
-            @Size(max = 64) String faceSha256) {
+            @Size(max = 64) String faceSha256,
+            @Size(max = ScanStamp.MAX_EPOCH) String scanEpoch,
+            @PositiveOrZero Long scanSeq) {
     }
 
     /** The message ids of one reader observation the gateway sent before it applies desired state. */

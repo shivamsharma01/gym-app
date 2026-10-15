@@ -5,6 +5,7 @@ import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.Device;
+import com.example.gym.device.domain.DeviceObservedUser;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.member.Member;
@@ -120,6 +121,19 @@ public class ReaderReconcileService {
             } else {
                 desired.seedIfAbsent(member, reader);
             }
+        }
+    }
+
+    /**
+     * A reader shows {@code person}, whom staff have not decided on. Every member they may already
+     * be loses a seed on this reader the gateway was never sent, so the reader is not given a second
+     * identity of the same person. Call with the reader locked; the lock keeps a pull out until the
+     * caller commits.
+     */
+    @Transactional
+    public void withdrawUnservedSeeds(Device reader, DeviceObservedUser person) {
+        for (Member member : matcher.candidates(reader.getTenantId(), person)) {
+            desired.withdrawUnservedSeed(member, reader, deviceUserId -> matcher.seenAt(reader, deviceUserId));
         }
     }
 

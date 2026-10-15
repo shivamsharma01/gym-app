@@ -11,6 +11,7 @@ import com.example.gym.device.ReaderRevisions;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractIntegrationTest;
+import com.example.gym.support.Scans;
 import com.example.gym.tenant.Tenant;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
@@ -44,7 +45,8 @@ import tools.jackson.databind.JsonNode;
  */
 class TrustedListOnlyScanIT extends AbstractIntegrationTest {
 
-    private static final Pattern VOLATILE = Pattern.compile("^id$|^public_id$|^version$|_at$|_by$|(?<!device_user)_id$");
+    private static final Pattern VOLATILE = Pattern.compile(
+            "^id$|^public_id$|^version$|_at$|_by$|(?<!device_user)_id$|_epoch$|_seq$|^served_revision$");
     private static final List<String> OBSERVED_TABLES = List.of(
             "device_observed_user", "pending_enrollment", "device_review_item", "device_review_snapshot",
             "device_reader_baseline", "member_device_mapping", "desired_member", "reader_revision", "member");
@@ -218,7 +220,10 @@ class TrustedListOnlyScanIT extends AbstractIntegrationTest {
                 .orElseThrow().getReaderName()).isEqualTo("Asha Shah");
     }
 
-    /** Every observation table, without generated ids, timestamps, or versions, rows sorted. */
+    /**
+     * Every observation table, without generated ids, timestamps, versions, or scan numbers, rows
+     * sorted. The two paths are different scans, so their numbers differ by design.
+     */
     private static Map<String, List<String>> dump() throws Exception {
         Map<String, List<String>> tables = new LinkedHashMap<>();
         try (var connection = rootConnection(); var statement = connection.createStatement()) {
@@ -300,7 +305,7 @@ class TrustedListOnlyScanIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayId, devicePublicId,
-                UUID.randomUUID(), payload.strip());
+                UUID.randomUUID(), Scans.stamp(payload.strip()));
         return mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)

@@ -393,6 +393,7 @@ public sealed class ChangeOnlyScanTests : IDisposable
 
         public Task<IReadOnlyList<string>> UploadAsync(
             string deviceId,
+            ScanStamp scan,
             IReadOnlyList<ReaderUser> users,
             IReadOnlyDictionary<string, string> faceHashes,
             CancellationToken cancellationToken)
@@ -403,6 +404,7 @@ public sealed class ChangeOnlyScanTests : IDisposable
 
         public async Task<RosterUpload> UploadTrustedRosterAsync(
             string deviceId,
+            ScanStamp scan,
             int announcedTotal,
             IReadOnlyList<ReaderUser> users,
             IReadOnlyDictionary<string, string> faceHashes,
@@ -422,7 +424,7 @@ public sealed class ChangeOnlyScanTests : IDisposable
         }
 
         public Task<IReadOnlyList<string>> UploadAbsencesAsync(
-            string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
+            string deviceId, ScanStamp scan, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
         {
             Calls.Add("absences");
             return Task.FromResult<IReadOnlyList<string>>(deviceUserIds.Select(id => "absence-" + id).ToList());

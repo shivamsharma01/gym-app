@@ -13,6 +13,7 @@ import com.example.gym.device.domain.PendingEnrollment;
 import com.example.gym.face.MemberFaceService;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractIntegrationTest;
+import com.example.gym.support.Scans;
 import com.example.gym.tenant.Tenant;
 import java.time.Instant;
 import java.util.UUID;
@@ -292,7 +293,7 @@ class RosterBootstrapReportIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, devicePublicId,
-                UUID.randomUUID(), payload);
+                UUID.randomUUID(), Scans.stamp(payload));
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)

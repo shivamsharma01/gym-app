@@ -16,8 +16,10 @@ namespace Gym.Gateway.Execution;
 /// Desired state is applied only after the server has processed the reader's latest observation:
 /// after a start or a reconnect, and after every observation upload, the path waits until the
 /// server confirms those messages were processed. A failed revision does not stop newer ones: it is
-/// retried with backoff, and dropped only when the server no longer desires it. One pass at a time
-/// runs per reader.
+/// retried with backoff, and dropped only when the server no longer desires it. One pass, or one
+/// scan's read of the reader, runs at a time per reader. Each scan is numbered in the reader's
+/// journal before the reader is read, and every upload, read-back and occupant report carries the
+/// number, so the server can tell an observation taken before a verified write from one taken after.
 /// </remarks>
 public sealed class DesiredRevisionPath
 {
@@ -137,14 +139,19 @@ public sealed class DesiredRevisionPath
 
     private async Task<bool> ScanAsync(bool force, CancellationToken cancellationToken)
     {
-        var observed = _reader.ListUsers();
-        if (!observed.Ok || !observed.CountMatchesAnnouncedTotal)
+        ReaderScan? scan = null;
+        await SerializedAsync(_ =>
+        {
+            scan = ReadScan(out ReaderListResult _);
+            return Task.CompletedTask;
+        }, cancellationToken).ConfigureAwait(false);
+        if (scan == null)
         {
             return false;
         }
 
-        await UploadTrustedListAsync(observed, true, force, cancellationToken).ConfigureAwait(false);
-        if (observed.Users.Count == 0)
+        await UploadTrustedListAsync(scan, true, force, cancellationToken).ConfigureAwait(false);
+        if (scan.Observed.Users.Count == 0)
         {
             await SerializedAsync(ct => HandleCoreAsync(false, ct), cancellationToken).ConfigureAwait(false);
         }
@@ -157,13 +164,58 @@ public sealed class DesiredRevisionPath
     /// </summary>
     public async Task ObserveAsync(CancellationToken cancellationToken)
     {
-        var observed = _reader.ListUsers();
-        if (!observed.Ok)
+        ReaderScan? scan = null;
+        await SerializedAsync(_ =>
         {
-            return;
+            scan = ReadScan(out ReaderListResult _);
+            return Task.CompletedTask;
+        }, cancellationToken).ConfigureAwait(false);
+        if (scan != null)
+        {
+            await UploadNewPeopleAsync(scan, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// One numbered read of the reader for upload: the list, the photo hashes, and the scan number.
+    /// Call inside the pass. The number is taken before the read and desired state starts to wait
+    /// before the pass ends, so no write, read-back or pull falls between the read and the upload.
+    /// The upload itself runs outside the pass. Null when the reader gave no trusted list; desired
+    /// state is then left as it was.
+    /// </summary>
+    private ReaderScan? ReadScan(out ReaderListResult observed)
+    {
+        var stamp = _worker.BeginScan();
+        observed = _reader.ListUsers();
+        if (!observed.Ok || !observed.CountMatchesAnnouncedTotal)
+        {
+            return null;
         }
 
-        await UploadNewPeopleAsync(observed, cancellationToken).ConfigureAwait(false);
+        var before = Gate;
+        var observation = _observations == null ? 0 : BeginObservation();
+        var listed = Listed(observed);
+        return new ReaderScan(observed, listed, FaceHashes(listed), stamp, observation, before);
+    }
+
+    private sealed record ReaderScan(
+        ReaderListResult Observed,
+        List<ReaderUser> Listed,
+        Dictionary<string, string> Hashes,
+        ScanStamp Stamp,
+        long Observation,
+        ObservationGate Before);
+
+    /// <summary>A read that is not uploaded leaves desired state as it was before the read.</summary>
+    private void NotUploaded(ReaderScan scan)
+    {
+        lock (_gateLock)
+        {
+            if (_observations != null && scan.Observation == _observation)
+            {
+                _gate = scan.Before;
+            }
+        }
     }
 
     private async Task SerializedAsync(Func<CancellationToken, Task> run, CancellationToken cancellationToken)
@@ -190,27 +242,29 @@ public sealed class DesiredRevisionPath
     /// nothing. Whatever is sent becomes the observation desired state waits for.
     /// </summary>
     private async Task UploadTrustedListAsync(
-        ReaderListResult observed, bool awaitAcceptance, bool force, CancellationToken cancellationToken)
+        ReaderScan scan, bool awaitAcceptance, bool force, CancellationToken cancellationToken)
     {
-        if (_observations == null || !observed.CountMatchesAnnouncedTotal)
+        if (_observations == null)
         {
             return;
         }
 
+        var observed = scan.Observed;
         var uploads = _memory.Uploads;
         var generation = uploads.Generation;
-        var listed = Listed(observed);
-        var hashes = FaceHashes(listed);
+        var listed = scan.Listed;
+        var hashes = scan.Hashes;
         var missing = listed.Count > 0 ? Missing(listed) : [];
         var entries = listed.ToDictionary(
             user => user.DeviceUserId, user => ScanUploadState.Entry(user, hashes), StringComparer.Ordinal);
         var list = ScanUploadState.List(observed.AnnouncedTotal, entries, missing);
         if (awaitAcceptance && !force && uploads.AlreadyAccepted(list))
         {
+            NotUploaded(scan);
             return;
         }
 
-        var observing = BeginObservation();
+        var observing = scan.Observation;
         var perUser = new List<string>();
         var absences = new List<string>();
         var roster = RosterUpload.NotSent;
@@ -223,18 +277,18 @@ public sealed class DesiredRevisionPath
 
             if (!awaitAcceptance && listed.Count > 0)
             {
-                perUser.AddRange(await _observations.UploadAsync(_deviceId, listed, hashes, cancellationToken)
+                perUser.AddRange(await _observations.UploadAsync(_deviceId, scan.Stamp, listed, hashes, cancellationToken)
                     .ConfigureAwait(false));
                 uploads.Sent(entries.Keys.ToHashSet(StringComparer.Ordinal), entries);
             }
 
             if (missing.Count > 0)
             {
-                absences.AddRange(await _observations.UploadAbsencesAsync(_deviceId, missing, cancellationToken)
+                absences.AddRange(await _observations.UploadAbsencesAsync(_deviceId, scan.Stamp, missing, cancellationToken)
                     .ConfigureAwait(false));
             }
 
-            roster = await UploadListAsync(observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
+            roster = await UploadListAsync(scan.Stamp, observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
                 .ConfigureAwait(false);
             if (awaitAcceptance && roster.Accepted)
             {
@@ -246,7 +300,7 @@ public sealed class DesiredRevisionPath
                 if (unsent.Count > 0)
                 {
                     perUser.AddRange(await _observations.UploadAsync(
-                            _deviceId, listed.Where(user => unsent.Contains(user.DeviceUserId)).ToList(), hashes,
+                            _deviceId, scan.Stamp, listed.Where(user => unsent.Contains(user.DeviceUserId)).ToList(), hashes,
                             cancellationToken)
                         .ConfigureAwait(false));
                     uploads.Sent(unsent, entries);
@@ -291,6 +345,7 @@ public sealed class DesiredRevisionPath
 
     /// <summary>Any failure of the list counts as not accepted, so the per-user messages still go.</summary>
     private async Task<RosterUpload> UploadListAsync(
+        ScanStamp stamp,
         int announcedTotal,
         IReadOnlyList<ReaderUser> listed,
         IReadOnlyDictionary<string, string> hashes,
@@ -300,7 +355,7 @@ public sealed class DesiredRevisionPath
         try
         {
             return await _observations!.UploadTrustedRosterAsync(
-                    _deviceId, announcedTotal, listed, hashes, awaitAcceptance, cancellationToken)
+                    _deviceId, stamp, announcedTotal, listed, hashes, awaitAcceptance, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -309,28 +364,24 @@ public sealed class DesiredRevisionPath
         }
     }
 
-    private async Task UploadNewPeopleAsync(ReaderListResult observed, CancellationToken cancellationToken)
+    private async Task UploadNewPeopleAsync(ReaderScan scan, CancellationToken cancellationToken)
     {
-        if (_observations == null || !observed.CountMatchesAnnouncedTotal)
+        var listed = scan.Listed;
+        if (_observations == null || listed.Count == 0)
         {
+            NotUploaded(scan);
             return;
         }
 
-        var listed = Listed(observed);
-        if (listed.Count == 0)
-        {
-            return;
-        }
-
-        var observing = BeginObservation();
+        var observing = scan.Observation;
         try
         {
-            var sent = new List<string>(await _observations.UploadAsync(_deviceId, listed, FaceHashes(listed), cancellationToken)
+            var sent = new List<string>(await _observations.UploadAsync(_deviceId, scan.Stamp, listed, scan.Hashes, cancellationToken)
                 .ConfigureAwait(false));
             var missing = Missing(listed);
             if (missing.Count > 0)
             {
-                sent.AddRange(await _observations.UploadAbsencesAsync(_deviceId, missing, cancellationToken)
+                sent.AddRange(await _observations.UploadAbsencesAsync(_deviceId, scan.Stamp, missing, cancellationToken)
                     .ConfigureAwait(false));
             }
 
@@ -487,8 +538,8 @@ public sealed class DesiredRevisionPath
             _nextObserve = _worker.Now + _options.ObserveRetry;
         }
 
-        var observed = _reader.ListUsers();
-        if (!observed.Ok || !observed.CountMatchesAnnouncedTotal)
+        var scan = ReadScan(out var observed);
+        if (scan == null)
         {
             _log.LogWarning(
                 "Reader {DeviceId}: no trusted user list ({Error}); desired state waits until one is processed",
@@ -496,7 +547,7 @@ public sealed class DesiredRevisionPath
             return false;
         }
 
-        await UploadTrustedListAsync(observed, false, false, cancellationToken).ConfigureAwait(false);
+        await UploadTrustedListAsync(scan, false, false, cancellationToken).ConfigureAwait(false);
         return Gate is ObservationGate.Fenced or ObservationGate.Open;
     }
 
@@ -686,8 +737,9 @@ public sealed class DesiredRevisionPath
         switch (result.Kind)
         {
             case MemberApplyKind.OccupantChanged:
+                var occupant = (result.Occupant ?? ReaderOccupant.Nobody) with { ReadAfter = _worker.CurrentScan };
                 return await ReportAsync(item, ct => _client.ReportOccupantAsync(
-                        _deviceId, item.Revision, item.DeviceUserId, result.Occupant ?? ReaderOccupant.Nobody, ct),
+                        _deviceId, item.Revision, item.DeviceUserId, occupant, ct),
                     cancellationToken).ConfigureAwait(false);
             case MemberApplyKind.Occupied:
                 var occupiedId = result.Detail;
@@ -864,7 +916,7 @@ public sealed class DesiredRevisionPath
             read.UserStatus,
             ReaderLocalTime.Format(read.ValidFrom.Value),
             ReaderLocalTime.Format(read.ValidTo.Value),
-            hash), cancellationToken).ConfigureAwait(false);
+            hash) { ReadAfter = _worker.CurrentScan }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task AcknowledgeFaceClearedAsync(DesiredPullItem item, CancellationToken cancellationToken)
@@ -908,7 +960,7 @@ public sealed class DesiredRevisionPath
             ReaderLocalTime.Format(read.ValidTo.Value),
             "",
             true,
-            FakeReader.FailUnknown), cancellationToken).ConfigureAwait(false);
+            FakeReader.FailUnknown) { ReadAfter = _worker.CurrentScan }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task AcknowledgeAbsenceAsync(DesiredPullItem item, CancellationToken cancellationToken)
@@ -930,7 +982,7 @@ public sealed class DesiredRevisionPath
             "",
             "",
             false,
-            FakeReader.FailNoRecord), cancellationToken).ConfigureAwait(false);
+            FakeReader.FailNoRecord) { ReadAfter = _worker.CurrentScan }, cancellationToken).ConfigureAwait(false);
     }
 
     private sealed class ReadBackException(string message) : Exception(message);

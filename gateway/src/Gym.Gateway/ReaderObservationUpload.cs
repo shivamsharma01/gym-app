@@ -9,7 +9,8 @@ namespace Gym.Gateway;
 
 /// <summary>
 /// Uploads a trusted list of reader-created people. A failed send stays in the outbound journal.
-/// This path does not write any reader.
+/// This path does not write any reader. Every message carries the scan that read it, which the
+/// caller numbered before it read the reader.
 /// </summary>
 public sealed class ReaderObservationUpload : IReaderObservationUpload
 {
@@ -41,6 +42,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
 
     public async Task<IReadOnlyList<string>> UploadAsync(
         string deviceId,
+        ScanStamp scan,
         IReadOnlyList<ReaderUser> users,
         IReadOnlyDictionary<string, string> faceHashes,
         CancellationToken cancellationToken)
@@ -50,6 +52,8 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         {
             var envelope = GatewayEnvelope.Create(_gatewayId, ProtocolTypes.DeviceUserChanged, new
             {
+                scanEpoch = scan.Epoch,
+                scanSeq = scan.Seq,
                 deviceUserId = user.DeviceUserId,
                 name = user.Name,
                 nameEx = user.NameEx,
@@ -82,6 +86,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
 
     public async Task<RosterUpload> UploadTrustedRosterAsync(
         string deviceId,
+        ScanStamp scan,
         int announcedTotal,
         IReadOnlyList<ReaderUser> users,
         IReadOnlyDictionary<string, string> faceHashes,
@@ -105,6 +110,8 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         }).ToArray();
         var envelope = GatewayEnvelope.Create(_gatewayId, ProtocolTypes.DeviceUserChanged, new
         {
+            scanEpoch = scan.Epoch,
+            scanSeq = scan.Seq,
             announcedTotal,
             users = people
         }, deviceId);
@@ -146,7 +153,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
     }
 
     public async Task<IReadOnlyList<string>> UploadAbsencesAsync(
-        string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
+        string deviceId, ScanStamp scan, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
     {
         var sent = new List<string>();
         foreach (var deviceUserId in deviceUserIds)
@@ -158,6 +165,8 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
 
             var envelope = GatewayEnvelope.Create(_gatewayId, ProtocolTypes.DeviceUserChanged, new
             {
+                scanEpoch = scan.Epoch,
+                scanSeq = scan.Seq,
                 deviceUserId,
                 isNew = false,
                 deleted = true

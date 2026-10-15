@@ -72,6 +72,9 @@ public sealed record ExpectedOccupant(
 public sealed record ReaderOccupant(bool Present, ReaderUser? User, string FaceSha256)
 {
     public static readonly ReaderOccupant Nobody = new(false, null, "");
+
+    /// <summary>The reader's newest scan when this was read; every scan up to it came before.</summary>
+    public ScanStamp? ReadAfter { get; init; }
 }
 
 public enum MemberApplyKind

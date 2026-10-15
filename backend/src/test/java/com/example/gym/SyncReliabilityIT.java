@@ -23,6 +23,7 @@ import com.example.gym.device.domain.SyncCommandState;
 import com.example.gym.device.domain.SyncCommandType;
 import com.example.gym.face.FaceStorageService;
 import com.example.gym.support.AbstractIntegrationTest;
+import com.example.gym.support.Scans;
 import com.example.gym.tenant.Tenant;
 import java.time.Instant;
 import java.util.List;
@@ -265,7 +266,8 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
         return """
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"%s","correlationId":"%s","payload":%s}
-                """.formatted(messageId, Instant.now(), gatewayId, deviceId, type, UUID.randomUUID(), payload);
+                """.formatted(messageId, Instant.now(), gatewayId, deviceId, type, UUID.randomUUID(),
+                        "DEVICE_USER_CHANGED".equals(type) ? Scans.stamp(payload) : payload);
     }
 
     private org.springframework.test.web.servlet.ResultActions postJson(String path, String body) throws Exception {

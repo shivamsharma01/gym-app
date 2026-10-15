@@ -26,15 +26,18 @@ public class ReaderOccupantService {
     private final PendingEnrollmentService observations;
     private final ReaderReviewService reviews;
     private final PendingEnrollmentRepository enrollments;
+    private final ReaderRevisions revisions;
 
     public ReaderOccupantService(DesiredProjectionService desired,
                                  PendingEnrollmentService observations,
                                  ReaderReviewService reviews,
-                                 PendingEnrollmentRepository enrollments) {
+                                 PendingEnrollmentRepository enrollments,
+                                 ReaderRevisions revisions) {
         this.desired = desired;
         this.observations = observations;
         this.reviews = reviews;
         this.enrollments = enrollments;
+        this.revisions = revisions;
     }
 
     /**
@@ -51,6 +54,12 @@ public class ReaderOccupantService {
             throw CommonExceptions.conflict("Reported id is not the desired id");
         }
         ObjectNode payload = Boolean.TRUE.equals(report.present()) ? payload(report) : null;
+        ScanStamp readAfter = ScanStamp.of(report.scanEpoch(), report.scanSeq());
+        if (payload != null && readAfter != null
+                && ObservationOrder.accept(revisions.lock(device.getTenantId(), device.getId()), readAfter)) {
+            payload.put("scanEpoch", readAfter.epoch());
+            payload.put("scanSeq", readAfter.seq());
+        }
         if (row.getMemberId() == null || awaitingEnrollmentDecision(device, row)) {
             observations.decisionOvertaken(device, row, payload);
         } else if (payload == null) {

@@ -117,7 +117,27 @@ public class DesiredMemberProjection extends TenantAwareEntity {
     @Column(name = "apply_error_permanent", nullable = false)
     private boolean applyErrorPermanent;
 
+    /** The revision a seed trigger placed this row at; null when staff or a member create placed it. */
+    @Column(name = "seed_revision")
+    private Long seedRevision;
+
     protected DesiredMemberProjection() {
+    }
+
+    public Long getSeedRevision() {
+        return seedRevision;
+    }
+
+    public void setSeedRevision(Long seedRevision) {
+        this.seedRevision = seedRevision;
+    }
+
+    /**
+     * A seed the gateway has never been sent, in any version: no pull served its first revision and
+     * no read-back confirmed it. {@code served} is the highest revision any pull of this reader served.
+     */
+    public boolean unservedSeed(long served) {
+        return seedRevision != null && ackedRevision == null && seedRevision > served;
     }
 
     public DesiredMemberProjection(Long tenantId, Long deviceId, Long memberId) {

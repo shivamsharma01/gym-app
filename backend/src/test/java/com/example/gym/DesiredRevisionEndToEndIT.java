@@ -25,6 +25,7 @@ import com.example.gym.member.Member;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.support.AbstractIntegrationTest;
+import com.example.gym.support.Scans;
 import com.example.gym.tenant.Tenant;
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -759,7 +760,7 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, flaggedId,
-                UUID.randomUUID(), payload);
+                UUID.randomUUID(), Scans.stamp(payload));
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -773,7 +774,7 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, devicePublicId,
-                UUID.randomUUID(), payload);
+                UUID.randomUUID(), Scans.stamp(payload));
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -789,7 +790,7 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, devicePublicId,
-                UUID.randomUUID(), payload);
+                UUID.randomUUID(), Scans.stamp(payload));
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -811,7 +812,7 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, devicePublicId,
-                UUID.randomUUID(), payload);
+                UUID.randomUUID(), Scans.stamp(payload));
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -827,7 +828,7 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayPublicId, flaggedId,
-                UUID.randomUUID(), payload);
+                UUID.randomUUID(), Scans.stamp(payload));
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -966,7 +967,17 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isCreated())
                 .andReturn();
+        servedTo(flaggedId);
         return readJson(result.getResponse().getContentAsString());
+    }
+
+    /** The gateway pulls the reader, so what it was sent may be on the reader from now on. */
+    private void servedTo(String deviceId) throws Exception {
+        mockMvc.perform(get("/internal/gateway/desired")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .param("deviceId", deviceId)
+                        .param("after", "0"))
+                .andExpect(status().isOk());
     }
 
     private String createDevice(String name, boolean projection, String gatewayId) throws Exception {

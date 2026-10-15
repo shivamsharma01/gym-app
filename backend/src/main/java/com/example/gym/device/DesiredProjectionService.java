@@ -37,9 +37,11 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.ObjLongConsumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -132,10 +134,37 @@ public class DesiredProjectionService {
                     device.getPublicId(), member.getPublicId());
             return null;
         }
-        write(member, device, face);
+        write(member, device, face, true);
         return mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
                 .map(MemberDeviceMapping::getDeviceUserId)
                 .orElse(null);
+    }
+
+    /**
+     * Takes back a seed of {@code member} on this reader that the gateway was never sent, so the
+     * reader is not given them while it may already hold them under another id. A row the reader
+     * may have, or one a decision placed, stays. Call with the reader locked.
+     *
+     * @param seenAt whether the reader has been seen holding someone at an id
+     * @return whether a seed was withdrawn
+     */
+    @Transactional
+    public boolean withdrawUnservedSeed(Member member, Device device, Predicate<String> seenAt) {
+        ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+        DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .map(revisions::reload)
+                .orElse(null);
+        if (row == null || !row.unservedSeed(cursor.getServedRevision())
+                || reviews.baseline(device.getId(), row.getDeviceUserId()).isPresent()
+                || seenAt.test(row.getDeviceUserId())) {
+            return false;
+        }
+        mappings.findByDeviceIdAndMemberId(device.getId(), member.getId()).ifPresent(mappings::delete);
+        projections.delete(row);
+        projections.flush();
+        FlowLog.info("device", "seed withdrawn reader={} member={} user={}: the reader may already hold them",
+                device.getPublicId(), member.getPublicId(), row.getDeviceUserId());
+        return true;
     }
 
     /** The id this reader holds the member under. */
@@ -154,6 +183,10 @@ public class DesiredProjectionService {
 
     @Transactional
     public long write(Member member, Device device, MemberFace face) {
+        return write(member, device, face, false);
+    }
+
+    private long write(Member member, Device device, MemberFace face, boolean seed) {
         if (device.getGatewayId() == null) {
             throw CommonExceptions.badRequest("Reader has no gateway");
         }
@@ -171,6 +204,9 @@ public class DesiredProjectionService {
                 member.getTenantId(), device.getId(), member.getId());
         fill(row, revision, deviceUserId, member, face);
         row.setExpected(ExpectedOccupant.ABSENT);
+        if (seed) {
+            row.setSeedRevision(revision);
+        }
         projections.save(row);
         notifyAfterCommit(device, revision);
         FlowLog.info("device", "desired member reader={} revision={} user={}",
@@ -465,7 +501,10 @@ public class DesiredProjectionService {
         return revision;
     }
 
-    /** Inactive is access disallowed, not an archive. A member with no plan stays enabled. */
+    /**
+     * Inactive is access disallowed, not an archive. A member who never had a membership stays
+     * enabled; one whose every membership was cancelled is disabled.
+     */
     private int readerStatus(Member member) {
         if (member.getStatus() != MemberStatus.ACTIVE) {
             return 1;
@@ -476,15 +515,20 @@ public class DesiredProjectionService {
         return authorization.desiredEnabled(member) ? USER_STATUS : 1;
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * One page of rows after {@code after}. The reader is locked and the highest revision served is
+     * recorded, so a seed the gateway was never sent can still be withdrawn. Rows are read after the
+     * lock, from the latest commits.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public DesiredPage pull(Gateway gateway, String devicePublicId, long after, int limit) {
         if (after < 0) {
             throw CommonExceptions.badRequest("after must be zero or greater");
         }
         Device device = ownedReader(gateway, devicePublicId);
-        ReaderRevision cursor = revisions.find(device.getId()).orElse(null);
-        long desired = cursor == null ? 0 : cursor.getDesiredRevision();
-        long applied = cursor == null ? 0 : cursor.getAppliedRevision();
+        ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+        long desired = cursor.getDesiredRevision();
+        long applied = cursor.getAppliedRevision();
         int page = Math.min(Math.max(limit, 1), PAGE_LIMIT);
         List<DesiredItem> items = projections
                 .findByDeviceIdAndHeldFalseAndRevisionGreaterThanOrderByRevisionAsc(
@@ -492,6 +536,9 @@ public class DesiredProjectionService {
                 .stream()
                 .map(this::item)
                 .toList();
+        if (!items.isEmpty()) {
+            cursor.served(items.getLast().revision());
+        }
         return new DesiredPage(desired, applied, items);
     }
 
@@ -500,6 +547,10 @@ public class DesiredProjectionService {
         Device device = ownedReader(gateway, ack.deviceId());
         ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
         DesiredMemberProjection row = currentAt(device, ack.revision());
+        ScanStamp readAfter = ScanStamp.of(ack.scanEpoch(), ack.scanSeq());
+        if (readAfter != null && !ObservationOrder.accept(cursor, readAfter)) {
+            readAfter = null;
+        }
         if (!matches(row, ack)) {
             String error = "Read-back does not match the desired member";
             if (ack.failCode() != null && !ack.failCode().isBlank()) {
@@ -517,9 +568,9 @@ public class DesiredProjectionService {
         row.acknowledged(ack.revision());
         projections.save(row);
         if (row.isPresentOnReader()) {
-            reviews.reconcile(row);
+            reviews.reconcile(row, readAfter);
         }
-        reviews.settle(device.getId(), row.getDeviceUserId(), row.getMemberId(), ack.revision());
+        reviews.settle(device.getId(), row.getDeviceUserId(), row.getMemberId(), ack.revision(), readAfter);
         if (ack.revision() > cursor.getAppliedRevision()) {
             cursor.setAppliedRevision(ack.revision());
         }

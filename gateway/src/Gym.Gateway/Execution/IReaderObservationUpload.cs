@@ -5,19 +5,21 @@ namespace Gym.Gateway.Execution;
 /// <summary>
 /// Sends reader-created people to the server. It does not write a reader and it does not allocate an id.
 /// Each upload returns the message ids it handed to the outbound link, sent or queued, so desired
-/// state can wait until the server has processed them.
+/// state can wait until the server has processed them. Every message carries the scan that read
+/// what it reports; the server places observations by that number, not by when they arrive.
 /// </summary>
 public interface IReaderObservationUpload
 {
     Task<IReadOnlyList<string>> UploadAsync(
         string deviceId,
+        ScanStamp scan,
         IReadOnlyList<ReaderUser> users,
         IReadOnlyDictionary<string, string> faceHashes,
         CancellationToken cancellationToken);
 
     /// <summary>A mapped id missing from a trusted list. This does not remove anyone.</summary>
     Task<IReadOnlyList<string>> UploadAbsencesAsync(
-        string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken);
+        string deviceId, ScanStamp scan, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken);
 
     /// <summary>A trusted roster, empty or not, with its announced total. This does not copy users onto another reader.</summary>
     /// <returns>
@@ -28,6 +30,7 @@ public interface IReaderObservationUpload
     /// </returns>
     Task<RosterUpload> UploadTrustedRosterAsync(
         string deviceId,
+        ScanStamp scan,
         int announcedTotal,
         IReadOnlyList<ReaderUser> users,
         IReadOnlyDictionary<string, string> faceHashes,

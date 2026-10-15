@@ -183,7 +183,7 @@ public class ReaderWorkerTests : IDisposable
         Assert.Equal(1, applied);
         Assert.Equal(1, pending);
         Assert.Equal(
-            new[] { "applied_revision", "applied_user", "revision_ack", "revision_attempt", "verified_revision" },
+            new[] { "applied_revision", "applied_user", "observation_scan", "revision_ack", "revision_attempt", "verified_revision" },
             TableNames(journal));
         Assert.Equal(0, CountRows(journal, "revision_attempt"));
         Assert.Equal(0, CountRows(journal, "verified_revision"));

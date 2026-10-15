@@ -1,5 +1,6 @@
 package com.example.gym.device;
 
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceObservedUser;
@@ -48,25 +49,30 @@ public class PendingEnrollmentService {
         this.bootstrap = bootstrap;
     }
 
+    /**
+     * One admitted observation of {@code device}, with the reader locked. A user this scan shows
+     * older than the server already knows them is skipped.
+     */
     @Transactional
-    public void observe(Device device, JsonNode payload) {
+    public void observe(Device device, JsonNode payload, ObservationOrder.Scan scan) {
         if (device == null || payload == null) {
             return;
         }
         JsonNode users = payload.get("users");
         if (users != null && users.isArray()) {
-            observeSet(device, payload, users);
+            observeSet(device, payload, users, scan);
             return;
         }
-        observeOne(device, payload);
+        observeOne(device, payload, scan);
     }
 
     /**
      * A short, empty, or mismatched list is not a disappearance and does not change the member.
      * A trusted list records a mapped id that is missing from it, when the reader had that id
-     * before, and then seeds the active members this reader does not have yet.
+     * before and has not verified it since this scan, and then seeds the active members this reader
+     * does not have yet.
      */
-    private void observeSet(Device device, JsonNode payload, JsonNode users) {
+    private void observeSet(Device device, JsonNode payload, JsonNode users, ObservationOrder.Scan scan) {
         int announced = payload.path("announcedTotal").asInt(-1);
         if (announced != users.size()) {
             rememberEmpty(device, false);
@@ -76,7 +82,7 @@ public class PendingEnrollmentService {
         rememberEmpty(device, users.isEmpty());
         Set<String> present = new HashSet<>();
         for (JsonNode user : users) {
-            observeOne(device, user);
+            observeOne(device, user, scan);
             String deviceUserId = text(user, "deviceUserId");
             if (deviceUserId != null) {
                 present.add(deviceUserId);
@@ -84,7 +90,8 @@ public class PendingEnrollmentService {
         }
         for (DesiredMemberProjection desired : desiredMembers.findByDeviceId(device.getId())) {
             if (desired.isPresentOnReader() && !present.contains(desired.getDeviceUserId())
-                    && wasOnReader(device, desired.getDeviceUserId())) {
+                    && wasOnReader(device, desired.getDeviceUserId())
+                    && !scan.staleFor(desired.getDeviceUserId())) {
                 reviews.recordAbsence(device, desired.getDeviceUserId());
             }
         }
@@ -100,9 +107,9 @@ public class PendingEnrollmentService {
                 || reviews.verifiedOnReader(device.getId(), deviceUserId);
     }
 
-    private void observeOne(Device device, JsonNode payload) {
+    private void observeOne(Device device, JsonNode payload, ObservationOrder.Scan scan) {
         String deviceUserId = text(payload, "deviceUserId");
-        if (deviceUserId == null || deviceUserId.isBlank()) {
+        if (deviceUserId == null || deviceUserId.isBlank() || scan.staleFor(deviceUserId)) {
             return;
         }
         if (bool(payload, "deleted")) {
@@ -111,22 +118,45 @@ public class PendingEnrollmentService {
             }
             return;
         }
-        saveSnapshot(device, payload, deviceUserId);
+        withdrawCollidingSeed(device, deviceUserId, scan);
+        DeviceObservedUser snapshot = saveSnapshot(device, payload, deviceUserId, scan.stamp(), false);
         if (serverAllocated(device.getId(), deviceUserId)
                 && !reviews.releaseIfReplaced(device, deviceUserId, payload)) {
             reviews.record(device, payload, deviceUserId);
             return;
         }
-        enroll(device, deviceUserId);
+        if (enroll(device, deviceUserId)) {
+            bootstrap.withdrawUnservedSeeds(device, snapshot);
+        }
+    }
+
+    /**
+     * A seed the gateway was never sent cannot be what the reader shows at its id: the server
+     * allocated the id before it saw that the reader already uses it. The seed is taken back, so the
+     * person there is treated as the reader's own.
+     */
+    private void withdrawCollidingSeed(Device device, String deviceUserId, ObservationOrder.Scan scan) {
+        desiredMembers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .filter(row -> row.unservedSeed(scan.servedRevision()))
+                .filter(row -> reviews.baseline(device.getId(), deviceUserId).isEmpty())
+                .ifPresent(row -> {
+                    mappings.findByDeviceIdAndMemberId(device.getId(), row.getMemberId()).ifPresent(mappings::delete);
+                    desiredMembers.delete(row);
+                    desiredMembers.flush();
+                    FlowLog.info("device", "seed withdrawn reader={} user={}: the reader already uses the id",
+                            device.getPublicId(), deviceUserId);
+                });
     }
 
     /**
      * The reader holds someone the server has not attached to a member at this id. An earlier
      * decision about the id was about someone else, so it is reopened.
+     *
+     * @return true when the person is undecided
      */
-    private void enroll(Device device, String deviceUserId) {
+    private boolean enroll(Device device, String deviceUserId) {
         if (serverAllocated(device.getId(), deviceUserId)) {
-            return;
+            return false;
         }
         PendingEnrollment enrollment = enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElseGet(() -> new PendingEnrollment(device.getTenantId(), device.getId(), deviceUserId));
@@ -135,6 +165,7 @@ public class PendingEnrollmentService {
         }
         enrollment.setObservedAt(Instant.now());
         enrollments.save(enrollment);
+        return enrollment.getDecision() == null;
     }
 
     /**
@@ -146,7 +177,7 @@ public class PendingEnrollmentService {
     public void occupantChanged(Device device, DesiredMemberProjection desired, ExpectedOccupant known,
                                 JsonNode payload) {
         String deviceUserId = desired.getDeviceUserId();
-        saveSnapshot(device, payload, deviceUserId);
+        saveSnapshot(device, payload, deviceUserId, ScanStamp.of(payload), true);
         if (known != null && ReaderReviewService.replaced(known, desired, payload)) {
             reviews.suspend(device, desired, payload);
             enroll(device, deviceUserId);
@@ -178,7 +209,7 @@ public class PendingEnrollmentService {
         desiredMembers.delete(desired);
         desiredMembers.flush();
         if (payload != null) {
-            saveSnapshot(device, payload, deviceUserId);
+            saveSnapshot(device, payload, deviceUserId, ScanStamp.of(payload), true);
         }
         PendingEnrollment enrollment = enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElseGet(() -> new PendingEnrollment(device.getTenantId(), device.getId(), deviceUserId));
@@ -200,9 +231,19 @@ public class PendingEnrollmentService {
         devices.save(device);
     }
 
-    private void saveSnapshot(Device device, JsonNode payload, String deviceUserId) {
+    /**
+     * What the reader shows at the id, from a scan, or from the gateway's read at write time
+     * ({@code readBack}). A read at write time is later than every scan up to {@code stamp}.
+     */
+    private DeviceObservedUser saveSnapshot(Device device, JsonNode payload, String deviceUserId, ScanStamp stamp,
+                                            boolean readBack) {
         DeviceObservedUser snapshot = observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElseGet(() -> new DeviceObservedUser(device.getTenantId(), device.getId(), deviceUserId));
+        if (stamp != null) {
+            snapshot.observedIn(stamp.epoch(), stamp.seq(), readBack);
+        } else if (readBack) {
+            snapshot.observedIn(null, null, true);
+        }
         snapshot.setReaderName(cut(text(payload, "name"), 127));
         snapshot.setReaderNameEx(cut(text(payload, "nameEx"), 127));
         snapshot.setUserStatus(number(payload, "userStatus"));
@@ -213,7 +254,7 @@ public class PendingEnrollmentService {
         snapshot.setTimeSectionNum(optionalNumber(payload, "timeSectionNum"));
         snapshot.setFaceSha256(face(text(payload, "faceSha256")));
         snapshot.setObservedAt(Instant.now());
-        observedUsers.save(snapshot);
+        return observedUsers.save(snapshot);
     }
 
     private boolean serverAllocated(Long deviceId, String deviceUserId) {

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Gym.Gateway.Adapters;
+using Gym.Gateway.Execution;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -126,8 +127,9 @@ public sealed class OutboundSnapshotTests : IDisposable
             foreach (var reader in readers)
             {
                 var users = Users(reader, scan);
-                await upload.UploadAsync(reader, users, new Dictionary<string, string>(), CancellationToken.None);
-                await upload.UploadTrustedRosterAsync(reader, users.Count, users, new Dictionary<string, string>(),
+                var stamp = new ScanStamp("journal-" + reader, scan + 1);
+                await upload.UploadAsync(reader, stamp, users, new Dictionary<string, string>(), CancellationToken.None);
+                await upload.UploadTrustedRosterAsync(reader, stamp, users.Count, users, new Dictionary<string, string>(),
                     false, CancellationToken.None);
             }
         }

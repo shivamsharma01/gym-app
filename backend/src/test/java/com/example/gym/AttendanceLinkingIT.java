@@ -14,6 +14,7 @@ import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.live.StaffLiveBroadcast;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractIntegrationTest;
+import com.example.gym.support.Scans;
 import com.example.gym.tenant.Tenant;
 import java.time.Instant;
 import java.util.List;
@@ -323,6 +324,6 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"%s","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayId, devicePublicId, type,
-                correlationId, payloadJson);
+                correlationId, "DEVICE_USER_CHANGED".equals(type) ? Scans.stamp(payloadJson) : payloadJson);
     }
 }

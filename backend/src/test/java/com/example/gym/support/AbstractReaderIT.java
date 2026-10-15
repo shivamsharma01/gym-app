@@ -115,7 +115,20 @@ public abstract class AbstractReaderIT extends AbstractIntegrationTest {
                 faceSha256);
     }
 
+    /** The gateway journal every helper stamps its scans with. */
+    protected static final String JOURNAL = "it-journal";
+
+    /** Each helper observation is the gateway's next scan, as the gateway numbers them. */
     protected void readerSays(String readerPublicId, String payload) throws Exception {
+        sendObservation(readerPublicId, payload.contains("\"scanSeq\"") ? payload : Scans.stamp(payload));
+    }
+
+    /** One observation from scan {@code seq} of journal {@code epoch}, whenever it is delivered. */
+    protected void readerSaysAt(String readerPublicId, String epoch, long seq, String payload) throws Exception {
+        sendObservation(readerPublicId, Scans.stamp(payload, epoch, seq));
+    }
+
+    private void sendObservation(String readerPublicId, String payload) throws Exception {
         String envelope = """
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
@@ -130,8 +143,11 @@ public abstract class AbstractReaderIT extends AbstractIntegrationTest {
 
     /** A complete list: its length matches the announced total. */
     protected void trustedRoster(String readerPublicId, String... people) throws Exception {
-        readerSays(readerPublicId, "{\"announcedTotal\":" + people.length + ",\"users\":["
-                + String.join(",", people) + "]}");
+        readerSays(readerPublicId, roster(people));
+    }
+
+    protected static String roster(String... people) {
+        return "{\"announcedTotal\":" + people.length + ",\"users\":[" + String.join(",", people) + "]}";
     }
 
     protected void punch(String readerPublicId, String deviceUserId, Instant at, int recNo) throws Exception {
@@ -155,13 +171,18 @@ public abstract class AbstractReaderIT extends AbstractIntegrationTest {
 
     /** The gateway applies every pending revision and the read-back matches each one. */
     protected void ackEverything(String readerPublicId) throws Exception {
+        ackEverything(readerPublicId, JOURNAL, Scans.current());
+    }
+
+    /** As {@link #ackEverything(String)}, read back after scan {@code seq} of journal {@code epoch}. */
+    protected void ackEverything(String readerPublicId, String epoch, long seq) throws Exception {
         long applied = readerRevisionRepository.findByDeviceId(readerPk(readerPublicId))
                 .map(cursor -> cursor.getAppliedRevision()).orElse(0L);
         for (JsonNode item : pull(readerPublicId, applied).get("items")) {
             mockMvc.perform(post("/internal/gateway/desired/ack")
                             .header("Authorization", "Bearer " + gatewayToken)
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content(readBack(readerPublicId, item)))
+                            .content(Scans.stamp(readBack(readerPublicId, item), epoch, seq)))
                     .andExpect(status().isOk());
         }
     }

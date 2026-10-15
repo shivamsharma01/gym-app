@@ -74,6 +74,34 @@ public sealed class DurableOutboundStore
         }
     }
 
+    /// <summary>
+    /// Drops every unacknowledged observation of one reader. Used when the reader's scan journal is
+    /// new: those observations were numbered in a journal the server can no longer place them in.
+    /// </summary>
+    /// <returns>How many were dropped.</returns>
+    public int DropObservations(string deviceId)
+    {
+        var dropped = 0;
+        lock (_snapshotGate)
+        {
+            foreach (var envelope in ReadFiles())
+            {
+                if (envelope.Type != ProtocolTypes.DeviceUserChanged
+                    || !string.Equals(envelope.DeviceId, deviceId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                Drop(envelope.MessageId);
+                dropped++;
+            }
+
+            _latestSnapshot.Remove(deviceId);
+        }
+
+        return dropped;
+    }
+
     /// <summary>False once the envelope was acknowledged or replaced by a newer list.</summary>
     public bool IsPending(string messageId) => _pending.ContainsKey(messageId);
 

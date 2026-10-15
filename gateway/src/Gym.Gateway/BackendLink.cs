@@ -37,6 +37,9 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
 
     public bool WebSocketLive => _websocketLive;
 
+    /// <summary>See <see cref="DurableOutboundStore.DropObservations"/>.</summary>
+    public int DropObservations(string deviceId) => _outbox.DropObservations(deviceId);
+
     public void ApplyCredential(string credential)
     {
         if (string.IsNullOrWhiteSpace(credential))

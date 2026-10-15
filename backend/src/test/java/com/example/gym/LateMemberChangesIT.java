@@ -15,6 +15,7 @@ import com.example.gym.device.domain.PendingEnrollment;
 import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractIntegrationTest;
+import com.example.gym.support.Scans;
 import com.example.gym.tenant.Tenant;
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -459,7 +460,7 @@ class LateMemberChangesIT extends AbstractIntegrationTest {
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
                 """.formatted(UUID.randomUUID(), Instant.now(), gatewayId, devicePublicId,
-                UUID.randomUUID(), payload.strip());
+                UUID.randomUUID(), Scans.stamp(payload.strip()));
         return mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)

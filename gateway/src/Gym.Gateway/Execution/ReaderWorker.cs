@@ -802,6 +802,58 @@ public sealed class ReaderWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// The newest scan of this reader: the journal it belongs to and its number. A read-back or an
+    /// occupant read taken now comes after every scan up to this one.
+    /// </summary>
+    public ScanStamp CurrentScan
+    {
+        get
+        {
+            lock (_gate)
+            {
+                using var command = _connection.CreateCommand();
+                command.CommandText = "SELECT epoch, seq FROM observation_scan WHERE reader_id = $reader";
+                command.Parameters.AddWithValue(ReaderParam, _readerId);
+                using var row = command.ExecuteReader();
+                row.Read();
+                return new ScanStamp(row.GetString(0), row.GetInt64(1));
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when this journal had no scan numbering for the reader when it was opened: it is new,
+    /// or it predates numbering. Observations queued before it cannot be placed in its order.
+    /// </summary>
+    public bool IsNewJournal { get; private set; }
+
+    /// <summary>
+    /// Numbers the next scan, durably, before the reader is read for it. Call only while no write
+    /// or read-back of this reader runs, so a higher number is always a later look at the reader.
+    /// </summary>
+    public ScanStamp BeginScan()
+    {
+        lock (_gate)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "UPDATE observation_scan SET seq = seq + 1 WHERE reader_id = $reader";
+            command.Parameters.AddWithValue(ReaderParam, _readerId);
+            command.ExecuteNonQuery();
+        }
+
+        return CurrentScan;
+    }
+
+    private void StartScanJournal()
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = "INSERT OR IGNORE INTO observation_scan (reader_id, epoch, seq) VALUES ($reader, $epoch, 0)";
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
+        command.Parameters.AddWithValue("$epoch", Guid.NewGuid().ToString("N"));
+        IsNewJournal = command.ExecuteNonQuery() == 1;
+    }
+
     public void Dispose()
     {
         _connection.Dispose();
@@ -841,8 +893,14 @@ public sealed class ReaderWorker : IDisposable
                 device_user_id TEXT NOT NULL,
                 PRIMARY KEY (reader_id, device_user_id)
             );
+            CREATE TABLE IF NOT EXISTS observation_scan (
+                reader_id TEXT PRIMARY KEY,
+                epoch TEXT NOT NULL,
+                seq INTEGER NOT NULL
+            );
             """;
         command.ExecuteNonQuery();
+        StartScanJournal();
         AddWrittenRecordColumns();
         MoveSingleRetry();
         RetryStoppedOnStart();
@@ -1287,3 +1345,9 @@ public sealed record RetryState(
     bool Reported = false);
 
 public sealed record RevisionAck(string ReaderId, long Revision);
+
+/// <summary>
+/// One scan of a reader: the gateway journal that numbered it and its number there. Numbers from
+/// different journals are not comparable.
+/// </summary>
+public sealed record ScanStamp(string Epoch, long Seq);

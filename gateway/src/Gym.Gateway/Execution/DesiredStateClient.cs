@@ -79,7 +79,11 @@ public sealed record DesiredAcknowledgement(
     string ValidTo,
     string FaceSha256,
     bool Present = true,
-    string? FailCode = null);
+    string? FailCode = null)
+{
+    /// <summary>The reader's newest scan when it was read back; every scan up to it came before.</summary>
+    public ScanStamp? ReadAfter { get; init; }
+}
 
 /// <summary>
 /// Pulls a desired member and posts the read-back acknowledgement or an occupied id.
@@ -151,7 +155,9 @@ public sealed class DesiredStateClient : IDesiredStateClient
             validTo = ack.ValidTo,
             faceSha256 = ack.FaceSha256,
             present = ack.Present,
-            failCode = ack.FailCode
+            failCode = ack.FailCode,
+            scanEpoch = ack.ReadAfter?.Epoch,
+            scanSeq = ack.ReadAfter?.Seq
         }, Json);
         using var response = await PostAsync("/internal/gateway/desired/ack", json, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -236,7 +242,9 @@ public sealed class DesiredStateClient : IDesiredStateClient
             authority = user?.Authority,
             doorNum = user?.DoorNum,
             timeSectionNum = user?.TimeSectionNum,
-            faceSha256 = occupant.Present ? occupant.FaceSha256 : null
+            faceSha256 = occupant.Present ? occupant.FaceSha256 : null,
+            scanEpoch = occupant.ReadAfter?.Epoch,
+            scanSeq = occupant.ReadAfter?.Seq
         }, Json);
         using var response = await PostAsync("/internal/gateway/desired/occupant", json, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);

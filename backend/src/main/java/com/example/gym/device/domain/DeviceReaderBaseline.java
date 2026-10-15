@@ -37,6 +37,12 @@ public class DeviceReaderBaseline extends TenantAwareEntity {
     @Column(name = "face_sha256", length = 64)
     private String faceSha256;
 
+    @Column(name = "verified_epoch", length = 64)
+    private String verifiedEpoch;
+
+    @Column(name = "verified_seq")
+    private Long verifiedSeq;
+
     @Column(name = "authority", length = 32)
     private String authority;
 
@@ -111,5 +117,19 @@ public class DeviceReaderBaseline extends TenantAwareEntity {
 
     public void setFaceSha256(String faceSha256) {
         this.faceSha256 = faceSha256;
+    }
+
+    public String getVerifiedEpoch() {
+        return verifiedEpoch;
+    }
+
+    /** The last scan the gateway had taken when it read this record back; null when unknown. */
+    public Long getVerifiedSeq() {
+        return verifiedSeq;
+    }
+
+    public void verifiedAfter(String epoch, Long seq) {
+        this.verifiedEpoch = epoch;
+        this.verifiedSeq = seq;
     }
 }

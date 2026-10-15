@@ -51,6 +51,12 @@ public class PendingEnrollment extends TenantAwareEntity {
     @Column(name = "bootstrap_run_id", length = 36)
     private String bootstrapRunId;
 
+    @Column(name = "settled_epoch", length = 64)
+    private String settledEpoch;
+
+    @Column(name = "settled_seq")
+    private Long settledSeq;
+
     protected PendingEnrollment() {
     }
 
@@ -157,5 +163,19 @@ public class PendingEnrollment extends TenantAwareEntity {
         if (decision != null) {
             this.reviewStatus = decision;
         }
+    }
+
+    public String getSettledEpoch() {
+        return settledEpoch;
+    }
+
+    /** The last scan the gateway had taken when it verified the decision; null when unknown. */
+    public Long getSettledSeq() {
+        return settledSeq;
+    }
+
+    public void settledAfter(String epoch, Long seq) {
+        this.settledEpoch = epoch;
+        this.settledSeq = seq;
     }
 }

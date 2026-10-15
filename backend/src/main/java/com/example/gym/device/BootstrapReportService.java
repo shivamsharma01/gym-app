@@ -100,6 +100,12 @@ public class BootstrapReportService {
         reconcile.reconcile(reader);
     }
 
+    /** See {@link ReaderReconcileService#withdrawUnservedSeeds}. */
+    @Transactional
+    public void withdrawUnservedSeeds(Device reader, DeviceObservedUser person) {
+        reconcile.withdrawUnservedSeeds(reader, person);
+    }
+
     private List<Row> seed(Device reader) {
         if (!reader.isRosterTrustedEmpty() || !observedUsers.findByDeviceId(reader.getId()).isEmpty()) {
             return List.of();

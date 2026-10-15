@@ -18,6 +18,7 @@ import com.example.gym.member.Member;
 import com.example.gym.membership.Membership;
 import com.example.gym.membership.MembershipStatus;
 import com.example.gym.support.AbstractIntegrationTest;
+import com.example.gym.support.Scans;
 import com.example.gym.tenant.Tenant;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -431,7 +432,7 @@ class AccessWindowIT extends AbstractIntegrationTest {
         gatewayMessageService.process("""
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
-                """.formatted(UUID.randomUUID(), Instant.now(), gatewayId, deviceId, UUID.randomUUID(), payload), gatewayId);
+                """.formatted(UUID.randomUUID(), Instant.now(), gatewayId, deviceId, UUID.randomUUID(), Scans.stamp(payload)), gatewayId);
     }
 
     private ResultActions postJson(String path, String body) throws Exception {

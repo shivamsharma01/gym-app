@@ -286,10 +286,12 @@ public class ReaderReviewService {
      * The reader verified revision {@code revision} of {@code deviceUserId}. Every open staff decision
      * for that user on this reader published at or below it is closed: the decision's own revision,
      * or one a later change of the same user replaced before the gateway applied it. The decision
-     * itself is left as recorded. Call inside the acknowledgement's reader lock.
+     * itself is left as recorded. A settled enrollment remembers the scan the gateway had taken when
+     * it read the reader back ({@code readAfter}), so no earlier scan can reopen it. Call inside the
+     * acknowledgement's reader lock.
      */
     @Transactional
-    public void settle(Long deviceId, String deviceUserId, Long memberId, long revision) {
+    public void settle(Long deviceId, String deviceUserId, Long memberId, long revision, ScanStamp readAfter) {
         memberItem(deviceId, deviceUserId, memberId)
                 .filter(item -> awaiting(item.isResolved(), item.getDecisionRevision(), revision))
                 .ifPresent(item -> {
@@ -300,6 +302,9 @@ public class ReaderReviewService {
                 .filter(enrollment -> awaiting(enrollment.isResolved(), enrollment.getDecisionRevision(), revision))
                 .ifPresent(enrollment -> {
                     enrollment.resolve();
+                    if (readAfter != null) {
+                        enrollment.settledAfter(readAfter.epoch(), readAfter.seq());
+                    }
                     enrollments.save(enrollment);
                 });
     }
@@ -337,9 +342,12 @@ public class ReaderReviewService {
         return !resolved && decisionRevision != null && decisionRevision <= revision;
     }
 
-    /** The reconciled record is the desired record the reader just read back. */
+    /**
+     * The reconciled record is the desired record the reader just read back, after scan
+     * {@code readAfter} when the gateway gave one.
+     */
     @Transactional
-    public void reconcile(DesiredMemberProjection desired) {
+    public void reconcile(DesiredMemberProjection desired, ScanStamp readAfter) {
         if (desired == null || !desired.isPresentOnReader()) {
             return;
         }
@@ -348,6 +356,9 @@ public class ReaderReviewService {
                 .orElseGet(() -> new DeviceReaderBaseline(
                         desired.getTenantId(), desired.getDeviceId(), desired.getDeviceUserId()));
         copyBaseline(baseline, desired);
+        if (readAfter != null) {
+            baseline.verifiedAfter(readAfter.epoch(), readAfter.seq());
+        }
         baselines.save(baseline);
     }
 

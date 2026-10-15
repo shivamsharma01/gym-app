@@ -9,13 +9,13 @@ import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import org.springframework.stereotype.Component;
 
 /**
@@ -45,22 +45,35 @@ public class MemberMatcher {
 
     /** The member, active or not, a reader person may already be; lowest id first. */
     public Optional<Member> existing(Long tenantId, DeviceObservedUser observed) {
+        return candidates(tenantId, observed).stream().findFirst();
+    }
+
+    /** Every member, active or not, a reader person may already be; lowest id first. */
+    public List<Member> candidates(Long tenantId, DeviceObservedUser observed) {
         if (observed == null) {
-            return Optional.empty();
+            return List.of();
         }
-        List<Member> found = new ArrayList<>();
+        Map<Long, Member> found = new TreeMap<>();
         if (observed.getFaceSha256() != null && !observed.getFaceSha256().isBlank()) {
-            found.addAll(members.findByTenantIdAndFaceSha256(tenantId, observed.getFaceSha256().toLowerCase(Locale.ROOT)));
+            for (Member member : members.findByTenantIdAndFaceSha256(
+                    tenantId, observed.getFaceSha256().toLowerCase(Locale.ROOT))) {
+                found.put(member.getId(), member);
+            }
         }
         String name = normalized(ReaderReviewService.shown(observed.getReaderName(), observed.getReaderNameEx()));
         if (!name.isEmpty()) {
             for (Member member : members.findByTenantId(tenantId)) {
                 if (name.equals(normalized(member.getFullName()))) {
-                    found.add(member);
+                    found.put(member.getId(), member);
                 }
             }
         }
-        return found.stream().min(Comparator.comparing(Member::getId));
+        return List.copyOf(found.values());
+    }
+
+    /** Whether a scan has shown this reader holding someone at the id. */
+    public boolean seenAt(Device reader, String deviceUserId) {
+        return observedUsers.findByDeviceIdAndDeviceUserId(reader.getId(), deviceUserId).isPresent();
     }
 
     /**

@@ -105,6 +105,11 @@ public class GatewayMessageService {
             log.warn("Rejecting gateway message for a device gateway {} does not own", boundGatewayId);
             return Optional.of(reply(GatewayMessageType.ERROR, ex.correlationId,
                     Map.of("error", "device is not owned by this gateway")));
+        } catch (ObservationOrder.Unordered ex) {
+            log.warn("Refusing gateway message {} ({}) for device {}: {}", message.type(), message.messageId(),
+                    message.deviceId(), ex.getMessage());
+            return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
+                    Map.of("error", "observation out of order")));
         } catch (RuntimeException ex) {
             // Not recorded as processed: the gateway keeps it (no ACK) and resends it on reconnect.
             log.error("Error handling gateway message {} ({})", message.type(), message.messageId(), ex);

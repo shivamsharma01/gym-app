@@ -25,7 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
  * so gaps between memberships are closed without any command. Enabled means: member active, the
  * membership not frozen, and either started or the devices enforce the start date themselves.
  * Payment is bookkeeping and does not open or close the door. When the last membership has ended
- * the device is disabled and keeps its dates.
+ * the device is disabled and keeps its dates. A member whose every membership was cancelled is
+ * disabled with the latest one's dates. A member who never had a membership has no window: the
+ * readers keep them enabled with the dates adopted from the reader they came from, or today.
  */
 @Service
 public class DeviceAuthorizationService {
@@ -56,13 +58,15 @@ public class DeviceAuthorizationService {
     }
 
     public Optional<AccessWindow> window(Member member, LocalDate today) {
-        List<Membership> memberships = membershipRepository
+        List<Membership> all = membershipRepository
                 .findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId()).stream()
-                .filter(m -> m.getStatus() != MembershipStatus.CANCELLED)
                 .sorted(Comparator.comparing(Membership::getStartDate).thenComparing(Membership::getEndDate))
                 .toList();
+        List<Membership> memberships = all.stream()
+                .filter(m -> m.getStatus() != MembershipStatus.CANCELLED)
+                .toList();
         if (memberships.isEmpty()) {
-            return Optional.empty();
+            return all.isEmpty() ? Optional.empty() : Optional.of(cancelled(all.getLast()));
         }
         int start = -1;
         for (int i = 0; i < memberships.size(); i++) {
@@ -93,6 +97,11 @@ public class DeviceAuthorizationService {
         boolean enabled = member.getStatus() == MemberStatus.ACTIVE && usable
                 && (started || properties.isDevicesEnforceValidityDates());
         return Optional.of(new AccessWindow(first, last, first.getStartDate(), validTo, enabled));
+    }
+
+    /** Every membership was cancelled: disabled, with the dates of the latest one. */
+    private static AccessWindow cancelled(Membership last) {
+        return new AccessWindow(last, last, last.getStartDate(), last.getEndDate(), false);
     }
 
     /** Neither frozen, expired nor cancelled. Payment is not part of this decision. */

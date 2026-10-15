@@ -151,7 +151,7 @@ public sealed class LiveBootstrapTests : IDisposable
             .ToList();
 
         Assert.Equal(RosterUpload.NotSent, await upload.UploadTrustedRosterAsync(
-            "reader-big", users.Count, users, new Dictionary<string, string>(), true, CancellationToken.None));
+            "reader-big", new ScanStamp("journal", 1), users.Count, users, new Dictionary<string, string>(), true, CancellationToken.None));
 
         Assert.Equal(0, backend.Messages);
         Assert.Empty(outbox.LoadPending());

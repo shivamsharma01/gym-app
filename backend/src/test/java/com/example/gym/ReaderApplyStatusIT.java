@@ -8,6 +8,7 @@ import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractReaderIT;
+import com.example.gym.support.Scans;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -252,7 +253,7 @@ class ReaderApplyStatusIT extends AbstractReaderIT {
         String envelope = """
                 {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
                 "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
-                """.formatted(messageId, Instant.now(), gatewayPublicId, reader, UUID.randomUUID(), payload);
+                """.formatted(messageId, Instant.now(), gatewayPublicId, reader, UUID.randomUUID(), Scans.stamp(payload));
         mockMvc.perform(post("/internal/gateway/messages")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)

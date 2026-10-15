@@ -278,6 +278,9 @@ public class PendingEnrollmentTests : IDisposable
 
         public List<string> Calls { get; } = [];
 
+        /// <summary>The scan each upload named, in upload order.</summary>
+        public List<ScanStamp> Stamps { get; } = [];
+
         /// <summary>The face hashes each list carried, in upload order.</summary>
         public List<Dictionary<string, string>> RosterHashes { get; } = [];
 
@@ -296,6 +299,7 @@ public class PendingEnrollmentTests : IDisposable
 
         public Task<IReadOnlyList<string>> UploadAsync(
             string deviceId,
+            ScanStamp scan,
             IReadOnlyList<ReaderUser> users,
             IReadOnlyDictionary<string, string> faceHashes,
             CancellationToken cancellationToken)
@@ -312,6 +316,7 @@ public class PendingEnrollmentTests : IDisposable
             }
 
             Calls.Add("users");
+            Stamps.Add(scan);
             Ids.AddRange(users.Select(user => user.DeviceUserId));
             Names.AddRange(users.Select(user => user.Name ?? ""));
             FaceHashes.AddRange(users.Select(user =>
@@ -321,6 +326,7 @@ public class PendingEnrollmentTests : IDisposable
 
         public Task<RosterUpload> UploadTrustedRosterAsync(
             string deviceId,
+            ScanStamp scan,
             int announcedTotal,
             IReadOnlyList<ReaderUser> users,
             IReadOnlyDictionary<string, string> faceHashes,
@@ -338,6 +344,7 @@ public class PendingEnrollmentTests : IDisposable
             }
 
             Calls.Add(awaitAcceptance ? "list-awaited" : "list");
+            Stamps.Add(scan);
             RosterHashes.Add(new Dictionary<string, string>(faceHashes));
             TrustedRosterTotals.Add(announcedTotal);
             RosterIds.AddRange(users.Select(user => user.DeviceUserId));
@@ -345,7 +352,7 @@ public class PendingEnrollmentTests : IDisposable
         }
 
         public Task<IReadOnlyList<string>> UploadAbsencesAsync(
-            string deviceId, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
+            string deviceId, ScanStamp scan, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
         {
             if (Offline)
             {
@@ -353,6 +360,7 @@ public class PendingEnrollmentTests : IDisposable
             }
 
             Calls.Add("absences");
+            Stamps.Add(scan);
             AbsentIds.AddRange(deviceUserIds);
             return Task.FromResult<IReadOnlyList<string>>(deviceUserIds.Select(_ => NextId("absence")).ToList());
         }

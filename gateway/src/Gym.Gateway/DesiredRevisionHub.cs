@@ -1,18 +1,20 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 
 namespace Gym.Gateway;
 
 /// <summary>
 /// Desired-revision handlers for readers that have a worker. A notice with no worker is not
-/// acknowledged and is not given to the command dispatcher.
+/// acknowledged and is not given to the command dispatcher. A reader may be attached while the
+/// loops run, when it comes online after the gateway started.
 /// </summary>
 public sealed class DesiredRevisionHub
 {
-    private readonly Dictionary<string, Func<DesiredRevisionNotice, CancellationToken, Task>> _paths = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Func<CancellationToken, Task>> _reconnects = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Func<CancellationToken, Task>> _observations = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Func<CancellationToken, Task<bool>>> _scansNow = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Func<CancellationToken, Task>> _retries = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Func<DesiredRevisionNotice, CancellationToken, Task>> _paths = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Func<CancellationToken, Task>> _reconnects = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Func<CancellationToken, Task>> _observations = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Func<CancellationToken, Task<bool>>> _scansNow = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Func<CancellationToken, Task>> _retries = new(StringComparer.Ordinal);
     private readonly ILogger<DesiredRevisionHub> _log;
 
     public DesiredRevisionHub(ILogger<DesiredRevisionHub> log)
@@ -127,6 +129,10 @@ public sealed class DesiredRevisionHub
             }
         }
     }
+
+    /// <summary>One reader, as after a reconnect. Nothing when it has no worker.</summary>
+    public Task ReconnectAsync(string deviceId, CancellationToken cancellationToken) =>
+        _reconnects.TryGetValue(deviceId, out var reconnect) ? reconnect(cancellationToken) : Task.CompletedTask;
 
     public Task HandleAsync(DesiredRevisionNotice notice, CancellationToken cancellationToken)
     {

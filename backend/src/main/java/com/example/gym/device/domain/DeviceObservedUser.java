@@ -49,6 +49,15 @@ public class DeviceObservedUser extends TenantAwareEntity {
     @Column(name = "observed_at", nullable = false)
     private Instant observedAt;
 
+    @Column(name = "observed_epoch", length = 64)
+    private String observedEpoch;
+
+    @Column(name = "observed_seq")
+    private Long observedSeq;
+
+    @Column(name = "observed_by_read_back", nullable = false)
+    private boolean observedByReadBack;
+
     protected DeviceObservedUser() {
     }
 
@@ -144,5 +153,25 @@ public class DeviceObservedUser extends TenantAwareEntity {
 
     public void setObservedAt(Instant observedAt) {
         this.observedAt = observedAt;
+    }
+
+    public String getObservedEpoch() {
+        return observedEpoch;
+    }
+
+    /** The scan this snapshot came from. */
+    public Long getObservedSeq() {
+        return observedSeq;
+    }
+
+    /** The snapshot came from the gateway's read at write time, which is later than scan {@link #getObservedSeq}. */
+    public boolean isObservedByReadBack() {
+        return observedByReadBack;
+    }
+
+    public void observedIn(String epoch, Long seq, boolean readBack) {
+        this.observedEpoch = epoch;
+        this.observedSeq = seq;
+        this.observedByReadBack = readBack;
     }
 }

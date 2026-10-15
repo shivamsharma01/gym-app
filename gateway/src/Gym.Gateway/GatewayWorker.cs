@@ -29,6 +29,8 @@ public sealed class GatewayWorker : BackgroundService
     private readonly string _readerJournalDirectory;
     private readonly List<ReaderWorker> _readerWorkers = [];
     private readonly List<AttendancePoll> _attendancePolls = [];
+    private readonly HashSet<string> _attachedReaders = new(StringComparer.Ordinal);
+    private readonly object _readersGate = new();
     private bool _readersAttached;
     private long _commandsReceived;
     private DateTimeOffset _lastCommandAt;
@@ -136,22 +138,7 @@ public sealed class GatewayWorker : BackgroundService
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
-                foreach (var (deviceId, adapter) in _adapters)
-                {
-                    if (adapter is not TimedDeviceAdapter { ReconnectDue: true } reader)
-                    {
-                        continue;
-                    }
-
-                    _log.LogInformation("Reader {DeviceId}: reconnecting ({Detail})", deviceId, reader.HealthDetail);
-                    DeviceConnectionStatus status;
-                    using (await _locks.AcquireAsync(deviceId, "reconnecting the reader", stoppingToken).ConfigureAwait(false))
-                    {
-                        status = reader.Reconnect();
-                    }
-
-                    await EnqueueStatus(deviceId, status).ConfigureAwait(false);
-                }
+                await CheckReaderHealthAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -161,6 +148,53 @@ public sealed class GatewayWorker : BackgroundService
             {
                 _log.LogWarning(ex, "Reader reconnect check failed");
             }
+        }
+    }
+
+    /// <summary>One pass of the health loop: every reader whose reconnect is due logs in again.</summary>
+    internal async Task CheckReaderHealthAsync(CancellationToken stoppingToken)
+    {
+        foreach (var (deviceId, adapter) in _adapters)
+        {
+            if (adapter is not TimedDeviceAdapter { ReconnectDue: true } reader)
+            {
+                continue;
+            }
+
+            _log.LogInformation("Reader {DeviceId}: reconnecting ({Detail})", deviceId, reader.HealthDetail);
+            DeviceConnectionStatus status;
+            using (await _locks.AcquireAsync(deviceId, "reconnecting the reader", stoppingToken).ConfigureAwait(false))
+            {
+                status = reader.Reconnect();
+            }
+
+            await EnqueueStatus(deviceId, status).ConfigureAwait(false);
+            if (status.Ok)
+            {
+                await ReaderBackAsync(deviceId, stoppingToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A reader that logged in again is read and its observation processed before desired state is
+    /// applied, as after a server reconnect. A reader that was off when the gateway started gets its
+    /// worker now.
+    /// </summary>
+    internal async Task ReaderBackAsync(string deviceId, CancellationToken cancellationToken)
+    {
+        if (_readersAttached)
+        {
+            AttachReader(deviceId);
+        }
+
+        try
+        {
+            await _desiredRevisions.ReconnectAsync(deviceId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Reader {DeviceId}: desired state was not applied after the reader came back", deviceId);
         }
     }
 
@@ -285,7 +319,8 @@ public sealed class GatewayWorker : BackgroundService
 
     /// <summary>
     /// Binds <see cref="ReaderWorker"/> to each configured reader that has an adapter. A device
-    /// with no adapter is left unwired, and a desired revision for it is not acknowledged.
+    /// with no adapter is left unwired, and a desired revision for it is not acknowledged. A reader
+    /// that is not online yet is bound when it comes back.
     /// </summary>
     internal void AttachReaders()
     {
@@ -305,15 +340,34 @@ public sealed class GatewayWorker : BackgroundService
                      .Select(device => device.DeviceId)
                      .Where(deviceId => !string.IsNullOrWhiteSpace(deviceId)))
         {
+            AttachReader(deviceId);
+        }
+    }
+
+    private void AttachReader(string deviceId)
+    {
+        if (_readerFactory == null)
+        {
+            return;
+        }
+
+        lock (_readersGate)
+        {
+            if (_attachedReaders.Contains(deviceId))
+            {
+                return;
+            }
+
             var opened = _readerFactory.Open(deviceId, OnlineAdapter(deviceId));
             if (opened == null)
             {
                 _log.LogInformation(
-                    "Reader {DeviceId} has no worker; desired revisions will not be acknowledged",
+                    "Reader {DeviceId} has no worker; desired revisions will not be acknowledged until it is online",
                     deviceId);
-                continue;
+                return;
             }
 
+            _attachedReaders.Add(deviceId);
             var reader = new LockedReaderAdapter(deviceId, opened, _locks);
             _attendancePolls.Add(new AttendancePoll(
                 deviceId, reader, _attendance, AttendancePollSettings.From(_options),
@@ -321,6 +375,17 @@ public sealed class GatewayWorker : BackgroundService
             var journal = Path.Combine(_readerJournalDirectory, JournalFile(deviceId));
             var worker = new ReaderWorker(deviceId, reader, journal, online: () => !KnownOffline(deviceId));
             _readerWorkers.Add(worker);
+            if (worker.IsNewJournal)
+            {
+                var dropped = _link.DropObservations(deviceId);
+                if (dropped > 0)
+                {
+                    _log.LogInformation(
+                        "Reader {DeviceId}: the scan journal is new; {Count} queued observation(s) from before it were dropped and the reader is read again",
+                        deviceId, dropped);
+                }
+            }
+
             IReaderObservationUpload observations = new ReaderObservationUpload(
                 _options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>());
             var memory = new ReaderScanMemory(
@@ -336,6 +401,14 @@ public sealed class GatewayWorker : BackgroundService
                 ct => path.BootstrapAsync(ct),
                 path.ScanNowAsync);
             _desiredRevisions.AttachRetry(deviceId, path.RetryAsync);
+        }
+    }
+
+    internal bool HasWorker(string deviceId)
+    {
+        lock (_readersGate)
+        {
+            return _attachedReaders.Contains(deviceId);
         }
     }
 
@@ -402,7 +475,7 @@ public sealed class GatewayWorker : BackgroundService
 
     /// <summary>One window per reader. One reader's failure does not stop the others.</summary>
     internal Task PollAttendanceAsync(CancellationToken cancellationToken) =>
-        Task.WhenAll(_attendancePolls.Select(async poll =>
+        Task.WhenAll(AttendancePolls().Select(async poll =>
         {
             try
             {
@@ -458,14 +531,25 @@ public sealed class GatewayWorker : BackgroundService
         return name + ".sqlite";
     }
 
+    private AttendancePoll[] AttendancePolls()
+    {
+        lock (_readersGate)
+        {
+            return [.. _attendancePolls];
+        }
+    }
+
     private void DisposeReaders()
     {
-        foreach (var worker in _readerWorkers)
+        lock (_readersGate)
         {
-            worker.Dispose();
-        }
+            foreach (var worker in _readerWorkers)
+            {
+                worker.Dispose();
+            }
 
-        _readerWorkers.Clear();
+            _readerWorkers.Clear();
+        }
     }
 
     private async Task HandleCommandAsync(BackendLink link, CommandDispatcher dispatcher, GatewayEnvelope command)

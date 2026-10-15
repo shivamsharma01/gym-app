@@ -290,8 +290,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException
                                        && !cancellationToken.IsCancellationRequested)
         {
-            _log.LogInformation("Reader {DeviceId}: asking which photos the server needs deferred: {Message}",
-                deviceId, ex.Message);
+            _log.LogInformation(ex, "Reader {DeviceId}: asking which photos the server needs deferred", deviceId);
             return [];
         }
     }

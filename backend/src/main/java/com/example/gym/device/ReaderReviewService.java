@@ -17,6 +17,8 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -227,6 +229,15 @@ public class ReaderReviewService {
     /** A read-back of this id was accepted on this reader at least once. */
     public boolean verifiedOnReader(Long deviceId, String deviceUserId) {
         return baselines.findByDeviceIdAndDeviceUserId(deviceId, deviceUserId).isPresent();
+    }
+
+    /** Every reconciled record of one reader, by device user id. */
+    public Map<String, DeviceReaderBaseline> baselines(Long deviceId) {
+        Map<String, DeviceReaderBaseline> byUserId = new HashMap<>();
+        for (DeviceReaderBaseline baseline : baselines.findByDeviceId(deviceId)) {
+            byUserId.put(baseline.getDeviceUserId(), baseline);
+        }
+        return byUserId;
     }
 
     /**

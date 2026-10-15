@@ -44,6 +44,46 @@ class RosterScanLoadIT extends AbstractIntegrationTest {
     private String gatewayId;
 
     @Test
+    void aFullListOfUndecidedPeople() throws Exception {
+        resetDatabase();
+        Tenant tenant = createTenant("Load Gym", "load-gym");
+        createUser(tenant.getId(), "load-admin", "load-admin@gym.local", "GYM_ADMIN");
+        token = tokenFor("load-admin");
+        String readerId = gatewayReader();
+        List<String[]> ids = new ArrayList<>();
+        for (int i = 0; i < USERS; i++) {
+            ids.add(new String[] {Integer.toString(i + 1), "Person" + i + " Shah"});
+        }
+        String whole = "{\"announcedTotal\":" + USERS + ",\"users\":" + list(ids) + "}";
+        for (int round = 0; round < 2; round++) {
+            Measured list = measure(() -> assertThat(send(readerId, whole)).isEqualTo(200));
+            report("undecided list round=%d users=%d ms=%d statements=%d readerLockMs=%d longestHoldMs=%d",
+                    round, USERS, list.millis(), list.statements(), list.lockMillis(), list.longestHoldMillis());
+        }
+    }
+
+    private String gatewayReader() throws Exception {
+        JsonNode gateway = readJson(mockMvc.perform(post("/api/v1/gateways")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"LAN\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        gatewayId = gateway.get("id").asString();
+        gatewayToken = readJson(mockMvc.perform(post("/internal/gateway/enroll")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"gatewayId\":\"" + gatewayId + "\",\"enrollmentToken\":\""
+                                + gateway.get("token").asString() + "\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString())
+                .get("credential").asString();
+        return readJson(mockMvc.perform(post("/api/v1/devices")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Entrance\",\"role\":\"ENTRANCE\",\"host\":\"10.0.0.50\",\"port\":37777,"
+                                + "\"gatewayId\":\"" + gatewayId + "\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString())
+                .get("id").asString();
+    }
+
+    @Test
     void aFullListOfAMappedReader() throws Exception {
         resetDatabase();
         Tenant tenant = createTenant("Load Gym", "load-gym");

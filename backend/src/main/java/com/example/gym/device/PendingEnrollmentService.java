@@ -4,6 +4,8 @@ import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceObservedUser;
+import com.example.gym.device.domain.DeviceReaderBaseline;
+import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.PendingEnrollment;
 import com.example.gym.device.repo.DesiredMemberProjectionRepository;
 import com.example.gym.device.repo.DeviceObservedUserRepository;
@@ -11,7 +13,9 @@ import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.PendingEnrollmentRepository;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.stereotype.Service;
@@ -80,9 +84,12 @@ public class PendingEnrollmentService {
         }
         bootstrap.lockForRoster(device);
         rememberEmpty(device, users.isEmpty());
+        Known known = known(device, scan);
         Set<String> present = new HashSet<>();
         for (JsonNode user : users) {
-            observeOne(device, user, scan);
+            if (!observeUnallocated(device, user, scan, known)) {
+                observeOne(device, user, scan);
+            }
             String deviceUserId = text(user, "deviceUserId");
             if (deviceUserId != null) {
                 present.add(deviceUserId);
@@ -96,6 +103,67 @@ public class PendingEnrollmentService {
             }
         }
         bootstrap.seedFromTrustedRoster(device);
+    }
+
+    /**
+     * This reader's rows, read once for a whole list under the reader lock. Processing a list never
+     * gives out an id, so an id not allocated here stays unallocated until the list is done, and only
+     * that id's own snapshot and enrollment change while it is processed.
+     *
+     * @param unservedSeeds whether any seed the gateway was never sent exists, which an undecided
+     *                      person may withdraw
+     */
+    private record Known(Set<String> allocated, Map<String, DeviceObservedUser> snapshots,
+                         Map<String, DeviceReaderBaseline> baselines, Map<String, PendingEnrollment> enrollments,
+                         boolean unservedSeeds) {
+    }
+
+    private Known known(Device device, ObservationOrder.Scan scan) {
+        Set<String> allocated = new HashSet<>();
+        for (MemberDeviceMapping mapping : mappings.findByDeviceId(device.getId())) {
+            allocated.add(mapping.getDeviceUserId());
+            allocated.add(mapping.getPendingDeviceUserId());
+        }
+        boolean unservedSeeds = false;
+        for (DesiredMemberProjection desired : desiredMembers.findByDeviceId(device.getId())) {
+            allocated.add(desired.getDeviceUserId());
+            unservedSeeds |= desired.unservedSeed(scan.servedRevision());
+        }
+        Map<String, DeviceObservedUser> snapshots = new HashMap<>();
+        for (DeviceObservedUser snapshot : observedUsers.findByDeviceId(device.getId())) {
+            snapshots.put(snapshot.getDeviceUserId(), snapshot);
+        }
+        Map<String, PendingEnrollment> pending = new HashMap<>();
+        for (PendingEnrollment enrollment : enrollments.findByDeviceId(device.getId())) {
+            pending.put(enrollment.getDeviceUserId(), enrollment);
+        }
+        return new Known(allocated, snapshots, reviews.baselines(device.getId()), pending, unservedSeeds);
+    }
+
+    /**
+     * {@link #observeOne} for a person at an id the server never gave out, from the rows read once.
+     * Each step that only applies to an allocated id is a no-op here.
+     *
+     * @return false when the id is allocated and must take the full path
+     */
+    private boolean observeUnallocated(Device device, JsonNode payload, ObservationOrder.Scan scan, Known known) {
+        String deviceUserId = text(payload, "deviceUserId");
+        if (deviceUserId == null || deviceUserId.isBlank() || known.allocated().contains(deviceUserId)) {
+            return false;
+        }
+        if (scan.staleFor(deviceUserId, known.snapshots().get(deviceUserId), known.baselines().get(deviceUserId),
+                known.enrollments().get(deviceUserId)) || bool(payload, "deleted")) {
+            return true;
+        }
+        DeviceObservedUser snapshot = saveSnapshot(device, payload, deviceUserId, scan.stamp(), false,
+                known.snapshots().get(deviceUserId));
+        known.snapshots().put(deviceUserId, snapshot);
+        PendingEnrollment enrollment = reopen(device, deviceUserId, known.enrollments().get(deviceUserId));
+        known.enrollments().put(deviceUserId, enrollment);
+        if (enrollment.getDecision() == null && known.unservedSeeds()) {
+            bootstrap.withdrawUnservedSeeds(device, snapshot);
+        }
+        return true;
     }
 
     /**
@@ -158,14 +226,19 @@ public class PendingEnrollmentService {
         if (serverAllocated(device.getId(), deviceUserId)) {
             return false;
         }
-        PendingEnrollment enrollment = enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                .orElseGet(() -> new PendingEnrollment(device.getTenantId(), device.getId(), deviceUserId));
+        return reopen(device, deviceUserId,
+                enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null))
+                .getDecision() == null;
+    }
+
+    private PendingEnrollment reopen(Device device, String deviceUserId, PendingEnrollment existing) {
+        PendingEnrollment enrollment = existing != null ? existing
+                : new PendingEnrollment(device.getTenantId(), device.getId(), deviceUserId);
         if (enrollment.isResolved()) {
             enrollment.clearDecision();
         }
         enrollment.setObservedAt(Instant.now());
-        enrollments.save(enrollment);
-        return enrollment.getDecision() == null;
+        return enrollments.save(enrollment);
     }
 
     /**
@@ -237,8 +310,14 @@ public class PendingEnrollmentService {
      */
     private DeviceObservedUser saveSnapshot(Device device, JsonNode payload, String deviceUserId, ScanStamp stamp,
                                             boolean readBack) {
-        DeviceObservedUser snapshot = observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                .orElseGet(() -> new DeviceObservedUser(device.getTenantId(), device.getId(), deviceUserId));
+        return saveSnapshot(device, payload, deviceUserId, stamp, readBack,
+                observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null));
+    }
+
+    private DeviceObservedUser saveSnapshot(Device device, JsonNode payload, String deviceUserId, ScanStamp stamp,
+                                            boolean readBack, DeviceObservedUser existing) {
+        DeviceObservedUser snapshot = existing != null ? existing
+                : new DeviceObservedUser(device.getTenantId(), device.getId(), deviceUserId);
         if (stamp != null) {
             snapshot.observedIn(stamp.epoch(), stamp.seq(), readBack);
         } else if (readBack) {

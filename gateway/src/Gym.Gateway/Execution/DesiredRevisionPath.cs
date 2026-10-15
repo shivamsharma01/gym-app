@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using Gym.Gateway.Adapters;
 using Microsoft.Extensions.Logging;
@@ -178,12 +179,17 @@ public sealed class DesiredRevisionPath
     private ReaderScan? ReadScan(out ReaderListResult observed)
     {
         var stamp = _worker.BeginScan();
+        var started = Stopwatch.GetTimestamp();
         observed = _reader.ListUsers();
         if (!observed.Ok || !observed.CountMatchesAnnouncedTotal)
         {
+            _log.LogWarning("Reader {DeviceId}: user list not usable ({Detail}); nothing is sent or applied from this read",
+                _deviceId, observed.Ok ? $"got {observed.Users.Count} of {observed.AnnouncedTotal} users" : observed.Error);
             return null;
         }
 
+        _log.LogInformation("Reader {DeviceId}: read the user list, {Count} users in {Seconds:0.0} s",
+            _deviceId, observed.Users.Count, Stopwatch.GetElapsedTime(started).TotalSeconds);
         var before = Gate;
         var observation = _observations == null ? 0 : BeginObservation();
         var listed = Listed(observed);
@@ -294,6 +300,8 @@ public sealed class DesiredRevisionPath
 
             var roster = await UploadListAsync(scan.Stamp, observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
                 .ConfigureAwait(false);
+            _log.LogInformation("Reader {DeviceId}: user list ({Count} users) {Outcome}", _deviceId, listed.Count,
+                RosterOutcome(roster));
             if (awaitAcceptance && roster.Accepted)
             {
                 uploads.Accepted(generation, list, entries);
@@ -324,6 +332,16 @@ public sealed class DesiredRevisionPath
             _log.LogWarning(ex, "Reader {DeviceId}: the observation was not uploaded; desired state waits", _deviceId);
             EndObservation(observing, [], false);
         }
+    }
+
+    private static string RosterOutcome(RosterUpload roster)
+    {
+        if (roster.Accepted)
+        {
+            return "processed by the server";
+        }
+
+        return roster.MessageId != null ? "sent to the server" : "not acknowledged; users are sent one by one";
     }
 
     /// <summary>
@@ -591,6 +609,9 @@ public sealed class DesiredRevisionPath
 
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
         var known = new Dictionary<string, string>(StringComparer.Ordinal);
+        var toDownload = listed.Count(user => checksums.ByUserId.TryGetValue(user.DeviceUserId, out var sum)
+            && (sum.Length == 0 || !_memory.Faces.TryGet(sum, out _)));
+        var downloads = new DownloadProgress(_log, _deviceId, toDownload);
         foreach (var deviceUserId in listed.Select(user => user.DeviceUserId))
         {
             if (!checksums.ByUserId.TryGetValue(deviceUserId, out var checksum))
@@ -601,6 +622,7 @@ public sealed class DesiredRevisionPath
             if (checksum.Length == 0 || !_memory.Faces.TryGet(checksum, out var hash))
             {
                 var face = _reader.GetFace(deviceUserId);
+                downloads.One();
                 if (!face.Ok || face.Bytes is not { Length: > 0 })
                 {
                     continue;
@@ -617,22 +639,67 @@ public sealed class DesiredRevisionPath
         }
 
         _memory.Faces.Replace(known);
+        downloads.Done(hashes.Count);
         return hashes;
     }
 
     private Dictionary<string, string> DownloadedFaceHashes(IReadOnlyList<ReaderUser> listed)
     {
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        var downloads = new DownloadProgress(_log, _deviceId, listed.Count);
         foreach (var deviceUserId in listed.Select(user => user.DeviceUserId))
         {
             var face = _reader.GetFace(deviceUserId);
+            downloads.One();
             if (face.Ok && face.Bytes is { Length: > 0 })
             {
                 hashes[deviceUserId] = FaceHash.Sha256Hex(face.Bytes);
             }
         }
 
+        downloads.Done(hashes.Count);
         return hashes;
+    }
+
+    /// <summary>Photo downloads from the reader can take minutes; progress is logged every 100.</summary>
+    private sealed class DownloadProgress
+    {
+        private const int Every = 100;
+        private readonly ILogger _log;
+        private readonly string _deviceId;
+        private readonly int _total;
+        private readonly long _started = Stopwatch.GetTimestamp();
+        private int _done;
+
+        public DownloadProgress(ILogger log, string deviceId, int total)
+        {
+            _log = log;
+            _deviceId = deviceId;
+            _total = total;
+            if (total > 0)
+            {
+                _log.LogInformation("Reader {DeviceId}: downloading {Total} photos from the reader", deviceId, total);
+            }
+        }
+
+        public void One()
+        {
+            _done++;
+            if (_done % Every == 0 && _done < _total)
+            {
+                _log.LogInformation("Reader {DeviceId}: downloaded {Done}/{Total} photos ({Seconds:0} s)",
+                    _deviceId, _done, _total, Stopwatch.GetElapsedTime(_started).TotalSeconds);
+            }
+        }
+
+        public void Done(int withPhoto)
+        {
+            if (_total > 0)
+            {
+                _log.LogInformation("Reader {DeviceId}: photos checked, {WithPhoto} users have a photo; {Done} downloaded in {Seconds:0} s",
+                    _deviceId, withPhoto, _done, Stopwatch.GetElapsedTime(_started).TotalSeconds);
+            }
+        }
     }
 
     /// <summary>
@@ -684,13 +751,15 @@ public sealed class DesiredRevisionPath
         var covered = from;
         var seen = new HashSet<long>();
         var reported = false;
+        var progress = new ApplyProgress(_log, _deviceId, from);
         for (var page = 0; page < MaxPages; page++)
         {
             var pull = await _client.PullAsync(_deviceId, after, cancellationToken).ConfigureAwait(false);
+            progress.Page(pull.Items.Count, pull.DesiredRevision);
             foreach (var item in pull.Items)
             {
                 seen.Add(item.Revision);
-                if (await ApplyItemAsync(item, cancellationToken).ConfigureAwait(false) == ItemStep.Reported)
+                if (await ApplyItemAsync(item, progress, cancellationToken).ConfigureAwait(false) == ItemStep.Reported)
                 {
                     reported = true;
                 }
@@ -714,7 +783,95 @@ public sealed class DesiredRevisionPath
         }
 
         DropSuperseded(from, covered, seen);
+        progress.Finished();
         return reported;
+    }
+
+    /// <summary>
+    /// What one pass did, for staff watching a long first sync: a start line, one line per write,
+    /// a count every 100 changes, and a summary. A pass with nothing to apply logs nothing.
+    /// </summary>
+    private sealed class ApplyProgress
+    {
+        private const int Every = 100;
+        private readonly ILogger _log;
+        private readonly string _deviceId;
+        private readonly long _from;
+        private readonly long _started = Stopwatch.GetTimestamp();
+        private long _target;
+        private bool _announced;
+        private int _checked;
+        private int _written;
+        private int _matched;
+        private int _failed;
+        private int _reported;
+        private int _waiting;
+
+        public ApplyProgress(ILogger log, string deviceId, long from)
+        {
+            _log = log;
+            _deviceId = deviceId;
+            _from = from;
+        }
+
+        public void Page(int items, long target)
+        {
+            _target = Math.Max(_target, target);
+            if (items > 0 && !_announced)
+            {
+                _announced = true;
+                _log.LogInformation("Reader {DeviceId}: applying changes after revision {From} up to revision {Target}",
+                    _deviceId, _from, _target);
+            }
+        }
+
+        public void Item(DesiredPullItem item, MemberApplyKind kind, TimeSpan took)
+        {
+            _checked++;
+            switch (kind)
+            {
+                case MemberApplyKind.Applied:
+                    _written++;
+                    _log.LogInformation(
+                        "Reader {DeviceId}: {Action} user {UserId}, read back OK (revision {Revision} of {Target}) in {Ms} ms",
+                        _deviceId, item.Present ? "wrote" : "removed", item.DeviceUserId, item.Revision, _target,
+                        (long)took.TotalMilliseconds);
+                    break;
+                case MemberApplyKind.AlreadyApplied:
+                    _matched++;
+                    break;
+                case MemberApplyKind.Failed:
+                    _failed++;
+                    break;
+                case MemberApplyKind.Occupied:
+                case MemberApplyKind.OccupantChanged:
+                    _reported++;
+                    break;
+                default:
+                    _waiting++;
+                    break;
+            }
+
+            if (_checked % Every == 0)
+            {
+                _log.LogInformation(
+                    "Reader {DeviceId}: {Checked} changes checked so far (revision {Revision} of {Target}), {Seconds:0} s",
+                    _deviceId, _checked, item.Revision, _target, Stopwatch.GetElapsedTime(_started).TotalSeconds);
+            }
+        }
+
+        public void Finished()
+        {
+            if (!_announced)
+            {
+                return;
+            }
+
+            _log.LogInformation(
+                "Reader {DeviceId}: changes up to revision {Target} done in {Seconds:0} s: {Written} written, {Matched} already matched, {Failed} failed (retried later), {Reported} reported to the server for review, {Waiting} waiting",
+                _deviceId, _target, Stopwatch.GetElapsedTime(_started).TotalSeconds, _written, _matched, _failed, _reported,
+                _waiting);
+        }
     }
 
     /// <summary>
@@ -737,7 +894,8 @@ public sealed class DesiredRevisionPath
         }
     }
 
-    private async Task<ItemStep> ApplyItemAsync(DesiredPullItem item, CancellationToken cancellationToken)
+    private async Task<ItemStep> ApplyItemAsync(
+        DesiredPullItem item, ApplyProgress progress, CancellationToken cancellationToken)
     {
         if (_worker.IsVerified(item.Revision))
         {
@@ -746,6 +904,7 @@ public sealed class DesiredRevisionPath
 
         if (item.Invalid != null)
         {
+            progress.Item(item, MemberApplyKind.Failed, TimeSpan.Zero);
             await FailedAsync(_worker.Attempt(item.Revision) is { State: AttemptState.Rejected } rejected
                     && _worker.Now < rejected.NextAttempt
                 ? rejected
@@ -753,9 +912,11 @@ public sealed class DesiredRevisionPath
             return ItemStep.Continue;
         }
 
+        var started = Stopwatch.GetTimestamp();
         var result = item.Present
             ? _worker.ApplyMember(item.ToMember())
             : _worker.ApplyRemoval(item.Revision, item.DeviceUserId, item.Expected);
+        progress.Item(item, result.Kind, Stopwatch.GetElapsedTime(started));
         switch (result.Kind)
         {
             case MemberApplyKind.OccupantChanged:

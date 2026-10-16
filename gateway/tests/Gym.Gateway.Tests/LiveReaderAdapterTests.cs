@@ -142,7 +142,7 @@ public class LiveReaderAdapterTests : IDisposable
         Assert.Equal(MemberApplyKind.Failed, result.Kind);
         Assert.Equal(0, worker.AppliedRevision);
         Assert.Empty(worker.PendingAcks);
-        Assert.StartsWith("read-back mismatch", worker.Retry!.LastError, StringComparison.Ordinal);
+        Assert.StartsWith("verification failed (reason=field-mismatch", worker.Retry!.LastError, StringComparison.Ordinal);
         Assert.Equal(8u, device.Stored("1").stuValidEndTime.dwDay);
     }
 

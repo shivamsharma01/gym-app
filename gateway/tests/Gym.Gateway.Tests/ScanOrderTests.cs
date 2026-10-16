@@ -206,7 +206,7 @@ public class ScanOrderTests : IDisposable
         var attempt = worker.Attempt(1);
         Assert.NotNull(attempt);
         Assert.Equal(1, attempt!.AttemptCount);
-        Assert.Contains("read-back mismatch", attempt.LastError, StringComparison.Ordinal);
+        Assert.Contains("verification failed (reason=field-mismatch", attempt.LastError, StringComparison.Ordinal);
         Assert.Equal("Ravi", fake.GetUser("8").User!.Name);
 
         reader.AfterInsertFace = null;

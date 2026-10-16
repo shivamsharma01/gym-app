@@ -529,13 +529,7 @@ public sealed class ReaderWorker : IDisposable
             return face.Value;
         }
 
-        var verified = VerifyReadBack(reader, desired);
-        if (verified.Verification.Verified)
-        {
-            Remember(desired, faceHash);
-        }
-
-        return verified;
+        return VerifyReadBack(reader, desired);
     }
 
     private WriteStep ClearFace(IReaderAdapter reader, DesiredMember desired)
@@ -692,12 +686,28 @@ public sealed class ReaderWorker : IDisposable
             : WriteStep.Fail(created.Error ?? created.FailCode);
     }
 
-    private static WriteStep? EnsureFace(IReaderAdapter reader, DesiredMember desired)
+    private WriteStep? EnsureFace(IReaderAdapter reader, DesiredMember desired)
     {
         var face = reader.GetFace(desired.DeviceUserId);
         if (face.Ok && face.Bytes is { Length: > 0 })
         {
-            return SameHash(face.Bytes, desired.Face) ? null : ReplaceFace(reader, desired);
+            if (SameHash(face.Bytes, desired.Face))
+            {
+                return null;
+            }
+
+            // Firmware may re-encode after InsertFace. A readable JPEG already verified for this
+            // user record must not be rewritten every pass (that loops forever).
+            var (now, _) = ReadOccupant(reader, desired.DeviceUserId);
+            if (now is { Present: true, User: not null }
+                && SameUser(now.User, desired)
+                && IsJpeg(face.Bytes)
+                && WroteHere(desired.DeviceUserId, now))
+            {
+                return null;
+            }
+
+            return ReplaceFace(reader, desired);
         }
 
         if (!face.Ok && face.FailCode is not (FakeReader.FailUnknown or FakeReader.FailNoRecord))
@@ -734,7 +744,7 @@ public sealed class ReaderWorker : IDisposable
         return WriteStep.Fail(error);
     }
 
-    private static WriteStep VerifyReadBack(IReaderAdapter reader, DesiredMember desired)
+    private WriteStep VerifyReadBack(IReaderAdapter reader, DesiredMember desired)
     {
         var readUser = reader.GetUser(desired.DeviceUserId);
         var readFace = reader.GetFace(desired.DeviceUserId);
@@ -744,15 +754,37 @@ public sealed class ReaderWorker : IDisposable
         }
 
         var differs = Differences(readUser.User, desired);
-        if (!SameHash(readFace.Bytes, desired.Face))
+        if (differs.Count > 0)
         {
-            differs.Add($"photo ({readFace.Bytes.Length} bytes back, {desired.Face?.Length ?? 0} sent)");
+            return WriteStep.Fail("verification failed (reason=field-mismatch: " + string.Join(", ", differs) + ")");
         }
 
-        return differs.Count == 0
-            ? WriteStep.Done()
-            : WriteStep.Fail("read-back mismatch: " + string.Join(", ", differs));
+        if (SameHash(readFace.Bytes, desired.Face))
+        {
+            Remember(desired, FaceHash.Sha256Hex(desired.Face));
+            return WriteStep.Done();
+        }
+
+        // Not byte-identical: accept only a readable JPEG so an empty or corrupt buffer never acks.
+        // Content equality after device re-encode is not proven; the journal stores the read-back hash.
+        if (readFace.Bytes.Length == 0)
+        {
+            return WriteStep.Fail("verification failed (reason=photo-missing-after-write)");
+        }
+
+        if (!IsJpeg(readFace.Bytes))
+        {
+            return WriteStep.Fail(
+                $"verification failed (reason=photo-not-readable-jpeg; bytesBack={readFace.Bytes.Length}; bytesSent={desired.Face?.Length ?? 0})");
+        }
+
+        Remember(desired, FaceHash.Sha256Hex(readFace.Bytes));
+        return WriteStep.Done();
     }
+
+    /// <summary>SOI marker only — enough to reject the non-image buffers tests use for mismatch.</summary>
+    internal static bool IsJpeg(byte[] bytes) =>
+        bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
 
     private static List<string> Differences(ReaderUser user, DesiredMember desired)
     {

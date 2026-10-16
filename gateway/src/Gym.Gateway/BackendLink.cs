@@ -30,7 +30,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         _options = options;
         _log = log;
         _outbox = outbox;
-        _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.Token);
         _http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
     }
@@ -279,7 +279,8 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                _log.LogWarning("Reader {DeviceId}: asking which photos the server needs failed HTTP {Status}",
+                _log.LogWarning(
+                    "Reader {DeviceId}: stage=want-photos; server want-list failed HTTP {Status}; next action=retry on next scan",
                     deviceId, (int)response.StatusCode);
                 return [];
             }
@@ -290,7 +291,9 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException
                                        && !cancellationToken.IsCancellationRequested)
         {
-            _log.LogInformation(ex, "Reader {DeviceId}: asking which photos the server needs deferred", deviceId);
+            _log.LogInformation(ex,
+                "Reader {DeviceId}: stage=want-photos; want-list deferred ({Error}); next action=retry on next scan",
+                deviceId, ex.GetType().Name);
             return [];
         }
     }

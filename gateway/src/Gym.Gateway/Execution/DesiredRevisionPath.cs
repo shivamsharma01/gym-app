@@ -40,6 +40,7 @@ public sealed class DesiredRevisionPath
     private ObservationGate _gate;
     private IReadOnlyList<IReadOnlyList<string>> _fence = [];
     private DateTimeOffset _fencedAt;
+    private DateTimeOffset _nextFenceWarn = DateTimeOffset.MinValue;
     private DateTimeOffset _nextObserve = DateTimeOffset.MinValue;
     private long _observation;
 
@@ -190,8 +191,9 @@ public sealed class DesiredRevisionPath
             return null;
         }
 
-        _log.LogInformation("Reader {DeviceId}: read the user list, {Count} users in {Seconds:0.0} s",
-            _deviceId, observed.Users.Count, Stopwatch.GetElapsedTime(started).TotalSeconds);
+        _log.LogInformation(
+            "Reader {DeviceId}: stage=enumerate; observed {Count} users in {Seconds:0.0} s (announced={Announced})",
+            _deviceId, observed.Users.Count, Stopwatch.GetElapsedTime(started).TotalSeconds, observed.AnnouncedTotal);
         var before = Gate;
         var observation = _observations == null ? 0 : BeginObservation();
         var listed = Listed(observed);
@@ -234,9 +236,7 @@ public sealed class DesiredRevisionPath
         }
 
         var started = Stopwatch.GetTimestamp();
-        var uploaded = 0;
-        var failed = 0;
-        _log.LogInformation("Reader {DeviceId}: uploading {Count} photos the server needs", _deviceId, wanted.Count);
+        var pending = new List<(string Hash, byte[] Bytes)>();
         foreach (var hash in wanted)
         {
             if (!holders.TryGetValue(hash, out var deviceUserId))
@@ -247,21 +247,37 @@ public sealed class DesiredRevisionPath
             var bytes = scan.Photos.GetValueOrDefault(hash)
                 ?? await SerializedAsync(_ => Task.FromResult(ReadPhoto(deviceUserId, hash)), cancellationToken)
                     .ConfigureAwait(false);
-            if (bytes != null && await _observations.UploadFaceAsync(bytes, cancellationToken).ConfigureAwait(false))
+            if (bytes != null)
             {
-                uploaded++;
-            }
-            else
-            {
-                failed++;
-            }
-
-            if ((uploaded + failed) % 100 == 0)
-            {
-                _log.LogInformation("Reader {DeviceId}: uploaded {Done}/{Total} photos ({Seconds:0} s)",
-                    _deviceId, uploaded + failed, wanted.Count, Stopwatch.GetElapsedTime(started).TotalSeconds);
+                pending.Add((hash, bytes));
             }
         }
+
+        var uploaded = 0;
+        var failed = wanted.Count - pending.Count;
+        _log.LogInformation(
+            "Reader {DeviceId}: stage=want-photos; server asked for {Count} photos ({Ready} ready to upload, concurrency=4)",
+            _deviceId, wanted.Count, pending.Count);
+        await Parallel.ForEachAsync(
+                pending,
+                new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
+                async (item, ct) =>
+                {
+                    if (await _observations.UploadFaceAsync(item.Bytes, ct).ConfigureAwait(false))
+                    {
+                        var done = Interlocked.Increment(ref uploaded);
+                        if (done % 100 == 0)
+                        {
+                            _log.LogInformation("Reader {DeviceId}: uploaded {Done}/{Total} photos ({Seconds:0} s)",
+                                _deviceId, done, wanted.Count, Stopwatch.GetElapsedTime(started).TotalSeconds);
+                        }
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref failed);
+                    }
+                })
+            .ConfigureAwait(false);
 
         _log.LogInformation("Reader {DeviceId}: photos uploaded, {Uploaded} stored, {Failed} retried next scan, in {Seconds:0} s",
             _deviceId, uploaded, failed, Stopwatch.GetElapsedTime(started).TotalSeconds);
@@ -533,9 +549,9 @@ public sealed class DesiredRevisionPath
 
     /// <summary>
     /// True once the server confirmed it processed the reader's latest observation. An unobserved
-    /// reader is read and uploaded first. A failed or unanswered check is not processed; an
-    /// observation the server has not processed within <see cref="DesiredPathOptions.FenceTimeout"/>
-    /// is sent again on a later pass.
+    /// reader is read and uploaded first. A failed or unanswered check is not processed. While fenced,
+    /// the same observation is probed again; only after <see cref="DesiredPathOptions.FenceResendAfter"/>
+    /// is the reader re-read and the observation resent.
     /// </summary>
     private async Task<bool> ObservationProcessedAsync(bool reconnecting, CancellationToken cancellationToken)
     {
@@ -555,16 +571,29 @@ public sealed class DesiredRevisionPath
 
         lock (_gateLock)
         {
-            if (_gate == ObservationGate.Fenced && _worker.Now - _fencedAt >= _options.FenceTimeout)
+            if (_gate == ObservationGate.Fenced)
             {
-                _log.LogWarning(
-                    "Reader {DeviceId}: the server has not processed the reader observation after {Seconds}s; it is read and sent again",
-                    _deviceId, (int)_options.FenceTimeout.TotalSeconds);
-                _gate = ObservationGate.Unobserved;
+                var age = _worker.Now - _fencedAt;
+                if (age >= _options.FenceResendAfter)
+                {
+                    _log.LogWarning(
+                        "Reader {DeviceId}: stage=fenced; observation unprocessed after {Seconds}s; next action=re-read reader and resend observation",
+                        _deviceId, (int)age.TotalSeconds);
+                    _gate = ObservationGate.Unobserved;
+                }
+                else if (age >= _options.FenceTimeout && _worker.Now >= _nextFenceWarn)
+                {
+                    _log.LogWarning(
+                        "Reader {DeviceId}: stage=fenced; observation still unprocessed after {Seconds}s; next action=probe same observation (resend after {Resend}s)",
+                        _deviceId, (int)age.TotalSeconds, (int)_options.FenceResendAfter.TotalSeconds);
+                    _nextFenceWarn = _worker.Now + _options.FenceTimeout;
+                }
             }
         }
 
-        _log.LogInformation("Reader {DeviceId}: desired state waits until the server has processed the reader observation", _deviceId);
+        _log.LogInformation(
+            "Reader {DeviceId}: stage=fenced; waiting for the server to finish processing the reader observation before applying desired state",
+            _deviceId);
         return false;
     }
 
@@ -1261,16 +1290,20 @@ public enum ObservationGate
 }
 
 /// <summary>
-/// <see cref="FenceTimeout"/>: how long an observation may wait for the server before the reader is
-/// read and sent again. <see cref="ReconnectWait"/>: how long a reconnect checks for that
-/// processing before leaving desired state to the next notice or retry. <see cref="ObserveRetry"/>:
-/// the least time between two reads made only to observe the reader.
+/// <see cref="FenceTimeout"/>: how long an observation may wait before a rate-limited warning while
+/// the same observation is still probed. <see cref="FenceResendAfter"/>: how long before the reader
+/// is re-read and the observation is sent again. <see cref="ReconnectWait"/>: how long a reconnect
+/// checks for that processing before leaving desired state to the next notice or retry.
+/// <see cref="ObserveRetry"/>: the least time between two reads made only to observe the reader.
 /// </summary>
 public sealed record DesiredPathOptions
 {
     public ILogger? Log { get; init; }
 
-    public TimeSpan FenceTimeout { get; init; } = TimeSpan.FromMinutes(2);
+    public TimeSpan FenceTimeout { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>After this, stage=fenced falls back to Unobserved and a full observe resend.</summary>
+    public TimeSpan FenceResendAfter { get; init; } = TimeSpan.FromMinutes(15);
 
     public TimeSpan ReconnectWait { get; init; } = TimeSpan.FromSeconds(5);
 

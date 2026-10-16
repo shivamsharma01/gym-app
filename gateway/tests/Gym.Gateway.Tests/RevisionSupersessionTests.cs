@@ -334,7 +334,13 @@ public class RevisionSupersessionTests : IDisposable
         var server = new Server { Items = [Item(1, "2", "Ravi")], Processing = false, FailChecks = 1 };
         var upload = new PendingEnrollmentTests.RecordingUpload();
         using var worker = Worker(reader, "lost");
-        var path = Path(worker, reader, server, upload);
+        var path = new DesiredRevisionPath("r", worker, reader, server, upload, null,
+            new DesiredPathOptions
+            {
+                ReconnectWait = TimeSpan.Zero,
+                FenceTimeout = TimeSpan.FromMinutes(2),
+                FenceResendAfter = TimeSpan.FromMinutes(5)
+            });
 
         await path.ReconnectAsync(CancellationToken.None);
         var firstIds = upload.MessageIds.ToList();
@@ -344,8 +350,14 @@ public class RevisionSupersessionTests : IDisposable
         _now += TimeSpan.FromMinutes(1);
         await path.RetryAsync(CancellationToken.None);
         Assert.Equal(firstIds, upload.MessageIds);
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
 
-        _now += TimeSpan.FromMinutes(1);
+        _now += TimeSpan.FromMinutes(2);
+        await path.RetryAsync(CancellationToken.None);
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
+        Assert.Equal(firstIds, upload.MessageIds);
+
+        _now += TimeSpan.FromMinutes(3);
         await path.RetryAsync(CancellationToken.None);
         Assert.Equal(ObservationGate.Unobserved, path.Gate);
         await path.RetryAsync(CancellationToken.None);

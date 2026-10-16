@@ -138,8 +138,26 @@ public class MemberCreateWorkerTests : IDisposable
         var retried = worker.ApplyMember(Member("1", nameEx: null));
 
         Assert.Equal(MemberApplyKind.Failed, retried.Kind);
-        Assert.StartsWith("read-back mismatch: photo", worker.Retry!.LastError, StringComparison.Ordinal);
+        Assert.StartsWith("verification failed (reason=photo-", worker.Retry!.LastError, StringComparison.Ordinal);
         Assert.DoesNotContain(reader.Writes, write => write.StartsWith("CreateUser 2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_reencoded_jpeg_read_back_is_acknowledged_and_not_rewritten()
+    {
+        // Minimal SOI…EOI JPEG, different bytes from Face, as a device that re-encodes would return.
+        byte[] reencoded =
+        [
+            0xFF, 0xD8, 0xFF, 0xD9, 0x00, 0x01, 0x02, 0x03
+        ];
+        var reader = new FakeReader();
+        reader.ScriptFaceReadBack(reencoded);
+        using var worker = Start(Path.Combine(_directory, "reencode.sqlite"), reader);
+
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", nameEx: null)).Kind);
+        var writes = reader.Writes.Count;
+        Assert.Equal(MemberApplyKind.AlreadyApplied, worker.ApplyMember(Member("1", nameEx: null)).Kind);
+        Assert.Equal(writes, reader.Writes.Count);
     }
 
     [Fact]
@@ -153,7 +171,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(MemberApplyKind.Failed, result.Kind);
         Assert.Equal(0, worker.AppliedRevision);
         Assert.Empty(worker.PendingAcks);
-        Assert.StartsWith("read-back mismatch", worker.Retry!.LastError, StringComparison.Ordinal);
+        Assert.StartsWith("verification failed (reason=photo-", worker.Retry!.LastError, StringComparison.Ordinal);
         Assert.Equal(new[] { "CreateUser 1", "InsertFace 1" }, reader.Writes);
     }
 
@@ -345,7 +363,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(1, worker.AppliedRevision);
         Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
         Assert.Equal(2, worker.Retry!.Revision);
-        Assert.StartsWith("read-back mismatch", worker.Retry.LastError, StringComparison.Ordinal);
+        Assert.StartsWith("verification failed (reason=field-mismatch", worker.Retry.LastError, StringComparison.Ordinal);
         Assert.Equal(face, reader.GetFace("1").Bytes);
         Assert.DoesNotContain(reader.Writes, line => line.Contains("SynchronizeTime", StringComparison.Ordinal));
 
@@ -423,7 +441,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(MemberApplyKind.Failed, worker.ApplyMember(next).Kind);
         Assert.Equal(1, worker.AppliedRevision);
         Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
-        Assert.StartsWith("read-back mismatch", worker.Retry!.LastError, StringComparison.Ordinal);
+        Assert.StartsWith("verification failed (reason=photo-", worker.Retry!.LastError, StringComparison.Ordinal);
     }
 
     [Fact]

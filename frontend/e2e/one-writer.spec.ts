@@ -114,9 +114,9 @@ test('importing a reader sends one request and lists who stayed pending', async 
   await mockStaff(page, [], user, requests)
   await page.goto('/app/devices/dev-1')
   await page.getByRole('button', { name: 'Import pending people' }).click()
-  await expect(page.getByText('2 members created · 1 left pending.')).toBeVisible()
+  await expect(page.getByText(/2 members created · 1 left pending/)).toBeVisible()
   await expect(page.getByText('Reader id 13: The reader face is not on the server')).toBeVisible()
-  expect(requests).toEqual(['/api/v1/devices/dev-1/import-pending'])
+  expect(requests).toEqual(['/api/v1/devices/dev-1/import-pending?mode=CONSERVATIVE'])
 })
 
 test('staff without device sync cannot import a reader', async ({ page }) => {
@@ -277,12 +277,25 @@ async function mockStaff(
       return
     }
     if (path === '/api/v1/devices/dev-1/import-pending' && method === 'POST') {
-      reconciles.push(path)
+      reconciles.push(path + url.search)
       await route.fulfill({
         json: {
           deviceId: 'dev-1',
           created: 2,
           skipped: [{ deviceUserId: '13', reason: 'The reader face is not on the server' }],
+          summary: {
+            deviceId: 'dev-1',
+            observed: 3,
+            withPhoto: 2,
+            withoutPhoto: 1,
+            pendingUndecided: 1,
+            possibleNameMatch: 0,
+            possibleFaceMatch: 0,
+            readyToCreate: 0,
+            created: 2,
+            skipped: 1,
+            mode: 'CONSERVATIVE',
+          },
         },
       })
       return

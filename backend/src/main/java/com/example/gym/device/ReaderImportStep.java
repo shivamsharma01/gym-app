@@ -11,11 +11,21 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * One person of a bulk import. Every reader of the gym is locked first, lowest id first, so two
  * imports, or an import and a seed, take turns, and the member check reads what the other one
- * committed. A person who may already be a member is not created: staff link them, or create them
- * one by one on the Review page.
+ * committed. How a possible match is treated depends on {@link Mode}.
  */
 @Service
 public class ReaderImportStep {
+
+    /**
+     * {@link #CONSERVATIVE} (default import): same photo or same name holds the person for Review.
+     * {@link #DISTINCT_SOURCE}: each reader id is its own identity; only the same photo holds them
+     * (staff link). Same name alone creates a second member. Not a blanket bypass of photo or
+     * already-decided rules.
+     */
+    public enum Mode {
+        CONSERVATIVE,
+        DISTINCT_SOURCE
+    }
 
     private final ReaderReconcileService readers;
     private final MemberMatcher matcher;
@@ -34,15 +44,24 @@ public class ReaderImportStep {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public ReviewItemView createUnlessKnown(PendingEnrollment enrollment, Long tenantId) {
+        return createUnlessKnown(enrollment, tenantId, Mode.CONSERVATIVE);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public ReviewItemView createUnlessKnown(PendingEnrollment enrollment, Long tenantId, Mode mode) {
         readers.lockReaders(tenantId);
         if (ReviewListService.waitingForReader(enrollment)) {
             return decisions.create(enrollment.getPublicId(), tenantId);
         }
         observedUsers.findByDeviceIdAndDeviceUserId(enrollment.getDeviceId(), enrollment.getDeviceUserId())
-                .flatMap(observed -> matcher.existing(tenantId, observed))
-                .ifPresent(member -> {
-                    throw CommonExceptions.conflict("May already be member " + member.getMemberCode() + " ("
-                            + member.getFullName() + "); link them or create them one by one on the Review page");
+                .ifPresent(observed -> {
+                    var match = mode == Mode.DISTINCT_SOURCE
+                            ? matcher.existingByFace(tenantId, observed)
+                            : matcher.existing(tenantId, observed);
+                    match.ifPresent(member -> {
+                        throw CommonExceptions.conflict("May already be member " + member.getMemberCode() + " ("
+                                + member.getFullName() + "); link them or create them one by one on the Review page");
+                    });
                 });
         return decisions.create(enrollment.getPublicId(), tenantId);
     }

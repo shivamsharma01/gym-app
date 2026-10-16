@@ -161,42 +161,68 @@ function Overview({ device }: { device: Device }) {
   )
 }
 
+type ImportSummary = {
+  deviceId: string
+  observed: number
+  withPhoto: number
+  withoutPhoto: number
+  pendingUndecided: number
+  possibleNameMatch: number
+  possibleFaceMatch: number
+  readyToCreate: number
+  created: number
+  skipped: number
+  mode: string
+}
+
 type ImportResult = {
   deviceId: string
   created: number
   skipped: { deviceUserId: string; reason: string }[]
+  summary?: ImportSummary
 }
 
 function ImportPending({ deviceId }: Readonly<{ deviceId: string }>) {
   const qc = useQueryClient()
   const run = useMutation({
-    mutationFn: () => api<ImportResult>(`/api/v1/devices/${deviceId}/import-pending`, { method: 'POST' }),
+    mutationFn: (mode: 'CONSERVATIVE' | 'DISTINCT_SOURCE') =>
+      api<ImportResult>(`/api/v1/devices/${deviceId}/import-pending?mode=${mode}`, { method: 'POST' }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['reviews'] })
     },
   })
   const created = run.data?.created ?? 0
   const skipped = run.data?.skipped ?? []
+  const summary = run.data?.summary
   return (
     <Card className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">People already on this reader</h2>
       <p className="text-sm text-muted">
         Creates a member for every person this reader showed that nobody has decided on yet. Each member keeps the
         reader&apos;s name, dates and photo, so nothing is written to the reader. Someone disabled on the reader
-        becomes an inactive member. Someone who may already be a member (same photo or same name) is left pending, so
-        staff link them or create them one by one on the Review page.
+        becomes an inactive member. Import pending people leaves same-name or same-photo matches for Review. Create
+        each distinct reader id creates a member per reader id when only the name matches; same photo still stays
+        pending for link or one-by-one create.
       </p>
-      <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate()}>
-        Import pending people
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate('CONSERVATIVE')}>
+          Import pending people
+        </Button>
+        <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate('DISTINCT_SOURCE')}>
+          Create each distinct reader id
+        </Button>
+      </div>
       {run.isSuccess ? (
         <p className="text-sm text-muted">
           {created} member{created === 1 ? '' : 's'} created
           {skipped.length > 0 ? ` · ${skipped.length} left pending` : ''}.
+          {summary
+            ? ` Observed ${summary.observed} · with photo ${summary.withPhoto} · name hold ${summary.possibleNameMatch} · photo hold ${summary.possibleFaceMatch}.`
+            : null}
         </p>
       ) : null}
       {skipped.length > 0 ? (
-        <ul className="space-y-1 text-sm text-muted">
+        <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-muted">
           {skipped.map((item) => (
             <li key={item.deviceUserId}>
               Reader id {item.deviceUserId}: {item.reason}

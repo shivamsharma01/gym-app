@@ -508,7 +508,6 @@ public sealed class ReaderWorker : IDisposable
             return WriteStep.Fail(error);
         }
 
-        var faceHash = FaceHash.Sha256Hex(desired.Face);
         // The desired record without its photo is this write's own earlier attempt: it is finished here,
         // never moved to another id, which would leave a copy of the person behind.
         var refused = Precondition(now, desired, now.Present && SameUser(now.User!, desired));

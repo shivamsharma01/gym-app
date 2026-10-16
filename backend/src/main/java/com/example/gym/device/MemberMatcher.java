@@ -48,17 +48,22 @@ public class MemberMatcher {
         return candidates(tenantId, observed).stream().findFirst();
     }
 
+    /**
+     * A member who already holds this reader photo. Name alone is not enough: two people on one
+     * reader can share a name and still be distinct enrollments (roster replication).
+     */
+    public Optional<Member> existingByFace(Long tenantId, DeviceObservedUser observed) {
+        return faceMatches(tenantId, observed).stream().findFirst();
+    }
+
     /** Every member, active or not, a reader person may already be; lowest id first. */
     public List<Member> candidates(Long tenantId, DeviceObservedUser observed) {
         if (observed == null) {
             return List.of();
         }
         Map<Long, Member> found = new TreeMap<>();
-        if (observed.getFaceSha256() != null && !observed.getFaceSha256().isBlank()) {
-            for (Member member : members.findByTenantIdAndFaceSha256(
-                    tenantId, observed.getFaceSha256().toLowerCase(Locale.ROOT))) {
-                found.put(member.getId(), member);
-            }
+        for (Member member : faceMatches(tenantId, observed)) {
+            found.put(member.getId(), member);
         }
         String name = normalized(ReaderReviewService.shown(observed.getReaderName(), observed.getReaderNameEx()));
         if (!name.isEmpty()) {
@@ -69,6 +74,14 @@ public class MemberMatcher {
             }
         }
         return List.copyOf(found.values());
+    }
+
+    private List<Member> faceMatches(Long tenantId, DeviceObservedUser observed) {
+        if (observed == null || observed.getFaceSha256() == null || observed.getFaceSha256().isBlank()) {
+            return List.of();
+        }
+        return members.findByTenantIdAndFaceSha256(
+                tenantId, observed.getFaceSha256().toLowerCase(Locale.ROOT));
     }
 
     /** Whether a scan has shown this reader holding someone at the id. */

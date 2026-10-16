@@ -1345,19 +1345,27 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         }
     }
 
+    /// <summary>Rows omitted from the last <see cref="FetchAttendance"/> because <c>stuTime</c> was unreadable.</summary>
+    public int LastMalformedAttendanceSkipped { get; private set; }
+
     private IReadOnlyList<DeviceAttendanceRecord> QueryAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc)
     {
         using var search = new SdkAttendanceSearch(_loginId, fromUtc, toUtc);
-        return ReadAttendance(search, AttendancePage);
+        var records = ReadAttendance(search, AttendancePage, out var skipped);
+        LastMalformedAttendanceSkipped = skipped;
+        return records;
     }
 
     /// <summary>
-    /// Every record of one search, oldest first. A failed search, a failed page, or a record whose time
-    /// cannot be read throws <see cref="AttendanceReadException"/>: a partial window is never returned
-    /// as complete. A search that finds nothing returns an empty list.
+    /// Every record of one search, oldest first. A failed search or a failed page throws
+    /// <see cref="AttendanceReadException"/> (the window is not trusted). A single record whose time
+    /// cannot be read is omitted so valid punches in the same window still return; those skips are
+    /// counted in <paramref name="malformedSkipped"/>. A search that finds nothing returns an empty list.
     /// </summary>
-    internal static IReadOnlyList<DeviceAttendanceRecord> ReadAttendance(IAttendanceSearch search, int page)
+    internal static IReadOnlyList<DeviceAttendanceRecord> ReadAttendance(
+        IAttendanceSearch search, int page, out int malformedSkipped)
     {
+        malformedSkipped = 0;
         if (!search.Start(out var startError))
         {
             throw new AttendanceReadException("Attendance search failed: " + startError);
@@ -1380,8 +1388,8 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
             {
                 if (!TryUtc(row.stuTime, out var at))
                 {
-                    throw new AttendanceReadException(
-                        $"Attendance record {row.nRecNo} has an unreadable time {Raw(row.stuTime)}");
+                    malformedSkipped++;
+                    continue;
                 }
 
                 records.Add(ToAttendance(row, at));

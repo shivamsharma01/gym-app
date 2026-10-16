@@ -7,7 +7,7 @@ Measurements from the October 2026 local-network logs and the 7 October 2026 pro
 - Listing one reader's users took about 3 seconds, and about 3–5 seconds for the ~1,200-user roster in the probe.
 - Photo reads were about 0.1 s per photo on 192.168.31.92 and 0.25 s on 192.168.31.91, one reader at a time. That is about 2–5 minutes per reader for 1,200 photos. A slow network (about 4 s per photo) stretches that into hours.
 - A full user write that also moves a photo is on the order of 1–1.5 s for one person on one reader.
-- The safety-scan interval is not fixed. Do not take 15 seconds from these numbers. A larger roster has not been measured.
+- Safety-scan default is every 5 minutes (`RosterPollSeconds` = 300): the user-list pass is a few seconds for ~1,200 users. If a site’s typical list pass is 30s–2 minutes, use hourly; if longer, daily. Do not use 15 seconds.
 
 ## What that means for desired state
 

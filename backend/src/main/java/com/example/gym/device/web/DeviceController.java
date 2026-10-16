@@ -5,6 +5,8 @@ import com.example.gym.device.DeviceReadService;
 import com.example.gym.device.DeviceService;
 import com.example.gym.device.ReaderImportService;
 import com.example.gym.device.ReaderImportService.Imported;
+import com.example.gym.device.ReaderImportService.Summary;
+import com.example.gym.device.ReaderImportStep.Mode;
 import com.example.gym.device.ReaderLinkMatches.Match;
 import com.example.gym.device.ReaderLinkService;
 import com.example.gym.device.ReaderLinkService.Linked;
@@ -110,11 +112,22 @@ public class DeviceController {
         return reconcileService.reconcile(id, SecurityUtils.currentTenantId());
     }
 
+    @GetMapping("/{id}/import-summary")
+    @PreAuthorize("hasAuthority('DEVICE_SYNC') and hasAuthority('REVIEW_DECIDE')")
+    @Operation(summary = "Counts for import: observed, photos, pending, name/face holds, ready to create")
+    public Summary importSummary(@PathVariable String id,
+                                 @RequestParam(defaultValue = "CONSERVATIVE") Mode mode) {
+        return importService.preview(id, SecurityUtils.currentTenantId(), mode);
+    }
+
     @PostMapping("/{id}/import-pending")
     @PreAuthorize("hasAuthority('DEVICE_SYNC') and hasAuthority('REVIEW_DECIDE')")
-    @Operation(summary = "Create a member for every undecided person this reader showed, keeping the reader's record")
-    public Imported importPending(@PathVariable String id) {
-        return importService.importPending(id, SecurityUtils.currentTenantId());
+    @Operation(summary = "Create a member for every undecided person this reader showed, keeping the reader's record. "
+            + "mode=CONSERVATIVE (default) holds name or photo matches; mode=DISTINCT_SOURCE creates per reader id "
+            + "unless the photo already belongs to a member.")
+    public Imported importPending(@PathVariable String id,
+                                  @RequestParam(defaultValue = "CONSERVATIVE") Mode mode) {
+        return importService.importPending(id, SecurityUtils.currentTenantId(), mode);
     }
 
     @GetMapping("/{id}/link-matches")

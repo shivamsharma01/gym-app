@@ -120,7 +120,7 @@ public sealed class DesiredStateClient : IDesiredStateClient
 
     public static HttpClient CreateHttp(string token)
     {
-        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
         return http;

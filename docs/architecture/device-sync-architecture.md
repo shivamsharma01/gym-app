@@ -38,7 +38,7 @@ The final system should behave like a declarative controller rather than a peer-
 
 - **Declarative convergence:** Each reader has a server-defined desired projection and an applied revision. The system reconciles to that desired state rather than replaying an unbounded history of per-member commands.
 
-- **Offline continuity:** Reader-side work continues without cloud connectivity. The gateway records observations locally and reports them when the backend is reachable. It does not copy an unlinked person onto another reader.
+- **Offline continuity:** Reader-side work continues without cloud connectivity. The gateway records observations locally and reports them when the backend is reachable. The server remains the only brain: the gateway never copies an unlinked person onto another reader.
 
 - **No silent loss:** Reader-side creations/edits/deletes that cannot be safely resolved automatically create pending enrollment/review items.
 
@@ -525,7 +525,7 @@ The review queue is not an exception-handling drawer hidden from the product. It
 
 There are no remaining business decisions that prevent the architecture from being designed. The following are implementation choices or hardware-verification tasks that can be closed in the POC and then reflected as concrete parameters:
 
-- Final periodic safety-scan interval after performance benchmarking.
+- Safety-scan interval: default every 5 minutes for a few-second list pass; hourly if 30s–2 minutes; daily if longer (see `GatewayOptions.RosterPollSeconds` / open-questions).
 
 - SQLite schema/file layout inside the gateway implementation.
 

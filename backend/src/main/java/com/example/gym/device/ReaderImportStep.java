@@ -4,17 +4,23 @@ import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.device.domain.PendingEnrollment;
 import com.example.gym.device.dto.ReviewItemView;
 import com.example.gym.device.repo.DeviceObservedUserRepository;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * One person of a bulk import. Every reader of the gym is locked first, lowest id first, so two
- * imports, or an import and a seed, take turns, and the member check reads what the other one
- * committed. How a possible match is treated depends on {@link Mode}.
+ * One person or a small batch of a bulk import. Every reader of the gym is locked once per batch,
+ * lowest id first, so two imports, or an import and a seed, take turns, and the member check reads
+ * what the other one committed. How a possible match is treated depends on {@link Mode}.
  */
 @Service
 public class ReaderImportStep {
+
+    /** How many creates share one reader-lock transaction. */
+    static final int BATCH_SIZE = 25;
 
     /**
      * {@link #CONSERVATIVE} (default import): same photo or same name holds the person for Review.
@@ -25,6 +31,9 @@ public class ReaderImportStep {
     public enum Mode {
         CONSERVATIVE,
         DISTINCT_SOURCE
+    }
+
+    public record BatchResult(List<ReviewItemView> created, List<ReaderImportService.Skipped> skipped) {
     }
 
     private final ReaderReconcileService readers;
@@ -50,19 +59,45 @@ public class ReaderImportStep {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public ReviewItemView createUnlessKnown(PendingEnrollment enrollment, Long tenantId, Mode mode) {
         readers.lockReaders(tenantId);
-        if (ReviewListService.waitingForReader(enrollment)) {
-            return decisions.create(enrollment.getPublicId(), tenantId);
+        Optional<String> hold = holdReason(enrollment, tenantId, mode);
+        if (hold.isPresent()) {
+            throw CommonExceptions.conflict(hold.get());
         }
-        observedUsers.findByDeviceIdAndDeviceUserId(enrollment.getDeviceId(), enrollment.getDeviceUserId())
-                .ifPresent(observed -> {
+        return decisions.create(enrollment.getPublicId(), tenantId);
+    }
+
+    /**
+     * Locks all gym readers once, then creates up to {@link #BATCH_SIZE} people (or records a skip
+     * reason without throwing, so one hold does not abort the batch transaction).
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public BatchResult createBatch(List<PendingEnrollment> batch, Long tenantId, Mode mode) {
+        readers.lockReaders(tenantId);
+        List<ReviewItemView> created = new ArrayList<>();
+        List<ReaderImportService.Skipped> skipped = new ArrayList<>();
+        for (PendingEnrollment enrollment : batch) {
+            Optional<String> hold = holdReason(enrollment, tenantId, mode);
+            if (hold.isPresent()) {
+                skipped.add(new ReaderImportService.Skipped(enrollment.getDeviceUserId(), hold.get()));
+                continue;
+            }
+            created.add(decisions.create(enrollment.getPublicId(), tenantId));
+        }
+        return new BatchResult(List.copyOf(created), List.copyOf(skipped));
+    }
+
+    private Optional<String> holdReason(PendingEnrollment enrollment, Long tenantId, Mode mode) {
+        // Already decided, ack still pending — leave them; do not call create again.
+        if (ReviewListService.waitingForReader(enrollment)) {
+            return Optional.of("Decision is waiting for the reader");
+        }
+        return observedUsers.findByDeviceIdAndDeviceUserId(enrollment.getDeviceId(), enrollment.getDeviceUserId())
+                .flatMap(observed -> {
                     var match = mode == Mode.DISTINCT_SOURCE
                             ? matcher.existingByFace(tenantId, observed)
                             : matcher.existing(tenantId, observed);
-                    match.ifPresent(member -> {
-                        throw CommonExceptions.conflict("May already be member " + member.getMemberCode() + " ("
-                                + member.getFullName() + "); link them or create them one by one on the Review page");
-                    });
+                    return match.map(member -> "May already be member " + member.getMemberCode() + " ("
+                            + member.getFullName() + "); link them or create them one by one on the Review page");
                 });
-        return decisions.create(enrollment.getPublicId(), tenantId);
     }
 }

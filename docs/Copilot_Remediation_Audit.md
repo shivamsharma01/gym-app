@@ -106,8 +106,8 @@ Definitions (do not mix stages):
 | V7 multi-reader isolation | Implemented | Report’s “parallelize readers” already true |
 | Import pending + Review | Implemented | No import **summary partition** API yet |
 | Photo wanted upload | Implemented | Persist checksum→SHA cache across restart (perf only) |
-| Attendance bad timestamp | Stalls window | Plan G.3: policy undecided |
-| Offline unlinked copy | Out of release | Do not implement |
+| Attendance bad timestamp | Was stall; **now skip that row** (product yes) | Valid punches continue; search/page failure still fails |
+| Offline unlinked copy | **Rejected permanently** | Server-only brain |
 
 ---
 
@@ -135,9 +135,9 @@ Definitions (do not mix stages):
 | P2 | Fence timeout rescan | Was 120 s → Unobserved | **Fixed:** warn @5 min, resend @15 min (`FenceResendAfter`) | 502 / slow observed |
 | P2 | HTTP 20 s | Bulk pull timeouts | **Fixed:** HttpClient 60 s on BackendLink + DesiredStateClient | Timeout + retry idempotent |
 | P2 | Photo cold-start | Was thought RAM-only | **Already persisted** as `{journal}.faces.json` (`FaceChecksumCache`) | Restart without 1154 downloads |
-| P2 | Import lock per row | `lockReaders` each create | Bounded batch locking | Mid-batch failure + retry |
+| P2 | Import lock per row | `lockReaders` each create | **Fixed:** batches of 25 | Mid-batch failure + retry |
 | P3 | Log verbiage | Ambiguous messages | Stage/reason/next action | — |
-| P3 | Attendance bad row | Throws whole window | Skip row if product accepts (align G.3) | Mixed valid/invalid batch |
+| P3 | Attendance bad row | Threw whole window | **Fixed:** skip messy row only | Mixed valid/invalid batch |
 
 ---
 
@@ -155,5 +155,4 @@ Acceptance for “hassle-free load”: every Reader 1 observed user with a face 
 
 - Whether Dahua `GetFace` bytes after `InsertFace` always differ in SHA-256 on this firmware (log shows mismatch; need classified reason after day-fix).  
 - Current production counts after 15–17 Oct staff actions (DB may have changed).  
-- Product choice: skip malformed attendance rows vs stall (plan G.3).  
-- Product choice: name-only “possible match” → create as new vs require Review (replicate op design).
+- Name-only “possible match” → use DISTINCT_SOURCE import or Review (replicate op shipped).

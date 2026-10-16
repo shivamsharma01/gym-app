@@ -184,16 +184,17 @@ public class LiveReaderAdapterTests : IDisposable
     [Fact]
     public void An_attendance_search_that_finds_nothing_is_an_empty_window()
     {
-        var records = TrueFaceDeviceAdapter.ReadAttendance(new ScriptedSearch(true, (0, [])), 20);
+        var records = TrueFaceDeviceAdapter.ReadAttendance(new ScriptedSearch(true, (0, [])), 20, out var skipped);
 
         Assert.Empty(records);
+        Assert.Equal(0, skipped);
     }
 
     [Fact]
     public void A_failed_attendance_search_is_a_failure_not_an_empty_window()
     {
         var error = Assert.Throws<AttendanceReadException>(() =>
-            TrueFaceDeviceAdapter.ReadAttendance(new ScriptedSearch(false), 20));
+            TrueFaceDeviceAdapter.ReadAttendance(new ScriptedSearch(false), 20, out _));
 
         Assert.Contains("Attendance search failed", error.Message);
     }
@@ -204,20 +205,23 @@ public class LiveReaderAdapterTests : IDisposable
         var full = Enumerable.Range(1, 2).Select(i => Record(i, "1", 2026, 10, 11, 5, 0, i)).ToArray();
         var search = new ScriptedSearch(true, (2, full), (-1, []));
 
-        var error = Assert.Throws<AttendanceReadException>(() => TrueFaceDeviceAdapter.ReadAttendance(search, 2));
+        var error = Assert.Throws<AttendanceReadException>(() =>
+            TrueFaceDeviceAdapter.ReadAttendance(search, 2, out _));
 
         Assert.Contains("page 2 failed after 2 record(s)", error.Message);
     }
 
     [Fact]
-    public void An_attendance_record_with_an_unreadable_time_fails_the_window()
+    public void An_attendance_record_with_an_unreadable_time_is_skipped_and_valid_rows_return()
     {
         var search = new ScriptedSearch(true,
             (2, [Record(1, "1", 2026, 10, 11, 5, 0, 0), Record(2, "2", 2026, 13, 0, 0, 0, 0)]));
 
-        var error = Assert.Throws<AttendanceReadException>(() => TrueFaceDeviceAdapter.ReadAttendance(search, 20));
+        var records = TrueFaceDeviceAdapter.ReadAttendance(search, 20, out var skipped);
 
-        Assert.Contains("record 2 has an unreadable time 2026-13-00", error.Message);
+        Assert.Equal(1, skipped);
+        Assert.Equal([1L], records.Select(r => r.RecNo!.Value));
+        Assert.Equal("1", records[0].DeviceUserId);
     }
 
     [Fact]
@@ -227,8 +231,9 @@ public class LiveReaderAdapterTests : IDisposable
             (2, [Record(9, "3", 2026, 10, 11, 7, 0, 0), Record(8, "2", 2026, 10, 11, 6, 0, 0)]),
             (1, [Record(7, "1", 2026, 10, 11, 5, 0, 0)]));
 
-        var records = TrueFaceDeviceAdapter.ReadAttendance(search, 2);
+        var records = TrueFaceDeviceAdapter.ReadAttendance(search, 2, out var skipped);
 
+        Assert.Equal(0, skipped);
         Assert.Equal([7L, 8L, 9L], records.Select(r => r.RecNo!.Value));
         Assert.Equal(new DateTimeOffset(2026, 10, 11, 5, 0, 0, TimeSpan.Zero), records[0].OccurredAt);
         Assert.Equal(TimeSpan.Zero, records[0].OccurredAt.Offset);

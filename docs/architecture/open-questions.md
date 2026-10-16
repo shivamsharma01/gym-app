@@ -21,16 +21,16 @@ These are product or hardware questions the architecture does not close. Do not 
 - Gym admin and staff may decide a review item. A pending enrollment of a person on a reader does not expire. The one-time gateway enrollment token does expire (24 hours) and is consumed on use.
 - The WebSocket carries live gateway traffic. The HTTP command poll runs only while that socket is down, so a dropped socket still delivers door and clock commands.
 - Attendance should reach admins as soon as the punches exist, by a poll that does not repeat work while nothing has changed. The reader log is not cleared. V19 builds this as a gateway-owned time-window poll; the server no longer schedules attendance reads.
-- An unlinked person is not copied to another reader while the server is down. The server publishes desired state. The gateway does not resolve that conflict on its own.
+- **Server is the only brain.** An unlinked person is never copied to another reader by the gateway (online or offline). Desired state comes from the server only. Offline gateway-side copy is out of scope permanently, not deferred.
 - Gateway authentication is the credential. Anonymous access is not part of the design. F1 records that the automated tests passed.
+- **Safety-scan interval:** default every 5 minutes (`RosterPollSeconds` = 300). Measured ~1,200-user list is a few seconds. Product rule by typical duration: under ~30s → every 5 minutes; 30s–2 minutes → hourly; longer → daily. Staff can still force a scan (`SCAN_READER`).
+- **SDK reconnect as a process guarantee:** the Windows gateway runs as a start-on-restart service. V6 re-reads and pulls after the process is up; it does not depend on the old SDK login surviving a power cut. (POC P20: auto-reconnect of an old login was UNKNOWN / mixed.)
+- **Unreadable attendance `stuTime`:** skip that one messy row, keep valid punches in the same window, log a warning with the skip count. Do not invent a substitute time. Search/page failures still fail the whole read.
 
 ## Still open
 
-1. The safety-scan interval. A safety scan is an occasional full read of one reader's user list, so a change made on the reader is still noticed when its alarm was missed. It is not the normal way changes are detected, and it is not the attendance poll. The only measurement is about 1,200 users in 3–5 seconds. Do not hardcode 15 seconds from an unmeasured larger roster.
-2. Door and time-section values other than the probe's `nDoorNum=1` and `nTimeSectionNum=1`.
-3. SDK reconnect as a guaranteed behavior. One power cycle reconnected and one did not.
-4. Attendance record-number survival across reboot or a full log, and the reader's retention cap. The poll is a time window of append-only rows and must not write member state.
-5. How staff recover when an attendance record's time cannot be read. Today, that record stalls the reader's attendance; it is never skipped and never given the current time. A recovery step, such as an audited skip of one named record, needs a product decision.
+1. **Attendance record-number survival across reboot or a full log, and retention cap.** Oct 7 POC (P6): record numbers rose during the afternoon; the two power cycles did **not** give a clean before/after punch that proves `nRecNo` survives reboot, and the full-log wrap case was not run. V19 does not need this for correctness (time-window poll + fingerprint), so it stays unproven hardware detail, not a product blocker.
+2. **Roster scan duration on production hardware.** If a site’s full list pass grows into the 30s–2 minute band (or beyond), raise `RosterPollSeconds` to hourly or daily per the rule above. Test DB: ~1,200 users ≈ a few seconds for the list / ~8.5 s acknowledged list-only scan.
 
 ## Operational risks that remain
 
@@ -38,4 +38,3 @@ These are product or hardware questions the architecture does not close. Do not 
 - Hash the face bytes read back. This firmware stored some padded files as a different image.
 - `0x800004B5` alone is not "user missing." The fail code separates a missing photo from a missing user.
 - There is no query for attendance records after a record number. Poll a time window.
-- Live `ALARM_ACCESS_CTL_EVENT` did not arrive for the punches in the 7 October 2026 run. Do not use it as the attendance source.

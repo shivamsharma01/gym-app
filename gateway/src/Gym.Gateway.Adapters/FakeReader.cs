@@ -509,9 +509,10 @@ public sealed record ReaderListResult(bool Ok, int AnnouncedTotal, IReadOnlyList
     public static ReaderListResult Failed(string error) => new(false, 0, [], error);
 }
 
-public sealed record ReaderPunchResult(bool Ok, IReadOnlyList<ReaderPunch> Punches, string? Error)
+public sealed record ReaderPunchResult(bool Ok, IReadOnlyList<ReaderPunch> Punches, string? Error, int MalformedSkipped = 0)
 {
-    public static ReaderPunchResult Found(IReadOnlyList<ReaderPunch> punches) => new(true, punches, null);
+    public static ReaderPunchResult Found(IReadOnlyList<ReaderPunch> punches, int malformedSkipped = 0) =>
+        new(true, punches, null, malformedSkipped);
 
     public static ReaderPunchResult Failed(string error) => new(false, [], error);
 }

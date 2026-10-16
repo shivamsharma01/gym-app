@@ -1,6 +1,5 @@
 package com.example.gym.device;
 
-import com.example.gym.common.error.ApiException;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.ReaderImportStep.Mode;
@@ -84,13 +83,14 @@ public class ReaderImportService {
                 .toList();
         int created = 0;
         List<Skipped> skipped = new ArrayList<>();
-        for (PendingEnrollment enrollment : pending) {
-            try {
-                audit.decided(step.createUnlessKnown(enrollment, tenantId, chosen));
-                created++;
-            } catch (ApiException e) {
-                skipped.add(new Skipped(enrollment.getDeviceUserId(), e.getMessage()));
+        for (int from = 0; from < pending.size(); from += ReaderImportStep.BATCH_SIZE) {
+            int to = Math.min(from + ReaderImportStep.BATCH_SIZE, pending.size());
+            ReaderImportStep.BatchResult batch = step.createBatch(pending.subList(from, to), tenantId, chosen);
+            for (var item : batch.created()) {
+                audit.decided(item);
             }
+            created += batch.created().size();
+            skipped.addAll(batch.skipped());
         }
         Summary summary = summarize(reader, chosen, created, skipped.size());
         FlowLog.info("device", "imported reader={} mode={} created={} skipped={}",

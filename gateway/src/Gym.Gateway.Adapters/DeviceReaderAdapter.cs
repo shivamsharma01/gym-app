@@ -260,9 +260,8 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
     }
 
     /// <summary>
-    /// A time-window record query. A failed search, a failed page, or an unreadable record time is a
-    /// failed read, never an empty or partial window, so the poll posts nothing and reads the same
-    /// window again next time.
+    /// A time-window record query. A failed search or a failed page is a failed read (nothing posted).
+    /// A single unreadable punch time is omitted; valid punches in the window still return.
     /// </summary>
     public ReaderPunchResult QueryAttendance(DateTimeOffset fromUtc, DateTimeOffset toUtc)
     {
@@ -283,7 +282,8 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
                     record.Granted,
                     record.ErrorCode))
                 .ToArray();
-            return ReaderPunchResult.Found(punches);
+            var skipped = _device is TrueFaceDeviceAdapter live ? live.LastMalformedAttendanceSkipped : 0;
+            return ReaderPunchResult.Found(punches, skipped);
         }
         catch (Exception ex)
         {

@@ -89,6 +89,13 @@ public sealed class AttendancePoll
             return new AttendancePollResult(false, from, to, 0, 0, 0, read.Error);
         }
 
+        if (read.MalformedSkipped > 0)
+        {
+            _log.LogWarning(
+                "Reader {DeviceId}: stage=attendance; skipped {Skipped} punch(es) with unreadable time in {From:o}..{To:o}; valid rows continue",
+                _deviceId, read.MalformedSkipped, from, to);
+        }
+
         var fresh = read.Punches
             .Where(p => !_confirmed.ContainsKey(Key(p)))
             .OrderBy(p => p.OccurredAtUtc)

@@ -7,7 +7,7 @@ Outcome of the Oct 2026 Copilot remediation sequence. Durable record: this file 
 | Prompt 1 — Audit (no product code) | **Done** | Audit written 17 Oct 2026 |
 | Prompt 2 — Roster complete / field-faithful | **Done** | Distinct-source import + summary + docs + tests |
 | Prompt 3 — Face verify / recovery / perf | **Done** | Face classify, fence probe/resend, cache, parallel want-upload |
-| Prompt 4 — Logs / attendance / final verify | **Mostly done** | Log stages done; attendance skip **blocked by plan G.3**; gateway suite 235 passed |
+| Prompt 4 — Logs / attendance / final verify | **Done** | Logs + attendance skip (product yes) + import batches; suites to re-run after this pass |
 
 ## Execution-plan conflicts (do not implement)
 
@@ -20,7 +20,7 @@ See audit §6. Short list:
 | Presence-only photo ack | Violates verify-before-ack + Prompt 3 |
 | Concurrent writes on one reader | Violates V16 |
 | Undo V3 end-of-day 23:59:59 | Intentional last-day access |
-| **Skip malformed attendance rows (Prompt 4)** | **Conflicts with execution plan G.3 / Section D:** unreadable `stuTime` must stall that reader’s window until an audited recovery policy is decided. Leave as stall; do not skip without product approval. |
+| Offline gateway copy to another reader | Rejected permanently (server-only brain) |
 
 ## Prompt 2 checklist
 
@@ -30,7 +30,7 @@ See audit §6. Short list:
 | 2.2 | Distinct-source import (name-only match creates; face match still held) + keep conservative default import | **Done** |
 | 2.3 | Reconciliation summary counts from persisted outcomes | **Done** (`Imported.summary` + `GET import-summary`) |
 | 2.4 | Document intentional transforms (validity, authority, ids) | **Done** (execution-plan import section) |
-| 2.5 | Safer import locking (bounded, resumable) | Deferred — still one tx per person; observe fast-path already cut list lock time |
+| 2.5 | Safer import locking (bounded, resumable) | **Done** — batches of 25 with one `lockReaders` per batch |
 | 2.6 | Tests for distinct IDs / same name / idempotent re-import | **Done** (`ReaderImportDistinctIT` 3) |
 | 2.7 | Frontend: clear action + summary | **Done** |
 
@@ -49,7 +49,7 @@ See audit §6. Short list:
 | # | Item | Status |
 | --- | --- | --- |
 | 4.1 | Log verbiage / stage summaries | **Done** (partial) — stage=enumerate / want-photos / fenced; verification reason codes |
-| 4.2 | Attendance malformed-row policy | **Blocked** — plan G.3 requires stall; Prompt 4 skip needs product yes |
+| 4.2 | Attendance malformed-row policy | **Done** — skip messy `stuTime` only; valid punches continue (product yes 17 Oct 2026) |
 | 4.3 | Full suite + doc sync | **Done for this pass** — gateway 235 passed; `ReaderImportDistinctIT` passed; attendance skip still blocked |
 
 ## Already in codebase (pre-audit; do not re-do)

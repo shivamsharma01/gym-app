@@ -1232,16 +1232,23 @@ public sealed class DesiredRevisionPath
             throw new ReadBackException("Read-back user is incomplete; acknowledgement was not sent");
         }
 
+        // Local verify already matched the user (day-level dates / TrueFace name form). Ack the desired
+        // user fields so string/time drift on the reader cannot 409; face hash stays from the reader.
+        if (!_worker.UserMatchesDesired(read, item.ToMember()))
+        {
+            throw new ReadBackException("Read-back user does not match desired; acknowledgement was not sent");
+        }
+
         var hash = Convert.ToHexString(SHA256.HashData(face.Bytes)).ToLowerInvariant();
         await _client.AcknowledgeAsync(new DesiredAcknowledgement(
             _deviceId,
             item.Revision,
-            read.DeviceUserId,
-            read.Name,
-            read.NameEx,
-            read.UserStatus,
-            ReaderLocalTime.Format(read.ValidFrom.Value),
-            ReaderLocalTime.Format(read.ValidTo.Value),
+            item.DeviceUserId,
+            item.Name,
+            item.NameEx,
+            item.UserStatus,
+            item.ValidFrom,
+            item.ValidTo,
             hash) { ReadAfter = _worker.CurrentScan }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -1275,15 +1282,20 @@ public sealed class DesiredRevisionPath
             throw new ReadBackException("Read-back user is incomplete; acknowledgement was not sent");
         }
 
+        if (!_worker.UserMatchesDesired(read, item.ToMember()))
+        {
+            throw new ReadBackException("Read-back user does not match desired; acknowledgement was not sent");
+        }
+
         await _client.AcknowledgeAsync(new DesiredAcknowledgement(
             _deviceId,
             item.Revision,
-            read.DeviceUserId,
-            read.Name,
-            read.NameEx,
-            read.UserStatus,
-            ReaderLocalTime.Format(read.ValidFrom.Value),
-            ReaderLocalTime.Format(read.ValidTo.Value),
+            item.DeviceUserId,
+            item.Name,
+            item.NameEx,
+            item.UserStatus,
+            item.ValidFrom,
+            item.ValidTo,
             "",
             true,
             FakeReader.FailUnknown) { ReadAfter = _worker.CurrentScan }, cancellationToken).ConfigureAwait(false);

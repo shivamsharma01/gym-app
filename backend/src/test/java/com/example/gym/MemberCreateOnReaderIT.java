@@ -190,6 +190,43 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void ackAcceptsSameValidityDayWithDifferentTimeOfDay() throws Exception {
+        createOnReader("Asha", "Shah", "M-DAY", "5006");
+        JsonNode item = pullItem(0);
+        ObjectNode body = (ObjectNode) jsonMapper.readTree(ackBody(item, flaggedId));
+        String fromDay = item.get("validFrom").asString().substring(0, 10);
+        String toDay = item.get("validTo").asString().substring(0, 10);
+        body.put("validFrom", fromDay + "T12:34:56+05:30");
+        body.put("validTo", toDay + "T00:00:00+05:30");
+        mockMvc.perform(post("/internal/gateway/desired/ack")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body.toString()))
+                .andExpect(status().isOk());
+
+        JsonNode page = readJson(pull(gatewayToken, flaggedId, 0).andReturn().getResponse().getContentAsString());
+        assertThat(page.get("appliedRevision").asLong()).isEqualTo(1);
+    }
+
+    @Test
+    void ackAcceptsLongNameReturnedInNameField() throws Exception {
+        String longName = "A".repeat(40);
+        createOnReader(longName, "Shah", "M-LONG", "5007");
+        JsonNode item = pullItem(0);
+        ObjectNode body = (ObjectNode) jsonMapper.readTree(ackBody(item, flaggedId));
+        body.put("name", item.get("nameEx").asString());
+        body.putNull("nameEx");
+        mockMvc.perform(post("/internal/gateway/desired/ack")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body.toString()))
+                .andExpect(status().isOk());
+
+        JsonNode page = readJson(pull(gatewayToken, flaggedId, 0).andReturn().getResponse().getContentAsString());
+        assertThat(page.get("appliedRevision").asLong()).isEqualTo(1);
+    }
+
+    @Test
     void desiredPullRequiresTheReadersGateway() throws Exception {
         pull(null, flaggedId, 0).andExpect(status().isUnauthorized());
         pull(otherGatewayToken, flaggedId, 0).andExpect(status().isNotFound());

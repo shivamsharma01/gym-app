@@ -552,11 +552,9 @@ public class DesiredProjectionService {
         if (readAfter != null && !ObservationOrder.accept(cursor, readAfter)) {
             readAfter = null;
         }
-        if (!matches(row, ack)) {
-            String error = "Read-back does not match the desired member";
-            if (ack.failCode() != null && !ack.failCode().isBlank()) {
-                error = error + ": " + ack.failCode();
-            }
+        String mismatch = mismatchReason(row, ack);
+        if (mismatch != null) {
+            String error = "Read-back does not match the desired member: " + mismatch;
             reviews.noteVerificationFailure(device.getId(), row.getDeviceUserId(), row.getMemberId(),
                     ack.revision(), error);
             throw CommonExceptions.conflict(error);
@@ -825,31 +823,62 @@ public class DesiredProjectionService {
     }
 
     private boolean matches(DesiredMemberProjection row, AcknowledgeRevision ack) {
-        if (!row.isPresentOnReader()) {
-            return Boolean.FALSE.equals(ack.present())
-                    && "NO_RECORD".equals(ack.failCode())
-                    && ack.deviceUserId().equals(row.getDeviceUserId());
-        }
-        if (!userMatches(row, ack)) {
-            return false;
-        }
-        return row.isFacePresent() ? faceHashMatches(ack) : faceCleared(ack);
+        return mismatchReason(row, ack) == null;
     }
 
-    private boolean userMatches(DesiredMemberProjection row, AcknowledgeRevision ack) {
+    /**
+     * Null when the ack matches. Otherwise a short reason (field names) for the 409 detail — gateway
+     * local verify already uses day-level validity and may report a re-encoded face hash.
+     */
+    private String mismatchReason(DesiredMemberProjection row, AcknowledgeRevision ack) {
+        if (!row.isPresentOnReader()) {
+            if (Boolean.FALSE.equals(ack.present())
+                    && "NO_RECORD".equals(ack.failCode())
+                    && ack.deviceUserId().equals(row.getDeviceUserId())) {
+                return null;
+            }
+            return "absence";
+        }
+        String user = userMismatch(row, ack);
+        if (user != null) {
+            return user;
+        }
+        if (row.isFacePresent()) {
+            return faceHashMatches(ack) ? null : "face";
+        }
+        return faceCleared(ack) ? null : "faceCleared";
+    }
+
+    private static String userMismatch(DesiredMemberProjection row, AcknowledgeRevision ack) {
         if (Boolean.FALSE.equals(ack.present())
                 || ack.name() == null
                 || ack.userStatus() == null
                 || ack.validFrom() == null
                 || ack.validTo() == null) {
-            return false;
+            return "incomplete";
         }
-        return ack.deviceUserId().equals(row.getDeviceUserId())
-                && ack.name().equals(row.getReaderName())
-                && sameNameEx(ack.nameEx(), row.getReaderNameEx())
-                && ack.userStatus() == row.getUserStatus()
-                && ack.validFrom().equals(row.getValidFrom())
-                && ack.validTo().equals(row.getValidTo());
+        if (!ack.deviceUserId().equals(row.getDeviceUserId())) {
+            return "deviceUserId";
+        }
+        if (!nameMatches(ack.name(), row.getReaderName(), row.getReaderNameEx())) {
+            return "name";
+        }
+        if (!sameNameEx(ack.nameEx(), row.getReaderNameEx())
+                && !(blank(ack.nameEx())
+                        && row.getReaderNameEx() != null
+                        && row.getReaderNameEx().equals(ack.name()))) {
+            return "nameEx";
+        }
+        if (ack.userStatus() != row.getUserStatus()) {
+            return "userStatus";
+        }
+        if (!sameValidityDay(ack.validFrom(), row.getValidFrom())) {
+            return "validFrom";
+        }
+        if (!sameValidityDay(ack.validTo(), row.getValidTo())) {
+            return "validTo";
+        }
+        return null;
     }
 
     /** Any 64-char hash: exact desired bytes, or a reader re-encode after a local gateway verify. */
@@ -865,10 +894,41 @@ public class DesiredProjectionService {
                 && "UNKNOWN".equals(ack.failCode());
     }
 
+    /**
+     * TrueFace reports the long name in {@code name} when {@code bUseNameEx} is set; short names stay
+     * in {@code readerName}. Either form is enough when it matches the desired projection.
+     */
+    private static boolean nameMatches(String reported, String readerName, String readerNameEx) {
+        return reported.equals(readerName)
+                || (readerNameEx != null && !readerNameEx.isBlank() && reported.equals(readerNameEx));
+    }
+
     private static boolean sameNameEx(String reported, String desired) {
         String left = reported == null || reported.isBlank() ? null : reported;
         String right = desired == null || desired.isBlank() ? null : desired;
         return Objects.equals(left, right);
+    }
+
+    /** Validity is a calendar day on the reader clock; time-of-day is not part of the match. */
+    static boolean sameValidityDay(String reported, String desired) {
+        LocalDate left = validityDay(reported);
+        LocalDate right = validityDay(desired);
+        return left != null && left.equals(right);
+    }
+
+    private static LocalDate validityDay(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return OffsetDateTime.parse(value).atZoneSameInstant(READER_ZONE).toLocalDate();
+        } catch (DateTimeParseException e) {
+            try {
+                return LocalDate.parse(value.length() >= 10 ? value.substring(0, 10) : value);
+            } catch (DateTimeParseException ignored) {
+                return null;
+            }
+        }
     }
 
     Device ownedReader(Gateway gateway, String devicePublicId) {

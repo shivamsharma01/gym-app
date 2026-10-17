@@ -781,11 +781,23 @@ public sealed class ReaderWorker : IDisposable
     internal static bool IsJpeg(byte[] bytes) =>
         bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
 
+    /// <summary>True when the reader user matches desired the same way apply/verify does.</summary>
+    internal bool UserMatchesDesired(ReaderUser user, DesiredMember desired) =>
+        SameUser(user, desired);
+
     private static List<string> Differences(ReaderUser user, DesiredMember desired)
     {
         var differs = new List<string>();
-        Compare(differs, "name", user.Name, desired.Name);
-        Compare(differs, "nameEx", user.NameEx, desired.NameEx);
+        if (!NameMatches(user.Name, desired.Name, desired.NameEx))
+        {
+            differs.Add($"name '{user.Name}' != '{desired.Name}'/'{desired.NameEx}'");
+        }
+
+        if (!NameExMatches(user.NameEx, desired.NameEx, user.Name))
+        {
+            differs.Add($"nameEx '{user.NameEx}' != '{desired.NameEx}'");
+        }
+
         Compare(differs, "userStatus", user.UserStatus, desired.UserStatus);
         CompareDay(differs, "validFrom", user.ValidFrom, desired.ValidFrom);
         CompareDay(differs, "validTo", user.ValidTo, desired.ValidTo);
@@ -793,6 +805,26 @@ public sealed class ReaderWorker : IDisposable
         Compare(differs, "doorNum", user.DoorNum, desired.DoorNum);
         Compare(differs, "timeSectionNum", user.TimeSectionNum, desired.TimeSectionNum);
         return differs;
+    }
+
+    /// <summary>
+    /// TrueFace may return the long name in {@code name}; accept short desired name or nameEx.
+    /// </summary>
+    private static bool NameMatches(string? reported, string desiredName, string? desiredNameEx) =>
+        string.Equals(reported, desiredName, StringComparison.Ordinal)
+        || (!string.IsNullOrWhiteSpace(desiredNameEx)
+            && string.Equals(reported, desiredNameEx, StringComparison.Ordinal));
+
+    private static bool NameExMatches(string? reported, string? desiredNameEx, string? reportedName)
+    {
+        var left = string.IsNullOrWhiteSpace(reported) ? null : reported;
+        var right = string.IsNullOrWhiteSpace(desiredNameEx) ? null : desiredNameEx;
+        if (string.Equals(left, right, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return left is null && right is not null && string.Equals(right, reportedName, StringComparison.Ordinal);
     }
 
     /// <summary>

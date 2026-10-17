@@ -193,8 +193,9 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         assertThat(memberDeviceMappingRepository.findByMemberId(asha.getId()))
                 .allMatch(m -> "1001".equals(m.getDeviceUserId()));
 
+        // Serial may reuse a reader id; attendance still follows the mapping, not the serial.
         createMemberWithFace(token, "{\"firstName\":\"Bina\",\"serialNumber\":\"1001\"}")
-                .andExpect(status().isConflict());
+                .andExpect(status().isCreated());
         punch(entranceId, "1001");
         punch(entranceId, "7");
 

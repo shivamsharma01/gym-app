@@ -298,8 +298,8 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void newMemberGetsTheNextFreeSerialAndATakenSerialIsRejected() throws Exception {
-        // Asha holds device user id 1 on the reader, and a serial does not reuse a reader's id.
+    void newMemberGetsSuggestedSerialAndDuplicateSerialIsAllowed() throws Exception {
+        // Asha holds device user id 1; next-serial skips it as a suggestion only.
         mockMvc.perform(get("/api/v1/members/next-serial").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.serialNumber").value("2"));
@@ -311,19 +311,21 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 
         createMemberWithFace(token, "{\"firstName\":\"Chetan\",\"serialNumber\":\"1001\"}")
-                .andExpect(status().isConflict());
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.serialNumber").value("1001"));
 
         long commandsBefore = deviceSyncCommandRepository.count();
         mockMvc.perform(put("/api/v1/members/" + binaId).header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"firstName\":\"Bina Renamed\",\"serialNumber\":\"1001\"}"))
-                .andExpect(status().isConflict());
+                .andExpect(status().isOk());
 
         var bina = memberRepository.findByPublicId(binaId).orElseThrow();
-        assertThat(bina.getSerialNumber()).isEqualTo("2");
-        assertThat(bina.getFirstName()).isEqualTo("Bina");
+        assertThat(bina.getSerialNumber()).isEqualTo("1001");
+        assertThat(bina.getFirstName()).isEqualTo("Bina Renamed");
         var asha = memberRepository.findByPublicId(memberId).orElseThrow();
         assertThat(asha.getSerialNumber()).isEqualTo("1001");
+        // Serial edit alone does not enqueue device sync commands.
         assertThat(deviceSyncCommandRepository.count()).isEqualTo(commandsBefore);
     }
 

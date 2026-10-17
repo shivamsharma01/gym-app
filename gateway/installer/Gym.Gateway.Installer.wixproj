@@ -7,6 +7,8 @@
     <!-- Compile-time path for Package.wxs $(PublishDir) — do not use !(bindpath.*) on File/@Source -->
     <PublishDir>$([System.IO.Path]::GetFullPath('$(GatewayPublishDir)'))\</PublishDir>
     <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(PublishDir)</DefineConstants>
+    <!-- Harvested native DLLs often have a file version but no Language in VERSIONINFO (ICE60). -->
+    <SuppressIces>ICE60</SuppressIces>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />

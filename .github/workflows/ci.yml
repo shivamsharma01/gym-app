@@ -27,6 +27,10 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      # DesiredRevisionEndToEndIT builds/runs the gateway FakeReader harness via ~/.dotnet/dotnet
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
       - name: Unit + integration tests (Testcontainers MySQL)
         run: mvn -B verify
 

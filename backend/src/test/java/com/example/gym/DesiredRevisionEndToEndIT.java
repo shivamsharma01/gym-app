@@ -1030,10 +1030,18 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
     }
 
     private static String dotnet() {
-        return dotnetHome() + "/dotnet";
+        String fromEnv = System.getenv("DOTNET_ROOT");
+        if (fromEnv != null && !fromEnv.isBlank()) {
+            return Path.of(fromEnv, "dotnet").toString();
+        }
+        return Path.of(dotnetHome(), "dotnet").toString();
     }
 
     private static String dotnetHome() {
+        String fromEnv = System.getenv("DOTNET_ROOT");
+        if (fromEnv != null && !fromEnv.isBlank()) {
+            return fromEnv;
+        }
         return System.getProperty("user.home") + "/.dotnet";
     }
 

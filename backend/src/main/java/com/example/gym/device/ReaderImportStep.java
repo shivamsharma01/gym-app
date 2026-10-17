@@ -91,13 +91,19 @@ public class ReaderImportStep {
         if (ReviewListService.waitingForReader(enrollment)) {
             return Optional.of("Decision is waiting for the reader");
         }
-        return observedUsers.findByDeviceIdAndDeviceUserId(enrollment.getDeviceId(), enrollment.getDeviceUserId())
-                .flatMap(observed -> {
-                    var match = mode == Mode.DISTINCT_SOURCE
-                            ? matcher.existingByFace(tenantId, observed)
-                            : matcher.existing(tenantId, observed);
-                    return match.map(member -> "May already be member " + member.getMemberCode() + " ("
-                            + member.getFullName() + "); link them or create them one by one on the Review page");
-                });
+        var observed = observedUsers
+                .findByDeviceIdAndDeviceUserId(enrollment.getDeviceId(), enrollment.getDeviceUserId())
+                .orElse(null);
+        if (observed == null) {
+            return Optional.of("Reader observation is missing");
+        }
+        if (observed.getFaceSha256() == null || observed.getFaceSha256().length() != 64) {
+            return Optional.of("The reader face is not on the server");
+        }
+        var match = mode == Mode.DISTINCT_SOURCE
+                ? matcher.existingByFace(tenantId, observed)
+                : matcher.existing(tenantId, observed);
+        return match.map(member -> "May already be member " + member.getMemberCode() + " ("
+                + member.getFullName() + "); link them or create them one by one on the Review page");
     }
 }

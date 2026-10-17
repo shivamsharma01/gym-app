@@ -17,6 +17,7 @@ import com.example.gym.member.MemberService;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -69,11 +70,11 @@ public class MemberDeviceSyncService {
     }
 
     /**
-     * Each reader that has this member, with the member's desired revision there and that reader's
-     * highest acknowledged revision. The member is on the reader as desired only when the gateway
-     * acknowledged this row's current revision: revisions of different members can be applied out
-     * of order, so a higher reader revision says nothing about this member. A held row waits for
-     * staff; a failure the gateway reported is shown while that revision is current.
+     * Every reader in the tenant, with this member's device user id when mapped. The member is on
+     * the reader as desired only when the gateway acknowledged this row's current revision:
+     * revisions of different members can be applied out of order, so a higher reader revision says
+     * nothing about this member. A held row waits for staff; a failure the gateway reported is
+     * shown while that revision is current.
      */
     @Transactional(readOnly = true)
     public SyncStatus status(String memberPublicId, Long tenantId) {
@@ -88,14 +89,15 @@ public class MemberDeviceSyncService {
                         : devices.get(face.getSourceDeviceId()).getName(),
                 face.getChangedAt());
 
+        Map<Long, MemberDeviceMapping> byDevice = mappingRepository.findByMemberId(member.getId()).stream()
+                .collect(Collectors.toMap(MemberDeviceMapping::getDeviceId, Function.identity(), (a, b) -> a));
         List<DeviceRow> rows = new ArrayList<>();
-        for (MemberDeviceMapping mapping : mappingRepository.findByMemberId(member.getId())) {
-            Device device = devices.get(mapping.getDeviceId());
-            if (device == null) {
-                continue;
-            }
-            DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
-                    .orElse(null);
+        for (Device device : devices.values().stream()
+                .sorted(Comparator.comparing(Device::getName, String.CASE_INSENSITIVE_ORDER))
+                .toList()) {
+            MemberDeviceMapping mapping = byDevice.get(device.getId());
+            DesiredMemberProjection row = mapping == null ? null
+                    : projections.findByDeviceIdAndMemberId(device.getId(), member.getId()).orElse(null);
             long applied = revisions.findByDeviceId(device.getId())
                     .map(ReaderRevision::getAppliedRevision)
                     .orElse(0L);
@@ -104,7 +106,7 @@ public class MemberDeviceSyncService {
                     device.getName(),
                     device.getConnectionState() == null ? null : device.getConnectionState().name(),
                     device.getGatewayId() != null,
-                    mapping.getDeviceUserId(),
+                    mapping == null ? null : mapping.getDeviceUserId(),
                     row == null ? null : row.getRevision(),
                     applied,
                     row != null && row.isApplied(),
@@ -142,6 +144,7 @@ public class MemberDeviceSyncService {
             String deviceName,
             String connectionState,
             boolean hasGateway,
+            /** Null when this member has no mapping on that reader yet. */
             String deviceUserId,
             /** This member's desired revision on this reader; null when none was published. */
             Long revision,

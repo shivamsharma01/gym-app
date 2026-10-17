@@ -74,7 +74,7 @@ export function MembersPage() {
     <div>
       <PageHeader
         title="Members"
-        description="Search by name, phone, serial, or member code. Click Member or Serial to sort."
+        description="Search by name, phone, or serial. Click Member or Serial to sort."
         actions={
           has('MEMBER_CREATE') ? (
             <Link to="/app/members/new">
@@ -85,7 +85,7 @@ export function MembersPage() {
       />
       <Toolbar>
         <Input
-          placeholder="Search by name, phone, serial or code…"
+          placeholder="Search by name, phone, or serial…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           className="max-w-md"
@@ -145,7 +145,6 @@ export function MembersPage() {
                 <SortableTh direction={directionFor('serial')} onSort={() => toggleSort('serial')}>
                   Serial
                 </SortableTh>
-                <Th>Code</Th>
                 <Th>Phone</Th>
                 <Th>Terminal Level</Th>
                 <Th>Membership status</Th>
@@ -167,7 +166,6 @@ export function MembersPage() {
                     {m.email ? <div className="mt-0.5 text-xs text-muted">{m.email}</div> : null}
                   </Td>
                   <Td className="font-mono text-xs">{m.serialNumber ?? '—'}</Td>
-                  <Td className="font-mono text-xs text-muted">{m.memberCode}</Td>
                   <Td className="text-muted">{m.phone ?? '—'}</Td>
                   <Td>
                     <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>

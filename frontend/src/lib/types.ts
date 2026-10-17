@@ -243,7 +243,8 @@ export type MemberDeviceSync = {
     deviceName: string
     connectionState: string | null
     hasGateway: boolean
-    deviceUserId: string
+    /** Null when this member has no mapping on that reader yet. */
+    deviceUserId: string | null
     /** This member's desired revision on this reader; null when none was published. */
     revision: number | null
     appliedRevision: number

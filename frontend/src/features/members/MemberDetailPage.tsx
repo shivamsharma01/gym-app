@@ -172,6 +172,25 @@ export function MemberDetailPage() {
             </div>
           </div>
           <div className="sm:col-span-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+              Reader user ids
+            </div>
+            <div className="mt-1 space-y-1 font-mono text-sm">
+              {sync.isLoading ? (
+                <Skeleton className="h-5 w-48" />
+              ) : sync.data && sync.data.devices.length > 0 ? (
+                sync.data.devices.map((d) => (
+                  <div key={d.deviceId}>
+                    <span className="font-sans text-muted">{d.deviceName}:</span>{' '}
+                    {d.deviceUserId ?? '—'}
+                  </div>
+                ))
+              ) : (
+                <span className="font-sans text-muted">No readers yet.</span>
+              )}
+            </div>
+          </div>
+          <div className="sm:col-span-2">
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Notes</div>
             <span className="text-muted">{m.notes || '—'}</span>
           </div>
@@ -261,6 +280,7 @@ export function MemberDetailPage() {
 }
 
 function readerStateLabel(row: MemberDeviceSync['devices'][number]) {
+  if (row.deviceUserId == null) return { label: 'Not on this reader', tone: 'muted' as const }
   if (row.revision == null) return { label: 'Not published', tone: 'muted' as const }
   if (row.held) return { label: 'Held for review', tone: 'warn' as const }
   if (!row.applied && row.applyError) return { label: 'Not applied', tone: 'danger' as const }
@@ -300,14 +320,14 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
       <SectionTitle title="Readers" />
       <Card className="space-y-4">
         <p className="text-sm text-muted">
-          Each reader has its own desired revision. Send again publishes that revision for this reader only.
+          Each reader has its own user id for this member. Send again publishes that revision for this reader only.
           A person added on a reader stays on that reader until staff review it.
         </p>
         {!data ? (
           <Skeleton className="h-16" />
         ) : data.devices.length === 0 ? (
           <p className="text-sm text-muted">
-            No devices with a gateway yet.
+            No devices yet.
             {has('DEVICE_VIEW') ? (
               <>
                 {' '}
@@ -322,12 +342,15 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
           <div className="divide-y divide-line">
             {rows.map((row) => {
               const state = readerStateLabel(row)
+              const onReader = row.deviceUserId != null
               return (
                 <div key={row.deviceId} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
                   <div className="space-y-1">
                     <div className="font-medium">
                       {row.deviceName}{' '}
-                      <span className="text-xs text-muted">· device user {row.deviceUserId}</span>
+                      <span className="font-mono text-xs text-muted">
+                        · device user {row.deviceUserId ?? '—'}
+                      </span>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Badge tone={statusTone(row.connectionState)}>{row.connectionState ?? 'UNKNOWN'}</Badge>
@@ -355,7 +378,7 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
                       </div>
                     ) : null}
                   </div>
-                  {has('DEVICE_SYNC') ? (
+                  {has('DEVICE_SYNC') && onReader ? (
                     <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"

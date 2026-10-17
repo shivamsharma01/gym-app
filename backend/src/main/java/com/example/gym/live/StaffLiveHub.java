@@ -68,14 +68,21 @@ public class StaffLiveHub {
     }
 
     private void sendAll(Set<WebSocketSession> targets, String json) {
+        TextMessage message = new TextMessage(json);
         for (WebSocketSession session : targets) {
             if (!session.isOpen()) {
                 continue;
             }
+            // Tomcat rejects concurrent sendMessage on one session (TEXT_PARTIAL_WRITING).
+            // Never let a live fan-out fail the publisher (e.g. attendance ingest).
             try {
-                session.sendMessage(new TextMessage(json));
-            } catch (IOException ex) {
-                log.debug("Live push failed for session {}", session.getId());
+                synchronized (session) {
+                    if (session.isOpen()) {
+                        session.sendMessage(message);
+                    }
+                }
+            } catch (Exception ex) {
+                log.debug("Live push failed for session {}: {}", session.getId(), ex.toString());
             }
         }
     }

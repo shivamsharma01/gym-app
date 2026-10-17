@@ -637,6 +637,12 @@ public sealed class GatewayWorker : BackgroundService
             catch (Exception ex)
             {
                 _log.LogWarning(ex, "Heartbeat failed");
+                // Send can fail while ReceiveAsync is still blocked on a half-closed socket; abort
+                // so RunWebSocketAsync exits and reconnects instead of logging this every interval.
+                if (link.WebSocketLive)
+                {
+                    link.RequestReconnect();
+                }
             }
         }
     }

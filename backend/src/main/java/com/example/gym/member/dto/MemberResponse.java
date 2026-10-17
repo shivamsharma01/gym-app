@@ -3,6 +3,7 @@ package com.example.gym.member.dto;
 import com.example.gym.member.Member;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 
 public record MemberResponse(
         String id,
@@ -20,9 +21,14 @@ public record MemberResponse(
         String notes,
         String deviceAuthority,
         Instant createdAt,
-        String coverageStatus) {
+        String coverageStatus,
+        /** Per-reader device user id; null deviceUserId when not mapped on that reader. */
+        List<ReaderUserId> readers) {
 
-    public static MemberResponse from(Member m, String coverageStatus) {
+    public record ReaderUserId(String deviceId, String deviceName, String deviceUserId) {
+    }
+
+    public static MemberResponse from(Member m, String coverageStatus, List<ReaderUserId> readers) {
         return new MemberResponse(
                 m.getPublicId(),
                 m.getMemberCode(),
@@ -39,6 +45,7 @@ public record MemberResponse(
                 m.getNotes(),
                 m.getDeviceAuthority() == null ? "USER" : m.getDeviceAuthority().name(),
                 m.getCreatedAt(),
-                coverageStatus);
+                coverageStatus,
+                readers == null ? List.of() : List.copyOf(readers));
     }
 }

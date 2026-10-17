@@ -93,6 +93,8 @@ export type Member = {
   deviceAuthority?: 'USER' | 'ADMIN'
   createdAt: string
   coverageStatus: string
+  /** Per-reader device user id; null when not mapped on that reader. */
+  readers?: { deviceId: string; deviceName: string; deviceUserId: string | null }[]
 }
 
 export type Plan = {
@@ -258,6 +260,9 @@ export type MemberDeviceSync = {
     applyError: string | null
     applyAttempts: number | null
     applyErrorPermanent: boolean
+    /** Desired validity on this reader; null when not present. */
+    validFrom: string | null
+    validTo: string | null
   }[]
 }
 

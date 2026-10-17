@@ -40,12 +40,14 @@ public class MemberController {
 
     private final MemberService memberService;
     private final MemberCoverage memberCoverage;
+    private final MemberReaderIds memberReaderIds;
     private final ReaderMemberCreate readerMemberCreate;
 
     public MemberController(MemberService memberService, MemberCoverage memberCoverage,
-                            ReaderMemberCreate readerMemberCreate) {
+                            MemberReaderIds memberReaderIds, ReaderMemberCreate readerMemberCreate) {
         this.memberService = memberService;
         this.memberCoverage = memberCoverage;
+        this.memberReaderIds = memberReaderIds;
         this.readerMemberCreate = readerMemberCreate;
     }
 
@@ -70,8 +72,11 @@ public class MemberController {
                 deviceAuthority,
                 pageable
         );
+        Long tenantId = SecurityUtils.currentTenantId();
         Map<Long, String> coverage = memberCoverage.ofAll(members.getContent());
-        return PageResponse.from(members, member -> MemberResponse.from(member, coverage.get(member.getId())));
+        var readers = memberReaderIds.ofAll(members.getContent(), tenantId);
+        return PageResponse.from(members, member -> MemberResponse.from(
+                member, coverage.get(member.getId()), readers.getOrDefault(member.getId(), List.of())));
     }
 
     /** Serials sort as numbers ("2" before "10"); members without a serial come last either way. */
@@ -150,6 +155,6 @@ public class MemberController {
     }
 
     private MemberResponse respond(Member member) {
-        return MemberResponse.from(member, memberCoverage.of(member));
+        return MemberResponse.from(member, memberCoverage.of(member), memberReaderIds.of(member));
     }
 }

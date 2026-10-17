@@ -115,7 +115,9 @@ public class MemberDeviceSyncService {
                     row != null && row.isHeld(),
                     row == null ? null : row.getApplyError(),
                     row == null ? null : row.getApplyAttempts(),
-                    row != null && row.isApplyErrorPermanent()));
+                    row != null && row.isApplyErrorPermanent(),
+                    row == null || !row.isPresentOnReader() ? null : row.getValidFrom(),
+                    row == null || !row.isPresentOnReader() ? null : row.getValidTo()));
         }
         return new SyncStatus(faceInfo, rows);
     }
@@ -158,6 +160,9 @@ public class MemberDeviceSyncService {
             String applyError,
             Integer applyAttempts,
             /** The gateway cannot apply the current revision as sent; it stays until replaced. */
-            boolean applyErrorPermanent) {
+            boolean applyErrorPermanent,
+            /** Desired validity on this reader (reader-local); null when not present. */
+            String validFrom,
+            String validTo) {
     }
 }

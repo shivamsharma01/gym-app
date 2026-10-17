@@ -145,6 +145,9 @@ export function MembersPage() {
                 <SortableTh direction={directionFor('serial')} onSort={() => toggleSort('serial')}>
                   Serial
                 </SortableTh>
+                {(members.data.content[0]?.readers ?? []).map((reader) => (
+                  <Th key={reader.deviceId}>{reader.deviceName} id</Th>
+                ))}
                 <Th>Phone</Th>
                 <Th>Terminal Level</Th>
                 <Th>Membership status</Th>
@@ -166,6 +169,11 @@ export function MembersPage() {
                     {m.email ? <div className="mt-0.5 text-xs text-muted">{m.email}</div> : null}
                   </Td>
                   <Td className="font-mono text-xs">{m.serialNumber ?? '—'}</Td>
+                  {(m.readers ?? []).map((reader) => (
+                    <Td key={reader.deviceId} className="font-mono text-xs">
+                      {reader.deviceUserId ?? '—'}
+                    </Td>
+                  ))}
                   <Td className="text-muted">{m.phone ?? '—'}</Td>
                   <Td>
                     <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>

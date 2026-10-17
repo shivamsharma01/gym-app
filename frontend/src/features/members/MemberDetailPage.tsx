@@ -173,20 +173,28 @@ export function MemberDetailPage() {
           </div>
           <div className="sm:col-span-2">
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
-              Reader user ids
+              Readers
             </div>
-            <div className="mt-1 space-y-1 font-mono text-sm">
+            <div className="mt-1 space-y-2 text-sm">
               {sync.isLoading ? (
-                <Skeleton className="h-5 w-48" />
+                <Skeleton className="h-10 w-64" />
               ) : sync.data && sync.data.devices.length > 0 ? (
                 sync.data.devices.map((d) => (
-                  <div key={d.deviceId}>
-                    <span className="font-sans text-muted">{d.deviceName}:</span>{' '}
-                    {d.deviceUserId ?? '—'}
+                  <div key={d.deviceId} className="flex flex-wrap gap-x-4 gap-y-0.5">
+                    <div>
+                      <span className="text-muted">{d.deviceName} id:</span>{' '}
+                      <span className="font-mono">{d.deviceUserId ?? '—'}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted">Validity:</span>{' '}
+                      {d.present && (d.validFrom || d.validTo)
+                        ? `${formatDate(d.validFrom)} – ${formatDate(d.validTo)}`
+                        : '—'}
+                    </div>
                   </div>
                 ))
               ) : (
-                <span className="font-sans text-muted">No readers yet.</span>
+                <span className="text-muted">No readers yet.</span>
               )}
             </div>
           </div>
@@ -351,6 +359,12 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
                       <span className="font-mono text-xs text-muted">
                         · device user {row.deviceUserId ?? '—'}
                       </span>
+                    </div>
+                    <div className="text-xs text-muted">
+                      Validity:{' '}
+                      {row.present && (row.validFrom || row.validTo)
+                        ? `${formatDate(row.validFrom)} – ${formatDate(row.validTo)}`
+                        : '—'}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Badge tone={statusTone(row.connectionState)}>{row.connectionState ?? 'UNKNOWN'}</Badge>

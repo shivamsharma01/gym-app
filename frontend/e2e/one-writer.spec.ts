@@ -347,6 +347,8 @@ async function mockStaff(
               applyError: null,
               applyAttempts: null,
               applyErrorPermanent: false,
+              validFrom: '2026-01-01T00:00:00+05:30',
+              validTo: '2027-01-01T23:59:59+05:30',
             },
             {
               deviceId: 'dev-2',
@@ -363,6 +365,8 @@ async function mockStaff(
               applyError: 'create failed',
               applyAttempts: 6,
               applyErrorPermanent: false,
+              validFrom: '2026-01-01T00:00:00+05:30',
+              validTo: '2027-01-01T23:59:59+05:30',
             },
             {
               deviceId: 'dev-3',
@@ -379,6 +383,8 @@ async function mockStaff(
               applyError: null,
               applyAttempts: null,
               applyErrorPermanent: false,
+              validFrom: '2026-01-01T00:00:00+05:30',
+              validTo: '2027-01-01T23:59:59+05:30',
             },
           ],
         },

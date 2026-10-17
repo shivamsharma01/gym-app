@@ -1,6 +1,7 @@
 package com.example.gym.device.repo;
 
 import com.example.gym.device.domain.MemberDeviceMapping;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -10,6 +11,8 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
     Optional<MemberDeviceMapping> findByPublicId(String publicId);
 
     List<MemberDeviceMapping> findByMemberId(Long memberId);
+
+    List<MemberDeviceMapping> findByMemberIdIn(Collection<Long> memberIds);
 
     @org.springframework.data.jpa.repository.Query("select distinct m.memberId from MemberDeviceMapping m")
     List<Long> findDistinctMemberIds();

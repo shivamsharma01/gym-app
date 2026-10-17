@@ -154,7 +154,7 @@ class ReaderApplyStatusIT extends AbstractReaderIT {
     }
 
     @Test
-    void aHeldRowStaysHeldWhenTheMemberIsEditedOrSentAgain() throws Exception {
+    void aHeldRowIsReleasedWhenTheMemberIsEditedOrSentAgain() throws Exception {
         Member asha = onlyOn(entrance, "Asha", "Rao", "APL-9", "9209");
         ackEverything(entrance);
         DesiredMemberProjection row = projection(entrance, asha);
@@ -169,14 +169,26 @@ class ReaderApplyStatusIT extends AbstractReaderIT {
 
         putJson("/api/v1/members/" + asha.getPublicId(), "{\"firstName\":\"Asha\",\"lastName\":\"Iyer\"}")
                 .andExpect(status().isOk());
+
+        DesiredMemberProjection afterEdit = projection(entrance, asha);
+        assertThat(afterEdit.isHeld()).as("a membership edit must reach held readers").isFalse();
+        assertThat(afterEdit.getExpected()).isNull();
+        assertThat(afterEdit.getReaderName()).contains("Iyer");
+        assertThat(pull(entrance, 0).get("items")).as("the new revision is offered again").isNotEmpty();
+        assertThat(readerRow(asha).get("held").asBoolean()).isFalse();
+
+        occupant(entrance, afterEdit.getRevision(), afterEdit.getDeviceUserId(), "Asha Desk",
+                afterEdit.getValidFrom(), afterEdit.getValidTo(), afterEdit.getFaceSha256())
+                .andExpect(status().isOk());
+        assertThat(projection(entrance, asha).isHeld()).isTrue();
+
         postJson("/api/v1/members/" + asha.getPublicId() + "/device-sync/" + entrance + "/retry", "{}")
                 .andExpect(status().is2xxSuccessful());
 
-        DesiredMemberProjection after = projection(entrance, asha);
-        assertThat(after.isHeld()).isTrue();
-        assertThat(after.getExpected()).as("neither edit set what the reader must show").isNull();
-        assertThat(pull(entrance, 0).get("items")).as("nothing is offered until staff decide").isEmpty();
-        assertThat(readerRow(asha).get("held").asBoolean()).isTrue();
+        DesiredMemberProjection afterRetry = projection(entrance, asha);
+        assertThat(afterRetry.isHeld()).as("manual retry must release the hold").isFalse();
+        assertThat(pull(entrance, 0).get("items")).isNotEmpty();
+        assertThat(readerRow(asha).get("held").asBoolean()).isFalse();
     }
 
     @Test

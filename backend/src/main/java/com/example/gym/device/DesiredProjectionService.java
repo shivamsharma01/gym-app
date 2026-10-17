@@ -353,10 +353,9 @@ public class DesiredProjectionService {
                         .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing")));
         MemberFace face = faces.findByMemberId(member.getId()).orElse(null);
         applyServer(row, member, mapping.getDeviceUserId(), face);
-        if (seen != null) {
-            row.setExpected(seen);
-            row.setHeld(false);
-        }
+        // Held rows are omitted from pull; staff edit/retry must release the hold or nothing is sent.
+        row.setHeld(false);
+        row.setExpected(seen);
         long revision = cursor.bumpDesired();
         row.setRevision(revision);
         projections.save(row);

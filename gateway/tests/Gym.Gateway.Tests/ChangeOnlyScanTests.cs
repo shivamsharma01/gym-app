@@ -76,6 +76,30 @@ public sealed class ChangeOnlyScanTests : IDisposable
     }
 
     [Fact]
+    public async Task Two_users_sharing_a_reader_checksum_keep_distinct_hashes_when_photos_differ()
+    {
+        var reader = new FakeReader();
+        reader.CreateUser(Person("57"));
+        reader.CreateUser(Person("58"));
+        reader.InsertFace("57", PhotoA);
+        reader.InsertFace("58", PhotoB);
+        reader.ScriptFaceChecksums(new Dictionary<string, string>
+        {
+            ["57"] = "same-md5",
+            ["58"] = "same-md5",
+        });
+        var sink = new PendingEnrollmentTests.RecordingUpload();
+        using var worker = Worker("shared-md5");
+
+        await Scanner(worker, reader, sink).ReconnectAsync(CancellationToken.None);
+
+        Assert.Equal(FaceHash.Sha256Hex(PhotoA), sink.RosterHashes[0]["57"]);
+        Assert.Equal(FaceHash.Sha256Hex(PhotoB), sink.RosterHashes[0]["58"]);
+        Assert.NotEqual(sink.RosterHashes[0]["57"], sink.RosterHashes[0]["58"]);
+        Assert.Equal(2, Downloads(reader));
+    }
+
+    [Fact]
     public async Task Without_the_checksum_list_every_photo_is_downloaded_and_the_hashes_are_the_same()
     {
         var listed = ReaderWithPhoto();

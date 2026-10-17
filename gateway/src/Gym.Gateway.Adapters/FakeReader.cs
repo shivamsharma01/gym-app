@@ -24,6 +24,7 @@ public sealed class FakeReader : IReaderAdapter
     private readonly List<string> _writes = [];
     private readonly List<string> _calls = [];
     private byte[]? _scriptedFaceReadBack;
+    private Dictionary<string, string>? _scriptedChecksums;
     private bool _scriptUnknownUser;
     private bool _keepUserOnRemove;
 
@@ -100,6 +101,15 @@ public sealed class FakeReader : IReaderAdapter
         lock (_gate)
         {
             _scriptedFaceReadBack = Copy(jpeg);
+        }
+    }
+
+    /// <summary>ListFaceChecksums returns these values instead of MD5 of stored photos.</summary>
+    public void ScriptFaceChecksums(IReadOnlyDictionary<string, string> byUserId)
+    {
+        lock (_gate)
+        {
+            _scriptedChecksums = new Dictionary<string, string>(byUserId, StringComparer.Ordinal);
         }
     }
 
@@ -253,6 +263,11 @@ public sealed class FakeReader : IReaderAdapter
             if (TakeFailure(FakeReaderOperation.ListFaceChecksums, out var error))
             {
                 return FaceChecksumList.Unavailable(error);
+            }
+
+            if (_scriptedChecksums != null)
+            {
+                return FaceChecksumList.Complete(_scriptedChecksums);
             }
 
             return FaceChecksumList.Complete(_faces.ToDictionary(

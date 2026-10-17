@@ -176,12 +176,12 @@ class MemberCreateOnEveryReaderIT extends AbstractIntegrationTest {
         Member asha = memberRepository.findByPublicId(publicId).orElseThrow();
         JsonNode onExit = latest(exitId);
 
-        ObjectNode wrongFace = (ObjectNode) jsonMapper.readTree(ackBody(exitId, onExit));
-        wrongFace.put("faceSha256", "0".repeat(64));
+        ObjectNode wrongName = (ObjectNode) jsonMapper.readTree(ackBody(exitId, onExit));
+        wrongName.put("name", "Not Asha");
         mockMvc.perform(post("/internal/gateway/desired/ack")
                         .header("Authorization", "Bearer " + gatewayToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(wrongFace.toString()))
+                        .content(wrongName.toString()))
                 .andExpect(status().isConflict());
         ack(entranceId, latest(entranceId)).andExpect(status().isOk());
 

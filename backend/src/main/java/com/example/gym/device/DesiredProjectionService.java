@@ -833,7 +833,7 @@ public class DesiredProjectionService {
         if (!userMatches(row, ack)) {
             return false;
         }
-        return row.isFacePresent() ? faceHashMatches(ack, row.getFaceSha256()) : faceCleared(ack);
+        return row.isFacePresent() ? faceHashMatches(ack) : faceCleared(ack);
     }
 
     private boolean userMatches(DesiredMemberProjection row, AcknowledgeRevision ack) {
@@ -852,9 +852,10 @@ public class DesiredProjectionService {
                 && ack.validTo().equals(row.getValidTo());
     }
 
-    private static boolean faceHashMatches(AcknowledgeRevision ack, String hash) {
+    /** Any 64-char hash: exact desired bytes, or a reader re-encode after a local gateway verify. */
+    private static boolean faceHashMatches(AcknowledgeRevision ack) {
         return ack.faceSha256() != null
-                && ack.faceSha256().equalsIgnoreCase(hash)
+                && ack.faceSha256().length() == 64
                 && (ack.failCode() == null || ack.failCode().isBlank());
     }
 

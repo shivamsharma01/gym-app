@@ -698,8 +698,9 @@ public sealed class DesiredRevisionPath
 
     /// <summary>
     /// One hash per id. Equal hashes stay separate observations. With the reader's photo checksum
-    /// list, a user it does not list has no photo, and only a photo whose checksum is not cached is
-    /// downloaded. Without that list every photo is downloaded.
+    /// list, a user it does not list has no photo. Cached checksums skip download for the first
+    /// user that claims them; another user with the same checksum is always re-read. Without that
+    /// list every photo is downloaded.
     /// </summary>
     private Dictionary<string, string> FaceHashes(IReadOnlyList<ReaderUser> listed, Dictionary<string, byte[]> photos)
     {
@@ -711,8 +712,30 @@ public sealed class DesiredRevisionPath
 
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
         var known = new Dictionary<string, string>(StringComparer.Ordinal);
-        var toDownload = listed.Count(user => checksums.ByUserId.TryGetValue(user.DeviceUserId, out var sum)
-            && (sum.Length == 0 || !_memory.Faces.TryGet(sum, out _)));
+        var claimedChecksum = new HashSet<string>(StringComparer.Ordinal);
+        var toDownload = 0;
+        foreach (var user in listed)
+        {
+            if (!checksums.ByUserId.TryGetValue(user.DeviceUserId, out var sum))
+            {
+                continue;
+            }
+
+            if (sum.Length == 0 || !_memory.Faces.TryGet(sum, out _))
+            {
+                toDownload++;
+                if (sum.Length > 0)
+                {
+                    claimedChecksum.Add(sum);
+                }
+            }
+            else if (!claimedChecksum.Add(sum))
+            {
+                toDownload++;
+            }
+        }
+
+        claimedChecksum.Clear();
         var downloads = new DownloadProgress(_log, _deviceId, toDownload);
         foreach (var deviceUserId in listed.Select(user => user.DeviceUserId))
         {
@@ -721,7 +744,10 @@ public sealed class DesiredRevisionPath
                 continue;
             }
 
-            if (checksum.Length == 0 || !_memory.Faces.TryGet(checksum, out var hash))
+            string? hash = null;
+            var cacheHit = checksum.Length > 0 && _memory.Faces.TryGet(checksum, out hash);
+            var sharedChecksum = checksum.Length > 0 && !claimedChecksum.Add(checksum);
+            if (!cacheHit || sharedChecksum || checksum.Length == 0)
             {
                 var face = _reader.GetFace(deviceUserId);
                 downloads.One();
@@ -734,10 +760,22 @@ public sealed class DesiredRevisionPath
                 photos[hash] = face.Bytes;
             }
 
+            if (hash == null)
+            {
+                continue;
+            }
+
             hashes[deviceUserId] = hash;
             if (checksum.Length > 0)
             {
-                known[checksum] = hash;
+                if (known.TryGetValue(checksum, out var prior) && !string.Equals(prior, hash, StringComparison.OrdinalIgnoreCase))
+                {
+                    known.Remove(checksum);
+                }
+                else
+                {
+                    known[checksum] = hash;
+                }
             }
         }
 

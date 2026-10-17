@@ -152,16 +152,10 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void ackIsRejectedWhenTheFaceHashDoesNotMatch() throws Exception {
+    void ackIsRejectedWhenTheFaceHashIsMissing() throws Exception {
         createOnReader("Asha", "Shah", "M-HASH", "5004");
         JsonNode item = pullItem(0);
         ObjectNode body = (ObjectNode) jsonMapper.readTree(ackBody(item, flaggedId));
-        body.put("faceSha256", "0".repeat(64));
-        mockMvc.perform(post("/internal/gateway/desired/ack")
-                        .header("Authorization", "Bearer " + gatewayToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body.toString()))
-                .andExpect(status().isConflict());
         body.remove("faceSha256");
         mockMvc.perform(post("/internal/gateway/desired/ack")
                         .header("Authorization", "Bearer " + gatewayToken)
@@ -173,6 +167,26 @@ class MemberCreateOnReaderIT extends AbstractIntegrationTest {
         assertThat(page.get("appliedRevision").asLong()).isZero();
         assertThat(page.get("desiredRevision").asLong()).isEqualTo(1);
         assertThat(page.get("items")).hasSize(1);
+    }
+
+    @Test
+    void ackAcceptsAReencodedFaceHashAndStoresItAsObserved() throws Exception {
+        createOnReader("Asha", "Shah", "M-REENCODE", "5005");
+        JsonNode item = pullItem(0);
+        ObjectNode body = (ObjectNode) jsonMapper.readTree(ackBody(item, flaggedId));
+        String reencoded = "ab".repeat(32);
+        body.put("faceSha256", reencoded);
+        mockMvc.perform(post("/internal/gateway/desired/ack")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body.toString()))
+                .andExpect(status().isOk());
+
+        DesiredMemberProjection projection = desiredMemberProjectionRepository
+                .findByDeviceIdAndDeviceUserId(flagged, "1").orElseThrow();
+        assertThat(projection.getObservedFaceSha256()).isEqualToIgnoringCase(reencoded);
+        JsonNode page = readJson(pull(gatewayToken, flaggedId, 0).andReturn().getResponse().getContentAsString());
+        assertThat(page.get("appliedRevision").asLong()).isEqualTo(1);
     }
 
     @Test

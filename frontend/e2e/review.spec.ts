@@ -1,4 +1,9 @@
 import { expect, test } from '@playwright/test'
+import { mockStaffLiveWs } from './mockLiveWs'
+
+test.beforeEach(async ({ page }) => {
+  await mockStaffLiveWs(page)
+})
 
 const user = {
   id: 'u1',

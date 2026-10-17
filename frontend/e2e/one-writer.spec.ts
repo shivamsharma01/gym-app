@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { mockStaffLiveWs } from './mockLiveWs'
 
 const user = {
   id: 'u1',
@@ -241,6 +242,7 @@ async function mockStaff(
   who: typeof user = user,
   reconciles: string[] = [],
 ) {
+  await mockStaffLiveWs(page)
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname

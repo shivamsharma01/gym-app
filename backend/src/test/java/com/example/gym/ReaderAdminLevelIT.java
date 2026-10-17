@@ -4,13 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.device.domain.DesiredMemberProjection;
+import com.example.gym.member.DeviceAuthority;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractReaderIT;
 import java.awt.Color;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** A reader administrator stays an administrator on every reader the member is written to. */
+/** Terminal admin level: import from a reader, or staff edit on the member, reaches every reader. */
 class ReaderAdminLevelIT extends AbstractReaderIT {
 
     private static final String FROM = "2025-03-23T19:03:35.0000000+05:30";
@@ -36,9 +37,33 @@ class ReaderAdminLevelIT extends AbstractReaderIT {
         postJson("/api/v1/devices/" + entranceId + "/import-pending", "{}").andExpect(status().isOk());
         trustedRoster(exitId);
 
-        assertThat(authorityOn(exitId, member("Rajat Dabas"))).isEqualTo("ADMIN");
-        assertThat(authorityOn(entranceId, member("Rajat Dabas"))).isEqualTo("ADMIN");
+        Member rajat = member("Rajat Dabas");
+        assertThat(rajat.getDeviceAuthority()).isEqualTo(DeviceAuthority.ADMIN);
+        assertThat(authorityOn(exitId, rajat)).isEqualTo("ADMIN");
+        assertThat(authorityOn(entranceId, rajat)).isEqualTo("ADMIN");
         assertThat(authorityOn(exitId, member("Priyanka Dahiya"))).isEqualTo("Customer");
+    }
+
+    @Test
+    void staffAdminChangePublishesAdminToEveryMappedReader() throws Exception {
+        trustedRoster(entranceId,
+                person("1", "Asha Shah", 0, FROM, TO, uploadFace(Color.RED)));
+        postJson("/api/v1/devices/" + entranceId + "/import-pending", "{}").andExpect(status().isOk());
+        trustedRoster(exitId);
+
+        Member asha = member("Asha Shah");
+        assertThat(asha.getDeviceAuthority()).isEqualTo(DeviceAuthority.USER);
+        assertThat(authorityOn(entranceId, asha)).isEqualTo("Customer");
+        assertThat(authorityOn(exitId, asha)).isEqualTo("Customer");
+
+        putJson("/api/v1/members/" + asha.getPublicId(), """
+                {"firstName":"Asha","lastName":"Shah","deviceAuthority":"ADMIN"}
+                """).andExpect(status().isOk());
+
+        Member updated = memberRepository.findById(asha.getId()).orElseThrow();
+        assertThat(updated.getDeviceAuthority()).isEqualTo(DeviceAuthority.ADMIN);
+        assertThat(authorityOn(entranceId, updated)).isEqualTo("ADMIN");
+        assertThat(authorityOn(exitId, updated)).isEqualTo("ADMIN");
     }
 
     private String authorityOn(String readerPublicId, Member member) {

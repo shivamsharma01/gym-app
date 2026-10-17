@@ -22,6 +22,7 @@ import com.example.gym.device.repo.ReaderBlockedUserRepository;
 import com.example.gym.face.FaceStorageService;
 import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceRepository;
+import com.example.gym.member.DeviceAuthority;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberStatus;
 import java.time.LocalDate;
@@ -227,6 +228,7 @@ public class DesiredProjectionService {
         String fullName = member.getFullName();
         String name = szName(fullName);
         String nameEx = szNameEx(fullName);
+        String desiredAuthority = authority(member);
         LocalDate today = LocalDate.now(READER_ZONE);
         var window = authorization.window(member, today);
         for (Held held : inReaderOrder(member)) {
@@ -240,7 +242,8 @@ public class DesiredProjectionService {
                     && from.equals(row.getValidFrom())
                     && to.equals(row.getValidTo())
                     && name.equals(row.getReaderName())
-                    && sameNameEx(nameEx, row.getReaderNameEx())) {
+                    && sameNameEx(nameEx, row.getReaderNameEx())
+                    && desiredAuthority.equalsIgnoreCase(row.getAuthority())) {
                 continue;
             }
             long revision = cursor.bumpDesired();
@@ -250,11 +253,12 @@ public class DesiredProjectionService {
             row.setUserStatus(status);
             row.setValidFrom(from);
             row.setValidTo(to);
+            row.setAuthority(desiredAuthority);
             row.setDeviceUserId(mapping.getDeviceUserId());
             projections.save(row);
             notifyAfterCommit(device, revision);
-            FlowLog.info("device", "desired member reader={} revision={} user={} status={}",
-                    device.getPublicId(), revision, mapping.getDeviceUserId(), status);
+            FlowLog.info("device", "desired member reader={} revision={} user={} status={} authority={}",
+                    device.getPublicId(), revision, mapping.getDeviceUserId(), status, desiredAuthority);
         }
     }
 
@@ -381,6 +385,10 @@ public class DesiredProjectionService {
         String to = readerTime(observed.getValidTo());
         if (from != null && to != null) {
             member.adoptReaderWindow(from, to);
+        }
+        // Terminal admin on the reader becomes the member's terminal authority so other readers get it.
+        if (isAdminAuthority(observed.getAuthority())) {
+            member.setDeviceAuthority(DeviceAuthority.ADMIN);
         }
         return written;
     }
@@ -709,16 +717,19 @@ public class DesiredProjectionService {
     }
 
     /**
-     * A member a reader holds as an administrator stays one on every reader: the level comes only
-     * from a reader, and a server write does not take it away.
+     * Terminal authority for desired writes comes from the member field staff edit in the UI.
+     * Import of a reader administrator sets that field via {@link #adoptFromReader}.
      */
     private String authority(Member member) {
-        if (member.getId() == null) {
-            return AUTHORITY;
+        return member.getDeviceAuthority() == DeviceAuthority.ADMIN ? ADMIN : AUTHORITY;
+    }
+
+    static boolean isAdminAuthority(String authority) {
+        if (authority == null || authority.isBlank()) {
+            return false;
         }
-        boolean admin = projections.findByMemberId(member.getId()).stream()
-                .anyMatch(row -> ADMIN.equalsIgnoreCase(row.getAuthority()));
-        return admin ? ADMIN : AUTHORITY;
+        String value = authority.trim();
+        return ADMIN.equalsIgnoreCase(value) || "Administrators".equalsIgnoreCase(value);
     }
 
     private static boolean blank(String value) {
@@ -769,7 +780,8 @@ public class DesiredProjectionService {
         row.setUserStatus(observed.getUserStatus());
         row.setValidFrom(readerTime(observed.getValidFrom(), at(today, LocalTime.MIN)));
         row.setValidTo(readerTime(observed.getValidTo(), at(today, LocalTime.of(23, 59, 59))));
-        row.setAuthority(observed.getAuthority() == null ? AUTHORITY : observed.getAuthority());
+        row.setAuthority(isAdminAuthority(observed.getAuthority()) ? ADMIN
+                : (observed.getAuthority() == null ? AUTHORITY : observed.getAuthority()));
         row.setDoorNum(observed.getDoorNum() == null ? DOOR_NUM : observed.getDoorNum());
         row.setTimeSectionNum(observed.getTimeSectionNum() == null ? TIME_SECTION_NUM : observed.getTimeSectionNum());
         row.setFacePresent(true);

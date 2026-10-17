@@ -134,11 +134,11 @@ public class MemberService {
             member.setSerialNumber(newSerial);
         }
         Member saved = memberRepository.save(member);
-        if (nameChanged) {
+        if (nameChanged || authorityChanged) {
             deviceAuthorizationService.publishProfile(saved);
         }
-        FlowLog.info("member", "updated id={} nameChanged={} serialChanged={}", saved.getPublicId(),
-                nameChanged, serialChanged);
+        FlowLog.info("member", "updated id={} nameChanged={} authorityChanged={} serialChanged={}",
+                saved.getPublicId(), nameChanged, authorityChanged, serialChanged);
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("nameChanged", nameChanged);
         details.put("serialNumber", saved.getSerialNumber());
@@ -201,6 +201,7 @@ public class MemberService {
             member.setDeviceAuthority(authority);
             member.setProfileChangedAt(Instant.now());
             Member saved = memberRepository.save(member);
+            deviceAuthorizationService.publishProfile(saved);
             FlowLog.info("member", "authority updated id={} authority={}", saved.getPublicId(), authority);
             Map<String, Object> details = serialDetails(saved);
             details.put("deviceAuthority", authority.name());

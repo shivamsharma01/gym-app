@@ -13,6 +13,7 @@ import com.example.gym.face.GatewayFaceUpload;
 import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceService;
 import com.example.gym.member.Member;
+import com.example.gym.member.MemberNumbers;
 import com.example.gym.member.MemberService;
 import com.example.gym.member.MemberStatus;
 import com.example.gym.member.dto.MemberRequests.CreateMember;
@@ -36,6 +37,7 @@ public class ReviewDecisionService {
     private final PendingEnrollmentRepository enrollments;
     private final PendingEnrollmentService observations;
     private final MemberService members;
+    private final MemberNumbers memberNumbers;
     private final MemberFaceService faces;
     private final DesiredProjectionService desired;
 
@@ -44,6 +46,7 @@ public class ReviewDecisionService {
                                  PendingEnrollmentRepository enrollments,
                                  PendingEnrollmentService observations,
                                  MemberService members,
+                                 MemberNumbers memberNumbers,
                                  MemberFaceService faces,
                                  DesiredProjectionService desired) {
         this.devices = devices;
@@ -51,6 +54,7 @@ public class ReviewDecisionService {
         this.enrollments = enrollments;
         this.observations = observations;
         this.members = members;
+        this.memberNumbers = memberNumbers;
         this.faces = faces;
         this.desired = desired;
     }
@@ -136,8 +140,9 @@ public class ReviewDecisionService {
         GatewayFaceUpload upload = faces.findUnconsumedByHash(tenantId, observed.getFaceSha256())
                 .orElseThrow(() -> CommonExceptions.conflict("The reader face is not on the server"));
         String[] name = personName(ReaderReviewService.shown(observed.getReaderName(), observed.getReaderNameEx()));
+        String serial = memberNumbers.serialForImport(enrollment.getDeviceUserId());
         Member member = members.saveNew(new CreateMember(
-                name[0], name[1], null, null, null, null, null, null, null, null), tenantId);
+                name[0], name[1], null, null, null, null, null, null, null, serial), tenantId);
         if (observed.getUserStatus() != DesiredProjectionService.USER_STATUS) {
             member.setStatus(MemberStatus.INACTIVE);
         }

@@ -1,20 +1,17 @@
 package com.example.gym.member;
 
 import com.example.gym.common.error.CommonExceptions;
-import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import java.security.SecureRandom;
 import java.util.HashSet;
-import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Member codes (server identity, generated) and serial numbers (the id staff use on readers).
- * A serial is free only when no other member has it as a serial and no reader holds it for
- * someone else, including a reader that is still moving a member to it.
+ * Member codes (server identity, generated) and serial numbers (a staff label, not unique).
+ * {@link #nextSerial} only suggests a convenient unused integer for the create form.
  */
 @Component
 public class MemberNumbers {
@@ -23,6 +20,8 @@ public class MemberNumbers {
     private static final int CODE_LENGTH = 6;
     private static final int MAX_CODE_ATTEMPTS = 10;
     private static final Pattern POSITIVE_INT = Pattern.compile("[1-9]\\d{0,8}");
+    /** Same character set as create/update serial validation, non-blank. */
+    private static final Pattern SERIAL_VALUE = Pattern.compile("[A-Za-z0-9_-]+");
 
     private final MemberRepository memberRepository;
     private final MemberDeviceMappingRepository mappingRepository;
@@ -45,7 +44,7 @@ public class MemberNumbers {
         throw CommonExceptions.conflict("Unable to allocate a unique member code; please retry");
     }
 
-    /** The smallest positive integer no member and no reader in the tenant uses. */
+    /** The smallest positive integer no member and no reader in the tenant uses (suggestion only). */
     @Transactional(readOnly = true)
     public String nextSerial(Long tenantId) {
         Set<Integer> used = new HashSet<>();
@@ -60,33 +59,16 @@ public class MemberNumbers {
         return Integer.toString(next);
     }
 
-    /** True when the serial belongs to someone other than {@code memberId} (null for a new member). */
-    @Transactional(readOnly = true)
-    public boolean isTaken(Long tenantId, String serial, Long memberId) {
-        if (memberRepository.findByTenantIdAndSerialNumber(tenantId, serial)
-                .filter(m -> !Objects.equals(m.getId(), memberId)).isPresent()) {
-            return true;
-        }
-        if (memberRepository.findByTenantIdAndMemberCode(tenantId, serial)
-                .filter(m -> m.getSerialNumber() == null && !Objects.equals(m.getId(), memberId)).isPresent()) {
-            return true;
-        }
-        for (MemberDeviceMapping mapping : mappingRepository.findHolding(tenantId, serial)) {
-            if (!Objects.equals(mapping.getMemberId(), memberId)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** The serial a device user id would get on import, or null when someone else already has it. */
-    @Transactional(readOnly = true)
-    public String serialForImport(Long tenantId, String deviceUserId) {
+    /**
+     * Serial to use when a member is created from a reader person: that reader's device user id,
+     * or null when the id is not a usable serial string.
+     */
+    public String serialForImport(String deviceUserId) {
         if (deviceUserId == null || deviceUserId.isBlank() || deviceUserId.length() > 32) {
             return null;
         }
-        return memberRepository.findByTenantIdAndSerialNumber(tenantId, deviceUserId).isPresent()
-                ? null : deviceUserId;
+        String trimmed = deviceUserId.trim();
+        return SERIAL_VALUE.matcher(trimmed).matches() ? trimmed : null;
     }
 
     private static void addNumbers(Set<Integer> used, Iterable<String> values) {

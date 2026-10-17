@@ -224,7 +224,11 @@ class MemberCreateOnEveryReaderIT extends AbstractIntegrationTest {
         assertThat(desiredMemberProjectionRepository.count()).isEqualTo(projectionsBefore);
         assertThat(cursor(looseId).getDesiredRevision()).isZero();
         assertThat(deviceSyncCommandRepository.findAll()).isEmpty();
-        assertThat(deviceSync(publicId, emptyToken).get("devices")).isEmpty();
+        JsonNode syncDevices = deviceSync(publicId, emptyToken).get("devices");
+        assertThat(syncDevices).hasSize(1);
+        assertThat(syncDevices.get(0).get("deviceId").asString()).isEqualTo(loose);
+        assertThat(syncDevices.get(0).get("deviceUserId").isNull()).isTrue();
+        assertThat(syncDevices.get(0).get("revision").isNull()).isTrue();
     }
 
     @Test

@@ -62,7 +62,7 @@ export function MemberNewPage() {
     <div className="max-w-xl">
       <PageHeader
         title="New member"
-        description="The serial number starts at the next free number; change it if needed. Every reader of the gym receives the member."
+        description="Serial is a staff label (not unique). It starts at a suggested number; change it if needed. Every reader of the gym receives the member."
       />
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => mutation.mutate(v))}>
         <MemberFormFields form={form} />

@@ -23,7 +23,7 @@ export function MemberFormFields({ form }: { form: UseFormReturn<MemberFormValue
         <Label>Serial number</Label>
         <Input inputMode="numeric" className="font-mono" {...form.register('serialNumber')} />
         <p className="mt-1 text-xs text-muted">
-          The number on the face readers. Changing it moves this member on the readers; their record stays the same.
+          Staff label for this member. Not unique, and not the same as each reader&apos;s device user id.
         </p>
         <FieldError message={form.formState.errors.serialNumber?.message} />
       </div>

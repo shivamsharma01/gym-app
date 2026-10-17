@@ -78,7 +78,6 @@ public class MemberService {
         String serial = StringUtils.hasText(request.serialNumber())
                 ? request.serialNumber().trim()
                 : numbers.nextSerial(tenantId);
-        requireFreeSerial(tenantId, serial, null);
 
         Member member = new Member(tenantId, code, request.firstName());
         member.setSerialNumber(serial);
@@ -109,9 +108,6 @@ public class MemberService {
         String previousSerial = member.getSerialNumber();
         String newSerial = StringUtils.hasText(request.serialNumber()) ? request.serialNumber().trim() : null;
         boolean serialChanged = newSerial != null && !newSerial.equals(previousSerial);
-        if (serialChanged) {
-            requireFreeSerial(tenantId, newSerial, member.getId());
-        }
         String previousName = member.getFullName();
         member.setFirstName(request.firstName());
         member.setLastName(request.lastName());
@@ -158,13 +154,6 @@ public class MemberService {
     @Transactional(readOnly = true)
     public String nextSerial(Long tenantId) {
         return numbers.nextSerial(tenantId);
-    }
-
-    private void requireFreeSerial(Long tenantId, String serial, Long memberId) {
-        if (numbers.isTaken(tenantId, serial, memberId)) {
-            throw CommonExceptions.conflict(
-                    "Serial number " + serial + " is already used by another member or on a reader");
-        }
     }
 
     @Transactional

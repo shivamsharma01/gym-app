@@ -30,7 +30,7 @@ public final class MemberRequests {
             /** Optional; auto-generated when blank. */
             @Size(max = 32) String memberCode,
             String deviceAuthority,
-            /** Optional; the next free number when blank. Used as the device user id. */
+            /** Optional; suggested when blank. Staff label only — not the reader device user id. */
             @Size(max = 31) @Pattern(regexp = SERIAL_PATTERN, message = SERIAL_MESSAGE) String serialNumber) {
     }
 
@@ -44,7 +44,7 @@ public final class MemberRequests {
             Gender gender,
             @Size(max = 1000) String notes,
             String deviceAuthority,
-            /** Optional; unchanged when blank. A new value moves the member on every reader. */
+            /** Optional; unchanged when blank. Not unique — staff may set any unused-looking value. */
             @Size(max = 31) @Pattern(regexp = SERIAL_PATTERN, message = SERIAL_MESSAGE) String serialNumber) {
     }
 

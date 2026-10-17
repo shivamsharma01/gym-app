@@ -169,7 +169,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
 
         gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("8001", "Esha Jain")), gatewayId);
 
-        assertThat(memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), "8001")).isEmpty();
+        assertThat(memberRepository.findFirstByTenantIdAndSerialNumber(tenant.getId(), "8001")).isEmpty();
         assertThat(eventsOn(entrance, "8001")).singleElement()
                 .satisfies(e -> assertThat(e.getMemberId()).isNull());
         assertThat(eventsOn(exit, "8001")).singleElement()
@@ -259,7 +259,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     }
 
     private Member memberBySerial(String serial) {
-        return memberRepository.findByTenantIdAndSerialNumber(tenant.getId(), serial).orElseThrow();
+        return memberRepository.findFirstByTenantIdAndSerialNumber(tenant.getId(), serial).orElseThrow();
     }
 
     private List<AttendanceEvent> eventsOn(Long deviceId, String deviceUserId) {

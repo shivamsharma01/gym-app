@@ -17,7 +17,8 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
 
     Optional<Member> findByTenantIdAndMemberCode(Long tenantId, String memberCode);
 
-    Optional<Member> findByTenantIdAndSerialNumber(Long tenantId, String serialNumber);
+    /** Serial is not unique; prefer search APIs when more than one match is possible. */
+    Optional<Member> findFirstByTenantIdAndSerialNumber(Long tenantId, String serialNumber);
 
     @Query("select m.serialNumber from Member m where m.tenantId = :tenantId and m.serialNumber is not null")
     List<String> findSerialNumbers(@Param("tenantId") Long tenantId);

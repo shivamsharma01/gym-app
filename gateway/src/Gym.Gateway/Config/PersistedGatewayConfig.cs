@@ -29,6 +29,9 @@ public sealed class PersistedDeviceConfig
 {
     public string DeviceId { get; set; } = "";
 
+    /// <summary>Staff-facing reader name (optional; refreshed from the server when available).</summary>
+    public string Name { get; set; } = "";
+
     public string Ip { get; set; } = "";
 
     public ushort Port { get; set; } = 37777;

@@ -16,10 +16,12 @@ public sealed class DesiredRevisionHub
     private readonly ConcurrentDictionary<string, Func<CancellationToken, Task<bool>>> _scansNow = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Func<CancellationToken, Task>> _retries = new(StringComparer.Ordinal);
     private readonly ILogger<DesiredRevisionHub> _log;
+    private readonly ReaderLabels _labels;
 
-    public DesiredRevisionHub(ILogger<DesiredRevisionHub> log)
+    public DesiredRevisionHub(ILogger<DesiredRevisionHub> log, ReaderLabels? labels = null)
     {
         _log = log;
+        _labels = labels ?? new ReaderLabels();
     }
 
     public void Attach(
@@ -71,7 +73,7 @@ public sealed class DesiredRevisionHub
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Reader {DeviceId} retry did not apply desired state", deviceId);
+                _log.LogWarning(ex, "Reader {Reader} retry did not apply desired state", _labels.Of(deviceId));
             }
         }
     }
@@ -105,7 +107,7 @@ public sealed class DesiredRevisionHub
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Reader {DeviceId} observation was not uploaded", deviceId);
+                _log.LogWarning(ex, "Reader {Reader} observation was not uploaded", _labels.Of(deviceId));
             }
         }
     }
@@ -125,7 +127,7 @@ public sealed class DesiredRevisionHub
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Reader {DeviceId} reconnect did not apply desired state", deviceId);
+                _log.LogWarning(ex, "Reader {Reader} reconnect did not apply desired state", _labels.Of(deviceId));
             }
         }
     }
@@ -142,8 +144,8 @@ public sealed class DesiredRevisionHub
         }
 
         _log.LogInformation(
-            "Desired revision {Revision} for {DeviceId} has no reader worker attached; it was not sent to the command dispatcher",
-            notice.Revision, notice.DeviceId);
+            "Desired revision {Revision} for reader {Reader} has no worker attached; it was not sent to the command dispatcher",
+            notice.Revision, _labels.Of(notice.DeviceId));
         return Task.CompletedTask;
     }
 }

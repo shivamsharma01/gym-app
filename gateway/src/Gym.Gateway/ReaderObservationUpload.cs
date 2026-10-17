@@ -26,17 +26,20 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
     private readonly string _gatewayId;
     private readonly BackendLink _link;
     private readonly ILogger<ReaderObservationUpload> _log;
+    private readonly ReaderLabels _labels;
     private readonly TimeSpan _acceptanceTimeout;
 
     public ReaderObservationUpload(
         string gatewayId,
         BackendLink link,
         ILogger<ReaderObservationUpload> log,
-        TimeSpan? acceptanceTimeout = null)
+        TimeSpan? acceptanceTimeout = null,
+        ReaderLabels? labels = null)
     {
         _gatewayId = gatewayId;
         _link = link;
         _log = log;
+        _labels = labels ?? new ReaderLabels();
         _acceptanceTimeout = acceptanceTimeout ?? DefaultAcceptanceTimeout;
     }
 
@@ -47,6 +50,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         IReadOnlyDictionary<string, string> faceHashes,
         CancellationToken cancellationToken)
     {
+        var reader = _labels.Of(deviceId);
         var sent = new List<string>();
         foreach (var user in users)
         {
@@ -76,9 +80,16 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             {
                 _log.LogInformation(
                     ex,
-                    "Observation for {DeviceId} user {UserId} queued; server unreachable ({Message})",
-                    deviceId, user.DeviceUserId, ex.Message);
+                    "Reader {Reader}: observation for user {User} queued; server unreachable ({Message})",
+                    reader, UserLabel(user), ex.Message);
             }
+        }
+
+        if (sent.Count > 0)
+        {
+            _log.LogInformation(
+                "Reader {Reader}: queued {Count} user update(s) for the server: {Users}",
+                reader, sent.Count, Summarize(users));
         }
 
         return sent;
@@ -99,6 +110,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         bool awaitAcceptance,
         CancellationToken cancellationToken)
     {
+        var reader = _labels.Of(deviceId);
         var people = users.Select(user => new
         {
             deviceUserId = user.DeviceUserId,
@@ -125,8 +137,8 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         if (size > MaxRosterBytes)
         {
             _log.LogWarning(
-                "Roster for {DeviceId} with {Count} users is {Bytes} bytes; it was not uploaded",
-                deviceId, people.Length, size);
+                "Reader {Reader}: roster with {Count} users is {Bytes} bytes; it was not uploaded",
+                reader, people.Length, size);
             return RosterUpload.NotSent;
         }
 
@@ -135,6 +147,9 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             if (!awaitAcceptance)
             {
                 await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
+                _log.LogInformation(
+                    "Reader {Reader}: roster of {Count} users sent to the server (no ack wait)",
+                    reader, people.Length);
                 return new RosterUpload(false, envelope.MessageId);
             }
 
@@ -143,7 +158,13 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             if (!accepted)
             {
                 _log.LogInformation(
-                    "Roster for {DeviceId} was not acknowledged; its users are sent one by one", deviceId);
+                    "Reader {Reader}: roster was not acknowledged; its users are sent one by one", reader);
+            }
+            else
+            {
+                _log.LogInformation(
+                    "Reader {Reader}: roster of {Count} users acknowledged by the server",
+                    reader, people.Length);
             }
 
             return new RosterUpload(accepted, envelope.MessageId);
@@ -152,8 +173,8 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         {
             _log.LogInformation(
                 ex,
-                "Roster for {DeviceId} queued; server unreachable ({Message})",
-                deviceId, ex.Message);
+                "Reader {Reader}: roster queued; server unreachable ({Message})",
+                reader, ex.Message);
             return new RosterUpload(false, envelope.MessageId);
         }
     }
@@ -161,6 +182,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
     public async Task<IReadOnlyList<string>> UploadAbsencesAsync(
         string deviceId, ScanStamp scan, IReadOnlyList<string> deviceUserIds, CancellationToken cancellationToken)
     {
+        var reader = _labels.Of(deviceId);
         var sent = new List<string>();
         foreach (var deviceUserId in deviceUserIds)
         {
@@ -186,11 +208,35 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             {
                 _log.LogInformation(
                     ex,
-                    "Absence for {DeviceId} user {UserId} queued; server unreachable ({Message})",
-                    deviceId, deviceUserId, ex.Message);
+                    "Reader {Reader}: absence for user {UserId} queued; server unreachable ({Message})",
+                    reader, deviceUserId, ex.Message);
             }
         }
 
+        if (sent.Count > 0)
+        {
+            _log.LogInformation(
+                "Reader {Reader}: queued {Count} absence(s) for the server: {Users}",
+                reader, sent.Count, string.Join(", ", deviceUserIds.Where(id => !string.IsNullOrWhiteSpace(id)).Take(20)));
+        }
+
         return sent;
+    }
+
+    private static string UserLabel(ReaderUser user)
+    {
+        var name = string.IsNullOrWhiteSpace(user.Name) ? null : user.Name.Trim();
+        return name == null ? user.DeviceUserId : $"{name} ({user.DeviceUserId})";
+    }
+
+    private static string Summarize(IReadOnlyList<ReaderUser> users)
+    {
+        var parts = users.Select(UserLabel).Take(20).ToList();
+        if (parts.Count == 0)
+        {
+            return "(none)";
+        }
+
+        return string.Join(", ", parts) + (users.Count > 20 ? ", …" : "");
     }
 }

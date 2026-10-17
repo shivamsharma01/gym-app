@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
+using Gym.Gateway;
 using Gym.Gateway.Adapters;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,6 +29,7 @@ public sealed class DesiredRevisionPath
     private const int MaxPages = 50;
 
     private readonly string _deviceId;
+    private readonly string _readerLabel;
     private readonly ReaderWorker _worker;
     private readonly IReaderAdapter _reader;
     private readonly IDesiredStateClient _client;
@@ -66,6 +68,9 @@ public sealed class DesiredRevisionPath
         _memory = memory ?? ReaderScanMemory.InMemory();
         _options = options ?? new DesiredPathOptions();
         _log = _options.Log ?? NullLogger.Instance;
+        _readerLabel = string.IsNullOrWhiteSpace(_options.ReaderName)
+            ? ReaderLabels.ShortId(deviceId)
+            : _options.ReaderName.Trim();
         _gate = observations == null ? ObservationGate.Open : ObservationGate.Unobserved;
     }
 
@@ -186,14 +191,14 @@ public sealed class DesiredRevisionPath
         observed = _reader.ListUsers();
         if (!observed.Ok || !observed.CountMatchesAnnouncedTotal)
         {
-            _log.LogWarning("Reader {DeviceId}: user list not usable ({Detail}); nothing is sent or applied from this read",
-                _deviceId, observed.Ok ? $"got {observed.Users.Count} of {observed.AnnouncedTotal} users" : observed.Error);
+            _log.LogWarning("Reader {Reader}: user list not usable ({Detail}); nothing is sent or applied from this read",
+                _readerLabel, observed.Ok ? $"got {observed.Users.Count} of {observed.AnnouncedTotal} users" : observed.Error);
             return null;
         }
 
         _log.LogInformation(
-            "Reader {DeviceId}: stage=enumerate; observed {Count} users in {Seconds:0.0} s (announced={Announced})",
-            _deviceId, observed.Users.Count, Stopwatch.GetElapsedTime(started).TotalSeconds, observed.AnnouncedTotal);
+            "Reader {Reader}: stage=enumerate; observed {Count} users in {Seconds:0.0} s (announced={Announced})",
+            _readerLabel, observed.Users.Count, Stopwatch.GetElapsedTime(started).TotalSeconds, observed.AnnouncedTotal);
         var before = Gate;
         var observation = _observations == null ? 0 : BeginObservation();
         var listed = Listed(observed);
@@ -256,8 +261,8 @@ public sealed class DesiredRevisionPath
         var uploaded = 0;
         var failed = wanted.Count - pending.Count;
         _log.LogInformation(
-            "Reader {DeviceId}: stage=want-photos; server asked for {Count} photos ({Ready} ready to upload, concurrency=4)",
-            _deviceId, wanted.Count, pending.Count);
+            "Reader {Reader}: stage=want-photos; server asked for {Count} photos ({Ready} ready to upload, concurrency=4)",
+            _readerLabel, wanted.Count, pending.Count);
         await Parallel.ForEachAsync(
                 pending,
                 new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
@@ -268,8 +273,8 @@ public sealed class DesiredRevisionPath
                         var done = Interlocked.Increment(ref uploaded);
                         if (done % 100 == 0)
                         {
-                            _log.LogInformation("Reader {DeviceId}: uploaded {Done}/{Total} photos ({Seconds:0} s)",
-                                _deviceId, done, wanted.Count, Stopwatch.GetElapsedTime(started).TotalSeconds);
+                            _log.LogInformation("Reader {Reader}: uploaded {Done}/{Total} photos ({Seconds:0} s)",
+                                _readerLabel, done, wanted.Count, Stopwatch.GetElapsedTime(started).TotalSeconds);
                         }
                     }
                     else
@@ -279,8 +284,8 @@ public sealed class DesiredRevisionPath
                 })
             .ConfigureAwait(false);
 
-        _log.LogInformation("Reader {DeviceId}: photos uploaded, {Uploaded} stored, {Failed} retried next scan, in {Seconds:0} s",
-            _deviceId, uploaded, failed, Stopwatch.GetElapsedTime(started).TotalSeconds);
+        _log.LogInformation("Reader {Reader}: photos uploaded, {Uploaded} stored, {Failed} retried next scan, in {Seconds:0} s",
+            _readerLabel, uploaded, failed, Stopwatch.GetElapsedTime(started).TotalSeconds);
     }
 
     /// <summary>The reader photo of this user when it is still the photo the scan hashed.</summary>
@@ -360,6 +365,9 @@ public sealed class DesiredRevisionPath
         var list = ScanUploadState.List(observed.AnnouncedTotal, entries, missing);
         if (awaitAcceptance && !force && uploads.AlreadyAccepted(list))
         {
+            _log.LogDebug(
+                "Reader {Reader}: stage=device→server; observation unchanged ({Count} users); nothing resent",
+                _readerLabel, listed.Count);
             NotUploaded(scan);
             return;
         }
@@ -376,6 +384,9 @@ public sealed class DesiredRevisionPath
 
             if (!awaitAcceptance && listed.Count > 0)
             {
+                _log.LogInformation(
+                    "Reader {Reader}: stage=device→server; sending full list ({Count} users) after reconnect: {Users}",
+                    _readerLabel, listed.Count, SummarizeUsers(listed));
                 perUser.AddRange(await _observations.UploadAsync(_deviceId, scan.Stamp, listed, hashes, cancellationToken)
                     .ConfigureAwait(false));
                 uploads.Sent(entries.Keys.ToHashSet(StringComparer.Ordinal), entries);
@@ -383,14 +394,18 @@ public sealed class DesiredRevisionPath
 
             if (missing.Count > 0)
             {
+                _log.LogInformation(
+                    "Reader {Reader}: stage=device→server; reporting {Count} absence(s) to the server: {Users}",
+                    _readerLabel, missing.Count, string.Join(", ", missing.Take(20)));
                 absences.AddRange(await _observations.UploadAbsencesAsync(_deviceId, scan.Stamp, missing, cancellationToken)
                     .ConfigureAwait(false));
             }
 
             var roster = await UploadListAsync(scan.Stamp, observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
                 .ConfigureAwait(false);
-            _log.LogInformation("Reader {DeviceId}: user list ({Count} users) {Outcome}", _deviceId, listed.Count,
-                RosterOutcome(roster));
+            _log.LogInformation(
+                "Reader {Reader}: stage=device→server; user list ({Count} users) {Outcome}",
+                _readerLabel, listed.Count, RosterOutcome(roster));
             if (awaitAcceptance && roster.Accepted)
             {
                 uploads.Accepted(generation, list, entries);
@@ -400,9 +415,12 @@ public sealed class DesiredRevisionPath
                 var unsent = uploads.Unsent(entries);
                 if (unsent.Count > 0)
                 {
+                    var changed = listed.Where(user => unsent.Contains(user.DeviceUserId)).ToList();
+                    _log.LogInformation(
+                        "Reader {Reader}: stage=device→server; sending {Count} changed user(s) to the server: {Users}",
+                        _readerLabel, changed.Count, SummarizeUsers(changed));
                     perUser.AddRange(await _observations.UploadAsync(
-                            _deviceId, scan.Stamp, listed.Where(user => unsent.Contains(user.DeviceUserId)).ToList(), hashes,
-                            cancellationToken)
+                            _deviceId, scan.Stamp, changed, hashes, cancellationToken)
                         .ConfigureAwait(false));
                     uploads.Sent(unsent, entries);
                 }
@@ -418,7 +436,7 @@ public sealed class DesiredRevisionPath
         catch (Exception ex)
         {
             // The people stay on this reader. Nothing is copied to another reader.
-            _log.LogWarning(ex, "Reader {DeviceId}: the observation was not uploaded; desired state waits", _deviceId);
+            _log.LogWarning(ex, "Reader {Reader}: the observation was not uploaded; desired state waits", _readerLabel);
             EndObservation(observing, [], false);
         }
     }
@@ -431,6 +449,25 @@ public sealed class DesiredRevisionPath
         }
 
         return roster.MessageId != null ? "sent to the server" : "not acknowledged; users are sent one by one";
+    }
+
+    private static string SummarizeUsers(IEnumerable<ReaderUser> users)
+    {
+        var parts = users
+            .Select(user =>
+            {
+                var name = string.IsNullOrWhiteSpace(user.Name) ? null : user.Name.Trim();
+                return name == null ? user.DeviceUserId : $"{name} ({user.DeviceUserId})";
+            })
+            .Take(21)
+            .ToList();
+        if (parts.Count == 0)
+        {
+            return "(none)";
+        }
+
+        var more = parts.Count > 20;
+        return string.Join(", ", parts.Take(20)) + (more ? ", …" : "");
     }
 
     /// <summary>
@@ -487,11 +524,17 @@ public sealed class DesiredRevisionPath
         var observing = scan.Observation;
         try
         {
+            _log.LogInformation(
+                "Reader {Reader}: stage=device→server; uploading {Count} user(s) seen on the reader: {Users}",
+                _readerLabel, listed.Count, SummarizeUsers(listed));
             var sent = new List<string>(await _observations.UploadAsync(_deviceId, scan.Stamp, listed, scan.Hashes, cancellationToken)
                 .ConfigureAwait(false));
             var missing = Missing(listed);
             if (missing.Count > 0)
             {
+                _log.LogInformation(
+                    "Reader {Reader}: stage=device→server; reporting {Count} absence(s) to the server: {Users}",
+                    _readerLabel, missing.Count, string.Join(", ", missing.Take(20)));
                 sent.AddRange(await _observations.UploadAbsencesAsync(_deviceId, scan.Stamp, missing, cancellationToken)
                     .ConfigureAwait(false));
             }
@@ -506,7 +549,7 @@ public sealed class DesiredRevisionPath
         catch (Exception ex)
         {
             // The person stays on this reader. Nothing is copied to another reader.
-            _log.LogWarning(ex, "Reader {DeviceId}: the observation was not uploaded; desired state waits", _deviceId);
+            _log.LogWarning(ex, "Reader {Reader}: the observation was not uploaded; desired state waits", _readerLabel);
             EndObservation(observing, [], false);
         }
     }
@@ -577,23 +620,23 @@ public sealed class DesiredRevisionPath
                 if (age >= _options.FenceResendAfter)
                 {
                     _log.LogWarning(
-                        "Reader {DeviceId}: stage=fenced; observation unprocessed after {Seconds}s; next action=re-read reader and resend observation",
-                        _deviceId, (int)age.TotalSeconds);
+                        "Reader {Reader}: stage=fenced; observation unprocessed after {Seconds}s; next action=re-read reader and resend observation",
+                        _readerLabel, (int)age.TotalSeconds);
                     _gate = ObservationGate.Unobserved;
                 }
                 else if (age >= _options.FenceTimeout && _worker.Now >= _nextFenceWarn)
                 {
                     _log.LogWarning(
-                        "Reader {DeviceId}: stage=fenced; observation still unprocessed after {Seconds}s; next action=probe same observation (resend after {Resend}s)",
-                        _deviceId, (int)age.TotalSeconds, (int)_options.FenceResendAfter.TotalSeconds);
+                        "Reader {Reader}: stage=fenced; observation still unprocessed after {Seconds}s; next action=probe same observation (resend after {Resend}s)",
+                        _readerLabel, (int)age.TotalSeconds, (int)_options.FenceResendAfter.TotalSeconds);
                     _nextFenceWarn = _worker.Now + _options.FenceTimeout;
                 }
             }
         }
 
         _log.LogInformation(
-            "Reader {DeviceId}: stage=fenced; waiting for the server to finish processing the reader observation before applying desired state",
-            _deviceId);
+            "Reader {Reader}: stage=fenced; waiting for the server to finish processing the reader observation before applying desired state",
+            _readerLabel);
         return false;
     }
 
@@ -660,7 +703,7 @@ public sealed class DesiredRevisionPath
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _log.LogInformation(ex, "Reader {DeviceId}: observation check failed; desired state waits", _deviceId);
+                _log.LogInformation(ex, "Reader {Reader}: observation check failed; desired state waits", _readerLabel);
             }
         }
 
@@ -684,8 +727,8 @@ public sealed class DesiredRevisionPath
         if (scan == null)
         {
             _log.LogWarning(
-                "Reader {DeviceId}: no trusted user list ({Error}); desired state waits until one is processed",
-                _deviceId, observed.Ok ? "the count does not match the announced total" : observed.Error);
+                "Reader {Reader}: no trusted user list ({Error}); desired state waits until one is processed",
+                _readerLabel, observed.Ok ? "the count does not match the announced total" : observed.Error);
             return false;
         }
 
@@ -736,7 +779,7 @@ public sealed class DesiredRevisionPath
         }
 
         claimedChecksum.Clear();
-        var downloads = new DownloadProgress(_log, _deviceId, toDownload);
+        var downloads = new DownloadProgress(_log, _readerLabel, toDownload);
         foreach (var deviceUserId in listed.Select(user => user.DeviceUserId))
         {
             if (!checksums.ByUserId.TryGetValue(deviceUserId, out var checksum))
@@ -787,7 +830,7 @@ public sealed class DesiredRevisionPath
     private Dictionary<string, string> DownloadedFaceHashes(IReadOnlyList<ReaderUser> listed, Dictionary<string, byte[]> photos)
     {
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
-        var downloads = new DownloadProgress(_log, _deviceId, listed.Count);
+        var downloads = new DownloadProgress(_log, _readerLabel, listed.Count);
         foreach (var deviceUserId in listed.Select(user => user.DeviceUserId))
         {
             var face = _reader.GetFace(deviceUserId);
@@ -809,19 +852,19 @@ public sealed class DesiredRevisionPath
     {
         private const int Every = 100;
         private readonly ILogger _log;
-        private readonly string _deviceId;
+        private readonly string _reader;
         private readonly int _total;
         private readonly long _started = Stopwatch.GetTimestamp();
         private int _done;
 
-        public DownloadProgress(ILogger log, string deviceId, int total)
+        public DownloadProgress(ILogger log, string reader, int total)
         {
             _log = log;
-            _deviceId = deviceId;
+            _reader = reader;
             _total = total;
             if (total > 0)
             {
-                _log.LogInformation("Reader {DeviceId}: downloading {Total} photos from the reader", deviceId, total);
+                _log.LogInformation("Reader {Reader}: downloading {Total} photos from the reader", reader, total);
             }
         }
 
@@ -830,8 +873,8 @@ public sealed class DesiredRevisionPath
             _done++;
             if (_done % Every == 0 && _done < _total)
             {
-                _log.LogInformation("Reader {DeviceId}: downloaded {Done}/{Total} photos ({Seconds:0} s)",
-                    _deviceId, _done, _total, Stopwatch.GetElapsedTime(_started).TotalSeconds);
+                _log.LogInformation("Reader {Reader}: downloaded {Done}/{Total} photos ({Seconds:0} s)",
+                    _reader, _done, _total, Stopwatch.GetElapsedTime(_started).TotalSeconds);
             }
         }
 
@@ -839,8 +882,8 @@ public sealed class DesiredRevisionPath
         {
             if (_total > 0)
             {
-                _log.LogInformation("Reader {DeviceId}: photos checked, {WithPhoto} users have a photo; {Done} downloaded in {Seconds:0} s",
-                    _deviceId, withPhoto, _done, Stopwatch.GetElapsedTime(_started).TotalSeconds);
+                _log.LogInformation("Reader {Reader}: photos checked, {WithPhoto} users have a photo; {Done} downloaded in {Seconds:0} s",
+                    _reader, withPhoto, _done, Stopwatch.GetElapsedTime(_started).TotalSeconds);
             }
         }
     }
@@ -878,8 +921,8 @@ public sealed class DesiredRevisionPath
         }
 
         _log.LogInformation(
-            "Reader {DeviceId}: desired state was still changing after {Passes} passes; the next notice or retry continues",
-            _deviceId, MaxPasses);
+            "Reader {Reader}: desired state was still changing after {Passes} passes; the next notice or retry continues",
+            _readerLabel, MaxPasses);
     }
 
     /// <summary>
@@ -894,7 +937,7 @@ public sealed class DesiredRevisionPath
         var covered = from;
         var seen = new HashSet<long>();
         var reported = false;
-        var progress = new ApplyProgress(_log, _deviceId, from);
+        var progress = new ApplyProgress(_log, _readerLabel, from);
         for (var page = 0; page < MaxPages; page++)
         {
             var pull = await _client.PullAsync(_deviceId, after, cancellationToken).ConfigureAwait(false);
@@ -938,7 +981,7 @@ public sealed class DesiredRevisionPath
     {
         private const int Every = 100;
         private readonly ILogger _log;
-        private readonly string _deviceId;
+        private readonly string _reader;
         private readonly long _from;
         private readonly long _started = Stopwatch.GetTimestamp();
         private long _target;
@@ -950,10 +993,10 @@ public sealed class DesiredRevisionPath
         private int _reported;
         private int _waiting;
 
-        public ApplyProgress(ILogger log, string deviceId, long from)
+        public ApplyProgress(ILogger log, string reader, long from)
         {
             _log = log;
-            _deviceId = deviceId;
+            _reader = reader;
             _from = from;
         }
 
@@ -963,8 +1006,8 @@ public sealed class DesiredRevisionPath
             if (items > 0 && !_announced)
             {
                 _announced = true;
-                _log.LogInformation("Reader {DeviceId}: applying changes after revision {From} up to revision {Target}",
-                    _deviceId, _from, _target);
+                _log.LogInformation("Reader {Reader}: applying changes after revision {From} up to revision {Target}",
+                    _reader, _from, _target);
             }
         }
 
@@ -976,8 +1019,8 @@ public sealed class DesiredRevisionPath
                 case MemberApplyKind.Applied:
                     _written++;
                     _log.LogInformation(
-                        "Reader {DeviceId}: {Action} user {UserId}, read back OK (revision {Revision} of {Target}) in {Ms} ms",
-                        _deviceId, item.Present ? "wrote" : "removed", item.DeviceUserId, item.Revision, _target,
+                        "Reader {Reader}: {Action} user {UserId}, read back OK (revision {Revision} of {Target}) in {Ms} ms",
+                        _reader, item.Present ? "wrote" : "removed", item.DeviceUserId, item.Revision, _target,
                         (long)took.TotalMilliseconds);
                     break;
                 case MemberApplyKind.AlreadyApplied:
@@ -998,8 +1041,8 @@ public sealed class DesiredRevisionPath
             if (_checked % Every == 0)
             {
                 _log.LogInformation(
-                    "Reader {DeviceId}: {Checked} changes checked so far (revision {Revision} of {Target}), {Seconds:0} s",
-                    _deviceId, _checked, item.Revision, _target, Stopwatch.GetElapsedTime(_started).TotalSeconds);
+                    "Reader {Reader}: {Checked} changes checked so far (revision {Revision} of {Target}), {Seconds:0} s",
+                    _reader, _checked, item.Revision, _target, Stopwatch.GetElapsedTime(_started).TotalSeconds);
             }
         }
 
@@ -1011,8 +1054,8 @@ public sealed class DesiredRevisionPath
             }
 
             _log.LogInformation(
-                "Reader {DeviceId}: changes up to revision {Target} done in {Seconds:0} s: {Written} written, {Matched} already matched, {Failed} failed (retried later), {Reported} reported to the server for review, {Waiting} waiting",
-                _deviceId, _target, Stopwatch.GetElapsedTime(_started).TotalSeconds, _written, _matched, _failed, _reported,
+                "Reader {Reader}: changes up to revision {Target} done in {Seconds:0} s: {Written} written, {Matched} already matched, {Failed} failed (retried later), {Reported} reported to the server for review, {Waiting} waiting",
+                _reader, _target, Stopwatch.GetElapsedTime(_started).TotalSeconds, _written, _matched, _failed, _reported,
                 _waiting);
         }
     }
@@ -1031,8 +1074,8 @@ public sealed class DesiredRevisionPath
             }
 
             _log.LogInformation(
-                "Reader {DeviceId}: revision {Revision} for user {UserId} is no longer desired by the server; its failed attempt ({Error}) is dropped",
-                _deviceId, attempt.Revision, attempt.DeviceUserId, attempt.LastError);
+                "Reader {Reader}: revision {Revision} for user {UserId} is no longer desired by the server; its failed attempt ({Error}) is dropped",
+                _readerLabel, attempt.Revision, attempt.DeviceUserId, attempt.LastError);
             _worker.Settle(attempt.Revision);
         }
     }
@@ -1102,14 +1145,14 @@ public sealed class DesiredRevisionPath
         catch (DesiredRefusedException ex)
         {
             _log.LogInformation(ex,
-                "Reader {DeviceId}: revision {Revision} was replaced before its report ({Message})",
-                _deviceId, item.Revision, ex.Message);
+                "Reader {Reader}: revision {Revision} was replaced before its report ({Message})",
+                _readerLabel, item.Revision, ex.Message);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex,
-                "Reader {DeviceId}: revision {Revision} for user {UserId} was not written and the report failed; it is retried",
-                _deviceId, item.Revision, item.DeviceUserId);
+                "Reader {Reader}: revision {Revision} for user {UserId} was not written and the report failed; it is retried",
+                _readerLabel, item.Revision, item.DeviceUserId);
             return ItemStep.Continue;
         }
 
@@ -1131,8 +1174,8 @@ public sealed class DesiredRevisionPath
         if (attempt.State == AttemptState.Retry)
         {
             _log.LogInformation(
-                "Reader {DeviceId}: revision {Revision} for user {UserId} failed attempt {Attempt} ({Error}); next at {Next:o}",
-                _deviceId, attempt.Revision, attempt.DeviceUserId, attempt.AttemptCount, attempt.LastError, attempt.NextAttempt);
+                "Reader {Reader}: revision {Revision} for user {UserId} failed attempt {Attempt} ({Error}); next at {Next:o}",
+                _readerLabel, attempt.Revision, attempt.DeviceUserId, attempt.AttemptCount, attempt.LastError, attempt.NextAttempt);
             return;
         }
 
@@ -1142,8 +1185,8 @@ public sealed class DesiredRevisionPath
         }
 
         _log.LogWarning(
-            "Reader {DeviceId}: revision {Revision} for user {UserId} is {State} after {Attempt} attempts ({Error}); newer revisions continue",
-            _deviceId, attempt.Revision, attempt.DeviceUserId, attempt.State, attempt.AttemptCount, attempt.LastError);
+            "Reader {Reader}: revision {Revision} for user {UserId} is {State} after {Attempt} attempts ({Error}); newer revisions continue",
+            _readerLabel, attempt.Revision, attempt.DeviceUserId, attempt.State, attempt.AttemptCount, attempt.LastError);
         try
         {
             await _client.ReportFailedAsync(_deviceId, attempt, cancellationToken).ConfigureAwait(false);
@@ -1155,8 +1198,8 @@ public sealed class DesiredRevisionPath
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.LogWarning(ex, "Reader {DeviceId}: failure of revision {Revision} was not reported; it is reported again later",
-                _deviceId, attempt.Revision);
+            _log.LogWarning(ex, "Reader {Reader}: failure of revision {Revision} was not reported; it is reported again later",
+                _readerLabel, attempt.Revision);
         }
     }
 
@@ -1199,8 +1242,8 @@ public sealed class DesiredRevisionPath
                 error = "the server refused the read-back: " + ex.Message;
             }
 
-            _log.LogWarning("Reader {DeviceId}: revision {Revision} is not acknowledged ({Error}); it is applied again",
-                _deviceId, revision, error);
+            _log.LogWarning("Reader {Reader}: revision {Revision} is not acknowledged ({Error}); it is applied again",
+                _readerLabel, revision, error);
             await FailedAsync(_worker.Unverify(revision, item.DeviceUserId, error), cancellationToken).ConfigureAwait(false);
         }
     }
@@ -1349,6 +1392,9 @@ public enum ObservationGate
 public sealed record DesiredPathOptions
 {
     public ILogger? Log { get; init; }
+
+    /// <summary>Staff-facing reader name for logs; falls back to a short device id.</summary>
+    public string? ReaderName { get; init; }
 
     public TimeSpan FenceTimeout { get; init; } = TimeSpan.FromMinutes(5);
 

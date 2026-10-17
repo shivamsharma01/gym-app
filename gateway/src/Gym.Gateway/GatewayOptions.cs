@@ -135,6 +135,9 @@ public sealed class DeviceEndpointOptions
 {
     public string DeviceId { get; set; } = "";
 
+    /// <summary>Staff-facing reader name from the server; used in gateway logs.</summary>
+    public string Name { get; set; } = "";
+
     public string Ip { get; set; } = "";
 
     public ushort Port { get; set; } = 37777;

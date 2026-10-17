@@ -231,6 +231,7 @@ public partial class MainWindow : Window
                 Devices = _devices.Select(d => new PersistedDeviceConfig
                 {
                     DeviceId = d.DeviceId,
+                    Name = d.Name?.Trim() ?? "",
                     Ip = d.Ip.Trim(),
                     Port = d.Port,
                     Username = d.Username.Trim(),

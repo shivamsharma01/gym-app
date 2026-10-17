@@ -23,6 +23,7 @@ public sealed class GatewayWorker : BackgroundService
     private readonly ConcurrentDictionary<string, Channel<GatewayEnvelope>> _inbox = new(StringComparer.Ordinal);
     private CommandDispatcher? _dispatcher;
     private readonly DesiredRevisionHub _desiredRevisions;
+    private readonly ReaderLabels _readerLabels = new();
     private readonly IReaderAdapterFactory? _readerFactory;
     private readonly IDesiredStateClient _desired;
     private readonly IAttendanceClient _attendance;
@@ -62,7 +63,8 @@ public sealed class GatewayWorker : BackgroundService
         _log = log;
         _logFactory = logFactory;
         _locks = locks ?? new DeviceLocks(logFactory.CreateLogger<DeviceLocks>());
-        _desiredRevisions = new DesiredRevisionHub(logFactory.CreateLogger<DesiredRevisionHub>());
+        SeedReaderLabels();
+        _desiredRevisions = new DesiredRevisionHub(logFactory.CreateLogger<DesiredRevisionHub>(), _readerLabels);
         _readerFactory = readers;
         _desired = desired ?? DesiredStateClient.Create(options.BackendUrl, options.Token);
         _attendance = attendance ?? AttendanceClient.Create(options.BackendUrl, options.Token);
@@ -74,6 +76,7 @@ public sealed class GatewayWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _stop = stoppingToken;
+        await RefreshReaderNamesAsync(stoppingToken).ConfigureAwait(false);
         foreach (var device in _options.Devices.Where(d => !string.IsNullOrWhiteSpace(d.DeviceId)))
         {
             var adapter = new TimedDeviceAdapter(
@@ -84,8 +87,8 @@ public sealed class GatewayWorker : BackgroundService
             adapter.RegisterEventListener(new ForwardingListener(device.DeviceId, _outbound.Writer));
             _adapters[device.DeviceId] = adapter;
             _log.LogInformation(
-                "Device {DeviceId} adapter={Adapter} state={State} error={Error}",
-                device.DeviceId, _options.Adapter, status.ConnectionState, status.Error);
+                "Reader {Reader} adapter={Adapter} state={State} error={Error}",
+                _readerLabels.Of(device.DeviceId), _options.Adapter, status.ConnectionState, status.Error);
             await EnqueueStatus(device.DeviceId, status).ConfigureAwait(false);
             if (status.Ok)
             {
@@ -161,7 +164,7 @@ public sealed class GatewayWorker : BackgroundService
                 continue;
             }
 
-            _log.LogInformation("Reader {DeviceId}: reconnecting ({Detail})", deviceId, reader.HealthDetail);
+            _log.LogInformation("Reader {Reader}: reconnecting ({Detail})", _readerLabels.Of(deviceId), reader.HealthDetail);
             DeviceConnectionStatus status;
             using (await _locks.AcquireAsync(deviceId, "reconnecting the reader", stoppingToken).ConfigureAwait(false))
             {
@@ -194,7 +197,7 @@ public sealed class GatewayWorker : BackgroundService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.LogWarning(ex, "Reader {DeviceId}: desired state was not applied after the reader came back", deviceId);
+            _log.LogWarning(ex, "Reader {Reader}: desired state was not applied after the reader came back", _readerLabels.Of(deviceId));
         }
     }
 
@@ -285,15 +288,15 @@ public sealed class GatewayWorker : BackgroundService
             var result = adapter.SynchronizeTime(ReaderLocalClock.Now(DateTimeOffset.UtcNow));
             if (result.Ok)
             {
-                _log.LogInformation("Reader {DeviceId}: clock set to gateway time", deviceId);
+                _log.LogInformation("Reader {Reader}: clock set to gateway time", _readerLabels.Of(deviceId));
                 return true;
             }
 
-            _log.LogWarning("Time sync failed for {DeviceId}: {Error}", deviceId, result.Error);
+            _log.LogWarning("Reader {Reader}: time sync failed: {Error}", _readerLabels.Of(deviceId), result.Error);
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Time sync failed for {DeviceId}", deviceId);
+            _log.LogWarning(ex, "Reader {Reader}: time sync failed", _readerLabels.Of(deviceId));
         }
 
         return false;
@@ -362,12 +365,13 @@ public sealed class GatewayWorker : BackgroundService
             if (opened == null)
             {
                 _log.LogInformation(
-                    "Reader {DeviceId} has no worker; desired revisions will not be acknowledged until it is online",
-                    deviceId);
+                    "Reader {Reader} has no worker; desired revisions will not be acknowledged until it is online",
+                    _readerLabels.Of(deviceId));
                 return;
             }
 
             _attachedReaders.Add(deviceId);
+            var readerLabel = _readerLabels.Of(deviceId);
             var reader = new LockedReaderAdapter(deviceId, opened, _locks);
             _attendancePolls.Add(new AttendancePoll(
                 deviceId, reader, _attendance, AttendancePollSettings.From(_options),
@@ -381,19 +385,23 @@ public sealed class GatewayWorker : BackgroundService
                 if (dropped > 0)
                 {
                     _log.LogInformation(
-                        "Reader {DeviceId}: the scan journal is new; {Count} queued observation(s) from before it were dropped and the reader is read again",
-                        deviceId, dropped);
+                        "Reader {Reader}: the scan journal is new; {Count} queued observation(s) from before it were dropped and the reader is read again",
+                        readerLabel, dropped);
                 }
             }
 
             IReaderObservationUpload observations = new ReaderObservationUpload(
-                _options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>());
+                _options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>(), labels: _readerLabels);
             var memory = new ReaderScanMemory(
                 new FaceChecksumCache(Path.ChangeExtension(journal, ".faces.json")),
                 new ScanUploadState(TimeSpan.FromMinutes(Math.Max(1, _options.RosterRefreshMinutes))));
             var path = new DesiredRevisionPath(
                 deviceId, worker, reader, _desired, observations, memory,
-                new DesiredPathOptions { Log = _logFactory.CreateLogger<DesiredRevisionPath>() });
+                new DesiredPathOptions
+                {
+                    Log = _logFactory.CreateLogger<DesiredRevisionPath>(),
+                    ReaderName = readerLabel
+                });
             _desiredRevisions.Attach(
                 deviceId,
                 path.HandleAsync,
@@ -401,6 +409,44 @@ public sealed class GatewayWorker : BackgroundService
                 ct => path.BootstrapAsync(ct),
                 path.ScanNowAsync);
             _desiredRevisions.AttachRetry(deviceId, path.RetryAsync);
+            _log.LogInformation("Reader {Reader}: attached for desired state and device→server observations", readerLabel);
+        }
+    }
+
+    private void SeedReaderLabels()
+    {
+        foreach (var device in _options.Devices.Where(d => !string.IsNullOrWhiteSpace(d.DeviceId)))
+        {
+            _readerLabels.Remember(device.DeviceId, device.Name);
+        }
+    }
+
+    private async Task RefreshReaderNamesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var remote = await new GatewayEnrollmentClient()
+                .ListDevicesAsync(_options.BackendUrl, _options.Token, cancellationToken)
+                .ConfigureAwait(false);
+            foreach (var device in remote)
+            {
+                if (string.IsNullOrWhiteSpace(device.Id) || string.IsNullOrWhiteSpace(device.Name))
+                {
+                    continue;
+                }
+
+                _readerLabels.Remember(device.Id, device.Name);
+                var local = _options.Devices.FirstOrDefault(d =>
+                    string.Equals(d.DeviceId, device.Id, StringComparison.Ordinal));
+                if (local != null)
+                {
+                    local.Name = device.Name.Trim();
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogInformation(ex, "Reader names were not refreshed from the server; using configured names when present");
         }
     }
 
@@ -487,8 +533,8 @@ public sealed class GatewayWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Reader {DeviceId}: attendance poll failed; the same window is read again next time",
-                    poll.DeviceId);
+                _log.LogWarning(ex, "Reader {Reader}: attendance poll failed; the same window is read again next time",
+                    _readerLabels.Of(poll.DeviceId));
             }
         }));
 

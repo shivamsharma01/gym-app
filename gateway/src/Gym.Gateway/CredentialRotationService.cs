@@ -94,6 +94,7 @@ public sealed class CredentialRotationService : BackgroundService
             Devices = previous?.Devices ?? _options.Devices.Select(d => new PersistedDeviceConfig
             {
                 DeviceId = d.DeviceId,
+                Name = d.Name ?? "",
                 Ip = d.Ip,
                 Port = d.Port,
                 Username = d.Username,

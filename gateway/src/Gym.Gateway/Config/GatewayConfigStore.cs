@@ -105,6 +105,7 @@ public sealed class GatewayConfigStore
         options.Devices = config.Devices.Select(d => new DeviceEndpointOptions
         {
             DeviceId = d.DeviceId,
+            Name = d.Name ?? "",
             Ip = d.Ip,
             Port = d.Port,
             Username = d.Username,
@@ -130,6 +131,7 @@ public sealed class GatewayConfigStore
             Devices = options.Devices.Select(d => new PersistedDeviceConfig
             {
                 DeviceId = d.DeviceId,
+                Name = d.Name ?? "",
                 Ip = d.Ip,
                 Port = d.Port,
                 Username = d.Username,

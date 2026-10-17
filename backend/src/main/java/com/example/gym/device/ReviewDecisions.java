@@ -4,6 +4,8 @@ package com.example.gym.device;
 public final class ReviewDecisions {
 
     public static final String ACCEPT_SERVER = "ACCEPT_SERVER";
+    /** Staff keep the reader's shown fields as desired on this reader. */
+    public static final String ACCEPT_READER = "ACCEPT_READER";
     public static final String RESTORE = "RESTORE";
     public static final String REMOVE = "REMOVE";
     public static final String LINK = "LINK";

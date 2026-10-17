@@ -38,7 +38,7 @@ export function ReviewPage() {
     <div className="space-y-6">
       <PageHeader
         title="Review"
-        description="Server, reader, and baseline for each open difference. Nothing is linked automatically."
+        description="Compare server vs what the reader shows. Choose which side to keep for that reader."
         actions={
           has('DEVICE_MANAGE') ? (
             <Button type="button" disabled={bootstrap.isPending} onClick={() => bootstrap.mutate()}>
@@ -278,13 +278,33 @@ function RowActions({
   }
   return (
     <div className="flex flex-wrap gap-2">
-      <Button type="button" size="sm" disabled={pending} onClick={() => onDecide('accept-server')}>
-        Accept server
+      <Button
+        type="button"
+        size="sm"
+        disabled={pending || item.readerAbsent}
+        title="Keep the reader's dates/name/status on this reader; do not overwrite the device"
+        onClick={() => onDecide('accept-reader')}
+      >
+        Keep reader values
       </Button>
-      <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => onDecide('restore')}>
-        Restore
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={pending}
+        title="Write the server record onto the reader (overwrites what the device shows)"
+        onClick={() => onDecide('accept-server')}
+      >
+        Overwrite with server
       </Button>
-      <Button type="button" size="sm" variant="danger" disabled={pending} onClick={() => onDecide('remove')}>
+      <Button
+        type="button"
+        size="sm"
+        variant="danger"
+        disabled={pending}
+        title="Remove this member from this reader only"
+        onClick={() => onDecide('remove')}
+      >
         Remove from this reader
       </Button>
     </div>

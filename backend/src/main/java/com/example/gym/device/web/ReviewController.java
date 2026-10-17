@@ -54,14 +54,21 @@ public class ReviewController {
 
     @PostMapping("/{id}/accept-server")
     @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
-    @Operation(summary = "Write the server value to the reader")
+    @Operation(summary = "Overwrite the reader with the server's desired record")
     public ReviewItemView acceptServer(@PathVariable String id) {
         return audit.decided(decisions.acceptServer(id, SecurityUtils.currentTenantId()));
     }
 
+    @PostMapping("/{id}/accept-reader")
+    @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
+    @Operation(summary = "Keep what the reader shows as desired on this reader")
+    public ReviewItemView acceptReader(@PathVariable String id) {
+        return audit.decided(decisions.acceptReader(id, SecurityUtils.currentTenantId()));
+    }
+
     @PostMapping("/{id}/restore")
     @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
-    @Operation(summary = "Restore the server record on the reader")
+    @Operation(summary = "Restore the server record on the reader (suspended: under a new id)")
     public ReviewItemView restore(@PathVariable String id) {
         return audit.decided(decisions.restore(id, SecurityUtils.currentTenantId()));
     }

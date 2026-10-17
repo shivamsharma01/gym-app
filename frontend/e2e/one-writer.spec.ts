@@ -178,8 +178,8 @@ test('a validity difference is shown for review and neither side is applied auto
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible()
   await expect(page.getByText('2026-10-08 – 2026-11-15')).toBeVisible()
   await expect(page.getByText('2026-10-01T00:00:00+05:30 – 2026-10-31T23:59:59+05:30')).toHaveCount(2)
-  await expect(page.getByRole('button', { name: 'Accept server' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /accept reader|use reader|reader wins/i })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Keep reader values' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Overwrite with server' })).toBeVisible()
 })
 
 test('a member page offers send again and remove for each reader', async ({ page }) => {

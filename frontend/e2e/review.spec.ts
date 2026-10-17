@@ -92,7 +92,7 @@ test('accept server records the staff decision', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'Asha Shah' }).first()).toBeVisible()
   await expect(page.getByRole('cell', { name: 'Left' })).toBeVisible()
-  await page.getByRole('button', { name: 'Accept server' }).click()
+  await page.getByRole('button', { name: 'Overwrite with server' }).click()
   await expect(page.getByText('ACCEPT_SERVER')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Link all' })).toHaveCount(0)
 })
@@ -189,7 +189,7 @@ test('staff can decide a review item but cannot run bootstrap', async ({ page })
   await page.goto('/app/review')
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Bootstrap report' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Accept server' }).click()
+  await page.getByRole('button', { name: 'Overwrite with server' }).click()
   await expect(page.getByText('ACCEPT_SERVER')).toBeVisible()
 })
 
@@ -253,7 +253,7 @@ test('a suspended member offers restore under a new id or keep off, and no accep
   await expect(page.getByText('Someone else holds this id; the member is off this reader')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Restore under a new id' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Keep off this reader' })).toBeEnabled()
-  await expect(page.getByRole('button', { name: 'Accept server' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Overwrite with server' })).toHaveCount(0)
 })
 
 test('one member items on two readers are grouped under the member and decided per reader', async ({ page }) => {
@@ -289,7 +289,8 @@ test('one member items on two readers are grouped under the member and decided p
   await expect(member.getByRole('row')).toHaveCount(3)
   await expect(member.getByRole('cell', { name: 'Entrance' })).toBeVisible()
   await expect(member.getByRole('cell', { name: 'Exit' })).toBeVisible()
-  await expect(member.getByRole('button', { name: 'Accept server' })).toHaveCount(2)
+  await expect(member.getByRole('button', { name: 'Overwrite with server' })).toHaveCount(2)
+  await expect(member.getByRole('button', { name: 'Keep reader values' })).toHaveCount(2)
 
   const unknown = page.getByRole('rowgroup', { name: 'People the server does not know' })
   await expect(unknown.getByText('May already be Asha Shah; link instead of creating')).toBeVisible()

@@ -5,6 +5,7 @@ import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceObservedUser;
+import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.ReaderBlockedUser;
@@ -238,23 +239,30 @@ public class DesiredProjectionService {
             MemberDeviceMapping mapping = held.mapping();
             String from = window.map(access -> at(access.validFrom(), LocalTime.MIN)).orElse(row.getValidFrom());
             String to = window.map(access -> at(access.validTo(), LocalTime.of(23, 59, 59))).orElse(row.getValidTo());
-            if (row.getUserStatus() == status
+            boolean same = row.getUserStatus() == status
                     && from.equals(row.getValidFrom())
                     && to.equals(row.getValidTo())
                     && name.equals(row.getReaderName())
                     && sameNameEx(nameEx, row.getReaderNameEx())
-                    && desiredAuthority.equalsIgnoreCase(row.getAuthority())) {
+                    && desiredAuthority.equalsIgnoreCase(row.getAuthority());
+            // A held row is omitted from pull; membership/access must release it or that reader never updates.
+            if (same && !row.isHeld()) {
                 continue;
             }
-            long revision = cursor.bumpDesired();
-            row.setRevision(revision);
-            row.setReaderName(name);
-            row.setReaderNameEx(nameEx);
-            row.setUserStatus(status);
-            row.setValidFrom(from);
-            row.setValidTo(to);
-            row.setAuthority(desiredAuthority);
-            row.setDeviceUserId(mapping.getDeviceUserId());
+            long revision = row.getRevision();
+            if (!same) {
+                revision = cursor.bumpDesired();
+                row.setRevision(revision);
+                row.setReaderName(name);
+                row.setReaderNameEx(nameEx);
+                row.setUserStatus(status);
+                row.setValidFrom(from);
+                row.setValidTo(to);
+                row.setAuthority(desiredAuthority);
+                row.setDeviceUserId(mapping.getDeviceUserId());
+            }
+            row.setHeld(false);
+            row.setExpected(null);
             projections.save(row);
             notifyAfterCommit(device, revision);
             FlowLog.info("device", "desired member reader={} revision={} user={} status={} authority={}",
@@ -354,6 +362,56 @@ public class DesiredProjectionService {
         projections.save(row);
         notifyAfterCommit(device, revision);
         FlowLog.info("device", "desired member reader={} revision={} user={}",
+                device.getPublicId(), revision, mapping.getDeviceUserId());
+        return revision;
+    }
+
+    /**
+     * Staff keep the reader's shown fields as desired on this reader. The hold is released; the
+     * gateway should read back a match and write nothing.
+     */
+    @Transactional
+    public long acceptReaderValues(Member member, Device device, DeviceReviewItem item) {
+        ReaderRevision cursor = revisions.lock(device.getTenantId(), device.getId());
+        DesiredMemberProjection row = revisions.reload(
+                projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                        .orElseThrow(() -> CommonExceptions.conflict("Member is not on this reader")));
+        MemberDeviceMapping mapping = revisions.reload(
+                mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                        .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing")));
+        ExpectedOccupant seen = ExpectedOccupant.of(item);
+        row.setPresentOnReader(true);
+        row.setDeviceUserId(mapping.getDeviceUserId());
+        if (!blank(item.getReaderName())) {
+            row.setReaderName(item.getReaderName());
+        }
+        row.setReaderNameEx(item.getReaderNameEx());
+        if (item.getReaderUserStatus() != null) {
+            row.setUserStatus(item.getReaderUserStatus());
+        }
+        String from = readerTime(item.getReaderValidFrom());
+        String to = readerTime(item.getReaderValidTo());
+        if (from != null) {
+            row.setValidFrom(from);
+        }
+        if (to != null) {
+            row.setValidTo(to);
+        }
+        if (!blank(item.getReaderAuthority())) {
+            row.setAuthority(isAdminAuthority(item.getReaderAuthority()) ? ADMIN : item.getReaderAuthority());
+        }
+        if (item.getReaderFaceSha256() != null && item.getReaderFaceSha256().length() == 64) {
+            row.setFacePresent(true);
+            row.setFaceSha256(item.getReaderFaceSha256());
+            row.setObservedFaceSha256(item.getReaderFaceSha256());
+        }
+        row.setExpected(seen);
+        row.setHeld(false);
+        long revision = cursor.bumpDesired();
+        row.setRevision(revision);
+        projections.save(row);
+        notifyAfterCommit(device, revision);
+        FlowLog.info("device", "desired keep-reader reader={} revision={} user={}",
                 device.getPublicId(), revision, mapping.getDeviceUserId());
         return revision;
     }

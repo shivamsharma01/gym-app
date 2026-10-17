@@ -84,6 +84,26 @@ public class ReviewDecisionService {
         return reviewView(reviews.save(item));
     }
 
+    /**
+     * Keep the fields the reader shows as desired on this reader only (name, validity, status,
+     * authority, face hash). The hold is released; the gateway acks without overwriting the reader.
+     */
+    @Transactional
+    public ReviewItemView acceptReader(String publicId, Long tenantId) {
+        DeviceReviewItem item = openReview(publicId, tenantId);
+        if (item.isSuspended()) {
+            throw CommonExceptions.conflict("The reader holds someone else at this id; restore or remove the member");
+        }
+        if (item.isReaderAbsent()) {
+            throw CommonExceptions.conflict("The reader shows nobody at this id; remove the member or overwrite with server");
+        }
+        Member member = members.getById(item.getMemberId(), tenantId);
+        Device device = device(item.getDeviceId(), tenantId);
+        long revision = desired.acceptReaderValues(member, device, item);
+        item.decide(ReviewDecisions.ACCEPT_READER, actor(), serverShown(item), readerShown(item), revision);
+        return reviewView(reviews.save(item));
+    }
+
     @Transactional
     public ReviewItemView restore(String publicId, Long tenantId) {
         DeviceReviewItem item = openReview(publicId, tenantId);
@@ -92,6 +112,7 @@ public class ReviewDecisionService {
         if (item.isSuspended()) {
             return restoreSuspended(item, member, device);
         }
+        // Same write as accept-server for field conflicts; kept for older clients.
         long revision = desired.republish(member, device, ExpectedOccupant.of(item));
         String prior = item.isReaderAbsent() ? "absent" : readerShown(item);
         item.decide(ReviewDecisions.RESTORE, actor(), prior, serverShown(item), revision);

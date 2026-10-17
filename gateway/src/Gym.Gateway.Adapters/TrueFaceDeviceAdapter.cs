@@ -986,7 +986,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 if (UserMatchesDesired(existing, mutation))
                 {
                     Touch();
-                    return DeviceCommandResult.Success();
+                    return DeviceCommandResult.AlreadyMatched();
                 }
 
                 user = ApplyMutation(existing, mutation);
@@ -1007,7 +1007,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 && UserMatchesDesired(afterFail, mutation))
             {
                 Touch();
-                return DeviceCommandResult.Success();
+                return DeviceCommandResult.AlreadyMatched();
             }
 
             return DeviceCommandResult.Fail(FailCodes("InsertOperateAccessUserService", fail));

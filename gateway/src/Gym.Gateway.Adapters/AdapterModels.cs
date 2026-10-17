@@ -37,9 +37,12 @@ public sealed record DeviceUserMutation(
     string? Authority = null,
     string? NameEx = null);
 
-public sealed record DeviceCommandResult(bool Ok, string? Error)
+public sealed record DeviceCommandResult(bool Ok, string? Error, bool Unchanged = false)
 {
     public static DeviceCommandResult Success() => new(true, null);
+
+    /// <summary>Reader already matched; no SDK write was issued.</summary>
+    public static DeviceCommandResult AlreadyMatched() => new(true, null, Unchanged: true);
 
     public static DeviceCommandResult Fail(string error) => new(false, error);
 }

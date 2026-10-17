@@ -68,10 +68,11 @@ public class MemberCreateWorkerTests : IDisposable
 
         var result = worker.ApplyMember(Member("1", nameEx: null) with { UserStatus = 1 });
 
-        Assert.Equal(MemberApplyKind.Applied, result.Kind);
+        Assert.Equal(MemberApplyKind.AlreadyApplied, result.Kind);
         Assert.Equal(1, worker.AppliedRevision);
         Assert.Equal(writes, reader.Writes);
         Assert.Equal(1, reader.GetUser("1").User!.UserStatus);
+        Assert.Equal(new[] { 1L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
     }
 
     [Fact]
@@ -243,7 +244,8 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal("1", reader.GetUser("1").User!.DeviceUserId);
 
         reader.ScriptReportedStatus(null);
-        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(frozen).Kind);
+        // Prior attempt already wrote status=1; only the scripted read-back failed. No second write.
+        Assert.Equal(MemberApplyKind.AlreadyApplied, worker.ApplyMember(frozen).Kind);
         Assert.Equal(2, worker.AppliedRevision);
         Assert.Equal(1, reader.GetUser("1").User!.UserStatus);
         Assert.Equal(face, reader.GetFace("1").Bytes);
@@ -368,7 +370,8 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.DoesNotContain(reader.Writes, line => line.Contains("SynchronizeTime", StringComparison.Ordinal));
 
         reader.ClearReportedValidity();
-        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(shifted).Kind);
+        // Prior attempt already wrote the new dates; only the scripted read-back failed.
+        Assert.Equal(MemberApplyKind.AlreadyApplied, worker.ApplyMember(shifted).Kind);
         Assert.Equal(2, worker.AppliedRevision);
         Assert.Equal(shifted.ValidTo, reader.GetUser("1").User!.ValidTo);
         Assert.Equal(face, reader.GetFace("1").Bytes);
@@ -473,7 +476,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(2, worker.AppliedRevision);
         Assert.Equal(new[] { 1L, 2L }, worker.PendingAcks.Select(ack => ack.Revision).ToArray());
 
-        Assert.Equal(MemberApplyKind.Applied, worker.ApplyRemoval(3, "1").Kind);
+        Assert.Equal(MemberApplyKind.AlreadyApplied, worker.ApplyRemoval(3, "1").Kind);
         Assert.Equal(3, worker.AppliedRevision);
         Assert.Equal(FakeReader.FailNoRecord, reader.GetUser("1").FailCode);
         Assert.Equal(["CreateUser 1", "InsertFace 1", "RemoveUser 1"], reader.Writes);
@@ -551,7 +554,7 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
         Assert.True(reader.RemoveFace("1").Ok);
 
-        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Cleared(2)).Kind);
+        Assert.Equal(MemberApplyKind.AlreadyApplied, worker.ApplyMember(Cleared(2)).Kind);
 
         Assert.Equal(2, worker.AppliedRevision);
         Assert.True(reader.GetUser("1").Ok);

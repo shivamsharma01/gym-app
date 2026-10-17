@@ -471,9 +471,12 @@ public sealed record ReaderPunch(
     bool Granted,
     int? ErrorCode);
 
-public sealed record ReaderCallResult(bool Ok, string? FailCode, int? SdkError, string? Error)
+public sealed record ReaderCallResult(bool Ok, string? FailCode, int? SdkError, string? Error, bool Unchanged = false)
 {
     public static ReaderCallResult Success() => new(true, null, null, null);
+
+    /// <summary>No device mutation; the reader already held the desired user fields.</summary>
+    public static ReaderCallResult AlreadyMatched() => new(true, null, null, null, Unchanged: true);
 
     public static ReaderCallResult Failed(string error) => new(false, null, null, error);
 

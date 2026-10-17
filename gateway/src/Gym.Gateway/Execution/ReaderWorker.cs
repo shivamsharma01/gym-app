@@ -360,7 +360,7 @@ public sealed class ReaderWorker : IDisposable
 
         if (!now.Present)
         {
-            return WriteStep.Done();
+            return WriteStep.UnchangedDone();
         }
 
         if (!expected.IsShownBy(now) && !WroteHere(deviceUserId, now))
@@ -397,6 +397,12 @@ public sealed class ReaderWorker : IDisposable
         if (written is { Shown: { } occupant })
         {
             return new MemberApplyResult(MemberApplyKind.OccupantChanged, deviceUserId, occupant);
+        }
+
+        // Device already held the desired record: still verified/acked, but never "wrote".
+        if (written is { Unchanged: true } && outcome is ApplyOutcome.Verified or ApplyOutcome.AlreadyVerified)
+        {
+            return new MemberApplyResult(MemberApplyKind.AlreadyApplied, null);
         }
 
         var kind = outcome switch
@@ -517,18 +523,25 @@ public sealed class ReaderWorker : IDisposable
         }
 
         var user = EnsureUser(reader, desired, now);
-        if (user != null)
+        if (user.Error != null)
         {
-            return user.Value;
+            return user.Error.Value;
         }
 
         var face = EnsureFace(reader, desired);
-        if (face != null)
+        if (face.Error != null)
         {
-            return face.Value;
+            return face.Error.Value;
         }
 
-        return VerifyReadBack(reader, desired);
+        var verified = VerifyReadBack(reader, desired);
+        if (!verified.Verification.Verified)
+        {
+            return verified;
+        }
+
+        // Ack without claiming a write when the reader already matched before we touched it.
+        return user.Mutated || face.Mutated ? WriteStep.Done() : WriteStep.UnchangedDone();
     }
 
     private WriteStep ClearFace(IReaderAdapter reader, DesiredMember desired)
@@ -546,11 +559,12 @@ public sealed class ReaderWorker : IDisposable
         }
 
         var user = EnsureUser(reader, desired, now);
-        if (user != null)
+        if (user.Error != null)
         {
-            return user.Value;
+            return user.Error.Value;
         }
 
+        var faceCleared = false;
         if (now.FaceSha256.Length > 0)
         {
             var removed = reader.RemoveFace(desired.DeviceUserId);
@@ -558,15 +572,18 @@ public sealed class ReaderWorker : IDisposable
             {
                 return WriteStep.Fail(removed.Error ?? removed.FailCode);
             }
+
+            faceCleared = true;
         }
 
         var verified = VerifyFaceCleared(reader, desired);
-        if (verified.Verification.Verified)
+        if (!verified.Verification.Verified)
         {
-            Remember(desired, "");
+            return verified;
         }
 
-        return verified;
+        Remember(desired, "");
+        return user.Mutated || faceCleared ? WriteStep.Done() : WriteStep.UnchangedDone();
     }
 
     /// <summary>
@@ -654,45 +671,55 @@ public sealed class ReaderWorker : IDisposable
     }
 
     /// <summary>Call only after <see cref="Precondition"/> allowed the write.</summary>
-    private WriteStep? EnsureUser(IReaderAdapter reader, DesiredMember desired, ReaderOccupant now)
+    private EnsureStep EnsureUser(IReaderAdapter reader, DesiredMember desired, ReaderOccupant now)
     {
         if (now.Present)
         {
             if (SameUser(now.User!, desired))
             {
-                return null;
+                return EnsureStep.Skip();
             }
 
             var replaced = reader.ReplaceUser(Record(desired));
             if (!replaced.Ok)
             {
-                return WriteStep.Fail(replaced.Error ?? replaced.FailCode);
+                return EnsureStep.Fail(WriteStep.Fail(replaced.Error ?? replaced.FailCode));
+            }
+
+            if (replaced.Unchanged)
+            {
+                return EnsureStep.Skip();
             }
 
             Remember(desired, null);
-            return null;
+            return EnsureStep.Wrote();
         }
 
         var created = reader.CreateUser(Record(desired));
-        if (created.Ok)
+        if (!created.Ok)
         {
-            Remember(desired, null);
-            return null;
+            return created.FailCode == FakeReader.FailOccupied
+                ? EnsureStep.Fail(WriteStep.Collision())
+                : EnsureStep.Fail(WriteStep.Fail(created.Error ?? created.FailCode));
         }
 
-        return created.FailCode == FakeReader.FailOccupied
-            ? WriteStep.Collision()
-            : WriteStep.Fail(created.Error ?? created.FailCode);
+        if (created.Unchanged)
+        {
+            return EnsureStep.Skip();
+        }
+
+        Remember(desired, null);
+        return EnsureStep.Wrote();
     }
 
-    private WriteStep? EnsureFace(IReaderAdapter reader, DesiredMember desired)
+    private EnsureStep EnsureFace(IReaderAdapter reader, DesiredMember desired)
     {
         var face = reader.GetFace(desired.DeviceUserId);
         if (face.Ok && face.Bytes is { Length: > 0 })
         {
             if (SameHash(face.Bytes, desired.Face))
             {
-                return null;
+                return EnsureStep.Skip();
             }
 
             var (now, _) = ReadOccupant(reader, desired.DeviceUserId);
@@ -702,7 +729,7 @@ public sealed class ReaderWorker : IDisposable
                 && WroteHere(desired.DeviceUserId, now)
                 && SameSentFace(desired))
             {
-                return null;
+                return EnsureStep.Skip();
             }
 
             return ReplaceFace(reader, desired);
@@ -710,36 +737,36 @@ public sealed class ReaderWorker : IDisposable
 
         if (!face.Ok && face.FailCode is not (FakeReader.FailUnknown or FakeReader.FailNoRecord))
         {
-            return WriteStep.Fail(face.Error);
+            return EnsureStep.Fail(WriteStep.Fail(face.Error));
         }
 
         return InsertFace(reader, desired);
     }
 
-    private static WriteStep? ReplaceFace(IReaderAdapter reader, DesiredMember desired)
+    private static EnsureStep ReplaceFace(IReaderAdapter reader, DesiredMember desired)
     {
         var updated = reader.UpdateFace(desired.DeviceUserId, desired.Face);
         if (updated.Ok)
         {
-            return null;
+            return EnsureStep.Wrote();
         }
 
         reader.RemoveFace(desired.DeviceUserId);
         return InsertFace(reader, desired);
     }
 
-    private static WriteStep? InsertFace(IReaderAdapter reader, DesiredMember desired)
+    private static EnsureStep InsertFace(IReaderAdapter reader, DesiredMember desired)
     {
         var inserted = reader.InsertFace(desired.DeviceUserId, desired.Face);
         if (inserted.Ok)
         {
-            return null;
+            return EnsureStep.Wrote();
         }
 
         var error = inserted.FailCode == FakeReader.FailPhotoExist
             ? FakeReader.FailPhotoExist
             : inserted.Error ?? inserted.FailCode;
-        return WriteStep.Fail(error);
+        return EnsureStep.Fail(WriteStep.Fail(error));
     }
 
     private WriteStep VerifyReadBack(IReaderAdapter reader, DesiredMember desired)
@@ -868,9 +895,16 @@ public sealed class ReaderWorker : IDisposable
         return CryptographicOperations.FixedTimeEquals(SHA256.HashData(readBack), SHA256.HashData(sent));
     }
 
-    private readonly record struct WriteStep(Verification Verification, bool Occupied, ReaderOccupant? Shown = null)
+    private readonly record struct WriteStep(
+        Verification Verification,
+        bool Occupied,
+        ReaderOccupant? Shown = null,
+        bool Unchanged = false)
     {
         public static WriteStep Done() => new(new Verification(true, null), false);
+
+        /// <summary>Reader already matched; ack/journal only — not a device write.</summary>
+        public static WriteStep UnchangedDone() => new(new Verification(true, null), false, Unchanged: true);
 
         public static WriteStep Fail(string? error) => new(new Verification(false, error), false);
 
@@ -878,6 +912,15 @@ public sealed class ReaderWorker : IDisposable
 
         public static WriteStep Unexpected(ReaderOccupant occupant) =>
             new(new Verification(false, "the reader shows a different record at this id"), false, occupant);
+    }
+
+    private readonly record struct EnsureStep(WriteStep? Error, bool Mutated)
+    {
+        public static EnsureStep Skip() => new(null, false);
+
+        public static EnsureStep Wrote() => new(null, true);
+
+        public static EnsureStep Fail(WriteStep error) => new(error, false);
     }
 
     public void MarkAckDelivered(long revision)

@@ -91,6 +91,11 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
             return ReaderCallResult.Failed(created.Error ?? "create failed");
         }
 
+        if (created.Unchanged)
+        {
+            return ReaderCallResult.AlreadyMatched();
+        }
+
         _written[user.DeviceUserId] = user;
         return ReaderCallResult.Success();
     }
@@ -126,6 +131,11 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
         if (!updated.Ok)
         {
             return ReaderCallResult.Failed(updated.Error ?? "user write failed");
+        }
+
+        if (updated.Unchanged)
+        {
+            return ReaderCallResult.AlreadyMatched();
         }
 
         _written[user.DeviceUserId] = user;

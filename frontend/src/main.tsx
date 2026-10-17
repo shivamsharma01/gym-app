@@ -34,17 +34,17 @@ import { SettingsPage } from '@/features/settings/SettingsPage'
 import { RolesPage } from '@/features/users/RolesPage'
 import { UsersPage } from '@/features/users/UsersPage'
 import { ApiError } from '@/lib/api'
-import { AuthProvider, useAuth } from '@/lib/auth'
+import { AuthProvider } from '@/lib/auth'
 import { DEFAULT_GYM_SLUG } from '@/lib/brand'
 import { FEATURES } from '@/lib/features'
 import { GymSlugFromRoute } from '@/lib/GymSlug'
-import { isPlatformSuperAdmin, platformHomePath } from '@/lib/platform'
 import { AboutPage, FacilitiesPage, ServicesPage } from '@/public/ContentPages'
 import { ContactPage } from '@/public/ContactPage'
 import { HomePage } from '@/public/HomePage'
 import { MembershipPlansPage } from '@/public/MembershipPlansPage'
 import { PublicLayout } from '@/public/PublicLayout'
 import { RootLandingPage } from '@/public/RootLandingPage'
+import { AppIndexRedirect } from '@/components/AppIndexRedirect'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -61,14 +61,6 @@ const queryClient = new QueryClient({
 
 function needs(anyOf: string[], page: ReactNode) {
   return <RequirePermission anyOf={anyOf}>{page}</RequirePermission>
-}
-
-function AppIndexRedirect() {
-  const { user } = useAuth()
-  if (isPlatformSuperAdmin(user)) {
-    return <Navigate to={platformHomePath()} replace />
-  }
-  return <Navigate to="dashboard" replace />
 }
 
 const publicChildren = [

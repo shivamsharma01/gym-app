@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useEffect, useState } from 'react'
 import { z } from 'zod'
 import { PageNav } from '@/components/Pager'
@@ -368,8 +368,7 @@ export function PaymentsPage() {
     enabled: Boolean(member),
   })
 
-  const membershipId =
-      form.watch('membershipId')
+  const membershipId = useWatch({ control: form.control, name: 'membershipId' })
 
   const selectedMembership =
       memberships.data?.find(

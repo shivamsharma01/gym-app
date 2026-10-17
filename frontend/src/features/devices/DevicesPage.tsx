@@ -23,7 +23,7 @@ import {
   Tr,
 } from '@/components/ui'
 import { api } from '@/lib/api'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import { formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
 import type { Device, Gateway, GatewayCreated, PageResponse } from '@/lib/types'

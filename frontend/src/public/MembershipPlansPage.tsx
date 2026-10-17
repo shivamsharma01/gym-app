@@ -1,8 +1,8 @@
 import { Link } from 'react-router'
 import { gymPath } from '@/lib/brand'
 import { money } from '@/lib/cn'
-import { useGymSlug } from '@/lib/GymSlug'
-import { usePublicPlans } from '@/public/HomePage'
+import { useGymSlug } from '@/lib/useGymSlug'
+import { usePublicPlans } from '@/public/usePublicSite'
 import { FEATURES } from '@/lib/features'
 
 export function MembershipPlansPage() {

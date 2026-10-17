@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Navigate, Outlet } from 'react-router'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import { isPlatformSuperAdmin, platformHomePath } from '@/lib/platform'
 
 /** Gym staff routes — redirect platform SUPER_ADMIN away from tenant UI. */

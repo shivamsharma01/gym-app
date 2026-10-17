@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, FieldError, Input, Label, PageHeader, Skeleton } from '@/components/ui'
 import { api } from '@/lib/api'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import type { UserSummary } from '@/lib/types'
 
 const schema = z

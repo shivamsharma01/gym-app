@@ -6,7 +6,7 @@ import { Badge, Button, Card, Input, Label, PageHeader, Select, Skeleton, Table,
 import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import { DEVICE_MODELS } from '@/lib/catalog'
 import { cn, formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'

@@ -5,9 +5,9 @@ import { z } from 'zod'
 import { Button, FieldError, Input, Label, Select, Textarea } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { brandDisplayName } from '@/lib/brand'
-import { useGymSlug } from '@/lib/GymSlug'
+import { useGymSlug } from '@/lib/useGymSlug'
 import { publicApi } from '@/lib/publicApi'
-import { usePublicPlans, usePublicSite } from '@/public/HomePage'
+import { usePublicPlans, usePublicSite } from '@/public/usePublicSite'
 import { FEATURES } from '@/lib/features'
 
 const schema = z.object({

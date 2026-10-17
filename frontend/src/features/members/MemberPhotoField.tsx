@@ -1,49 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, FieldError, Label } from '@/components/ui'
-import { ApiError, api, apiBlob } from '@/lib/api'
-import type { FaceView } from '@/lib/types'
 
 const MAX_BYTES = 10 * 1024 * 1024
 const MIN_SIDE = 200
 const ACCEPTED = ['image/jpeg', 'image/png']
-
-/** Uploads a member photo. The server stores it and publishes it to the gym's readers. */
-export function uploadMemberPhoto(memberId: string, file: File) {
-  const body = new FormData()
-  body.append('file', file)
-  return api<FaceView>(`/api/v1/members/${memberId}/face`, { method: 'PUT', body })
-}
-
-/** Uploads after the member was saved; returns an error message instead of throwing. */
-export async function photoUploadError(memberId: string, file: File): Promise<string | null> {
-  try {
-    await uploadMemberPhoto(memberId, file)
-    return null
-  } catch (e) {
-    return e instanceof ApiError ? e.message : 'Photo upload failed'
-  }
-}
-
-/** Object URL for the member's current photo, or null when there is none. */
-export function useMemberPhotoUrl(memberId: string | undefined) {
-  const photo = useQuery({
-    queryKey: ['member-photo', memberId],
-    queryFn: () => apiBlob(`/api/v1/members/${memberId}/face`),
-    enabled: !!memberId,
-  })
-  const [url, setUrl] = useState<string | null>(null)
-  useEffect(() => {
-    if (!photo.data) {
-      setUrl(null)
-      return
-    }
-    const next = URL.createObjectURL(photo.data)
-    setUrl(next)
-    return () => URL.revokeObjectURL(next)
-  }, [photo.data])
-  return { url, isLoading: photo.isLoading }
-}
 
 async function validatePhoto(file: File): Promise<string | null> {
   if (!ACCEPTED.includes(file.type)) return 'Use a JPEG or PNG photo.'
@@ -80,17 +40,12 @@ export function MemberPhotoField({
   const cameraInput = useRef<HTMLInputElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
-  const [preview, setPreview] = useState<string | null>(null)
-
+  const preview = useMemo(() => (value ? URL.createObjectURL(value) : null), [value])
   useEffect(() => {
-    if (!value) {
-      setPreview(null)
-      return
+    return () => {
+      if (preview) URL.revokeObjectURL(preview)
     }
-    const url = URL.createObjectURL(value)
-    setPreview(url)
-    return () => URL.revokeObjectURL(url)
-  }, [value])
+  }, [preview])
 
   async function pick(file: File | undefined) {
     if (!file) return

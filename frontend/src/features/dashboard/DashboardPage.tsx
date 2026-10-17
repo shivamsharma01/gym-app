@@ -27,7 +27,7 @@ import {
   Tr,
 } from '@/components/ui'
 import { api } from '@/lib/api'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import { formatDateTime, money } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
 import type { Attendance, PageResponse } from '@/lib/types'

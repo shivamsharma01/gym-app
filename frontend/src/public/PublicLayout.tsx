@@ -1,7 +1,7 @@
 import { Link, NavLink, Outlet } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { brandDisplayName, brandLogo, gymPath, type PublicSite } from '@/lib/brand'
-import { useGymSlug } from '@/lib/GymSlug'
+import { useGymSlug } from '@/lib/useGymSlug'
 import { publicApi } from '@/lib/publicApi'
 import { cn } from '@/lib/cn'
 import { FEATURES } from '@/lib/features'

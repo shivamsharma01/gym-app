@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import { staffLiveWsProtocols, staffLiveWsUrl } from '@/lib/backendUrls'
 import { getAccessToken } from '@/lib/tokens'
 
@@ -12,11 +12,16 @@ const FAIL_BEFORE_OFFLINE = 3
 export function useStaffLive() {
   const { user } = useAuth()
   const qc = useQueryClient()
-  const [state, setState] = useState<LiveState>('off')
+  const [connection, setConnection] = useState<Exclude<LiveState, 'off'>>('reconnecting')
   const failCount = useRef(0)
   const intentionalClose = useRef(false)
+  const canConnect = Boolean(user && getAccessToken())
 
   useEffect(() => {
+    if (!canConnect) {
+      return
+    }
+
     let ws: WebSocket | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let cancelled = false
@@ -40,7 +45,6 @@ export function useStaffLive() {
       if (cancelled) return
       const token = getAccessToken()
       if (!user || !token) {
-        setState('off')
         return
       }
 
@@ -49,7 +53,7 @@ export function useStaffLive() {
 
       ws.onopen = () => {
         failCount.current = 0
-        setState('live')
+        setConnection('live')
       }
 
       ws.onmessage = (event: MessageEvent) => {
@@ -89,20 +93,14 @@ export function useStaffLive() {
         if (cancelled || intentionalClose.current) return
         failCount.current += 1
         if (failCount.current >= FAIL_BEFORE_OFFLINE) {
-          setState('offline')
+          setConnection('offline')
         } else {
-          setState('reconnecting')
+          setConnection('reconnecting')
         }
         scheduleReconnect()
       }
     }
 
-    if (!user || !getAccessToken()) {
-      setState('off')
-      return
-    }
-
-    setState('reconnecting')
     connect()
 
     return () => {
@@ -113,7 +111,7 @@ export function useStaffLive() {
         ws.close()
       }
     }
-  }, [user, qc])
+  }, [canConnect, user, qc])
 
-  return state
+  return canConnect ? connection : 'off'
 }

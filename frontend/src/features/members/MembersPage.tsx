@@ -23,7 +23,7 @@ import {
   Toolbar,
 } from '@/components/ui'
 import { api } from '@/lib/api'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import { accountStatusLabel, membershipStatusLabel, statusTone } from '@/lib/status'
 import type { Member, PageResponse } from '@/lib/types'
 

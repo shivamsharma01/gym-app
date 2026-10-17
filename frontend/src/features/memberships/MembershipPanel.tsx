@@ -13,7 +13,7 @@ import {
 import { DateField } from '@/components/DateField';
 import { QueryError } from '@/components/QueryError';
 import { api } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth } from '@/lib/useAuth';
 import { formatDate, money } from '@/lib/cn';
 import { membershipStatusLabel, statusTone } from '@/lib/status';
 import type { Membership, PageResponse, Plan } from '@/lib/types';

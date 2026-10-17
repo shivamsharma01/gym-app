@@ -8,8 +8,8 @@ import {
   brandTrainingImage,
   gymPath,
 } from '@/lib/brand'
-import { useGymSlug } from '@/lib/GymSlug'
-import { usePublicSite } from '@/public/HomePage'
+import { useGymSlug } from '@/lib/useGymSlug'
+import { usePublicSite } from '@/public/usePublicSite'
 
 export function AboutPage() {
   const slug = useGymSlug()

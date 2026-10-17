@@ -1,17 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, loginRequest, logoutRequest, refreshRequest, setRefreshHandler } from '@/lib/api'
+import { AuthContext } from '@/lib/auth-context'
 import { setAccessToken } from '@/lib/tokens'
 import type { UserSummary } from '@/lib/types'
-
-type AuthContextValue = {
-  user: UserSummary | null
-  ready: boolean
-  login: (usernameOrEmail: string, password: string) => Promise<UserSummary>
-  logout: () => Promise<void>
-  has: (permission: string) => boolean
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserSummary | null>(null)
@@ -45,12 +36,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const value = useMemo<AuthContextValue>(
+  const value = useMemo(
     () => ({
       user,
       ready,
-      has: (permission) => Boolean(user?.permissions.includes(permission)),
-      login: async (usernameOrEmail, password) => {
+      has: (permission: string) => Boolean(user?.permissions.includes(permission)),
+      login: async (usernameOrEmail: string, password: string) => {
         const tokens = await loginRequest(usernameOrEmail, password)
         setAccessToken(tokens.accessToken)
         setUser(tokens.user)
@@ -65,10 +56,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider')
-  return ctx
 }

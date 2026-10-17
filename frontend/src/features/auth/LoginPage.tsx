@@ -5,7 +5,7 @@ import { Link, Navigate, useNavigate } from 'react-router'
 import { z } from 'zod'
 import { Button, FieldError, Input, Label } from '@/components/ui'
 import { ApiError } from '@/lib/api'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import { isPlatformSuperAdmin, platformHomePath } from '@/lib/platform'
 
 const schema = z.object({

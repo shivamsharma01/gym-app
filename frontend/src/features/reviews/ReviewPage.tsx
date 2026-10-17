@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { Button, Card, Input, PageHeader, Table, TableShell, THead, Th, Td, Tr } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import type { BootstrapReport, ReviewItem } from '@/lib/types'
 
 export function ReviewPage() {

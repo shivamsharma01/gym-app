@@ -2,7 +2,7 @@ import { Controller, type UseFormReturn } from 'react-hook-form'
 import { FieldError, Input, Label, Select, Textarea } from '@/components/ui'
 import { DateOfBirthField } from '@/features/members/DateOfBirthField'
 import type { MemberFormValues } from '@/features/members/memberFormSchema'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 
 export function MemberFormFields({ form }: { form: UseFormReturn<MemberFormValues> }) {
   const canSetAuthority = useAuth().has('USER_MANAGE')

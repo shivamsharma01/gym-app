@@ -26,7 +26,7 @@ import {
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, LiveDot } from '@/components/ui'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '@/lib/useAuth'
 import { brandDisplayName, brandLogo, type PublicSite } from '@/lib/brand'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -120,14 +120,7 @@ export function AppShell() {
     setTheme(cycleTheme())
   }
 
-  function StatusCluster() {
-    return (
-      <div className="flex flex-wrap items-center gap-3">
-        <LiveDot state={live} labelPrefix="Server" />
-        {!isPlatform && has('DEVICE_VIEW') ? <LiveDot state={gatewayState} labelPrefix="Gateway" /> : null}
-      </div>
-    )
-  }
+  const showGateway = !isPlatform && has('DEVICE_VIEW')
 
   return (
     <div className="app-shell-bg min-h-screen text-ink">
@@ -144,7 +137,7 @@ export function AppShell() {
           <span className="truncate">{brand}</span>
         </span>
         <div className="flex items-center gap-2">
-          <StatusCluster />
+          <StatusCluster live={live} gatewayState={gatewayState} showGateway={showGateway} />
           <ThemeToggleButton theme={theme} onToggle={onToggleTheme} />
           <button
             type="button"
@@ -220,7 +213,7 @@ export function AppShell() {
               Signed in as <span className="font-medium text-ink">{user?.fullName}</span>
             </p>
             <div className="flex items-center gap-3">
-              <StatusCluster />
+              <StatusCluster live={live} gatewayState={gatewayState} showGateway={showGateway} />
               <ThemeToggleButton theme={theme} onToggle={onToggleTheme} />
             </div>
           </div>
@@ -242,6 +235,23 @@ function gatewayConnectionState(
   if (!loaded) return 'off'
   if (!gateway) return 'offline'
   return gateway.status === 'ONLINE' ? 'live' : 'offline'
+}
+
+function StatusCluster({
+  live,
+  gatewayState,
+  showGateway,
+}: {
+  live: 'off' | 'live' | 'reconnecting' | 'offline'
+  gatewayState: 'live' | 'offline' | 'off'
+  showGateway: boolean
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <LiveDot state={live} labelPrefix="Server" />
+      {showGateway ? <LiveDot state={gatewayState} labelPrefix="Gateway" /> : null}
+    </div>
+  )
 }
 
 function ThemeToggleButton({ theme, onToggle }: { theme: ThemeMode; onToggle: () => void }) {

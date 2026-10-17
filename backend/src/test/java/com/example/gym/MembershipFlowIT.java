@@ -186,7 +186,6 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[1].expiringWithin7Days").value(false));
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private ResultActions post(String path, String body) throws Exception {
         var req = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path)

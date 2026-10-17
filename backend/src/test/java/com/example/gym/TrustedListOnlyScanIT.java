@@ -158,7 +158,6 @@ class TrustedListOnlyScanIT extends AbstractIntegrationTest {
         assertThat(projection(reader, asha).getUserStatus()).isEqualTo(1);
     }
 
-    // --- scenario --------------------------------------------------------------------------------
 
     /**
      * One reader with four applied members, then the reader reports: one matching member, one under
@@ -249,7 +248,6 @@ class TrustedListOnlyScanIT extends AbstractIntegrationTest {
         return tables;
     }
 
-    // --- racing ----------------------------------------------------------------------------------
 
     private record Futures(Future<Integer> first, Future<Integer> second) {
     }
@@ -294,7 +292,6 @@ class TrustedListOnlyScanIT extends AbstractIntegrationTest {
         }
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private static String list(List<String> users) {
         return "{\"announcedTotal\":" + users.size() + ",\"users\":[" + String.join(",", users) + "]}";

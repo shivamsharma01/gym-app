@@ -36,7 +36,6 @@ public sealed class RosterAcceptanceTests : IDisposable
         }
     }
 
-    // --- the scan, with a recording upload ------------------------------------------------------
 
     [Fact]
     public async Task An_acknowledged_list_on_a_scan_sends_no_per_user_messages()
@@ -131,7 +130,6 @@ public sealed class RosterAcceptanceTests : IDisposable
         Assert.Empty(sink.Ids);
     }
 
-    // --- the whole chain over REST, against a server-like handler -------------------------------
 
     [Fact]
     public async Task Initial_sync_against_a_server_that_acknowledges_delivers_only_the_list()
@@ -227,7 +225,6 @@ public sealed class RosterAcceptanceTests : IDisposable
         Assert.Empty(afterStore.LoadPending());
     }
 
-    // --- the backend link over a WebSocket ------------------------------------------------------
 
     [Fact]
     public async Task An_ack_over_the_socket_is_acceptance()
@@ -307,7 +304,6 @@ public sealed class RosterAcceptanceTests : IDisposable
         Assert.Equal(2, backend.Received.Count(envelope => envelope.MessageId == list.MessageId));
     }
 
-    // --- helpers -------------------------------------------------------------------------------
 
     private ReaderWorker Worker(string name) => new("reader-a", new FakeReader(), Path.Combine(_directory, name + ".sqlite"));
 

@@ -129,7 +129,6 @@ public class UserService {
         }
         user.setStatus(UserStatus.DISABLED);
         userRepository.save(user);
-        // Revoke active sessions immediately.
         refreshTokenRepository.revokeAllForUser(user.getId());
         FlowLog.info("staff", "disabled username={}", user.getUsername());
         auditService.record(AuditActions.USER_DISABLED, AuditActions.RESULT_SUCCESS,

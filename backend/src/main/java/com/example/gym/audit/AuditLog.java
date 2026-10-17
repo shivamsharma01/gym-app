@@ -75,7 +75,6 @@ public class AuditLog {
         }
     }
 
-    // Builder-style setters used by AuditService.
     public AuditLog tenantId(Long v) { this.tenantId = v; return this; }
     public AuditLog actorUserId(Long v) { this.actorUserId = v; return this; }
     public AuditLog actorUsername(String v) { this.actorUsername = v; return this; }

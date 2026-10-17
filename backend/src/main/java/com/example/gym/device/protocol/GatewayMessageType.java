@@ -2,7 +2,6 @@ package com.example.gym.device.protocol;
 
 /** The gateway ↔ backend message vocabulary (§37). */
 public enum GatewayMessageType {
-    // Gateway -> Backend
     REGISTER_GATEWAY,
     HEARTBEAT,
     DEVICE_STATUS,
@@ -12,7 +11,6 @@ public enum GatewayMessageType {
     /** A user (or their face) was created/changed directly on a device. */
     DEVICE_USER_CHANGED,
 
-    // Backend -> Gateway replies
     REGISTERED,
     ACK,
     ERROR

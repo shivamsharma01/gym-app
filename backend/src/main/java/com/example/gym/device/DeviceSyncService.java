@@ -310,7 +310,6 @@ public class DeviceSyncService {
         return command;
     }
 
-    // --- internals -------------------------------------------------------------------------------
 
     static final List<SyncCommandState> OPEN_STATES = List.of(
             SyncCommandState.PENDING, SyncCommandState.DISPATCHED,

@@ -56,7 +56,6 @@ html[data-theme='slate'] {
   --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 8px 24px rgb(0 0 0 / 0.35);
 }
 
-/* react-day-picker themed to app tokens */
 .rdp-theme,
 .rdp-theme .rdp-root {
   --rdp-accent-color: var(--color-accent);

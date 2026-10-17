@@ -35,7 +35,6 @@ public sealed class ChangeOnlyScanTests : IDisposable
         }
     }
 
-    // --- photo checksums ------------------------------------------------------------------------
 
     [Fact]
     public async Task A_photo_is_downloaded_once_while_its_reader_checksum_stays_the_same()
@@ -173,7 +172,6 @@ public sealed class ChangeOnlyScanTests : IDisposable
         Assert.Equal(PhotoMd5.Hex(PhotoA), Assert.Single(list.ByUserId).Value);
     }
 
-    // --- change-only uploads --------------------------------------------------------------------
 
     [Fact]
     public async Task An_acknowledged_list_is_not_sent_again_while_nothing_changes()

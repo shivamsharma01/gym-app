@@ -338,7 +338,6 @@ class DeviceSyncIT extends AbstractIntegrationTest {
         assertThat(deviceSyncCommandRepository.findAll()).isEmpty();
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private ResultActions postJson(String path, String body) throws Exception {
         var req = post(path).header("Authorization", "Bearer " + token)

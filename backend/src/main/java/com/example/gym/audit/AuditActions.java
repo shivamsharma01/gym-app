@@ -20,7 +20,6 @@ public final class AuditActions {
     public static final String USER_PASSWORD_CHANGED = "USER_PASSWORD_CHANGED";
     public static final String USER_PASSWORD_SET = "USER_PASSWORD_SET";
 
-    // Business domain
     public static final String PLAN_CREATED = "PLAN_CREATED";
     public static final String PLAN_UPDATED = "PLAN_UPDATED";
     public static final String PLAN_ARCHIVED = "PLAN_ARCHIVED";
@@ -40,7 +39,6 @@ public final class AuditActions {
     public static final String MEMBERSHIP_DISCOUNT = "MEMBERSHIP_DISCOUNT";
     public static final String PAYMENT_RECORDED = "PAYMENT_RECORDED";
 
-    // Device integration
     public static final String GATEWAY_REGISTERED = "GATEWAY_REGISTERED";
     public static final String GATEWAY_ENROLLED = "GATEWAY_ENROLLED";
     public static final String GATEWAY_ENROLLMENT_REISSUED = "GATEWAY_ENROLLMENT_REISSUED";

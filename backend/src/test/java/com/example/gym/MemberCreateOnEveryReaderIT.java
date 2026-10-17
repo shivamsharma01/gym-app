@@ -278,7 +278,6 @@ class MemberCreateOnEveryReaderIT extends AbstractIntegrationTest {
         assertThat(row(after, exitId).get("applied").asBoolean()).isFalse();
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private String create(String firstName, String code, String serial) throws Exception {
         return createMemberId(token, """

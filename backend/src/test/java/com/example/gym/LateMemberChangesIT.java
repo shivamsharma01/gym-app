@@ -346,7 +346,6 @@ class LateMemberChangesIT extends AbstractIntegrationTest {
         assertConverged(late);
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private void ackAll(String devicePublicId) throws Exception {
         for (JsonNode item : pull(devicePublicId, 0).get("items")) {

@@ -127,16 +127,6 @@ export function PaymentsPage() {
 
   const [gstRate, setGstRate] = useState(18)
 
-  /*
-   * Generate financial years.
-   *
-   * Example:
-   *
-   * FY 2026-27
-   * FY 2025-26
-   * FY 2024-25
-   * ...
-   */
   const financialYears = Array.from(
       { length: 6 },
       (_, index) => {
@@ -199,24 +189,12 @@ export function PaymentsPage() {
           ).padStart(2, '0')}`
           : `${selectedYear + 1}-03-31`
 
-  /*
-   * Financial year date range.
-   *
-   * FY 2026-27:
-   *
-   * 01-Apr-2026
-   *     ->
-   * 31-Mar-2027
-   */
   const financialYearStart =
       `${selectedYear}-04-01`
 
   const financialYearEnd =
       `${selectedYear + 1}-03-31`
 
-  /*
-   * Monthly payment summary.
-   */
   const monthlySummary = useQuery({
     queryKey: [
       'payments',
@@ -232,9 +210,6 @@ export function PaymentsPage() {
         ),
   })
 
-  /*
-   * Financial year payment summary.
-   */
   const annualSummary = useQuery({
     queryKey: [
       'payments',
@@ -272,9 +247,6 @@ export function PaymentsPage() {
         ),
   })
 
-  /*
-   * Payment totals.
-   */
   const monthlyTotal =
       Number(
           monthlySummary.data?.totalAmount ?? 0,
@@ -334,9 +306,6 @@ export function PaymentsPage() {
   const annualGstAmount =
       roundMoney(annualGst)
 
-  /*
-   * Payment form.
-   */
   const form = useForm<Form>({
     resolver: zodResolver(schema),
 
@@ -351,9 +320,6 @@ export function PaymentsPage() {
     },
   })
 
-  /*
-   * Memberships for selected member.
-   */
   const memberships = useQuery({
     queryKey: [
       'memberships',
@@ -375,9 +341,6 @@ export function PaymentsPage() {
           (m) => m.id === membershipId,
       )
 
-  /*
-   * Automatically select unpaid membership.
-   */
   useEffect(() => {
     if (!member) {
       form.setValue(
@@ -417,9 +380,6 @@ export function PaymentsPage() {
     form,
   ])
 
-  /*
-   * Automatically set remaining amount.
-   */
   useEffect(() => {
     if (!selectedMembership) return
 
@@ -468,14 +428,10 @@ export function PaymentsPage() {
               title="Payments"
           />
 
-          {/* ================================================== */}
-          {/* Financial Year / Month / GST selector */}
-          {/* ================================================== */}
 
           <Card className="mb-6">
             <div className="grid gap-4 sm:grid-cols-3">
 
-              {/* Financial Year */}
 
               <Field label="Financial Year">
                 <Select
@@ -505,7 +461,6 @@ export function PaymentsPage() {
                 </Select>
               </Field>
 
-              {/* Month */}
 
               <Field label="Month">
                 <Select
@@ -529,7 +484,6 @@ export function PaymentsPage() {
                 </Select>
               </Field>
 
-              {/* GST */}
 
               <Field label="GST Rate">
                 <Select
@@ -554,9 +508,6 @@ export function PaymentsPage() {
             </div>
           </Card>
 
-          {/* ================================================== */}
-          {/* Monthly Payment Summary */}
-          {/* ================================================== */}
 
           <Card className="mb-6">
             <div className="mb-4">
@@ -638,9 +589,6 @@ export function PaymentsPage() {
             )}
           </Card>
 
-          {/* ================================================== */}
-          {/* Financial Year GST Summary */}
-          {/* ================================================== */}
 
           <Card className="mb-6">
             <div className="mb-4">
@@ -724,9 +672,6 @@ export function PaymentsPage() {
             )}
           </Card>
 
-          {/* ================================================== */}
-          {/* Payment Table */}
-          {/* ================================================== */}
 
           {payments.isLoading ? (
               <Skeleton className="h-40" />
@@ -809,9 +754,6 @@ export function PaymentsPage() {
               </>
           ) : null}
 
-          {/* ================================================== */}
-          {/* Pagination */}
-          {/* ================================================== */}
 
           {payments.data &&
           payments.data.content.length > 0 ? (

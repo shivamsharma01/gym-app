@@ -177,7 +177,6 @@ class AuthAndSecurityIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("locked")));
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private String login(String username, String password) throws Exception {
         return loginJson(username, password).get("accessToken").asString();

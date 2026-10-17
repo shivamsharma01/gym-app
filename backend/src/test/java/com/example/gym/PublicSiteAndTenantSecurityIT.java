@@ -48,7 +48,6 @@ class PublicSiteAndTenantSecurityIT extends AbstractIntegrationTest {
     @Test
     void gymAdminCannotReadOtherTenantsMembers() throws Exception {
         String alphaToken = tokenFor("alpha-admin");
-        // Create a member in beta via beta admin.
         String betaToken = tokenFor("beta-admin");
         String created = createMemberWithFace(betaToken, """
                                 {"firstName":"Beta","lastName":"Member","phone":"9000000001"}

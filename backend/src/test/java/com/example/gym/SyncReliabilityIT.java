@@ -203,7 +203,6 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(device, "9300")).isPresent();
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private List<DeviceSyncCommand> commands(Long deviceId) {
         return deviceSyncCommandRepository.findAll().stream()

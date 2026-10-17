@@ -393,6 +393,22 @@ public class MemberCreateWorkerTests : IDisposable
     }
 
     [Fact]
+    public void Jpeg_photo_replace_updates_even_when_the_previous_read_back_was_a_jpeg()
+    {
+        byte[] first = [0xFF, 0xD8, 0xFF, 0xD9, 0x01];
+        byte[] second = [0xFF, 0xD8, 0xFF, 0xD9, 0x02];
+        var reader = new FakeReader();
+        using var worker = Start(Path.Combine(_directory, "jpeg-replace.sqlite"), reader);
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null) with { Face = first }).Kind);
+
+        var next = Member("1", null) with { Revision = 2, Face = second };
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(next).Kind);
+        Assert.Equal(second, reader.GetFace("1").Bytes);
+        Assert.Equal(["CreateUser 1", "InsertFace 1", "UpdateFace 1"], reader.Writes);
+        Assert.Equal(2, worker.AppliedRevision);
+    }
+
+    [Fact]
     public void Photo_exist_does_not_ack_and_leaves_the_applied_revision_behind()
     {
         var reader = new FakeReader();

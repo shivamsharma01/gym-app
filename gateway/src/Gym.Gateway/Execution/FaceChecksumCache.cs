@@ -76,7 +76,6 @@ public sealed class FaceChecksumCache
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            // Start empty.
         }
 
         return new Dictionary<string, string>(StringComparer.Ordinal);

@@ -24,7 +24,6 @@ export function HomePage() {
 
   return (
     <div>
-      {/* Hero — one composition: brand, headline, support, CTAs, full-bleed image */}
       <section className="relative min-h-[88vh] overflow-hidden">
         <img
           src={brandHero(site.data)}
@@ -59,7 +58,6 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* Training */}
       <section className="border-t border-white/10">
         <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 py-20 md:grid-cols-2 md:py-28">
           <div className="motion-safe:animate-fade-up order-2 md:order-1">
@@ -80,7 +78,6 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* Facilities */}
       <section className="border-t border-white/10 bg-white/[0.02]">
         <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 py-20 md:grid-cols-2 md:py-28">
           <div className="overflow-hidden">
@@ -101,7 +98,6 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* Plans CTA */}
       <section className="border-t border-white/10">
         <div className="mx-auto max-w-6xl px-4 py-20 md:py-28">
           <div className="flex flex-wrap items-end justify-between gap-4">
@@ -132,7 +128,6 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* Contact strip */}
       <section className="border-t border-white/10 bg-[#c8f542] text-[#14180f]">
         <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-6 px-4 py-14 md:flex-row md:items-center">
           <div>

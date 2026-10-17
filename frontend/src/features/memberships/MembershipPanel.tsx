@@ -55,14 +55,12 @@ export function MembershipPanel({
     enabled: has('MEMBERSHIP_CREATE') || has('MEMBERSHIP_UPDATE'),
   });
 
-// Create membership
   const [planId, setPlanId] = useState('');
   const [startDate, setStartDate] = useState(todayIso());
   const [endDate, setEndDate] = useState('');
   const [discountAmount, setDiscountAmount] = useState('');
   const [discountConfirmed, setDiscountConfirmed] = useState(false);
 
-  // Edit membership
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editPlanId, setEditPlanId] = useState('');
   const [editStart, setEditStart] = useState('');
@@ -70,14 +68,12 @@ export function MembershipPanel({
   const [editDiscountAmount, setEditDiscountAmount] = useState('');
   const [editDiscountConfirmed, setEditDiscountConfirmed] = useState(false);
 
-  // Renewal
   const [renewingId, setRenewingId] = useState<string | null>(null);
   const [renewPlanId, setRenewPlanId] = useState('');
   const [renewStartDate, setRenewStartDate] = useState('');
   const [renewEndDate, setRenewEndDate] = useState('');
   const [renewDiscountAmount, setRenewDiscountAmount] = useState('');
   const [renewDiscountConfirmed, setRenewDiscountConfirmed] = useState(false);
-// Record payment
   const [paymentMembershipId, setPaymentMembershipId] = useState<string | null>(null)
   const [paymentAmount, setPaymentAmount] = useState('')
   const [paymentCurrency, setPaymentCurrency] = useState('INR')
@@ -389,7 +385,6 @@ export function MembershipPanel({
 
   return (
     <div className="space-y-4">
-      {/* CREATE MEMBERSHIP */}
       {has('MEMBERSHIP_CREATE') ? (
         memberStatusIsInactive ? (
           <div className="rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
@@ -534,7 +529,6 @@ export function MembershipPanel({
         />
       ) : null}
 
-      {/* MEMBERSHIPS */}
       {[...rows]
           .sort((a, b) => {
             const order = {
@@ -582,7 +576,6 @@ export function MembershipPanel({
                 </p>
 
 
-          {/* EDIT MEMBERSHIP */}
           {editingId === row.id && !memberStatusIsInactive ? (
             <div className="grid gap-3 rounded-xl border border-line bg-raised/30 p-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
@@ -694,7 +687,6 @@ export function MembershipPanel({
             </div>
           ) : null}
 
-          {/* ACTIONS */}
           {editingId !== row.id && !memberStatusIsInactive ? (
           <div className="flex flex-wrap gap-2">
             {has('MEMBERSHIP_UPDATE') &&
@@ -738,7 +730,6 @@ export function MembershipPanel({
               </Button>
             ) : null}
 
-            {/* RENEW */}
             {has('MEMBERSHIP_CREATE') &&
             !memberStatusIsInactive &&
             (row.effectiveStatus === 'ACTIVE' || row.effectiveStatus === 'EXPIRED') ? (
@@ -770,7 +761,6 @@ export function MembershipPanel({
                 </Button>
             ) : null}
 
-            {/* CANCEL */}
             {has('MEMBERSHIP_CANCEL') && !memberStatusIsInactive && row.status !== 'CANCELLED' ? (
               <Button
                 variant="danger"
@@ -795,11 +785,9 @@ export function MembershipPanel({
         </Card>
       ))}
 
-      {/* RENEWAL MODAL */}
       {renewingId && !memberStatusIsInactive && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/80 p-4">
           <Card className="w-full max-w-md overflow-hidden border border-line bg-panel text-ink shadow-2xl">
-            {/* Header */}
             <div className="border-b border-line bg-raised px-6 py-5">
               <h2 className="text-lg font-semibold">Renew Membership</h2>
 
@@ -808,9 +796,7 @@ export function MembershipPanel({
               </p>
             </div>
 
-            {/* Body */}
             <div className="space-y-5 px-6 py-5">
-              {/* Current Plan */}
               {renewingMembership && (
                 <div className="rounded-lg border border-line bg-raised p-4">
                   <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">
@@ -836,7 +822,6 @@ export function MembershipPanel({
                 </div>
               )}
 
-              {/* New Plan */}
               <div className="space-y-2">
                 <Label
                   htmlFor="renew-plan"
@@ -886,7 +871,6 @@ export function MembershipPanel({
                 ) : null}
               </div>
 
-              {/* Dates */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label
@@ -920,7 +904,6 @@ export function MembershipPanel({
                 </div>
               </div>
 
-              {/* Error */}
               {renew.error && (
                 <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                   {renew.error instanceof Error
@@ -930,7 +913,6 @@ export function MembershipPanel({
               )}
             </div>
 
-            {/* Footer */}
             <div className="flex justify-end gap-3 border-t border-line bg-raised px-6 py-4">
               <Button
                 variant="outline"
@@ -974,7 +956,6 @@ export function MembershipPanel({
         </div>
       )}
 
-      {/* RECORD PAYMENT MODAL */}
       {paymentMembershipId && paymentMembership ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/80 p-4">
             <Card className="w-full max-w-md overflow-hidden border border-line bg-panel text-ink shadow-2xl">

@@ -245,7 +245,6 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         return users;
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private void link(Member member, Long deviceId, String deviceUserId) {
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {

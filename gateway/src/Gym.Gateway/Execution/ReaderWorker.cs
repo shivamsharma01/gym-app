@@ -695,13 +695,12 @@ public sealed class ReaderWorker : IDisposable
                 return null;
             }
 
-            // Firmware may re-encode after InsertFace. A readable JPEG already verified for this
-            // user record must not be rewritten every pass (that loops forever).
             var (now, _) = ReadOccupant(reader, desired.DeviceUserId);
             if (now is { Present: true, User: not null }
                 && SameUser(now.User, desired)
                 && IsJpeg(face.Bytes)
-                && WroteHere(desired.DeviceUserId, now))
+                && WroteHere(desired.DeviceUserId, now)
+                && SameSentFace(desired))
             {
                 return null;
             }
@@ -764,8 +763,6 @@ public sealed class ReaderWorker : IDisposable
             return WriteStep.Done();
         }
 
-        // Not byte-identical: accept only a readable JPEG so an empty or corrupt buffer never acks.
-        // Content equality after device re-encode is not proven; the journal stores the read-back hash.
         if (readFace.Bytes.Length == 0)
         {
             return WriteStep.Fail("verification failed (reason=photo-missing-after-write)");
@@ -781,7 +778,6 @@ public sealed class ReaderWorker : IDisposable
         return WriteStep.Done();
     }
 
-    /// <summary>SOI marker only — enough to reject the non-image buffers tests use for mismatch.</summary>
     internal static bool IsJpeg(byte[] bytes) =>
         bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
 
@@ -1027,7 +1023,8 @@ public sealed class ReaderWorker : IDisposable
         ("valid_from", "ALTER TABLE applied_user ADD COLUMN valid_from TEXT"),
         ("valid_to", "ALTER TABLE applied_user ADD COLUMN valid_to TEXT"),
         ("authority", "ALTER TABLE applied_user ADD COLUMN authority TEXT"),
-        ("face_sha256", "ALTER TABLE applied_user ADD COLUMN face_sha256 TEXT")
+        ("face_sha256", "ALTER TABLE applied_user ADD COLUMN face_sha256 TEXT"),
+        ("sent_face_sha256", "ALTER TABLE applied_user ADD COLUMN sent_face_sha256 TEXT")
     ];
 
     /// <summary>A journal from before the written record was kept gets the columns, empty.</summary>
@@ -1296,10 +1293,21 @@ public sealed class ReaderWorker : IDisposable
     /// <summary>The record just written at the id; <paramref name="faceSha256"/> null until a read-back verified the photo.</summary>
     private void Remember(DesiredMember desired, string? faceSha256)
     {
+        string? sentFace = null;
+        if (faceSha256 != null
+            && desired.FacePresent
+            && desired.Face is { Length: > 0 }
+            && faceSha256.Length > 0)
+        {
+            sentFace = FaceHash.Sha256Hex(desired.Face);
+        }
+
         using var command = _connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO applied_user (reader_id, device_user_id, name, name_ex, user_status, valid_from, valid_to, authority, face_sha256)
-            VALUES ($reader, $user, $name, $nameEx, $status, $from, $to, $authority, $face)
+            INSERT INTO applied_user (
+                reader_id, device_user_id, name, name_ex, user_status, valid_from, valid_to, authority,
+                face_sha256, sent_face_sha256)
+            VALUES ($reader, $user, $name, $nameEx, $status, $from, $to, $authority, $face, $sent)
             ON CONFLICT (reader_id, device_user_id) DO UPDATE SET
                 name = excluded.name,
                 name_ex = excluded.name_ex,
@@ -1307,7 +1315,8 @@ public sealed class ReaderWorker : IDisposable
                 valid_from = excluded.valid_from,
                 valid_to = excluded.valid_to,
                 authority = excluded.authority,
-                face_sha256 = excluded.face_sha256
+                face_sha256 = excluded.face_sha256,
+                sent_face_sha256 = excluded.sent_face_sha256
             """;
         command.Parameters.AddWithValue(ReaderParam, _readerId);
         command.Parameters.AddWithValue(UserParam, desired.DeviceUserId);
@@ -1318,7 +1327,28 @@ public sealed class ReaderWorker : IDisposable
         command.Parameters.AddWithValue("$to", desired.ValidTo is { } to ? ReaderLocalTime.Format(to) : (object)DBNull.Value);
         command.Parameters.AddWithValue("$authority", desired.Authority);
         command.Parameters.AddWithValue("$face", (object?)faceSha256 ?? DBNull.Value);
+        command.Parameters.AddWithValue("$sent", (object?)sentFace ?? DBNull.Value);
         command.ExecuteNonQuery();
+    }
+
+    private bool SameSentFace(DesiredMember desired)
+    {
+        if (!desired.FacePresent || desired.Face is not { Length: > 0 })
+        {
+            return false;
+        }
+
+        using var command = _connection.CreateCommand();
+        command.CommandText = """
+            SELECT sent_face_sha256 FROM applied_user
+            WHERE reader_id = $reader AND device_user_id = $user
+            """;
+        command.Parameters.AddWithValue(ReaderParam, _readerId);
+        command.Parameters.AddWithValue(UserParam, desired.DeviceUserId);
+        var value = command.ExecuteScalar();
+        return value is string sent
+            && sent.Length > 0
+            && string.Equals(sent, FaceHash.Sha256Hex(desired.Face), StringComparison.OrdinalIgnoreCase);
     }
 
     private void Forget(string deviceUserId)

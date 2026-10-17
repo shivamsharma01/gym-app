@@ -359,7 +359,6 @@ class AccessWindowIT extends AbstractIntegrationTest {
         assertThat(commandsSince(0)).isEmpty();
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private void seedDesired(LocalDate from, LocalDate to) {
         var device = deviceRepository.findByPublicId(deviceId).orElseThrow();

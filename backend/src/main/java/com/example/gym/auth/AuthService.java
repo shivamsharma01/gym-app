@@ -89,7 +89,6 @@ public class AuthService {
             throw invalidCredentials();
         }
 
-        // Success: reset lockout counters.
         user.setFailedLoginAttempts(0);
         user.setLockedUntil(null);
         userRepository.save(user);

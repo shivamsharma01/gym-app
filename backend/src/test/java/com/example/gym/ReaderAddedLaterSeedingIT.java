@@ -224,7 +224,6 @@ class ReaderAddedLaterSeedingIT extends AbstractIntegrationTest {
         assertThat(cursor(late).getDesiredRevision()).isEqualTo(expected);
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private void assertWalkInUntouched(Long late, String deviceUserId) {
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(late, deviceUserId)).isEmpty();

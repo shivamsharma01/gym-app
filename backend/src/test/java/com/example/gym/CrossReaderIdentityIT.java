@@ -65,7 +65,6 @@ class CrossReaderIdentityIT extends AbstractReaderIT {
         pool.shutdownNow();
     }
 
-    // --- duplicate imports -----------------------------------------------------------------------
 
     @Test
     void importingASecondReaderLeavesAPersonWhoMayAlreadyBeAMemberPending() throws Exception {
@@ -161,7 +160,6 @@ class CrossReaderIdentityIT extends AbstractReaderIT {
         }
     }
 
-    // --- canonical data --------------------------------------------------------------------------
 
     @Test
     void aSecondReaderGetsTheMembersOwnAdoptedDatesNotWhateverAnotherReadersRowHolds() throws Exception {
@@ -216,7 +214,6 @@ class CrossReaderIdentityIT extends AbstractReaderIT {
                         .contains("the reader showed this person disabled"));
     }
 
-    // --- one seed rule for every trigger ---------------------------------------------------------
 
     @Test
     void reactivationDoesNotSeedAMemberOntoAReaderShowingAnUndecidedPersonWhoMayBeThem() throws Exception {
@@ -304,7 +301,6 @@ class CrossReaderIdentityIT extends AbstractReaderIT {
         }
     }
 
-    // --- review isolation ------------------------------------------------------------------------
 
     @Test
     void aResolvedReviewOnOneReaderStaysClosedWhenAnotherReaderDevelopsItsOwnConflict() throws Exception {
@@ -341,7 +337,6 @@ class CrossReaderIdentityIT extends AbstractReaderIT {
         });
     }
 
-    // --- delayed observations --------------------------------------------------------------------
 
     @Test
     void aReplayedObservationFromBeforeTheImportOpensNothing() throws Exception {
@@ -384,7 +379,6 @@ class CrossReaderIdentityIT extends AbstractReaderIT {
         assertThat(memberRepository.count()).isEqualTo(1);
     }
 
-    // --- helpers ---------------------------------------------------------------------------------
 
     private JsonNode importPending(String readerPublicId) throws Exception {
         return readJson(postJson("/api/v1/devices/" + readerPublicId + "/import-pending", "{}")

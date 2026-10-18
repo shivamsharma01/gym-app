@@ -4,10 +4,12 @@ import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
+import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.device.repo.DesiredMemberProjectionRepository;
 import com.example.gym.device.repo.DeviceRepository;
+import com.example.gym.device.repo.DeviceReviewItemRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.ReaderRevisionRepository;
 import com.example.gym.face.MemberFace;
@@ -20,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -35,6 +38,7 @@ public class MemberDeviceSyncService {
     private final DeviceRepository deviceRepository;
     private final DesiredMemberProjectionRepository projections;
     private final ReaderRevisionRepository revisions;
+    private final DeviceReviewItemRepository reviewItemRepository;
     private final DesiredProjectionService desired;
 
     public MemberDeviceSyncService(MemberService memberService,
@@ -43,6 +47,7 @@ public class MemberDeviceSyncService {
                                    DeviceRepository deviceRepository,
                                    DesiredMemberProjectionRepository projections,
                                    ReaderRevisionRepository revisions,
+                                   DeviceReviewItemRepository reviewItemRepository,
                                    DesiredProjectionService desired) {
         this.memberService = memberService;
         this.faceRepository = faceRepository;
@@ -50,6 +55,7 @@ public class MemberDeviceSyncService {
         this.deviceRepository = deviceRepository;
         this.projections = projections;
         this.revisions = revisions;
+        this.reviewItemRepository = reviewItemRepository;
         this.desired = desired;
     }
 
@@ -91,6 +97,10 @@ public class MemberDeviceSyncService {
 
         Map<Long, MemberDeviceMapping> byDevice = mappingRepository.findByMemberId(member.getId()).stream()
                 .collect(Collectors.toMap(MemberDeviceMapping::getDeviceId, Function.identity(), (a, b) -> a));
+        Set<Long> openReviewDevices = reviewItemRepository.findByMemberId(member.getId()).stream()
+                .filter(item -> !item.isResolved())
+                .map(DeviceReviewItem::getDeviceId)
+                .collect(Collectors.toSet());
         List<DeviceRow> rows = new ArrayList<>();
         for (Device device : devices.values().stream()
                 .sorted(Comparator.comparing(Device::getName, String.CASE_INSENSITIVE_ORDER))
@@ -101,6 +111,7 @@ public class MemberDeviceSyncService {
             long applied = revisions.findByDeviceId(device.getId())
                     .map(ReaderRevision::getAppliedRevision)
                     .orElse(0L);
+            boolean held = (row != null && row.isHeld()) || openReviewDevices.contains(device.getId());
             rows.add(new DeviceRow(
                     device.getPublicId(),
                     device.getName(),
@@ -112,7 +123,7 @@ public class MemberDeviceSyncService {
                     row != null && row.isApplied(),
                     row != null && row.isPresentOnReader(),
                     row != null && row.isPresentOnReader() && row.isFacePresent(),
-                    row != null && row.isHeld(),
+                    held,
                     row == null ? null : row.getApplyError(),
                     row == null ? null : row.getApplyAttempts(),
                     row != null && row.isApplyErrorPermanent(),

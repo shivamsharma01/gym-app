@@ -59,7 +59,7 @@ export function MemberPhotoField({
     <div>
       <Label>Photo</Label>
       <div className="flex items-center gap-4">
-        <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-raised text-xs text-muted">
+        <div className="flex h-48 w-48 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-raised text-xs text-muted">
           {shown ? <img src={shown} alt="Member" className="h-full w-full object-cover" /> : 'No photo'}
         </div>
         <div className="flex flex-wrap gap-2">

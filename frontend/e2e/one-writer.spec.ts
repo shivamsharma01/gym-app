@@ -195,10 +195,10 @@ test('a member page shows each reader as applied, not applied, or held, from tha
   await page.goto('/app/members/mem-1')
   await expect(page.getByText('On reader')).toBeVisible()
   await expect(page.getByText('Revision 2; read back on the reader')).toBeVisible()
-  await expect(page.getByText('Not applied', { exact: true })).toBeVisible()
+  await expect(page.getByText('Apply failed', { exact: true })).toBeVisible()
   await expect(page.getByText('Revision 1; not yet read back on the reader')).toBeVisible()
   await expect(page.getByText('Not applied after 6 attempts: create failed. The gateway keeps retrying.')).toBeVisible()
-  await expect(page.getByText('Held for review')).toBeVisible()
+  await expect(page.getByText('Needs review')).toBeVisible()
   await expect(page.getByText(/Decide in Reviews before it is written/)).toBeVisible()
   await expect(page.getByText(/reader applied/)).toHaveCount(0)
   await expect(page.getByText('Monthly')).toBeVisible()
@@ -210,6 +210,8 @@ test('creating a member sends one request with a face and no reader choice', asy
   await page.goto('/app/members/new')
   await expect(page.getByRole('heading', { name: 'New member' })).toBeVisible()
   await expect(page.getByText('Select a reader')).toHaveCount(0)
+  await expect(page.getByText('Date of birth')).toHaveCount(0)
+  await expect(page.locator('input[name="serialNumber"]')).toHaveValue('')
 
   await page.locator('input[name="firstName"]').fill('Asha')
   await page.getByRole('button', { name: 'Save member' }).click()
@@ -234,6 +236,7 @@ test('creating a member sends one request with a face and no reader choice', asy
   expect(created[0].body).toContain('name="member"')
   expect(created[0].body).toContain('name="face"')
   expect(created[0].body).not.toContain('readerId')
+  expect(created[0].body).toContain('"serialNumber":null')
 })
 
 async function mockStaff(

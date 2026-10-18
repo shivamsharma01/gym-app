@@ -282,11 +282,55 @@ class MemberCreateOnEveryReaderIT extends AbstractIntegrationTest {
         assertThat(row(after, exitId).get("applied").asBoolean()).isFalse();
     }
 
+    @Test
+    void serialIsSetFromDevice1AckOnlyWhenEmpty() throws Exception {
+        // Entrance was registered first → device 1. Exit ack must not fill serial.
+        String publicId = createWithoutSerial("Neha", "EVERY-SERIAL");
+        Member before = memberRepository.findByPublicId(publicId).orElseThrow();
+        assertThat(before.getSerialNumber()).isNull();
+        String entranceUserId = mapping(entrance, before).getDeviceUserId();
+        String exitUserId = mapping(exit, before).getDeviceUserId();
+        assertThat(entranceUserId).isEqualTo("1");
+        assertThat(exitUserId).isEqualTo("1");
+
+        ack(exitId, latest(exitId)).andExpect(status().isOk());
+        assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getSerialNumber())
+                .as("device 2 ack does not set serial")
+                .isNull();
+
+        ack(entranceId, latest(entranceId)).andExpect(status().isOk());
+        assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getSerialNumber())
+                .isEqualTo(entranceUserId);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(
+                                "/api/v1/members/" + publicId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"firstName":"Neha","lastName":"Shah","serialNumber":"STAFF-9"}
+                                """))
+                .andExpect(status().isOk());
+        assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getSerialNumber())
+                .isEqualTo("STAFF-9");
+
+        String kept = create("Riya", "EVERY-KEEP", "KEEP-1");
+        ack(exitId, latest(exitId)).andExpect(status().isOk());
+        ack(entranceId, latest(entranceId)).andExpect(status().isOk());
+        assertThat(memberRepository.findByPublicId(kept).orElseThrow().getSerialNumber())
+                .as("explicit serial is not overwritten by device 1 ack")
+                .isEqualTo("KEEP-1");
+    }
 
     private String create(String firstName, String code, String serial) throws Exception {
         return createMemberId(token, """
                 {"firstName":"%s","lastName":"Shah","memberCode":"%s","serialNumber":"%s"}
                 """.formatted(firstName, code, serial));
+    }
+
+    private String createWithoutSerial(String firstName, String code) throws Exception {
+        return createMemberId(token, """
+                {"firstName":"%s","lastName":"Shah","memberCode":"%s","serialNumber":null}
+                """.formatted(firstName, code));
     }
 
     /** Ria is on the entrance only, as when the exit was added after she was created. */

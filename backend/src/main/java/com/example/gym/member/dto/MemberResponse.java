@@ -22,10 +22,14 @@ public record MemberResponse(
         String deviceAuthority,
         Instant createdAt,
         String coverageStatus,
-        /** Per-reader device user id; null deviceUserId when not mapped on that reader. */
+        /** Per-reader device user id and sync marker; null deviceUserId when not mapped. */
         List<ReaderUserId> readers) {
 
-    public record ReaderUserId(String deviceId, String deviceName, String deviceUserId) {
+    /**
+     * @param syncState {@code none}, {@code ok}, {@code pending}, {@code held}, {@code failed},
+     *                  or {@code absent}
+     */
+    public record ReaderUserId(String deviceId, String deviceName, String deviceUserId, String syncState) {
     }
 
     public static MemberResponse from(Member m, String coverageStatus, List<ReaderUserId> readers) {

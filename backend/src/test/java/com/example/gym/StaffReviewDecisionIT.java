@@ -116,6 +116,76 @@ class StaffReviewDecisionIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void acceptServerPublishesTheServerValueOntoEveryMappedReader() throws Exception {
+        JsonNode created = onlyOnReader("Asha", "Shah", "REVIEW-FAN", "9111", flaggedId);
+        String memberId = created.get("id").asString();
+        Member member = memberRepository.findByPublicId(memberId).orElseThrow();
+        Device side = deviceRepository.findByPublicId(sideId).orElseThrow();
+        desiredProjectionService.write(member, side,
+                memberFaceService.find(member.getId()).orElseThrow());
+        DesiredMemberProjection sideBefore = desiredMemberProjectionRepository
+                .findByDeviceIdAndMemberId(side.getId(), member.getId()).orElseThrow();
+        // Stale name on the other reader so accept-server must republish there too.
+        sideBefore.setReaderName("Stale Side");
+        desiredMemberProjectionRepository.save(sideBefore);
+        long sideRevisionBefore = sideBefore.getRevision();
+        String deviceUserId = mapping(memberId).getDeviceUserId();
+
+        postReaderEdit(deviceUserId, "Left");
+        DeviceReviewItem opened = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, deviceUserId)
+                .orElseThrow();
+        assertThat(opened.isResolved()).isFalse();
+        JsonNode list = readJson(mockMvc.perform(get("/api/v1/members")
+                        .header("Authorization", "Bearer " + token)
+                        .param("q", "REVIEW-FAN"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(list.get("content").get(0).get("readers")).isNotEmpty();
+        boolean sawHeld = false;
+        for (JsonNode reader : list.get("content").get(0).get("readers")) {
+            if (flaggedId.equals(reader.get("deviceId").asString())) {
+                assertThat(reader.get("syncState").asString()).isEqualTo("held");
+                sawHeld = true;
+            }
+        }
+        assertThat(sawHeld).isTrue();
+
+        decide(opened.getPublicId(), "accept-server");
+
+        DesiredMemberProjection onFlagged = projection(memberId);
+        assertThat(onFlagged.getReaderName()).isEqualTo("Asha Shah");
+        DesiredMemberProjection onSide = desiredMemberProjectionRepository
+                .findByDeviceIdAndMemberId(side.getId(), member.getId()).orElseThrow();
+        assertThat(onSide.getReaderName()).isEqualTo("Asha Shah");
+        assertThat(onSide.getRevision()).isGreaterThan(sideRevisionBefore);
+    }
+
+    @Test
+    void acceptReaderUpdatesTheMemberAndPublishesOntoEveryMappedReader() throws Exception {
+        JsonNode created = onlyOnReader("Asha", "Shah", "REVIEW-KEEP", "9112", flaggedId);
+        String memberId = created.get("id").asString();
+        Member member = memberRepository.findByPublicId(memberId).orElseThrow();
+        Device side = deviceRepository.findByPublicId(sideId).orElseThrow();
+        desiredProjectionService.write(member, side,
+                memberFaceService.find(member.getId()).orElseThrow());
+        long sideRevisionBefore = desiredMemberProjectionRepository
+                .findByDeviceIdAndMemberId(side.getId(), member.getId()).orElseThrow().getRevision();
+        String deviceUserId = mapping(memberId).getDeviceUserId();
+
+        postReaderEdit(deviceUserId, "Left Door");
+        DeviceReviewItem opened = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, deviceUserId)
+                .orElseThrow();
+        decide(opened.getPublicId(), "accept-reader");
+
+        assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("Left Door");
+        assertThat(projection(memberId).getReaderName()).isEqualTo("Left Door");
+        DesiredMemberProjection onSide = desiredMemberProjectionRepository
+                .findByDeviceIdAndMemberId(side.getId(), member.getId()).orElseThrow();
+        assertThat(onSide.getReaderName()).isEqualTo("Left Door");
+        assertThat(onSide.getRevision()).isGreaterThan(sideRevisionBefore);
+    }
+
+    @Test
     void aFailedReadBackLeavesTheDecisionOpenWithTheVerificationError() throws Exception {
         JsonNode created = onlyOnReader("Asha", "Shah", "REVIEW-FAIL", "9102", flaggedId);
         String memberId = created.get("id").asString();

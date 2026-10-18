@@ -9,7 +9,6 @@ export const memberFormSchema = z.object({
     .string()
     .optional()
     .refine((v) => !v || /^\d{10}$/.test(v), 'Enter a 10-digit phone number'),
-  dateOfBirth: z.string().optional(),
   gender: z.string(),
   notes: z.string().optional(),
   deviceAuthority: z.enum(['USER', 'ADMIN']).optional(),

@@ -1,6 +1,5 @@
-import { Controller, type UseFormReturn } from 'react-hook-form'
+import type { UseFormReturn } from 'react-hook-form'
 import { FieldError, Input, Label, Select, Textarea } from '@/components/ui'
-import { DateOfBirthField } from '@/features/members/DateOfBirthField'
 import type { MemberFormValues } from '@/features/members/memberFormSchema'
 import { useAuth } from '@/lib/useAuth'
 
@@ -23,7 +22,8 @@ export function MemberFormFields({ form }: { form: UseFormReturn<MemberFormValue
         <Label>Serial number</Label>
         <Input inputMode="numeric" className="font-mono" {...form.register('serialNumber')} />
         <p className="mt-1 text-xs text-muted">
-          Staff label for this member. Not unique, and not the same as each reader&apos;s device user id.
+          Optional staff label. When left empty on create, it is set from device 1 after that reader
+          acknowledges the member. Not the same as each reader&apos;s device user id.
         </p>
         <FieldError message={form.formState.errors.serialNumber?.message} />
       </div>
@@ -36,17 +36,6 @@ export function MemberFormFields({ form }: { form: UseFormReturn<MemberFormValue
         <Label>Phone</Label>
         <Input inputMode="numeric" maxLength={10} placeholder="10 digits" {...form.register('phone')} />
         <FieldError message={form.formState.errors.phone?.message} />
-      </div>
-      <div>
-        <Label>Date of birth</Label>
-        <Controller
-          control={form.control}
-          name="dateOfBirth"
-          render={({ field }) => (
-            <DateOfBirthField value={field.value} onChange={field.onChange} />
-          )}
-        />
-        <FieldError message={form.formState.errors.dateOfBirth?.message} />
       </div>
       <div>
         <Label>Gender</Label>

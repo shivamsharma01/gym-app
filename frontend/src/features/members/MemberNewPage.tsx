@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router'
 import { Button, PageHeader } from '@/components/ui'
@@ -19,22 +19,12 @@ export function MemberNewPage() {
       lastName: '',
       email: '',
       phone: '',
-      dateOfBirth: '',
       gender: 'UNSPECIFIED',
       notes: '',
       deviceAuthority: 'USER',
       serialNumber: '',
     },
   })
-  const nextSerial = useQuery({
-    queryKey: ['members', 'next-serial'],
-    queryFn: () => api<{ serialNumber: string }>('/api/v1/members/next-serial'),
-  })
-  useEffect(() => {
-    if (nextSerial.data && !form.getValues('serialNumber')) {
-      form.setValue('serialNumber', nextSerial.data.serialNumber)
-    }
-  }, [nextSerial.data, form])
   const [photo, setPhoto] = useState<File | null>(null)
   const mutation = useMutation({
     mutationFn: async (body: MemberFormValues) => {
@@ -46,7 +36,7 @@ export function MemberNewPage() {
         email: body.email || null,
         lastName: body.lastName || null,
         phone: body.phone || null,
-        dateOfBirth: body.dateOfBirth || null,
+        dateOfBirth: null,
         serialNumber: body.serialNumber?.trim() || null,
         memberCode: null,
       }
@@ -62,7 +52,7 @@ export function MemberNewPage() {
     <div className="max-w-xl">
       <PageHeader
         title="New member"
-        description="Serial is a staff label (not unique). It starts at a suggested number; change it if needed. Every reader of the gym receives the member."
+        description="Serial is optional. When empty, it is filled from device 1 after that reader acknowledges the member. Every reader of the gym receives the member."
       />
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => mutation.mutate(v))}>
         <MemberFormFields form={form} />

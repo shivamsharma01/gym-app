@@ -27,7 +27,6 @@ export function MemberEditPage() {
       lastName: member.data.lastName ?? '',
       email: member.data.email ?? '',
       phone: member.data.phone ?? '',
-      dateOfBirth: member.data.dateOfBirth ?? '',
       gender: member.data.gender,
       notes: member.data.notes ?? '',
       deviceAuthority: (member.data.deviceAuthority as 'USER' | 'ADMIN') ?? 'USER',
@@ -46,7 +45,7 @@ export function MemberEditPage() {
           email: body.email || null,
           lastName: body.lastName || null,
           phone: body.phone || null,
-          dateOfBirth: body.dateOfBirth || null,
+          dateOfBirth: member.data?.dateOfBirth ?? null,
           serialNumber: body.serialNumber?.trim() || null,
         }),
       })

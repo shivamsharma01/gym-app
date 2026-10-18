@@ -93,8 +93,14 @@ export type Member = {
   deviceAuthority?: 'USER' | 'ADMIN'
   createdAt: string
   coverageStatus: string
-  /** Per-reader device user id; null when not mapped on that reader. */
-  readers?: { deviceId: string; deviceName: string; deviceUserId: string | null }[]
+  /** Per-reader device user id and sync marker; null when not mapped on that reader. */
+  readers?: {
+    deviceId: string
+    deviceName: string
+    deviceUserId: string | null
+    /** none | ok | pending | held | failed | absent */
+    syncState?: string
+  }[]
 }
 
 export type Plan = {

@@ -12,6 +12,7 @@ import com.example.gym.device.repo.PendingEnrollmentRepository;
 import com.example.gym.face.GatewayFaceUpload;
 import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceService;
+import com.example.gym.member.DeviceAuthority;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberNumbers;
 import com.example.gym.member.MemberService;
@@ -80,13 +81,16 @@ public class ReviewDecisionService {
         Member member = members.getById(item.getMemberId(), tenantId);
         Device device = device(item.getDeviceId(), tenantId);
         long revision = desired.republish(member, device, ExpectedOccupant.of(item));
+        // Approved server record becomes desired on every other mapped reader too.
+        desired.publishAccess(member, device.getId());
         item.decide(ReviewDecisions.ACCEPT_SERVER, actor(), readerShown(item), serverShown(item), revision);
         return reviewView(reviews.save(item));
     }
 
     /**
-     * Keep the fields the reader shows as desired on this reader only (name, validity, status,
-     * authority, face hash). The hold is released; the gateway acks without overwriting the reader.
+     * Keep the fields the reader shows as the member of record, apply them on this reader, then
+     * publish that approved state onto every other mapped reader. The hold is released; the gateway
+     * acks this reader without overwriting what it already shows.
      */
     @Transactional
     public ReviewItemView acceptReader(String publicId, Long tenantId) {
@@ -99,7 +103,9 @@ public class ReviewDecisionService {
         }
         Member member = members.getById(item.getMemberId(), tenantId);
         Device device = device(item.getDeviceId(), tenantId);
+        adoptReaderDecisionOntoMember(member, item);
         long revision = desired.acceptReaderValues(member, device, item);
+        desired.publishAccess(member, device.getId());
         item.decide(ReviewDecisions.ACCEPT_READER, actor(), serverShown(item), readerShown(item), revision);
         return reviewView(reviews.save(item));
     }
@@ -114,6 +120,7 @@ public class ReviewDecisionService {
         }
         // Same write as accept-server for field conflicts; kept for older clients.
         long revision = desired.republish(member, device, ExpectedOccupant.of(item));
+        desired.publishAccess(member, device.getId());
         String prior = item.isReaderAbsent() ? "absent" : readerShown(item);
         item.decide(ReviewDecisions.RESTORE, actor(), prior, serverShown(item), revision);
         return reviewView(reviews.save(item));
@@ -324,6 +331,29 @@ public class ReviewDecisionService {
 
     private static String actor() {
         return SecurityUtils.currentPrincipal().getUsername();
+    }
+
+    /** Copy the approved reader fields onto the member so other readers get the same record. */
+    private static void adoptReaderDecisionOntoMember(Member member, DeviceReviewItem item) {
+        String[] name = personName(readerShown(item));
+        member.setFirstName(name[0]);
+        member.setLastName(name[1]);
+        if (item.getReaderUserStatus() != null) {
+            member.setStatus(item.getReaderUserStatus() == DesiredProjectionService.USER_STATUS
+                    ? MemberStatus.ACTIVE
+                    : MemberStatus.INACTIVE);
+        }
+        if (item.getReaderAuthority() != null && !item.getReaderAuthority().isBlank()) {
+            member.setDeviceAuthority(DesiredProjectionService.isAdminAuthority(item.getReaderAuthority())
+                    ? DeviceAuthority.ADMIN
+                    : DeviceAuthority.USER);
+        }
+        String from = DesiredProjectionService.readerTime(item.getReaderValidFrom());
+        String to = DesiredProjectionService.readerTime(item.getReaderValidTo());
+        if (from != null && to != null) {
+            member.adoptReaderWindow(from, to);
+        }
+        member.setProfileChangedAt(Instant.now());
     }
 
     private static String[] personName(String shown) {

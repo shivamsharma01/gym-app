@@ -77,6 +77,7 @@ export function MemberDetailPage() {
   if (member.isLoading) return <Skeleton className="h-40" />
   if (member.error || !member.data) return <QueryError error={member.error ?? new Error('Member not found')} />
   const m = member.data
+  const syncSummary = summarizeSync(sync.data?.devices)
 
   return (
     <div className="space-y-8">
@@ -106,8 +107,25 @@ export function MemberDetailPage() {
           Member saved, but the photo was not: {photoError}. Open Edit to try another photo.
         </p>
       ) : null}
+      {syncSummary ? (
+        <p
+          className={`rounded-lg border px-4 py-3 text-sm ${
+            syncSummary.tone === 'danger'
+              ? 'border-danger/40 bg-danger/10 text-danger'
+              : 'border-warn/40 bg-warn/10 text-warn'
+          }`}
+          role="status"
+        >
+          {syncSummary.message}{' '}
+          {has('DEVICE_VIEW') && syncSummary.linkReview ? (
+            <Link className="underline" to="/app/review">
+              Open Review
+            </Link>
+          ) : null}
+        </p>
+      ) : null}
       <div className="flex items-center gap-4">
-        <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-raised text-xs text-muted">
+        <div className="flex h-48 w-48 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-raised text-xs text-muted">
           {photo.url ? <img src={photo.url} alt={m.fullName} className="h-full w-full object-cover" /> : 'No photo'}
         </div>
         <div className="text-sm text-muted">
@@ -156,10 +174,6 @@ export function MemberDetailPage() {
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Phone</div>
             <div className="mt-1">{m.phone ?? '—'}</div>
-          </div>
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Date of birth</div>
-            <div className="mt-1">{formatDate(m.dateOfBirth)}</div>
           </div>
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Gender</div>
@@ -287,12 +301,50 @@ export function MemberDetailPage() {
   )
 }
 
+function summarizeSync(devices: MemberDeviceSync['devices'] | undefined) {
+  if (!devices?.length) return null
+  const failed = devices.filter((d) => d.deviceUserId != null && !d.held && d.applyError)
+  const held = devices.filter((d) => d.held)
+  const pending = devices.filter((d) => d.deviceUserId != null && d.revision != null && !d.held && !d.applied && !d.applyError)
+  if (failed.length > 0) {
+    return {
+      tone: 'danger' as const,
+      linkReview: false,
+      message:
+        failed.length === 1
+          ? `${failed[0].deviceName} failed to apply the latest change.`
+          : `${failed.length} readers failed to apply the latest change.`,
+    }
+  }
+  if (held.length > 0) {
+    return {
+      tone: 'warn' as const,
+      linkReview: true,
+      message:
+        held.length === 1
+          ? `${held[0].deviceName} is paused — the reader shows a different person at this id.`
+          : `${held.length} readers are paused until Review decides which record wins.`,
+    }
+  }
+  if (pending.length > 0) {
+    return {
+      tone: 'warn' as const,
+      linkReview: false,
+      message:
+        pending.length === 1
+          ? `${pending[0].deviceName} has not applied the latest change yet.`
+          : `${pending.length} readers have not applied the latest change yet.`,
+    }
+  }
+  return null
+}
+
 function readerStateLabel(row: MemberDeviceSync['devices'][number]) {
   if (row.deviceUserId == null) return { label: 'Not on this reader', tone: 'muted' as const }
   if (row.revision == null) return { label: 'Not published', tone: 'muted' as const }
-  if (row.held) return { label: 'Held for review', tone: 'warn' as const }
-  if (!row.applied && row.applyError) return { label: 'Not applied', tone: 'danger' as const }
-  if (!row.applied) return { label: 'Waiting for reader', tone: 'warn' as const }
+  if (row.held) return { label: 'Needs review', tone: 'warn' as const }
+  if (!row.applied && row.applyError) return { label: 'Apply failed', tone: 'danger' as const }
+  if (!row.applied) return { label: 'Syncing', tone: 'warn' as const }
   if (!row.present) return { label: 'Removed from reader', tone: 'muted' as const }
   return { label: 'On reader', tone: 'ok' as const }
 }
@@ -328,8 +380,8 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
       <SectionTitle title="Readers" />
       <Card className="space-y-4">
         <p className="text-sm text-muted">
-          Each reader has its own user id for this member. Send again publishes that revision for this reader only.
-          A person added on a reader stays on that reader until staff review it.
+          Each reader has its own user id for this member. Approve a Review decision or edit the member to sync all
+          mapped readers. Send again republishes this reader only.
         </p>
         {!data ? (
           <Skeleton className="h-16" />
@@ -351,8 +403,17 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
             {rows.map((row) => {
               const state = readerStateLabel(row)
               const onReader = row.deviceUserId != null
+              const rowTone =
+                state.tone === 'danger'
+                  ? 'border-l-2 border-l-danger pl-3'
+                  : state.tone === 'warn'
+                    ? 'border-l-2 border-l-warn pl-3'
+                    : ''
               return (
-                <div key={row.deviceId} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
+                <div
+                  key={row.deviceId}
+                  className={`flex flex-wrap items-start justify-between gap-3 py-3 text-sm ${rowTone}`}
+                >
                   <div className="space-y-1">
                     <div className="font-medium">
                       {row.deviceName}{' '}
@@ -380,8 +441,12 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
                       </div>
                     ) : null}
                     {row.held ? (
-                      <div className="text-xs text-muted">
-                        The reader showed a different record at this id. Decide in Reviews before it is written.
+                      <div className="text-xs text-warn">
+                        Paused: this reader shows someone else at this id. Decide in{' '}
+                        <Link className="underline" to="/app/review">
+                          Review
+                        </Link>{' '}
+                        before updates go through.
                       </div>
                     ) : null}
                     {!row.held && row.applyError ? (

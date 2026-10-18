@@ -2,6 +2,7 @@ package com.example.gym.device.repo;
 
 import com.example.gym.device.domain.DesiredMemberProjection;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
@@ -15,6 +16,8 @@ public interface DesiredMemberProjectionRepository extends JpaRepository<Desired
     List<DesiredMemberProjection> findByDeviceId(Long deviceId);
 
     List<DesiredMemberProjection> findByMemberId(Long memberId);
+
+    List<DesiredMemberProjection> findByMemberIdIn(Collection<Long> memberIds);
 
     Optional<DesiredMemberProjection> findByDeviceIdAndMemberId(Long deviceId, Long memberId);
 

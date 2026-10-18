@@ -29,6 +29,9 @@ export function ReviewPage() {
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['reviews'] })
+      void qc.invalidateQueries({ queryKey: ['members'] })
+      void qc.invalidateQueries({ queryKey: ['member'] })
+      void qc.invalidateQueries({ queryKey: ['member-device-sync'] })
     },
   })
 
@@ -38,7 +41,7 @@ export function ReviewPage() {
     <div className="space-y-6">
       <PageHeader
         title="Review"
-        description="Compare server vs what the reader shows. Choose which side to keep for that reader."
+        description="Compare server vs what the reader shows. Keep server or keep reader values syncs the approved record to every mapped reader. Remove affects only that reader."
         actions={
           has('DEVICE_MANAGE') ? (
             <Button type="button" disabled={bootstrap.isPending} onClick={() => bootstrap.mutate()}>
@@ -97,7 +100,7 @@ export function ReviewPage() {
                     {group.title}
                     {group.items.length > 1 ? (
                       <span className="ml-2 text-xs font-normal text-muted">
-                        {group.items.length} items, decided one reader at a time
+                        {group.items.length} items — approving keep server/reader syncs all mapped readers
                       </span>
                     ) : null}
                   </Td>
@@ -282,7 +285,7 @@ function RowActions({
         type="button"
         size="sm"
         disabled={pending || item.readerAbsent}
-        title="Keep the reader's dates/name/status on this reader; do not overwrite the device"
+        title="Approve the reader's values as the member record and sync them to all mapped readers"
         onClick={() => onDecide('accept-reader')}
       >
         Keep reader values
@@ -292,7 +295,7 @@ function RowActions({
         size="sm"
         variant="outline"
         disabled={pending}
-        title="Write the server record onto the reader (overwrites what the device shows)"
+        title="Write the server record onto this reader and sync it to all mapped readers"
         onClick={() => onDecide('accept-server')}
       >
         Overwrite with server

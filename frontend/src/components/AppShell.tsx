@@ -34,9 +34,15 @@ import { useStaffLive } from '@/lib/live'
 import { FEATURES } from '@/lib/features'
 import { isPlatformSuperAdmin } from '@/lib/platform'
 import { cycleTheme, readStoredTheme, type ThemeMode } from '@/lib/theme'
-import type { Gateway, PageResponse } from '@/lib/types'
+import type { Gateway, PageResponse, ReviewItem } from '@/lib/types'
 
-type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; perm: string | null }
+type NavItem = {
+  to: string
+  label: string
+  icon: typeof LayoutDashboard
+  perm: string | null
+  badge?: number
+}
 
 const operations: NavItem[] = [
   { to: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: null },
@@ -89,9 +95,16 @@ export function AppShell() {
     enabled: Boolean(user?.tenantId) && !isPlatform && has('DEVICE_VIEW'),
     refetchInterval: 30_000,
   })
+  const openReviews = useQuery({
+    queryKey: ['reviews'],
+    queryFn: () => api<ReviewItem[]>('/api/v1/reviews'),
+    enabled: Boolean(user?.tenantId) && !isPlatform && has('DEVICE_VIEW'),
+    refetchInterval: 60_000,
+  })
   const gatewayState = gatewayConnectionState(gateways.isSuccess, gateways.data?.content[0])
   const brand = isPlatform ? 'Platform' : brandDisplayName(settings.data, 'Gym')
   const logo = isPlatform ? null : brandLogo(settings.data)
+  const reviewCount = openReviews.data?.length ?? 0
 
   const groups = useMemo(() => {
     if (isPlatform) {
@@ -100,13 +113,15 @@ export function AppShell() {
     const filter = (items: NavItem[]) => items.filter((l) => !l.perm || has(l.perm))
     const result: { label: string; items: NavItem[] }[] = []
     const ops = filter(operations)
-    const fac = filter(facility)
+    const fac = filter(facility).map((item) =>
+      item.to === '/app/review' && reviewCount > 0 ? { ...item, badge: reviewCount } : item,
+    )
     const adm = filter(admin)
     if (ops.length) result.push({ label: 'Operations', items: ops })
     if (fac.length) result.push({ label: 'Facility', items: fac })
     if (adm.length) result.push({ label: 'Admin', items: adm })
     return result
-  }, [has, isPlatform])
+  }, [has, isPlatform, reviewCount])
 
   async function onLogout() {
     const confirmed = window.confirm('Are you sure you want to sign out?')
@@ -296,7 +311,12 @@ function NavGroups({
                   }
                 >
                   <item.icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
-                  {item.label}
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  {item.badge != null && item.badge > 0 ? (
+                    <span className="rounded-full bg-warn/20 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-warn">
+                      {item.badge > 99 ? '99+' : item.badge}
+                    </span>
+                  ) : null}
                 </NavLink>
               </li>
             ))}

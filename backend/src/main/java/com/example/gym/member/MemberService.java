@@ -75,9 +75,10 @@ public class MemberService {
         if (memberRepository.existsByTenantIdAndMemberCode(tenantId, code)) {
             throw CommonExceptions.conflict("Member code already exists");
         }
+        // Leave serial empty when staff omit it; device 1 ACK fills it from that reader's device user id.
         String serial = StringUtils.hasText(request.serialNumber())
                 ? request.serialNumber().trim()
-                : numbers.nextSerial(tenantId);
+                : null;
 
         Member member = new Member(tenantId, code, request.firstName());
         member.setSerialNumber(serial);
@@ -96,9 +97,11 @@ public class MemberService {
         }
         Member saved = memberRepository.save(member);
         FlowLog.info("member", "created id={} code={} serial={}", saved.getPublicId(), saved.getMemberCode(), serial);
+        Map<String, Object> created = new LinkedHashMap<>();
+        created.put("memberCode", saved.getMemberCode());
+        created.put("serialNumber", serial);
         auditService.record(AuditActions.MEMBER_CREATED, AuditActions.RESULT_SUCCESS,
-                "Member", saved.getPublicId(),
-                Map.of("memberCode", saved.getMemberCode(), "serialNumber", serial));
+                "Member", saved.getPublicId(), created);
         return saved;
     }
 

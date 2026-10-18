@@ -11,7 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Member codes (server identity, generated) and serial numbers (a staff label, not unique).
- * {@link #nextSerial} only suggests a convenient unused integer for the create form.
+ * {@link #nextSerial} suggests an unused integer for optional staff fill; create leaves serial
+ * null until device 1 ACK when staff omit it.
  */
 @Component
 public class MemberNumbers {

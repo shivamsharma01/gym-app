@@ -30,7 +30,7 @@ public final class MemberRequests {
             /** Optional; auto-generated when blank. */
             @Size(max = 32) String memberCode,
             String deviceAuthority,
-            /** Optional; suggested when blank. Staff label only — not the reader device user id. */
+            /** Optional staff label; blank stays null until device 1 ACK. Not the reader device user id. */
             @Size(max = 31) @Pattern(regexp = SERIAL_PATTERN, message = SERIAL_MESSAGE) String serialNumber) {
     }
 

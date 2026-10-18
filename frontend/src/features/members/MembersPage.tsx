@@ -155,39 +155,50 @@ export function MembersPage() {
               </tr>
             </THead>
             <tbody>
-              {members.data.content.map((m) => (
-                <Tr key={m.id}>
-                  <Td>
-                    <div className="flex items-center gap-1.5">
-                      <Link className="font-semibold text-ink hover:text-accent" to={`/app/members/${m.id}`}>
-                        {m.fullName}
-                      </Link>
-                      {m.deviceAuthority === 'ADMIN' ? (
-                        <Badge tone="danger">Admin</Badge>
-                      ) : null}
-                    </div>
-                    {m.email ? <div className="mt-0.5 text-xs text-muted">{m.email}</div> : null}
-                  </Td>
-                  <Td className="font-mono text-xs">{m.serialNumber ?? '—'}</Td>
-                  {(m.readers ?? []).map((reader) => (
-                    <Td key={reader.deviceId} className="font-mono text-xs">
-                      {reader.deviceUserId ?? '—'}
+              {members.data.content.map((m) => {
+                const syncIssue = worstSyncBadge(m.readers)
+                return (
+                  <Tr key={m.id}>
+                    <Td>
+                      <div className="flex items-center gap-1.5">
+                        <Link className="font-semibold text-ink hover:text-accent" to={`/app/members/${m.id}`}>
+                          {m.fullName}
+                        </Link>
+                        {m.deviceAuthority === 'ADMIN' ? (
+                          <Badge tone="danger">Admin</Badge>
+                        ) : null}
+                        {syncIssue ? <Badge tone={syncIssue.tone}>{syncIssue.label}</Badge> : null}
+                      </div>
+                      {m.email ? <div className="mt-0.5 text-xs text-muted">{m.email}</div> : null}
                     </Td>
-                  ))}
-                  <Td className="text-muted">{m.phone ?? '—'}</Td>
-                  <Td>
-                    <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>
-                      {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'User'}
-                    </Badge>
-                  </Td>
-                  <Td>
-                    <Badge tone={statusTone(m.coverageStatus)}>{membershipStatusLabel(m.coverageStatus)}</Badge>
-                  </Td>
-                  <Td>
-                    <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
-                  </Td>
-                </Tr>
-              ))}
+                    <Td className="font-mono text-xs">{m.serialNumber ?? '—'}</Td>
+                    {(m.readers ?? []).map((reader) => (
+                      <Td
+                        key={reader.deviceId}
+                        className={`font-mono text-xs ${readerSyncCellClass(reader.syncState)}`}
+                        title={readerSyncTitle(reader.syncState)}
+                      >
+                        <span className="inline-flex items-center gap-1.5">
+                          {readerSyncDot(reader.syncState)}
+                          {reader.deviceUserId ?? '—'}
+                        </span>
+                      </Td>
+                    ))}
+                    <Td className="text-muted">{m.phone ?? '—'}</Td>
+                    <Td>
+                      <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>
+                        {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'User'}
+                      </Badge>
+                    </Td>
+                    <Td>
+                      <Badge tone={statusTone(m.coverageStatus)}>{membershipStatusLabel(m.coverageStatus)}</Badge>
+                    </Td>
+                    <Td>
+                      <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
+                    </Td>
+                  </Tr>
+                )
+              })}
             </tbody>
           </Table>
         </TableShell>
@@ -197,4 +208,47 @@ export function MembersPage() {
       ) : null}
     </div>
   )
+}
+
+type SyncBadge = { label: string; tone: 'warn' | 'danger' }
+
+function worstSyncBadge(
+  readers: Member['readers'] | undefined,
+): SyncBadge | null {
+  const states = (readers ?? []).map((r) => r.syncState)
+  if (states.includes('failed')) return { label: 'Sync failed', tone: 'danger' }
+  if (states.includes('held')) return { label: 'Needs review', tone: 'warn' }
+  if (states.includes('pending')) return { label: 'Syncing', tone: 'warn' }
+  return null
+}
+
+function readerSyncCellClass(syncState: string | undefined) {
+  if (syncState === 'failed') return 'bg-danger/10 text-danger'
+  if (syncState === 'held') return 'bg-warn/10 text-warn'
+  if (syncState === 'pending') return 'bg-warn/5 text-warn'
+  return ''
+}
+
+function readerSyncTitle(syncState: string | undefined) {
+  switch (syncState) {
+    case 'failed':
+      return 'Reader could not apply the latest change'
+    case 'held':
+      return 'Paused — decide in Review before this reader updates'
+    case 'pending':
+      return 'Waiting for the reader to apply the latest change'
+    case 'absent':
+      return 'Removed from this reader'
+    case 'ok':
+      return 'On reader'
+    default:
+      return undefined
+  }
+}
+
+function readerSyncDot(syncState: string | undefined) {
+  if (syncState !== 'failed' && syncState !== 'held' && syncState !== 'pending') return null
+  const color =
+    syncState === 'failed' ? 'bg-danger' : syncState === 'held' ? 'bg-warn' : 'bg-warn/70'
+  return <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${color}`} aria-hidden />
 }

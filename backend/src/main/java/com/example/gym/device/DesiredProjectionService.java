@@ -25,6 +25,8 @@ import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceRepository;
 import com.example.gym.member.DeviceAuthority;
 import com.example.gym.member.Member;
+import com.example.gym.member.MemberNumbers;
+import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -82,6 +84,8 @@ public class DesiredProjectionService {
     private final GatewaySessionRegistry sessions;
     private final ReaderReviewService reviews;
     private final AttendanceLinker attendance;
+    private final MemberRepository members;
+    private final MemberNumbers memberNumbers;
 
     public DesiredProjectionService(DeviceRepository devices,
                                     GatewayRepository gateways,
@@ -95,7 +99,9 @@ public class DesiredProjectionService {
                                     DeviceAuthorizationService authorization,
                                     GatewaySessionRegistry sessions,
                                     ReaderReviewService reviews,
-                                    AttendanceLinker attendance) {
+                                    AttendanceLinker attendance,
+                                    MemberRepository members,
+                                    MemberNumbers memberNumbers) {
         this.devices = devices;
         this.gateways = gateways;
         this.mappings = mappings;
@@ -109,6 +115,8 @@ public class DesiredProjectionService {
         this.sessions = sessions;
         this.reviews = reviews;
         this.attendance = attendance;
+        this.members = members;
+        this.memberNumbers = memberNumbers;
     }
 
     /**
@@ -225,6 +233,15 @@ public class DesiredProjectionService {
      */
     @Transactional
     public void publishAccess(Member member) {
+        publishAccess(member, null);
+    }
+
+    /**
+     * Publish the member's current access onto every mapped reader, optionally skipping one reader
+     * (for example the reader that already received a review decision with an expected occupant).
+     */
+    @Transactional
+    public void publishAccess(Member member, Long exceptDeviceId) {
         int status = readerStatus(member);
         String fullName = member.getFullName();
         String name = szName(fullName);
@@ -234,6 +251,9 @@ public class DesiredProjectionService {
         var window = authorization.window(member, today);
         for (Held held : inReaderOrder(member)) {
             Device device = held.device();
+            if (exceptDeviceId != null && exceptDeviceId.equals(device.getId())) {
+                continue;
+            }
             ReaderRevision cursor = held.cursor();
             DesiredMemberProjection row = held.row();
             MemberDeviceMapping mapping = held.mapping();
@@ -633,12 +653,47 @@ public class DesiredProjectionService {
         projections.save(row);
         if (row.isPresentOnReader()) {
             reviews.reconcile(row, readAfter);
+            adoptSerialFromPrimaryAck(device, row);
         }
         reviews.settle(device.getId(), row.getDeviceUserId(), row.getMemberId(), ack.revision(), readAfter);
         if (ack.revision() > cursor.getAppliedRevision()) {
             cursor.setAppliedRevision(ack.revision());
         }
         return new RevisionNotice(device.getPublicId(), cursor.getAppliedRevision());
+    }
+
+    /**
+     * Device 1 is the gateway reader with the lowest internal id (first registered). When it ACKs a
+     * present user and the member still has no serial, copy that reader's device user id into serial.
+     */
+    private void adoptSerialFromPrimaryAck(Device device, DesiredMemberProjection row) {
+        if (blank(row.getDeviceUserId()) || !isPrimaryGatewayReader(device)) {
+            return;
+        }
+        Member member = members.findById(row.getMemberId()).orElse(null);
+        if (member == null || !blank(member.getSerialNumber())) {
+            return;
+        }
+        String serial = memberNumbers.serialForImport(row.getDeviceUserId());
+        if (serial == null) {
+            return;
+        }
+        member.setSerialNumber(serial);
+        members.save(member);
+        FlowLog.info("member", "serial set from device 1 ack id={} serial={}",
+                member.getPublicId(), serial);
+    }
+
+    /** First registered gateway reader for the tenant: lowest {@link Device#getId()} with a gateway. */
+    private boolean isPrimaryGatewayReader(Device device) {
+        if (device.getGatewayId() == null || device.getId() == null) {
+            return false;
+        }
+        return devices.findByTenantId(device.getTenantId()).stream()
+                .filter(candidate -> candidate.getGatewayId() != null)
+                .min(Comparator.comparing(Device::getId))
+                .map(primary -> primary.getId().equals(device.getId()))
+                .orElse(false);
     }
 
     /**

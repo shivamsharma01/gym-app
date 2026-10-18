@@ -4,7 +4,7 @@ import { Link, useLocation, useParams } from 'react-router'
 import { ConfirmDialog } from '@/components/Dialog'
 import { PageNav, Pager } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
-import { Badge, Button, Card, EmptyState, PageHeader, SectionTitle, Skeleton } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, SectionTitle, Skeleton } from '@/components/ui'
 import { useMemberPhotoUrl } from '@/features/members/useMemberPhotoUrl'
 import { MembershipPanel } from '@/features/memberships/MembershipPanel'
 import { ApiError, api } from '@/lib/api'
@@ -79,13 +79,23 @@ export function MemberDetailPage() {
   const m = member.data
   const syncSummary = summarizeSync(sync.data?.devices)
 
+  const photoCaption = sync.data?.face
+    ? sync.data.face.source === 'DEVICE'
+      ? `Photo taken on ${sync.data.face.sourceDeviceName ?? 'a device'} · ${formatDateTime(sync.data.face.changedAt)}`
+      : `Photo added in the app · ${formatDateTime(sync.data.face.changedAt)}`
+    : 'No photo yet. Add one with Edit, or enrol the face on any device.'
+
   return (
     <div className="space-y-8">
-      <PageHeader
-        title={m.fullName}
-        description={`${m.serialNumber ? `Serial ${m.serialNumber} · ` : ''}${m.memberCode} · joined ${formatDate(m.joinedOn)}`}
-        actions={
-          <div className="flex gap-2">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-[1.75rem] font-bold leading-tight tracking-tight text-ink sm:text-[1.875rem]">
+            {m.fullName}
+          </h1>
+          <p className="mt-1.5 text-sm text-muted">Joined {formatDate(m.joinedOn)}</p>
+        </div>
+        <div className="flex shrink-0 flex-col items-stretch gap-3 sm:items-end">
+          <div className="flex flex-wrap gap-2 sm:justify-end">
             {has('MEMBER_UPDATE') ? (
               <Link to={`/app/members/${m.id}/edit`}>
                 <Button variant="outline">Edit</Button>
@@ -100,8 +110,17 @@ export function MemberDetailPage() {
               <Button onClick={() => setConfirmReactivate(true)}>Reactivate</Button>
             ) : null}
           </div>
-        }
-      />
+          <div className="text-right">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Serial</div>
+            <div className="font-mono text-4xl font-bold tracking-tight text-ink sm:text-5xl">
+              {m.serialNumber ?? '—'}
+            </div>
+            <div className="mt-1 font-mono text-lg font-semibold tracking-wide text-muted sm:text-xl">
+              {m.memberCode}
+            </div>
+          </div>
+        </div>
+      </div>
       {photoError ? (
         <p className="rounded-lg border border-line px-4 py-3 text-sm text-danger">
           Member saved, but the photo was not: {photoError}. Open Edit to try another photo.
@@ -124,48 +143,54 @@ export function MemberDetailPage() {
           ) : null}
         </p>
       ) : null}
-      <div className="flex items-center gap-4">
-        <div className="flex h-48 w-48 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-raised text-xs text-muted">
-          {photo.url ? <img src={photo.url} alt={m.fullName} className="h-full w-full object-cover" /> : 'No photo'}
-        </div>
-        <div className="text-sm text-muted">
-          {sync.data?.face
-            ? sync.data.face.source === 'DEVICE'
-              ? `Photo taken on ${sync.data.face.sourceDeviceName ?? 'a device'} · ${formatDateTime(sync.data.face.changedAt)}`
-              : `Photo added in the app · ${formatDateTime(sync.data.face.changedAt)}`
-            : 'No photo yet. Add one with Edit, or enrol the face on any device.'}
-        </div>
-      </div>
-      <div className="flex flex-wrap items-end gap-6">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Membership status</div>
-          <div className="mt-1">
-            <Badge tone={statusTone(m.coverageStatus)}>{membershipStatusLabel(m.coverageStatus)}</Badge>
-          </div>
-        </div>
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Account status</div>
-          <div className="mt-1">
-            <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
-          </div>
-        </div>
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Terminal Level</div>
-          <div className="mt-1">
-            <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>
-              {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'Standard User'}
-            </Badge>
-          </div>
-        </div>
-        {access.data ? (
-          <Badge tone={access.data.allowed ? 'ok' : 'danger'}>
-            {access.data.allowed ? 'Access allowed' : `Denied: ${access.data.reason}`}
-          </Badge>
-        ) : null}
-      </div>
 
-      <section>
-        <SectionTitle title="Overview" />
+      <div className="grid gap-6 lg:grid-cols-[12rem_minmax(10rem,14rem)_minmax(0,1fr)] lg:items-start">
+        <div className="space-y-2">
+          <div className="flex aspect-square w-full max-w-[12rem] items-center justify-center overflow-hidden rounded-lg border border-line bg-raised text-xs text-muted">
+            {photo.url ? (
+              <img src={photo.url} alt={m.fullName} className="h-full w-full object-cover" />
+            ) : (
+              'No photo'
+            )}
+          </div>
+          <p className="text-xs leading-relaxed text-muted">{photoCaption}</p>
+        </div>
+
+        <div className="space-y-4 text-sm">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+              Membership status
+            </div>
+            <div className="mt-1">
+              <Badge tone={statusTone(m.coverageStatus)}>{membershipStatusLabel(m.coverageStatus)}</Badge>
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Account status</div>
+            <div className="mt-1">
+              <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Terminal Level</div>
+            <div className="mt-1">
+              <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>
+                {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'Standard User'}
+              </Badge>
+            </div>
+          </div>
+          {access.data ? (
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Access</div>
+              <div className="mt-1">
+                <Badge tone={access.data.allowed ? 'ok' : 'danger'}>
+                  {access.data.allowed ? 'Access allowed' : `Denied: ${access.data.reason}`}
+                </Badge>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
         <Card className="grid gap-4 text-sm sm:grid-cols-2">
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Email</div>
@@ -179,16 +204,8 @@ export function MemberDetailPage() {
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Gender</div>
             <div className="mt-1">{m.gender}</div>
           </div>
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Terminal User Level</div>
-            <div className="mt-1 font-medium">
-              {m.deviceAuthority === 'ADMIN' ? 'Admin (Staff / Owner)' : 'Standard User (Member)'}
-            </div>
-          </div>
           <div className="sm:col-span-2">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
-              Readers
-            </div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Readers</div>
             <div className="mt-1 space-y-2 text-sm">
               {sync.isLoading ? (
                 <Skeleton className="h-10 w-64" />
@@ -217,7 +234,7 @@ export function MemberDetailPage() {
             <span className="text-muted">{m.notes || '—'}</span>
           </div>
         </Card>
-      </section>
+      </div>
 
       {has('MEMBERSHIP_VIEW') ? (
         <section>

@@ -199,7 +199,7 @@ test('a member page shows each reader as applied, not applied, or held, from tha
   await expect(page.getByText('Revision 1; not yet read back on the reader')).toBeVisible()
   await expect(page.getByText('Not applied after 6 attempts: create failed. The gateway keeps retrying.')).toBeVisible()
   await expect(page.getByText('Needs review')).toBeVisible()
-  await expect(page.getByText(/Decide in Reviews before it is written/)).toBeVisible()
+  await expect(page.getByText(/Paused: this reader shows someone else at this id/)).toBeVisible()
   await expect(page.getByText(/reader applied/)).toHaveCount(0)
   await expect(page.getByText('Monthly')).toBeVisible()
 })

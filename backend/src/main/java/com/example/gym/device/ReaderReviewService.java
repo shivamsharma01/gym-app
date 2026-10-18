@@ -56,6 +56,23 @@ public class ReaderReviewService {
         this.mappings = mappings;
     }
 
+    /**
+     * Staff republished this member on the reader (edit, retry, or access publish). An open undecided
+     * conflict is closed as accept-server without waiting for another decision.
+     */
+    @Transactional
+    public void closeUndecidedConflict(Device device, Long memberId, String chosenState) {
+        for (DeviceReviewItem item : reviews.findByDeviceIdAndMemberIdAndKindAndResolvedFalse(
+                device.getId(), memberId, DeviceReviewItem.CONFLICT)) {
+            if (item.getDecision() != null) {
+                continue;
+            }
+            String prior = item.isReaderAbsent() ? "absent" : shown(item.getReaderName(), item.getReaderNameEx());
+            item.decideWithoutWrite(ReviewDecisions.ACCEPT_SERVER, "staff-publish", prior, chosenState);
+            reviews.save(item);
+        }
+    }
+
     @Transactional
     public void record(Device device, JsonNode payload, String deviceUserId) {
         DesiredMemberProjection desired = desiredMembers

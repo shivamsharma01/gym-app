@@ -284,6 +284,7 @@ public class DesiredProjectionService {
             row.setHeld(false);
             row.setExpected(null);
             projections.save(row);
+            reviews.closeUndecidedConflict(device, member.getId(), fullName);
             notifyAfterCommit(device, revision);
             FlowLog.info("device", "desired member reader={} revision={} user={} status={} authority={}",
                     device.getPublicId(), revision, mapping.getDeviceUserId(), status, desiredAuthority);
@@ -379,6 +380,10 @@ public class DesiredProjectionService {
         long revision = cursor.bumpDesired();
         row.setRevision(revision);
         projections.save(row);
+        // Review decisions pass seen and close the item themselves; retry/edit-without-review closes here.
+        if (seen == null) {
+            reviews.closeUndecidedConflict(device, member.getId(), member.getFullName());
+        }
         notifyAfterCommit(device, revision);
         FlowLog.info("device", "desired member reader={} revision={} user={}",
                 device.getPublicId(), revision, mapping.getDeviceUserId());

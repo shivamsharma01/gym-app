@@ -18,8 +18,14 @@ test.describe('Staff login page', () => {
     await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible()
   })
 
-  test('shows an alert on bad credentials when API is available', async ({ page }) => {
-    test.skip(process.env.E2E_API !== '1', 'Set E2E_API=1 with a running backend to enable')
+  test('shows an alert on bad credentials', async ({ page }) => {
+    await page.route('**/api/v1/auth/login', async (route) => {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'Invalid username or password.' }),
+      })
+    })
     await page.goto('/app/login')
     await page.getByLabel('Username or email').fill('nobody')
     await page.getByLabel('Password').fill('wrong-password')

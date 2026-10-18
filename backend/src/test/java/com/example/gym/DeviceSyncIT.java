@@ -298,15 +298,16 @@ class DeviceSyncIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void newMemberGetsSuggestedSerialAndDuplicateSerialIsAllowed() throws Exception {
-        // Asha holds device user id 1; next-serial skips it as a suggestion only.
+    void newMemberLeavesSerialEmptyAndDuplicateSerialIsAllowed() throws Exception {
+        // Asha holds device user id 1; next-serial skips it as a suggestion only (UI may show it).
         mockMvc.perform(get("/api/v1/members/next-serial").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.serialNumber").value("2"));
 
+        // Create without serial: stays null until device-1 ACK fills it.
         String binaId = readJson(createMemberWithFace(token, "{\"firstName\":\"Bina\"}")
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.serialNumber").value("2"))
+                .andExpect(jsonPath("$.serialNumber").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.memberCode").value(org.hamcrest.Matchers.startsWith("MBR-")))
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
 

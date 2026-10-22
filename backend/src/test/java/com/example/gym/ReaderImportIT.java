@@ -123,11 +123,10 @@ class ReaderImportIT extends AbstractReaderIT {
                 .extracting(mapping -> mapping.getDeviceUserId())
                 .containsExactlyInAnyOrder("11", "7");
         DesiredMemberProjection onExit = projection(exitId, asha);
-        DesiredMemberProjection onEntrance = projection(entranceId, asha);
         assertThat(onExit.getDeviceUserId()).isEqualTo("7");
-        assertThat(onExit.getValidFrom()).as("the window the member already holds, not today")
-                .isEqualTo(onEntrance.getValidFrom());
-        assertThat(onExit.getValidTo()).isEqualTo(onEntrance.getValidTo());
+        assertThat(onExit.getValidFrom()).as("link keeps the exit reader's window, not the entrance import")
+                .isEqualTo("2026-02-01T00:00:00+05:30");
+        assertThat(onExit.getValidTo()).isEqualTo("2026-12-31T23:59:59+05:30");
         assertThat(onExit.getUserStatus()).isZero();
         ackEverything(exitId);
         assertThat(enrollment(exitId, "7").isResolved()).isTrue();

@@ -294,7 +294,7 @@ test('one member items on two readers are grouped under the member and decided p
 
   const unknown = page.getByRole('rowgroup', { name: 'People the server does not know' })
   await expect(unknown.getByText('May already be Asha Shah; link instead of creating')).toBeVisible()
-  await expect(page.getByLabel('Member id for 9')).toHaveValue('member-asha')
+  await expect(page.getByLabel('Server member UUID for 9')).toHaveValue('member-asha')
 })
 
 test('the bootstrap suggestion fills in the member to link', async ({ page }) => {
@@ -318,8 +318,8 @@ test('the bootstrap suggestion fills in the member to link', async ({ page }) =>
   )
 
   await page.goto('/app/review')
-  await expect(page.getByLabel('Member id for 7')).toHaveValue('')
+  await expect(page.getByLabel('Server member UUID for 7')).toHaveValue('')
   await page.getByRole('button', { name: 'Bootstrap report' }).click()
-  await expect(page.getByLabel('Member id for 7')).toHaveValue('member-asha')
+  await expect(page.getByLabel('Server member UUID for 7')).toHaveValue('member-asha')
   await expect(page.getByRole('button', { name: 'Link', exact: true })).toBeEnabled()
 })

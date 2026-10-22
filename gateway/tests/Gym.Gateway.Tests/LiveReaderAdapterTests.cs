@@ -182,6 +182,44 @@ public class LiveReaderAdapterTests : IDisposable
     }
 
     [Fact]
+    public void Attendance_search_bounds_follow_the_reader_clock()
+    {
+        var from = new DateTimeOffset(2026, 10, 7, 7, 31, 54, TimeSpan.Zero);
+        var to = new DateTimeOffset(2026, 10, 7, 7, 35, 25, TimeSpan.Zero);
+
+        var window = TrueFaceDeviceAdapter.AttendanceSearchWindow(from, to);
+
+        Assert.Equal(2026u, window.Start.dwYear);
+        Assert.Equal(10u, window.Start.dwMonth);
+        Assert.Equal(7u, window.Start.dwDay);
+        Assert.Equal(13u, window.Start.dwHour);
+        Assert.Equal(1u, window.Start.dwMinute);
+        Assert.Equal(54u, window.Start.dwSecond);
+        Assert.Equal(13u, window.End.dwHour);
+        Assert.Equal(5u, window.End.dwMinute);
+        Assert.Equal(25u, window.End.dwSecond);
+    }
+
+    [Fact]
+    public void A_punch_a_few_seconds_ahead_of_the_gateway_is_kept_and_an_older_one_is_not()
+    {
+        var now = new DateTimeOffset(2026, 10, 22, 15, 10, 0, TimeSpan.Zero);
+        var device = new StructReader
+        {
+            Attendance = () =>
+            [
+                new DeviceAttendanceRecord("now", now.AddSeconds(20), "FACE", true, 1),
+                new DeviceAttendanceRecord("earlier", now.AddHours(-6), "FACE", true, 2)
+            ]
+        };
+
+        var read = new DeviceReaderAdapter(device).QueryAttendance(now.AddMinutes(-2), now);
+
+        Assert.True(read.Ok);
+        Assert.Equal(["now"], read.Punches.Select(p => p.DeviceUserId));
+    }
+
+    [Fact]
     public void An_attendance_search_that_finds_nothing_is_an_empty_window()
     {
         var records = TrueFaceDeviceAdapter.ReadAttendance(new ScriptedSearch(true, (0, [])), 20, out var skipped);

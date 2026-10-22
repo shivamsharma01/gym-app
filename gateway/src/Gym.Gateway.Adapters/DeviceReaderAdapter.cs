@@ -270,8 +270,15 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
     }
 
     /// <summary>
+    /// How far past the gateway clock a punch may be and still be kept. The reader clock leads the
+    /// gateway by a few seconds; without this, that punch is read and then dropped.
+    /// </summary>
+    internal static readonly TimeSpan AttendanceClockSkew = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// A time-window record query. A failed search or a failed page is a failed read (nothing posted).
     /// A single unreadable punch time is omitted; valid punches in the window still return.
+    /// The device is asked through the end of the window plus <see cref="AttendanceClockSkew"/>.
     /// </summary>
     public ReaderPunchResult QueryAttendance(DateTimeOffset fromUtc, DateTimeOffset toUtc)
     {
@@ -280,10 +287,11 @@ public sealed class DeviceReaderAdapter : IReaderAdapter
             return ReaderPunchResult.Failed(error);
         }
 
+        var queryTo = toUtc + AttendanceClockSkew;
         try
         {
-            var punches = _device.FetchAttendance(fromUtc, toUtc)
-                .Where(record => record.OccurredAt >= fromUtc && record.OccurredAt <= toUtc)
+            var punches = _device.FetchAttendance(fromUtc, queryTo)
+                .Where(record => record.OccurredAt >= fromUtc && record.OccurredAt <= queryTo)
                 .Select(record => new ReaderPunch(
                     record.DeviceUserId,
                     record.OccurredAt.ToUniversalTime(),

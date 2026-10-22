@@ -504,7 +504,7 @@ public sealed class GatewayWorker : BackgroundService
     /// <summary>Reads each reader's attendance window on its own schedule, beside the reader worker.</summary>
     private async Task AttendanceLoopAsync(CancellationToken cancellationToken)
     {
-        var interval = TimeSpan.FromSeconds(Math.Max(5, _options.AttendancePollSeconds));
+        var interval = TimeSpan.FromSeconds(Math.Clamp(_options.AttendancePollSeconds, 2, 60));
         while (!cancellationToken.IsCancellationRequested)
         {
             try

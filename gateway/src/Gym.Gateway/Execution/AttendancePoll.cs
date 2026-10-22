@@ -5,12 +5,15 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Gym.Gateway.Execution;
 
 /// <param name="Overlap">How far before the last stored punch the next window starts.</param>
-/// <param name="FirstLookback">How far back the first window of a reader with no stored punch reaches.</param>
+/// <param name="FirstLookback">
+/// How far back the first window of a reader with no stored punch reaches. Zero starts at now,
+/// so history already on the reader is left there.
+/// </param>
 public sealed record AttendancePollSettings(TimeSpan Overlap, TimeSpan FirstLookback)
 {
     public static AttendancePollSettings From(GatewayOptions options) => new(
         TimeSpan.FromSeconds(Math.Max(0, options.AttendanceOverlapSeconds)),
-        TimeSpan.FromHours(Math.Max(1, options.AttendanceFirstLookbackHours)));
+        TimeSpan.FromHours(Math.Max(0, options.AttendanceFirstLookbackHours)));
 }
 
 /// <param name="Read">Punches the reader returned for the window.</param>
@@ -21,11 +24,12 @@ public sealed record AttendancePollResult(
 
 /// <summary>
 /// Reads one time window of one reader's log and posts the punches the server has not confirmed.
-/// The window starts at the server's last stored punch time less a small overlap and ends now. A
-/// window with nothing new posts nothing. Punches are uploaded oldest first in batches; a failed batch
-/// stops the poll, so the server's cursor never passes a punch it has not stored. Only the query holds
-/// the reader's connection lock. The log is never cleared, and record numbers are not used to choose
-/// what to read. Member state is not touched.
+/// The window starts at the server's last stored punch time less a small overlap and ends now. A reader
+/// with no stored punch starts at now, less the overlap, and does not import older history. A window
+/// with nothing new posts nothing. Punches are uploaded oldest first in batches; a failed batch stops
+/// the poll, so the server's cursor never passes a punch it has not stored. Only the query holds the
+/// reader's connection lock. The log is never cleared, and record numbers are not used to choose what
+/// to read. Member state is not touched.
 /// </summary>
 public sealed class AttendancePoll
 {

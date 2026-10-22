@@ -45,14 +45,17 @@ public sealed class GatewayOptions
     /// </summary>
     public int RosterRefreshMinutes { get; set; } = 60;
 
-    /// <summary>How often each reader's attendance log is read, so admins see recent check-ins.</summary>
-    public int AttendancePollSeconds { get; set; } = 15;
+    /// <summary>How often each reader's attendance log is read. A punch is uploaded on the next pass.</summary>
+    public int AttendancePollSeconds { get; set; } = 5;
 
     /// <summary>How far before the last stored punch each attendance window starts.</summary>
     public int AttendanceOverlapSeconds { get; set; } = 120;
 
-    /// <summary>How far back the first window of a reader with no stored punch reaches.</summary>
-    public int AttendanceFirstLookbackHours { get; set; } = 24;
+    /// <summary>
+    /// How far back the first window of a reader with no stored punch reaches. Zero, the default,
+    /// starts at now so punches from before the gateway was installed stay on the reader.
+    /// </summary>
+    public int AttendanceFirstLookbackHours { get; set; }
 
     /// <summary>How often the gateway logs a status summary.</summary>
     public int StatusLogSeconds { get; set; } = 60;

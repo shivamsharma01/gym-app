@@ -2,7 +2,8 @@ namespace Gym.Gateway.Adapters;
 
 /// <summary>
 /// The reader clock measured on the gym readers: India Standard Time, UTC+05:30, no daylight saving.
-/// Validity fields are this wall clock. Punch timestamps are a separate UTC clock and are not converted here.
+/// Validity fields and the attendance search window are this wall clock. A stored punch's
+/// <c>stuTime</c> is that same instant in UTC, and is not converted here.
 /// </summary>
 public static class ReaderLocalClock
 {

@@ -1176,6 +1176,15 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     internal static NET_TIME DeviceClock(DateTimeOffset instant) =>
         NET_TIME.FromDateTime(ReaderLocalClock.Wall(instant));
 
+    /// <summary>
+    /// Bounds for an attendance search. The reader compares <c>stStartTime</c> and <c>stEndTime</c>
+    /// with its own clock, which is India local time. The punch it returns still carries <c>stuTime</c>
+    /// in UTC. Sending the UTC clock numbers asks for punches five and a half hours earlier and
+    /// leaves the person at the door out of the window.
+    /// </summary>
+    internal static (NET_TIME Start, NET_TIME End) AttendanceSearchWindow(DateTimeOffset fromUtc, DateTimeOffset toUtc) =>
+        (NET_TIME.FromDateTime(ReaderLocalClock.Wall(fromUtc)), NET_TIME.FromDateTime(ReaderLocalClock.Wall(toUtc)));
+
     /// <summary>The device compares against a time of day: the end date must stay valid until 23:59:59 reader-local.</summary>
     private static bool SameLocalDate(NET_TIME stored, DateTimeOffset desired)
     {
@@ -1426,14 +1435,19 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 dwSize = (uint)Marshal.SizeOf<NET_FIND_RECORD_ACCESSCTLCARDREC_CONDITION_EX>(),
                 bTimeEnable = fromUtc.HasValue || toUtc.HasValue
             };
-            if (fromUtc.HasValue)
+            if (fromUtc.HasValue && toUtc.HasValue)
             {
-                condition.stStartTime = NET_TIME.FromDateTime(fromUtc.Value.UtcDateTime);
+                var window = AttendanceSearchWindow(fromUtc.Value, toUtc.Value);
+                condition.stStartTime = window.Start;
+                condition.stEndTime = window.End;
             }
-
-            if (toUtc.HasValue)
+            else if (fromUtc.HasValue)
             {
-                condition.stEndTime = NET_TIME.FromDateTime(toUtc.Value.UtcDateTime);
+                condition.stStartTime = NET_TIME.FromDateTime(ReaderLocalClock.Wall(fromUtc.Value));
+            }
+            else if (toUtc.HasValue)
+            {
+                condition.stEndTime = NET_TIME.FromDateTime(ReaderLocalClock.Wall(toUtc.Value));
             }
 
             object boxed = condition;

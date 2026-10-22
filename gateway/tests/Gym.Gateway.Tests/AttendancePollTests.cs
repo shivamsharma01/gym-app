@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Gym.Gateway;
 using Gym.Gateway.Adapters;
 using Gym.Gateway.Execution;
 using Microsoft.Extensions.Logging;
@@ -61,6 +62,22 @@ public class AttendancePollTests
         var result = await Poll(new FakeReader(), new StoringServer()).PollOnceAsync(CancellationToken.None);
 
         Assert.Equal(Now.AddHours(-24).AddMinutes(-2), result.FromUtc);
+    }
+
+    [Fact]
+    public async Task A_reader_with_no_stored_punch_starts_at_now_when_history_is_not_requested()
+    {
+        var reader = new FakeReader();
+        var server = new StoringServer();
+        var poll = new AttendancePoll(
+            "reader-1", reader, server, AttendancePollSettings.From(new GatewayOptions()), clock: () => Now);
+
+        var result = await poll.PollOnceAsync(CancellationToken.None);
+
+        Assert.Equal(TimeSpan.Zero, AttendancePollSettings.From(new GatewayOptions()).FirstLookback);
+        Assert.Equal(Now.AddSeconds(-new GatewayOptions().AttendanceOverlapSeconds), result.FromUtc);
+        Assert.Equal(Now, result.ToUtc);
+        Assert.Empty(server.Posts);
     }
 
     [Fact]

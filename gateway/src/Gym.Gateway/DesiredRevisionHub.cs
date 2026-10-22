@@ -105,9 +105,16 @@ public sealed class DesiredRevisionHub
             {
                 throw;
             }
+            catch (Exception ex) when (IsTransientBackend(ex))
+            {
+                _log.LogWarning(
+                    "Reader {Reader}: observation upload timed out or was canceled; will retry on the next scan ({Detail})",
+                    _labels.Of(deviceId),
+                    ex.GetType().Name);
+            }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Reader {Reader} observation was not uploaded", _labels.Of(deviceId));
+                _log.LogWarning(ex, "Reader {Reader}: observation was not uploaded", _labels.Of(deviceId));
             }
         }
     }
@@ -125,12 +132,23 @@ public sealed class DesiredRevisionHub
             {
                 throw;
             }
+            catch (Exception ex) when (IsTransientBackend(ex))
+            {
+                _log.LogWarning(
+                    "Reader {Reader}: desired retry timed out or was canceled; will retry ({Detail})",
+                    _labels.Of(deviceId),
+                    ex.GetType().Name);
+            }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Reader {Reader} reconnect did not apply desired state", _labels.Of(deviceId));
+                _log.LogWarning(ex, "Reader {Reader}: reconnect did not apply desired state", _labels.Of(deviceId));
             }
         }
     }
+
+    private static bool IsTransientBackend(Exception ex) =>
+        ex is TaskCanceledException or TimeoutException or OperationCanceledException
+        || ex.InnerException is TaskCanceledException or TimeoutException;
 
     /// <summary>One reader, as after a reconnect. Nothing when it has no worker.</summary>
     public Task ReconnectAsync(string deviceId, CancellationToken cancellationToken) =>

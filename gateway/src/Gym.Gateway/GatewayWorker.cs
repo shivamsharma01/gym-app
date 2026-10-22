@@ -375,7 +375,7 @@ public sealed class GatewayWorker : BackgroundService
             var reader = new LockedReaderAdapter(deviceId, opened, _locks);
             _attendancePolls.Add(new AttendancePoll(
                 deviceId, reader, _attendance, AttendancePollSettings.From(_options),
-                _logFactory.CreateLogger<AttendancePoll>()));
+                _logFactory.CreateLogger<AttendancePoll>(), readerLabel: readerLabel));
             var journal = Path.Combine(_readerJournalDirectory, JournalFile(deviceId));
             var worker = new ReaderWorker(deviceId, reader, journal, online: () => !KnownOffline(deviceId));
             _readerWorkers.Add(worker);
@@ -702,9 +702,11 @@ public sealed class GatewayWorker : BackgroundService
         var link = _link.WebSocketLive ? "connected (live)" : "not on live connection (polling over REST)";
         var received = Interlocked.Read(ref _commandsReceived);
         var last = _lastCommandAt;
+        // Desired revisions are pulled over REST / DESIRED_REVISION notices; "commands" are rare
+        // staff pushes. Saying "no commands since start" every minute looked like a fault.
         return received == 0
-            ? link + ", no commands received from the server since start"
-            : $"{link}, {received} command(s) received from the server since start, last {(long)(DateTimeOffset.UtcNow - last).TotalSeconds} s ago";
+            ? link + ", waiting for staff commands (desired state uses pull)"
+            : $"{link}, {received} staff command(s) since start, last {(long)(DateTimeOffset.UtcNow - last).TotalSeconds} s ago";
     }
 
     private Task AcceptCommand(GatewayEnvelope command)

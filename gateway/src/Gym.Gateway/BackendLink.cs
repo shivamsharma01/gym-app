@@ -163,6 +163,10 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     /// </summary>
     public async Task ReplayPendingAsync(CancellationToken cancellationToken)
     {
+        var pending = 0;
+        var failed = 0;
+        Exception? firstFailure = null;
+        string? firstMessageId = null;
         foreach (var envelope in _outbox.LoadPending())
         {
             if (!_outbox.IsPending(envelope.MessageId))
@@ -170,14 +174,33 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
                 continue;
             }
 
+            pending++;
             try
             {
                 await DeliverAsync(envelope, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Failed to replay outbox message {MessageId}", envelope.MessageId);
+                failed++;
+                firstFailure ??= ex;
+                firstMessageId ??= envelope.MessageId;
+                // Same broken socket fails every remaining row; stop and reconnect rather than
+                // dumping hundreds of identical stack traces.
+                if (ex is WebSocketException or IOException or ObjectDisposedException)
+                {
+                    break;
+                }
             }
+        }
+
+        if (failed > 0)
+        {
+            _log.LogWarning(
+                firstFailure,
+                "Outbox replay failed for {Failed} of {Pending} pending message(s); first messageId={MessageId}. Remains queued until the link is healthy",
+                failed,
+                pending,
+                firstMessageId);
         }
     }
 

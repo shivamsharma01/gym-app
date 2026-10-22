@@ -171,17 +171,25 @@ class StaffReviewDecisionIT extends AbstractIntegrationTest {
         long sideRevisionBefore = desiredMemberProjectionRepository
                 .findByDeviceIdAndMemberId(side.getId(), member.getId()).orElseThrow().getRevision();
         String deviceUserId = mapping(memberId).getDeviceUserId();
+        DesiredMemberProjection flaggedBefore = projection(memberId);
+        String newFrom = "2026-10-23T00:00:00.0000000+05:30";
+        String newTo = "2026-11-20T23:59:59.0000000+05:30";
 
-        postReaderEdit(deviceUserId, "Left Door");
+        postReaderEdit(deviceUserId, "Left Door", newFrom, newTo, flaggedBefore.getFaceSha256());
         DeviceReviewItem opened = deviceReviewItemRepository.findByDeviceIdAndDeviceUserId(flagged, deviceUserId)
                 .orElseThrow();
         decide(opened.getPublicId(), "accept-reader");
 
         assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("Left Door");
         assertThat(projection(memberId).getReaderName()).isEqualTo("Left Door");
+        assertThat(projection(memberId).getValidFrom()).isEqualTo("2026-10-23T00:00:00+05:30");
+        assertThat(projection(memberId).getValidTo()).isEqualTo("2026-11-20T23:59:59+05:30");
         DesiredMemberProjection onSide = desiredMemberProjectionRepository
                 .findByDeviceIdAndMemberId(side.getId(), member.getId()).orElseThrow();
         assertThat(onSide.getReaderName()).isEqualTo("Left Door");
+        assertThat(onSide.getValidFrom()).as("Keep reader dates fan out to every mapped reader")
+                .isEqualTo("2026-10-23T00:00:00+05:30");
+        assertThat(onSide.getValidTo()).isEqualTo("2026-11-20T23:59:59+05:30");
         assertThat(onSide.getRevision()).isGreaterThan(sideRevisionBefore);
     }
 
@@ -694,9 +702,18 @@ class StaffReviewDecisionIT extends AbstractIntegrationTest {
     }
 
     private void postReaderEdit(String deviceUserId, String name) throws Exception {
+        postReaderEdit(deviceUserId, name, null, null, null);
+    }
+
+    private void postReaderEdit(String deviceUserId, String name, String validFrom, String validTo, String faceSha256)
+            throws Exception {
         String payload = """
-                {"deviceUserId":"%s","name":"%s","authority":"Customer","isNew":false,"deleted":false}
-                """.formatted(deviceUserId, name);
+                {"deviceUserId":"%s","name":"%s","authority":"Customer","validFrom":%s,"validTo":%s,\
+                "faceSha256":%s,"isNew":false,"deleted":false}
+                """.formatted(deviceUserId, name,
+                validFrom == null ? "null" : "\"" + validFrom + "\"",
+                validTo == null ? "null" : "\"" + validTo + "\"",
+                faceSha256 == null ? "null" : "\"" + faceSha256 + "\"");
         postMessage(payload);
     }
 

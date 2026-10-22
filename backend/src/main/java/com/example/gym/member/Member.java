@@ -112,6 +112,12 @@ public class Member extends TenantAwareEntity {
         this.adoptedValidTo = validTo;
     }
 
+    /** Membership refresh takes over dates; clear the last Keep-reader / import window. */
+    public void clearAdoptedReaderWindow() {
+        this.adoptedValidFrom = null;
+        this.adoptedValidTo = null;
+    }
+
     public LocalDate getDeviceValidFrom() {
         return deviceValidFrom;
     }

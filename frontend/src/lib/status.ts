@@ -29,6 +29,9 @@ export function accountStatusLabel(value?: string | null): string {
 export function accessReasonLabel(allowed: boolean, reason?: string | null): string {
   if (allowed) {
     if (reason === 'READER_VALIDITY') return 'Allowed (reader validity)'
+    if (reason === 'READER_VALIDITY_NO_ACTIVE_PLAN') {
+      return 'Allowed (reader validity) — no active plan'
+    }
     return 'Access allowed'
   }
   switch (reason) {

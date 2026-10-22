@@ -149,6 +149,7 @@ public class DeviceAuthorizationService {
     }
 
     private void send(Member member, Optional<AccessWindow> window) {
+        member.clearAdoptedReaderWindow();
         member.setDeviceWindow(
                 window.map(AccessWindow::validFrom).orElse(null),
                 window.map(AccessWindow::validTo).orElse(null),

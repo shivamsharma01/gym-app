@@ -257,8 +257,20 @@ public class DesiredProjectionService {
             ReaderRevision cursor = held.cursor();
             DesiredMemberProjection row = held.row();
             MemberDeviceMapping mapping = held.mapping();
-            String from = window.map(access -> at(access.validFrom(), LocalTime.MIN)).orElse(row.getValidFrom());
-            String to = window.map(access -> at(access.validTo(), LocalTime.of(23, 59, 59))).orElse(row.getValidTo());
+            // Keep-reader / import adopt sets adoptedValid*; prefer that over each row's old dates
+            // (and over a stale membership window) so other readers get the approved validity.
+            String from;
+            String to;
+            if (member.getAdoptedValidFrom() != null && member.getAdoptedValidTo() != null) {
+                from = member.getAdoptedValidFrom();
+                to = member.getAdoptedValidTo();
+            } else if (window.isPresent()) {
+                from = at(window.get().validFrom(), LocalTime.MIN);
+                to = at(window.get().validTo(), LocalTime.of(23, 59, 59));
+            } else {
+                from = row.getValidFrom();
+                to = row.getValidTo();
+            }
             // Null-safe: empty membership window or a row missing authority/dates must not 500.
             boolean same = row.getUserStatus() == status
                     && Objects.equals(from, row.getValidFrom())
@@ -815,8 +827,18 @@ public class DesiredProjectionService {
         String fullName = member.getFullName();
         LocalDate today = LocalDate.now(READER_ZONE);
         var window = authorization.window(member, today);
-        String from = window.map(access -> at(access.validFrom(), LocalTime.MIN)).orElse(row.getValidFrom());
-        String to = window.map(access -> at(access.validTo(), LocalTime.of(23, 59, 59))).orElse(row.getValidTo());
+        String from;
+        String to;
+        if (member.getAdoptedValidFrom() != null && member.getAdoptedValidTo() != null) {
+            from = member.getAdoptedValidFrom();
+            to = member.getAdoptedValidTo();
+        } else if (window.isPresent()) {
+            from = at(window.get().validFrom(), LocalTime.MIN);
+            to = at(window.get().validTo(), LocalTime.of(23, 59, 59));
+        } else {
+            from = row.getValidFrom();
+            to = row.getValidTo();
+        }
         row.setPresentOnReader(true);
         row.setDeviceUserId(deviceUserId);
         row.setReaderName(szName(fullName));
@@ -863,7 +885,7 @@ public class DesiredProjectionService {
                       Member member, MemberFace face) {
         LocalDate today = LocalDate.now(READER_ZONE);
         var window = authorization.window(member, today);
-        boolean adopted = window.isEmpty() && member.getAdoptedValidFrom() != null && member.getAdoptedValidTo() != null;
+        boolean adopted = member.getAdoptedValidFrom() != null && member.getAdoptedValidTo() != null;
         String fullName = member.getFullName();
         row.setRevision(revision);
         row.setDeviceUserId(deviceUserId);

@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { ArrowLeft } from 'lucide-react'
 import { Link, NavLink, Navigate, useNavigate, useParams } from 'react-router'
+import { BackLink } from '@/components/BackLink'
 import { Badge, Button, Card, Input, Label, PageHeader, Select, Skeleton, Table, TableShell, Textarea, THead, Th, Td, Tr } from '@/components/ui'
 import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
@@ -29,13 +29,7 @@ export function DeviceDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Link
-        to="/app/devices"
-        className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-ink"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back to devices
-      </Link>
+      <BackLink to="/app/devices" label="Back to devices" />
       <PageHeader
         title={d.name}
         description={`${d.role} · ${d.host ?? 'no host'} · ${d.model ?? 'unknown model'}`}

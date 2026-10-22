@@ -128,26 +128,13 @@ public class ReaderReviewService {
     }
 
     /**
-     * An observation of a member's id shows someone else: the shown name and the photo both differ
-     * from what this reader last verified there, and from the desired record. The member is
-     * suspended on this reader and the id released. False when that is not shown.
+     * Formerly auto-suspended when name and photo both differed. Device edits often change every
+     * field including a rehashed face; that must stay a CONFLICT for staff. Always returns false;
+     * {@link #suspend} remains for legacy open SUSPENDED items and staff restore/remove paths.
      */
     @Transactional
     public boolean releaseIfReplaced(Device device, String deviceUserId, JsonNode payload) {
-        DesiredMemberProjection desired = desiredMembers
-                .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                .orElse(null);
-        if (desired == null || desired.getMemberId() == null) {
-            return false;
-        }
-        DeviceReaderBaseline baseline = baselines
-                .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                .orElse(null);
-        if (baseline == null || !replaced(ExpectedOccupant.of(baseline), desired, payload)) {
-            return false;
-        }
-        suspend(device, desired, payload);
-        return true;
+        return false;
     }
 
     /** Someone other than {@code known} and other than the desired record. */
@@ -168,6 +155,7 @@ public class ReaderReviewService {
      * mapping, the desired row and the baseline for the id go, so the id is the reader's to review
      * as an enrollment and no later revision writes or removes it. The member's item on this
      * reader records what the reader showed. Nothing is written to the reader.
+     * Kept for legacy open SUSPENDED rows; new observations open CONFLICT instead.
      */
     @Transactional
     public void suspend(Device device, DesiredMemberProjection desired, JsonNode payload) {
@@ -183,14 +171,42 @@ public class ReaderReviewService {
         describe(item, desired, baseline, payload);
         item = reviews.save(item);
         rememberSnapshot(item, device, deviceUserId, payload);
+        dropMapping(device, memberId, deviceUserId, desired, baseline);
+        FlowLog.info("device", "member suspended reader={} user={}: the reader shows someone else",
+                device.getPublicId(), deviceUserId);
+    }
+
+    /**
+     * Staff chose Create as new on a CONFLICT: drop this member's mapping on the reader so the
+     * person at the id can become a new member. The review item stays open for the CREATE decision.
+     * Nothing is written to the reader.
+     */
+    @Transactional
+    public void releaseMappedMember(Device device, DeviceReviewItem item) {
+        Long memberId = item.getMemberId();
+        DesiredMemberProjection desired = desiredMembers
+                .findByDeviceIdAndMemberId(device.getId(), memberId)
+                .orElse(null);
+        if (desired == null) {
+            return;
+        }
+        String deviceUserId = desired.getDeviceUserId();
+        DeviceReaderBaseline baseline = baselines
+                .findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElse(null);
+        dropMapping(device, memberId, deviceUserId, desired, baseline);
+        FlowLog.info("device", "member released for create-as-new reader={} user={}",
+                device.getPublicId(), deviceUserId);
+    }
+
+    private void dropMapping(Device device, Long memberId, String deviceUserId,
+                             DesiredMemberProjection desired, DeviceReaderBaseline baseline) {
         mappings.findByDeviceIdAndMemberId(device.getId(), memberId).ifPresent(mappings::delete);
         if (baseline != null) {
             baselines.delete(baseline);
         }
         desiredMembers.delete(desired);
         desiredMembers.flush();
-        FlowLog.info("device", "member suspended reader={} user={}: the reader shows someone else",
-                device.getPublicId(), deviceUserId);
     }
 
     /** Taken off this reader because the reader showed someone else; staff have not restored them. */
@@ -397,7 +413,8 @@ public class ReaderReviewService {
         baseline.setValidFrom(desired.getValidFrom());
         baseline.setValidTo(desired.getValidTo());
         baseline.setAuthority(desired.getAuthority());
-        baseline.setFaceSha256(serverFace(desired));
+        // Last verified photo is what GetFace hashed on the device, not MemberFace content hash.
+        baseline.setFaceSha256(deviceFace(desired));
     }
 
     /** What one side holds for a reader user, in the form an observation is compared with. */
@@ -407,7 +424,7 @@ public class ReaderReviewService {
 
     private static Held held(DesiredMemberProjection desired) {
         return new Held(shown(desired.getReaderName(), desired.getReaderNameEx()), authority(desired.getAuthority()),
-                desired.getValidFrom(), desired.getValidTo(), desired.getUserStatus(), serverFace(desired));
+                desired.getValidFrom(), desired.getValidTo(), desired.getUserStatus(), deviceFace(desired));
     }
 
     private static Held held(DeviceReaderBaseline baseline) {
@@ -415,14 +432,31 @@ public class ReaderReviewService {
                 baseline.getValidFrom(), baseline.getValidTo(), baseline.getUserStatus(), baseline.getFaceSha256());
     }
 
+    /** Server MemberFace hash — what we push when writing the photo. */
     private static String serverFace(DesiredMemberProjection desired) {
         return desired.isFacePresent() ? desired.getFaceSha256() : null;
     }
 
     /**
+     * Hash of the photo bytes last seen on this reader (ACK / Keep reader). Prefer that for
+     * observation compares so TrueFace re-encode vs server JPEG does not open a false review.
+     * Falls back to the server face only before the first successful face read-back.
+     */
+    private static String deviceFace(DesiredMemberProjection desired) {
+        if (!desired.isFacePresent()) {
+            return null;
+        }
+        String observed = desired.getObservedFaceSha256();
+        if (observed != null && observed.length() == 64) {
+            return observed;
+        }
+        return desired.getFaceSha256();
+    }
+
+    /**
      * Name and authority always count. Validity, enabled or frozen, and the photo count only when
      * the observation includes them; validity only as a calendar day, so a clock suffix on the
-     * same day is not a difference.
+     * same day is not a difference. Photo is compared to the last device-observed hash.
      */
     private static boolean agrees(JsonNode payload, Held other) {
         Integer readerStatus = status(payload);
@@ -441,7 +475,7 @@ public class ReaderReviewService {
                 && sameDay(baseline.getValidFrom(), desired.getValidFrom())
                 && sameDay(baseline.getValidTo(), desired.getValidTo())
                 && baseline.getUserStatus() == desired.getUserStatus()
-                && sameFace(baseline.getFaceSha256(), serverFace(desired));
+                && sameFace(baseline.getFaceSha256(), deviceFace(desired));
     }
 
     private static boolean sameFace(String left, String right) {

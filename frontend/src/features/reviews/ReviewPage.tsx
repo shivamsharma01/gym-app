@@ -41,7 +41,7 @@ export function ReviewPage() {
     <div className="space-y-6">
       <PageHeader
         title="Review"
-        description="Compare server vs what the reader shows. Keep server or keep reader values syncs the approved record to every mapped reader. Remove affects only that reader."
+        description="Each row is one reader’s observation (name, dates, status, or photo). Photo compares to the last hash read from that device, so re-encodes after a server write do not open noise. Keep reader values adopts the edit; Create as new releases that id for a different person."
         actions={
           has('DEVICE_MANAGE') ? (
             <Button type="button" disabled={bootstrap.isPending} onClick={() => bootstrap.mutate()}>
@@ -50,6 +50,7 @@ export function ReviewPage() {
           ) : null
         }
       />
+      {decide.error ? <QueryError error={decide.error} /> : null}
       {report ? (
         <Card padded={false}>
           <TableShell>
@@ -106,9 +107,7 @@ export function ReviewPage() {
                   </Td>
                 </Tr>
                 {group.items.map((item) => {
-                  const suggestion =
-                    report?.rows.find((row) => row.deviceId === item.deviceId && row.deviceUserId === item.deviceUserId)
-                      ?.suggestionMemberId ?? item.possibleMemberId
+                  const suggestion = linkSuggestion(item, report?.rows, reviews.data ?? [])
                   const actions = decisionCell(item, has('REVIEW_DECIDE'), decide.isPending, suggestion, (path, body) =>
                     decide.mutate({ id: item.id, path, body }),
                   )
@@ -158,6 +157,28 @@ export function ReviewPage() {
 }
 
 type ReviewGroup = { key: string; title: string; items: ReviewItem[] }
+
+/** Prefer a real member UUID suggestion; never treat the reader device user id as a member id. */
+function linkSuggestion(
+  item: ReviewItem,
+  reportRows: BootstrapReport['rows'] | undefined,
+  openItems: ReviewItem[],
+): string | null {
+  const fromReport = reportRows?.find(
+    (row) => row.deviceId === item.deviceId && row.deviceUserId === item.deviceUserId,
+  )?.suggestionMemberId
+  const fromPossible = item.possibleMemberId
+  const fromSuspended = openItems.find(
+    (row) =>
+      row.kind === 'SUSPENDED' &&
+      row.deviceId === item.deviceId &&
+      row.deviceUserId === item.deviceUserId &&
+      row.memberId,
+  )?.memberId
+  const candidate = fromReport || fromPossible || fromSuspended || null
+  if (!candidate || candidate === item.deviceUserId) return null
+  return candidate
+}
 
 /** One section per member; each reader's item in it is still decided on its own. Unknown people come last. */
 function groupByMember(items: ReviewItem[]): ReviewGroup[] {
@@ -241,75 +262,117 @@ function RowActions({
   const [memberId, setMemberId] = useState(suggestion ?? '')
   if (item.kind === 'ENROLLMENT') {
     return (
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" size="sm" disabled={pending} onClick={() => onDecide('create')}>
-          Create member
-        </Button>
-        <Button type="button" size="sm" variant="danger" disabled={pending} onClick={() => onDecide('reject')}>
-          Reject
-        </Button>
-        <Input
-          aria-label={`Member id for ${item.deviceUserId}`}
-          value={memberId}
-          onChange={(event) => setMemberId(event.target.value)}
-          placeholder="Member id"
-          className="w-40"
-        />
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={pending || memberId.trim() === ''}
-          onClick={() => onDecide('link', { memberId: memberId.trim() })}
-        >
-          Link
-        </Button>
+      <div className="flex flex-col gap-2">
+        <p className="max-w-sm text-xs text-muted">
+          Link needs the server member UUID from the member page URL (e.g. /app/members/…), not reader id{' '}
+          {item.deviceUserId}. Link keeps the reader&apos;s name, dates, and photo on that member.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" disabled={pending} onClick={() => onDecide('create')}>
+            Create member
+          </Button>
+          <Button type="button" size="sm" variant="danger" disabled={pending} onClick={() => onDecide('reject')}>
+            Reject
+          </Button>
+          <Input
+            aria-label={`Server member UUID for ${item.deviceUserId}`}
+            value={memberId}
+            onChange={(event) => setMemberId(event.target.value)}
+            placeholder="Server member UUID"
+            className="w-56 font-mono text-xs"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={pending || memberId.trim() === '' || memberId.trim() === item.deviceUserId}
+            title={
+              memberId.trim() === item.deviceUserId
+                ? 'That is the reader id; paste the member UUID from the member page'
+                : undefined
+            }
+            onClick={() => onDecide('link', { memberId: memberId.trim() })}
+          >
+            Link
+          </Button>
+        </div>
       </div>
     )
   }
   if (item.kind === 'SUSPENDED') {
     return (
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" disabled={pending} onClick={() => onDecide('restore')}>
-          Restore under a new id
-        </Button>
-        <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => onDecide('remove')}>
-          Keep off this reader
-        </Button>
+      <div className="flex flex-col gap-2">
+        <p className="max-w-xs text-xs text-muted">
+          Name and photo both differ from what was last verified, so this looked like a different person. If it is
+          still {item.memberName || 'this member'}, adopt the reader values — do not create a new member.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={pending}
+            title="Keep this member; take name, dates, and photo from the reader at the same id"
+            onClick={() => onDecide('adopt-reader')}
+          >
+            Keep as this member (reader wins)
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => onDecide('restore')}>
+            Restore under a new id
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => onDecide('remove')}>
+            Keep off this reader
+          </Button>
+        </div>
       </div>
     )
   }
   return (
-    <div className="flex flex-wrap gap-2">
-      <Button
-        type="button"
-        size="sm"
-        disabled={pending || item.readerAbsent}
-        title="Approve the reader's values as the member record and sync them to all mapped readers"
-        onClick={() => onDecide('accept-reader')}
-      >
-        Keep reader values
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        disabled={pending}
-        title="Write the server record onto this reader and sync it to all mapped readers"
-        onClick={() => onDecide('accept-server')}
-      >
-        Overwrite with server
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="danger"
-        disabled={pending}
-        title="Remove this member from this reader only"
-        onClick={() => onDecide('remove')}
-      >
-        Remove from this reader
-      </Button>
+    <div className="flex flex-col gap-2">
+      <p className="max-w-sm text-xs text-muted">
+        Device edits stay on this member until you decide. Keep reader values if it is the same person; Create as
+        new if someone else is at this id.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          disabled={pending || item.readerAbsent}
+          title="Approve the reader's values as the member record and sync them to all mapped readers"
+          onClick={() => onDecide('accept-reader')}
+        >
+          Keep reader values
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pending}
+          title="Write the server record onto this reader and sync it to all mapped readers"
+          onClick={() => onDecide('accept-server')}
+        >
+          Overwrite with server
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pending || item.readerAbsent}
+          title="Release this member from the id and create a new member from what the reader shows"
+          onClick={() => onDecide('create-as-new')}
+        >
+          Create as new
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="danger"
+          disabled={pending}
+          title="Remove this member from this reader only"
+          onClick={() => onDecide('remove')}
+        >
+          Remove from this reader
+        </Button>
+      </div>
     </div>
   )
 }

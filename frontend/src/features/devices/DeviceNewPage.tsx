@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router'
 import { z } from 'zod'
+import { BackLink } from '@/components/BackLink'
 import { Button, FieldError, Input, Label, PageHeader, Select } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
@@ -57,6 +58,7 @@ export function DeviceNewPage() {
 
   return (
     <div className="max-w-xl">
+      <BackLink to="/app/devices" label="Back to devices" />
       <PageHeader title="Register device" description="Device passwords stay on the LAN gateway, not in this form." />
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => create.mutate(v))}>
         <div>

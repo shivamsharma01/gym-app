@@ -57,24 +57,21 @@ class ReaderOccupantIT extends AbstractReaderIT {
     }
 
     @Test
-    void aDifferentPersonObservedAtAMappedIdIsAnEnrollmentAndTheMemberIsSuspendedOnThatReaderOnly() throws Exception {
+    void aDifferentPersonObservedAtAMappedIdOpensAConflictNotASuspension() throws Exception {
         Member asha = onBoth("Asha", "OCC-2", "9102");
         DesiredMemberProjection row = projection(entrance, asha);
         String id = row.getDeviceUserId();
-        long desiredBefore = cursor(entrance);
 
         readerSays(entrance, person(id, "Bob Stranger", 0, FROM, TO, uploadFace(Color.GREEN)));
 
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(readerPk(entrance), id))
-                .as("Bob is someone the server does not know").get()
-                .extracting(PendingEnrollment::isResolved).isEqualTo(false);
-        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(readerPk(entrance), asha.getId())).isEmpty();
+                .as("mapped id stays a member conflict until staff create-as-new").isEmpty();
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(readerPk(entrance), asha.getId()))
+                .isPresent();
         assertThat(desiredMemberProjectionRepository.findByDeviceIdAndMemberId(readerPk(entrance), asha.getId()))
-                .as("no revision may write or remove the id for Asha").isEmpty();
-        assertThat(pull(entrance, 0).get("items")).isEmpty();
-        assertThat(cursor(entrance)).as("nothing was published for the id").isEqualTo(desiredBefore);
+                .isPresent();
         DeviceReviewItem item = onlyOpenItem();
-        assertThat(item.getKind()).isEqualTo(DeviceReviewItem.SUSPENDED);
+        assertThat(item.getKind()).isEqualTo(DeviceReviewItem.CONFLICT);
         assertThat(item.getMemberId()).isEqualTo(asha.getId());
         assertThat(item.getReaderName()).isEqualTo("Bob Stranger");
         assertThat(projection(exit, asha).isPresentOnReader()).as("the other reader keeps Asha").isTrue();
@@ -82,77 +79,58 @@ class ReaderOccupantIT extends AbstractReaderIT {
     }
 
     @Test
-    void aSuspendedMemberIsNotSeededBackOntoThatReader() throws Exception {
-        Member asha = onlyOn(entrance, "Asha", "Rao", "OCC-3", "9103");
+    void keepReaderValuesAdoptsAFullDeviceEditOntoTheSameMember() throws Exception {
+        Member asha = onlyOn(entrance, "Asha", "Rao", "OCC-ADOPT", "9115");
         ackEverything(entrance);
         String id = projection(entrance, asha).getDeviceUserId();
-        String bob = person(id, "Bob Stranger", 0, FROM, TO, uploadFace(Color.GREEN));
-        readerSays(entrance, bob);
+        readerSays(entrance, person(id, "Asha Desk", 0, FROM, TO, uploadFace(Color.GREEN)));
+        DeviceReviewItem conflict = onlyOpenItem();
+        assertThat(conflict.getKind()).isEqualTo(DeviceReviewItem.CONFLICT);
 
-        trustedRoster(entrance, bob);
-        postJson("/api/v1/devices/" + entrance + "/reconcile", "{}").andExpect(status().isOk());
-
-        assertThat(desiredMemberProjectionRepository.findByDeviceIdAndMemberId(readerPk(entrance), asha.getId()))
-                .isEmpty();
-    }
-
-    @Test
-    void restoringASuspendedMemberWritesThemUnderANewIdAndLeavesThePersonAtTheOldId() throws Exception {
-        Member asha = onlyOn(entrance, "Asha", "Rao", "OCC-4", "9104");
-        ackEverything(entrance);
-        String oldId = projection(entrance, asha).getDeviceUserId();
-        readerSays(entrance, person(oldId, "Bob Stranger", 0, FROM, TO, uploadFace(Color.GREEN)));
-        DeviceReviewItem item = onlyOpenItem();
-
-        JsonNode decided = readJson(postJson("/api/v1/reviews/" + item.getPublicId() + "/restore", "{}")
+        JsonNode decided = readJson(postJson("/api/v1/reviews/" + conflict.getPublicId() + "/accept-reader", "{}")
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
 
-        DesiredMemberProjection restored = projection(entrance, asha);
-        assertThat(restored.getDeviceUserId()).isNotEqualTo(oldId);
-        assertThat(decided.get("deviceUserId").asString()).isEqualTo(restored.getDeviceUserId());
-        JsonNode pulled = only(pull(entrance, 0));
-        assertThat(pulled.get("deviceUserId").asString()).isEqualTo(restored.getDeviceUserId());
-        assertThat(pulled.get("expected").get("present").asBoolean()).isFalse();
-        ackEverything(entrance);
-        assertThat(deviceReviewItemRepository.findByPublicId(item.getPublicId()).orElseThrow().isResolved()).isTrue();
-        assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(readerPk(entrance), oldId).orElseThrow()
-                .isResolved()).isFalse();
+        assertThat(decided.get("decision").asString()).isEqualTo("ACCEPT_READER");
+        assertThat(memberRepository.findById(asha.getId()).orElseThrow().getFullName()).isEqualTo("Asha Desk");
+        DesiredMemberProjection kept = projection(entrance, asha);
+        assertThat(kept.getDeviceUserId()).isEqualTo(id);
+        assertThat(kept.getReaderName()).isEqualTo("Asha Desk");
     }
 
     @Test
-    void linkingTheNewPersonToTheSuspendedMemberClosesTheSuspension() throws Exception {
-        Member asha = onlyOn(entrance, "Asha", "Rao", "OCC-14", "9114");
+    void createAsNewReleasesTheMappedIdForANewMember() throws Exception {
+        Member asha = onlyOn(entrance, "Asha", "Rao", "OCC-NEW", "9116");
         ackEverything(entrance);
         String id = projection(entrance, asha).getDeviceUserId();
-        readerSays(entrance, person(id, "Asha R", 0, FROM, TO, uploadFace(Color.GREEN)));
-        DeviceReviewItem suspended = onlyOpenItem();
-        PendingEnrollment enrollment = pendingEnrollmentRepository
-                .findByDeviceIdAndDeviceUserId(readerPk(entrance), id).orElseThrow();
+        readerSays(entrance, person(id, "Bob Stranger", 0, FROM, TO, uploadFace(Color.GREEN)));
+        DeviceReviewItem conflict = onlyOpenItem();
+        long membersBefore = memberRepository.count();
 
-        postJson("/api/v1/reviews/" + enrollment.getPublicId() + "/link",
-                "{\"memberId\":\"" + asha.getPublicId() + "\"}").andExpect(status().isOk());
+        JsonNode decided = readJson(postJson("/api/v1/reviews/" + conflict.getPublicId() + "/create-as-new", "{}")
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
 
-        DeviceReviewItem closed = deviceReviewItemRepository.findByPublicId(suspended.getPublicId()).orElseThrow();
-        assertThat(closed.isResolved()).isTrue();
-        assertThat(closed.getDecision()).isEqualTo("LINK");
-        assertThat(projection(entrance, asha).getDeviceUserId()).isEqualTo(id);
-        assertThat(only(pull(entrance, 0)).get("expected").get("name").asString()).isEqualTo("Asha R");
+        assertThat(decided.get("decision").asString()).isEqualTo("CREATE");
+        assertThat(memberRepository.count()).isEqualTo(membersBefore + 1);
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(readerPk(entrance), asha.getId()))
+                .isEmpty();
+        assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(readerPk(entrance), id)).isPresent();
+        assertThat(projection(entrance, memberRepository.findByPublicId(decided.get("chosenState").asString())
+                .orElseThrow()).getReaderName()).isEqualTo("Bob Stranger");
     }
 
     @Test
-    void removingASuspendedMemberClosesTheItemWithoutWritingTheReader() throws Exception {
+    void removingAConflictPublishesRemovalOfTheMappedMember() throws Exception {
         Member asha = onlyOn(entrance, "Asha", "Rao", "OCC-5", "9105");
         ackEverything(entrance);
         String id = projection(entrance, asha).getDeviceUserId();
         readerSays(entrance, person(id, "Bob Stranger", 0, FROM, TO, uploadFace(Color.GREEN)));
         DeviceReviewItem item = onlyOpenItem();
-        long desiredBefore = cursor(entrance);
 
         postJson("/api/v1/reviews/" + item.getPublicId() + "/remove", "{}").andExpect(status().isOk());
 
-        assertThat(deviceReviewItemRepository.findByPublicId(item.getPublicId()).orElseThrow().isResolved()).isTrue();
-        assertThat(cursor(entrance)).isEqualTo(desiredBefore);
-        assertThat(pull(entrance, 0).get("items")).isEmpty();
+        DeviceReviewItem decided = deviceReviewItemRepository.findByPublicId(item.getPublicId()).orElseThrow();
+        assertThat(decided.getDecision()).isEqualTo("REMOVE");
+        assertThat(only(pull(entrance, 0)).get("present").asBoolean()).isFalse();
     }
 
     @Test
@@ -198,7 +176,7 @@ class ReaderOccupantIT extends AbstractReaderIT {
     }
 
     @Test
-    void aReportedStrangerSuspendsTheMemberAndBecomesAnEnrollment() throws Exception {
+    void aReportedStrangerHoldsTheRevisionAsAConflict() throws Exception {
         Member asha = onlyOn(entrance, "Asha", "Rao", "OCC-8", "9108");
         ackEverything(entrance);
         putJson("/api/v1/members/" + asha.getPublicId(), "{\"firstName\":\"Asha\",\"lastName\":\"Menon\"}")
@@ -208,11 +186,10 @@ class ReaderOccupantIT extends AbstractReaderIT {
         report(entrance, row.getRevision(), row.getDeviceUserId(), true, "Bob Stranger", 0, row.getValidFrom(),
                 row.getValidTo(), uploadFace(Color.GREEN)).andExpect(status().isOk());
 
-        assertThat(desiredMemberProjectionRepository.findByDeviceIdAndMemberId(readerPk(entrance), asha.getId()))
-                .isEmpty();
+        assertThat(projection(entrance, asha).isHeld()).isTrue();
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(readerPk(entrance),
-                row.getDeviceUserId())).isPresent();
-        assertThat(onlyOpenItem().getKind()).isEqualTo(DeviceReviewItem.SUSPENDED);
+                row.getDeviceUserId())).isEmpty();
+        assertThat(onlyOpenItem().getKind()).isEqualTo(DeviceReviewItem.CONFLICT);
     }
 
     @Test

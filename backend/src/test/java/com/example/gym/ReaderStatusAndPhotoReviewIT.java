@@ -2,6 +2,7 @@ package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.device.domain.DesiredMemberProjection;
@@ -11,6 +12,7 @@ import com.example.gym.member.MemberStatus;
 import com.example.gym.support.AbstractReaderIT;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -69,6 +71,27 @@ class ReaderStatusAndPhotoReviewIT extends AbstractReaderIT {
     }
 
     @Test
+    void theSameDeviceObservedPhotoOpensNothingEvenWhenItDiffersFromServerFaceHash() throws Exception {
+        String deviceHash = "b".repeat(64);
+        assertThat(deviceHash).isNotEqualToIgnoringCase(written.getFaceSha256());
+
+        putJson("/api/v1/members/" + asha.getPublicId(),
+                "{\"firstName\":\"Asha\",\"lastName\":\"Rai\"}").andExpect(status().isOk());
+        JsonNode item = onlyItem(pull(entranceId, written.getRevision()));
+        ackWithFace(entranceId, item, deviceHash);
+
+        DesiredMemberProjection afterAck = projection(entranceId, asha);
+        assertThat(afterAck.getObservedFaceSha256()).isEqualToIgnoringCase(deviceHash);
+        assertThat(afterAck.getFaceSha256()).isEqualToIgnoringCase(written.getFaceSha256());
+
+        readerSays(entranceId, asDesired(afterAck, 0, deviceHash));
+        assertThat(deviceReviewItemRepository.count()).isZero();
+
+        readerSays(entranceId, asDesired(afterAck, 0, OTHER_PHOTO));
+        assertThat(onlyReview().getReaderFaceSha256()).isEqualTo(OTHER_PHOTO);
+    }
+
+    @Test
     void theSameStatusAndPhotoOpenNothing() throws Exception {
         readerSays(entranceId, asDesired(written, 0, written.getFaceSha256()));
         trustedRoster(entranceId, asDesired(written, 0, written.getFaceSha256()));
@@ -97,6 +120,27 @@ class ReaderStatusAndPhotoReviewIT extends AbstractReaderIT {
         JsonNode rows = getJson("/api/v1/reviews");
         assertThat(rows).hasSize(1);
         return rows.get(0);
+    }
+
+    private static JsonNode onlyItem(JsonNode page) {
+        assertThat(page.get("items")).hasSize(1);
+        return page.get("items").get(0);
+    }
+
+    /** ACK with a GetFace hash that may differ from the server MemberFace content hash. */
+    private void ackWithFace(String readerPublicId, JsonNode item, String faceSha256) throws Exception {
+        String nameEx = item.get("nameEx").isNull() ? "null" : "\"" + item.get("nameEx").asString() + "\"";
+        String body = """
+                {"deviceId":"%s","revision":%d,"deviceUserId":"%s","name":"%s","nameEx":%s,"userStatus":%d,\
+                "validFrom":"%s","validTo":"%s","faceSha256":"%s","present":true}
+                """.formatted(readerPublicId, item.get("revision").asLong(), item.get("deviceUserId").asString(),
+                item.get("name").asString(), nameEx, item.get("userStatus").asInt(),
+                item.get("validFrom").asString(), item.get("validTo").asString(), faceSha256);
+        mockMvc.perform(post("/internal/gateway/desired/ack")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk());
     }
 
     private void assertUnchanged() {

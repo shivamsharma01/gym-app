@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useNavigate, useParams } from 'react-router'
+import { BackLink } from '@/components/BackLink'
 import { Button, PageHeader, Skeleton } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { MemberFormFields } from '@/features/members/MemberFormFields'
@@ -63,6 +64,7 @@ export function MemberEditPage() {
 
   return (
     <div className="max-w-xl">
+      <BackLink to={id ? `/app/members/${id}` : '/app/members'} label="Back to member" />
       <PageHeader title="Edit member" description={member.data?.memberCode} />
       <p className="mb-4 text-sm text-muted">
         Saving a name or a photo publishes a new revision for a reader using desired-state sync. Other readers

@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router'
+import { BackLink } from '@/components/BackLink'
 import { Button, PageHeader } from '@/components/ui'
 import { MemberFormFields } from '@/features/members/MemberFormFields'
 import { MemberPhotoField } from '@/features/members/MemberPhotoField'
@@ -50,6 +51,7 @@ export function MemberNewPage() {
 
   return (
     <div className="max-w-xl">
+      <BackLink to="/app/members" label="Back to members" />
       <PageHeader
         title="New member"
         description="Serial is optional. When empty, it is filled from device 1 after that reader acknowledges the member. Every reader of the gym receives the member."

@@ -144,6 +144,11 @@ public class DeviceReviewItem extends TenantAwareEntity {
         return memberId;
     }
 
+    /** Create-as-new points the item at the member that was just created from the reader person. */
+    public void setMemberId(Long memberId) {
+        this.memberId = memberId;
+    }
+
     public String getDeviceUserId() {
         return deviceUserId;
     }

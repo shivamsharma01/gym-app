@@ -35,6 +35,7 @@ public class ReviewDecisionService {
 
     private final DeviceRepository devices;
     private final DeviceReviewItemRepository reviews;
+    private final ReaderReviewService readerReviews;
     private final PendingEnrollmentRepository enrollments;
     private final PendingEnrollmentService observations;
     private final MemberService members;
@@ -44,6 +45,7 @@ public class ReviewDecisionService {
 
     public ReviewDecisionService(DeviceRepository devices,
                                  DeviceReviewItemRepository reviews,
+                                 ReaderReviewService readerReviews,
                                  PendingEnrollmentRepository enrollments,
                                  PendingEnrollmentService observations,
                                  MemberService members,
@@ -52,6 +54,7 @@ public class ReviewDecisionService {
                                  DesiredProjectionService desired) {
         this.devices = devices;
         this.reviews = reviews;
+        this.readerReviews = readerReviews;
         this.enrollments = enrollments;
         this.observations = observations;
         this.members = members;
@@ -104,9 +107,46 @@ public class ReviewDecisionService {
         Member member = members.getById(item.getMemberId(), tenantId);
         Device device = device(item.getDeviceId(), tenantId);
         adoptReaderDecisionOntoMember(member, item);
+        adoptReaderFaceIfPresent(member, device, item.getReaderFaceSha256(), tenantId);
         long revision = desired.acceptReaderValues(member, device, item);
         desired.publishAccess(member, device.getId());
+        desired.publishFace(member);
         item.decide(ReviewDecisions.ACCEPT_READER, actor(), serverShown(item), readerShown(item), revision);
+        return reviewView(reviews.save(item));
+    }
+
+    /**
+     * Staff say the person at the suspended id is still this member: adopt the reader's name,
+     * dates, and photo onto the member, remapping that same device user id, then publish to other
+     * mapped readers. Use this after a rename/photo edit on the reader was mistaken for a stranger.
+     */
+    @Transactional
+    public ReviewItemView adoptReader(String publicId, Long tenantId) {
+        DeviceReviewItem item = openReview(publicId, tenantId);
+        if (!item.isSuspended()) {
+            throw CommonExceptions.conflict("Adopt reader applies only when the member was suspended on this reader");
+        }
+        if (item.isReaderAbsent()) {
+            throw CommonExceptions.conflict("The reader shows nobody at this id");
+        }
+        Member member = members.getById(item.getMemberId(), tenantId);
+        Device device = device(item.getDeviceId(), tenantId);
+        PendingEnrollment enrollment = enrollments
+                .findByDeviceIdAndDeviceUserId(device.getId(), item.getDeviceUserId())
+                .filter(row -> !row.isResolved())
+                .orElseThrow(() -> CommonExceptions.conflict(
+                        "No open enrollment at this reader id; create or link from People the server does not know"));
+        DeviceObservedUser observed = requireObserved(enrollment);
+        adoptObservedOntoMember(member, observed);
+        MemberFace face = faces.findUnconsumedByHash(tenantId, observed.getFaceSha256())
+                .map(upload -> faces.applyFromDevice(member, upload, device.getId(), Instant.now()))
+                .orElseGet(() -> faces.find(member.getId())
+                        .orElseThrow(() -> CommonExceptions.conflict("Member has no face")));
+        long revision = desired.adoptFromReader(member, device, face, observed);
+        desired.publishAccess(member, device.getId());
+        item.decide(ReviewDecisions.ACCEPT_READER, actor(), serverShown(item), readerShown(item), revision);
+        enrollment.decide(ReviewDecisions.LINK, actor(), "PENDING", member.getPublicId(), revision);
+        enrollments.save(enrollment);
         return reviewView(reviews.save(item));
     }
 
@@ -145,12 +185,29 @@ public class ReviewDecisionService {
 
     @Transactional
     public ReviewItemView link(String publicId, String memberPublicId, Long tenantId) {
+        if (memberPublicId == null || memberPublicId.isBlank()) {
+            throw CommonExceptions.badRequest("memberId is required (the member UUID from the member page, not the reader id)");
+        }
+        String trimmed = memberPublicId.trim();
         PendingEnrollment enrollment = openEnrollment(publicId, tenantId);
-        Member member = members.getByPublicId(memberPublicId, tenantId);
-        MemberFace face = faces.find(member.getId())
-                .orElseThrow(() -> CommonExceptions.conflict("Member has no face"));
+        if (trimmed.equals(enrollment.getDeviceUserId())) {
+            throw CommonExceptions.badRequest(
+                    "memberId must be the server member UUID (from the member page URL), not reader id "
+                            + trimmed);
+        }
+        // Enrollment came from the reader: keep reader fields on the member, do not overwrite the reader
+        // with the previous server record.
+        Member member = members.getByPublicId(trimmed, tenantId);
         Device device = device(enrollment.getDeviceId(), tenantId);
-        long revision = desired.writeKeepingId(member, device, face, requireObserved(enrollment));
+        DeviceObservedUser observed = requireObserved(enrollment);
+        adoptObservedOntoMember(member, observed);
+        MemberFace face = faces.findUnconsumedByHash(tenantId, observed.getFaceSha256())
+                .map(upload -> faces.applyFromDevice(member, upload, device.getId(), Instant.now()))
+                .orElseGet(() -> faces.find(member.getId())
+                        .orElseThrow(() -> CommonExceptions.conflict("Member has no face")));
+        long revision = desired.adoptFromReader(member, device, face, observed);
+        desired.publishAccess(member, device.getId());
+        desired.publishFace(member);
         for (DeviceReviewItem suspended : reviews.findByDeviceIdAndMemberIdAndKindAndResolvedFalse(
                 device.getId(), member.getId(), DeviceReviewItem.SUSPENDED)) {
             suspended.decideWithoutWrite(ReviewDecisions.LINK, actor(),
@@ -179,6 +236,42 @@ public class ReviewDecisionService {
         long revision = desired.adoptFromReader(member, device, face, observed);
         enrollment.decide(ReviewDecisions.CREATE, actor(), "PENDING", member.getPublicId(), revision);
         return enrollmentView(enrollments.save(enrollment));
+    }
+
+    /**
+     * CONFLICT on a mapped id: staff say the person on the reader is not this member. Release the
+     * former member from this reader and create a new member that keeps the reader's id and fields.
+     */
+    @Transactional
+    public ReviewItemView createAsNew(String publicId, Long tenantId) {
+        DeviceReviewItem item = openReview(publicId, tenantId);
+        if (item.isSuspended()) {
+            throw CommonExceptions.conflict("Use Create on the enrollment at this reader id");
+        }
+        if (item.isReaderAbsent()) {
+            throw CommonExceptions.conflict("The reader shows nobody at this id");
+        }
+        Device device = device(item.getDeviceId(), tenantId);
+        DeviceObservedUser observed = observations.snapshot(device.getId(), item.getDeviceUserId());
+        if (observed == null) {
+            throw CommonExceptions.conflict("Reader observation is missing");
+        }
+        GatewayFaceUpload upload = faces.findUnconsumedByHash(tenantId, observed.getFaceSha256())
+                .orElseThrow(() -> CommonExceptions.conflict("The reader face is not on the server"));
+        String prior = serverShown(item);
+        readerReviews.releaseMappedMember(device, item);
+        String[] name = personName(ReaderReviewService.shown(observed.getReaderName(), observed.getReaderNameEx()));
+        String serial = memberNumbers.serialForImport(item.getDeviceUserId());
+        Member member = members.saveNew(new CreateMember(
+                name[0], name[1], null, null, null, null, null, null, null, serial), tenantId);
+        if (observed.getUserStatus() != DesiredProjectionService.USER_STATUS) {
+            member.setStatus(MemberStatus.INACTIVE);
+        }
+        MemberFace face = faces.applyFromDevice(member, upload, device.getId(), Instant.now());
+        long revision = desired.adoptFromReader(member, device, face, observed);
+        item.setMemberId(member.getId());
+        item.decide(ReviewDecisions.CREATE, actor(), prior, member.getPublicId(), revision);
+        return reviewView(reviews.save(item));
     }
 
     @Transactional
@@ -350,6 +443,34 @@ public class ReviewDecisionService {
         }
         String from = DesiredProjectionService.readerTime(item.getReaderValidFrom());
         String to = DesiredProjectionService.readerTime(item.getReaderValidTo());
+        if (from != null && to != null) {
+            member.adoptReaderWindow(from, to);
+        }
+        member.setProfileChangedAt(Instant.now());
+    }
+
+    private void adoptReaderFaceIfPresent(Member member, Device device, String faceSha256, Long tenantId) {
+        if (faceSha256 == null || faceSha256.length() != 64) {
+            return;
+        }
+        faces.findUnconsumedByHash(tenantId, faceSha256)
+                .ifPresent(upload -> faces.applyFromDevice(member, upload, device.getId(), Instant.now()));
+    }
+
+    private static void adoptObservedOntoMember(Member member, DeviceObservedUser observed) {
+        String[] name = personName(ReaderReviewService.shown(observed.getReaderName(), observed.getReaderNameEx()));
+        member.setFirstName(name[0]);
+        member.setLastName(name[1]);
+        member.setStatus(observed.getUserStatus() == DesiredProjectionService.USER_STATUS
+                ? MemberStatus.ACTIVE
+                : MemberStatus.INACTIVE);
+        if (observed.getAuthority() != null && !observed.getAuthority().isBlank()) {
+            member.setDeviceAuthority(DesiredProjectionService.isAdminAuthority(observed.getAuthority())
+                    ? DeviceAuthority.ADMIN
+                    : DeviceAuthority.USER);
+        }
+        String from = DesiredProjectionService.readerTime(observed.getValidFrom());
+        String to = DesiredProjectionService.readerTime(observed.getValidTo());
         if (from != null && to != null) {
             member.adoptReaderWindow(from, to);
         }

@@ -39,11 +39,11 @@ class MembershipFlowIT extends AbstractIntegrationTest {
 
         String memberId = createMemberId(token, "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"phone\":\"5551234567\"}");
 
-        // No membership yet -> denied.
+        // No membership yet -> allowed on reader / adopted validity (same as desired state).
         getAccess(memberId)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.allowed").value(false))
-                .andExpect(jsonPath("$.reason").value("NO_MEMBERSHIP"));
+                .andExpect(jsonPath("$.allowed").value(true))
+                .andExpect(jsonPath("$.reason").value("READER_VALIDITY"));
 
         String membershipId = readJson(post("/api/v1/memberships",
                 "{\"memberId\":\"" + memberId + "\",\"planId\":\"" + planId + "\"}")

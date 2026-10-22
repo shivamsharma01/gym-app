@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { ArrowLeft } from 'lucide-react'
 import { Link, useParams } from 'react-router'
+import { BackLink } from '@/components/BackLink'
 import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
@@ -122,13 +122,7 @@ export function MembershipPlanMembersPage() {
 
   return (
     <div className="space-y-6">
-      <Link
-        to="/app/memberships"
-        className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-ink"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        All plans
-      </Link>
+      <BackLink to="/app/memberships" label="All plans" />
       <PageHeader
         title={plan?.name ?? 'Plan'}
         description={

@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
+import { BackLink } from '@/components/BackLink'
 import { ConfirmDialog } from '@/components/Dialog'
 import { PageNav, Pager } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
@@ -10,7 +11,7 @@ import { MembershipPanel } from '@/features/memberships/MembershipPanel'
 import { ApiError, api } from '@/lib/api'
 import { useAuth } from '@/lib/useAuth'
 import { formatDate, formatDateTime, money } from '@/lib/cn'
-import { accountStatusLabel, membershipStatusLabel, statusTone } from '@/lib/status'
+import { accessReasonLabel, accountStatusLabel, membershipStatusLabel, statusTone } from '@/lib/status'
 import { usePagedRows } from '@/lib/usePagedRows'
 import type { AccessStatus, Attendance, Member, MemberDeviceSync, Membership, PageResponse, Payment } from '@/lib/types'
 
@@ -87,6 +88,7 @@ export function MemberDetailPage() {
 
   return (
     <div className="space-y-8">
+      <BackLink to="/app/members" label="Back to members" />
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-[1.75rem] font-bold leading-tight tracking-tight text-ink sm:text-[1.875rem]">
@@ -184,7 +186,7 @@ export function MemberDetailPage() {
               <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Access</div>
               <div className="mt-1">
                 <Badge tone={access.data.allowed ? 'ok' : 'danger'}>
-                  {access.data.allowed ? 'Access allowed' : `Denied: ${access.data.reason}`}
+                  {accessReasonLabel(access.data.allowed, access.data.reason)}
                 </Badge>
               </div>
             </div>

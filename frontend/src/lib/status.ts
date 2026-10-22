@@ -25,6 +25,30 @@ export function accountStatusLabel(value?: string | null): string {
   return value || '—'
 }
 
+/** Staff-facing label for `/access` reason codes. */
+export function accessReasonLabel(allowed: boolean, reason?: string | null): string {
+  if (allowed) {
+    if (reason === 'READER_VALIDITY') return 'Allowed (reader validity)'
+    return 'Access allowed'
+  }
+  switch (reason) {
+    case 'MEMBER_INACTIVE':
+      return 'Denied: account inactive'
+    case 'NO_MEMBERSHIP':
+      return 'Denied: no plan'
+    case 'NO_ACTIVE_MEMBERSHIP':
+      return 'Denied: no active plan'
+    case 'MEMBERSHIP_FROZEN':
+      return 'Denied: plan frozen'
+    case 'MEMBERSHIP_EXPIRED':
+      return 'Denied: plan expired'
+    case 'MEMBERSHIP_CANCELLED':
+      return 'Denied: plan cancelled'
+    default:
+      return reason ? `Denied: ${reason}` : 'Access denied'
+  }
+}
+
 export function statusTone(value?: string | null): Tone {
   const v = (value ?? '').toUpperCase()
   if (v === 'NOT_SYNCED' || v === 'INACTIVE') {

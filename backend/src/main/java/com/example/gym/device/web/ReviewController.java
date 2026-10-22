@@ -66,6 +66,13 @@ public class ReviewController {
         return audit.decided(decisions.acceptReader(id, SecurityUtils.currentTenantId()));
     }
 
+    @PostMapping("/{id}/adopt-reader")
+    @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
+    @Operation(summary = "Suspended: keep this member and adopt the reader's values at the same id")
+    public ReviewItemView adoptReader(@PathVariable String id) {
+        return audit.decided(decisions.adoptReader(id, SecurityUtils.currentTenantId()));
+    }
+
     @PostMapping("/{id}/restore")
     @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
     @Operation(summary = "Restore the server record on the reader (suspended: under a new id)")
@@ -92,6 +99,13 @@ public class ReviewController {
     @Operation(summary = "Create a member and keep the reader's device user id")
     public ReviewItemView create(@PathVariable String id) {
         return audit.decided(decisions.create(id, SecurityUtils.currentTenantId()));
+    }
+
+    @PostMapping("/{id}/create-as-new")
+    @PreAuthorize("hasAuthority('REVIEW_DECIDE')")
+    @Operation(summary = "Conflict: release this member on the reader and create a new member from the reader person")
+    public ReviewItemView createAsNew(@PathVariable String id) {
+        return audit.decided(decisions.createAsNew(id, SecurityUtils.currentTenantId()));
     }
 
     @PostMapping("/{id}/reject")

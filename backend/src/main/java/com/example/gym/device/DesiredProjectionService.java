@@ -259,12 +259,13 @@ public class DesiredProjectionService {
             MemberDeviceMapping mapping = held.mapping();
             String from = window.map(access -> at(access.validFrom(), LocalTime.MIN)).orElse(row.getValidFrom());
             String to = window.map(access -> at(access.validTo(), LocalTime.of(23, 59, 59))).orElse(row.getValidTo());
+            // Null-safe: empty membership window or a row missing authority/dates must not 500.
             boolean same = row.getUserStatus() == status
-                    && from.equals(row.getValidFrom())
-                    && to.equals(row.getValidTo())
-                    && name.equals(row.getReaderName())
+                    && Objects.equals(from, row.getValidFrom())
+                    && Objects.equals(to, row.getValidTo())
+                    && Objects.equals(name, row.getReaderName())
                     && sameNameEx(nameEx, row.getReaderNameEx())
-                    && desiredAuthority.equalsIgnoreCase(row.getAuthority());
+                    && desiredAuthority.equalsIgnoreCase(row.getAuthority() == null ? AUTHORITY : row.getAuthority());
             // A held row is omitted from pull; membership/access must release it or that reader never updates.
             if (same && !row.isHeld()) {
                 continue;
@@ -315,7 +316,7 @@ public class DesiredProjectionService {
             row.setRevision(revision);
             row.setFacePresent(true);
             row.setFaceSha256(face.getSha256());
-            row.setObservedFaceSha256(null);
+            // Keep last device-observed hash until ACK so photo reviews stay device-vs-device.
             row.setDeviceUserId(mapping.getDeviceUserId());
             projections.save(row);
             notifyAfterCommit(device, revision);
@@ -824,13 +825,14 @@ public class DesiredProjectionService {
         row.setValidFrom(from);
         row.setValidTo(to);
         row.setAuthority(authority(member));
-        row.setObservedFaceSha256(null);
         if (face == null) {
             row.setFacePresent(false);
+            row.setObservedFaceSha256(null);
             return;
         }
         row.setFacePresent(true);
         row.setFaceSha256(face.getSha256());
+        // Do not clear observedFaceSha256: reviews compare GetFace hashes; ACK refreshes it.
     }
 
     /**

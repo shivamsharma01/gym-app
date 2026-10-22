@@ -273,10 +273,12 @@ class StaffReviewDecisionIT extends AbstractIntegrationTest {
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndDeviceUserId(flagged, "1")).isEmpty();
         JsonNode pulled = pull(flaggedId).get("items").get(0);
         assertThat(pulled.get("deviceUserId").asString()).isEqualTo("12");
-        assertThat(pulled.get("name").asString()).isEqualTo("Ria Shah");
+        assertThat(pulled.get("name").asString())
+                .as("link keeps the reader's fields on the member").isEqualTo("Door");
         assertThat(pulled.get("expected").get("present").asBoolean()).isTrue();
         assertThat(pulled.get("expected").get("name").asString())
                 .as("the link writes only over the person staff saw").isEqualTo("Door");
+        assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("Door");
         JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "review-admin");
         assertThat(audited.get("decision").asString()).isEqualTo("LINK");
         assertThat(audited.get("memberId").asString()).isEqualTo(memberId);
@@ -461,7 +463,8 @@ class StaffReviewDecisionIT extends AbstractIntegrationTest {
         assertThat(memberDeviceMappingRepository.findByDeviceIdAndMemberId(side, memberPk).orElseThrow()
                 .getDeviceUserId()).isEqualTo(sideUserId);
         assertThat(readerRevisionRepository.findByDeviceId(side).orElseThrow().getDesiredRevision())
-                .isEqualTo(sideDesired);
+                .as("adopted reader fields publish onto other mapped readers")
+                .isGreaterThan(sideDesired);
         assertThat(memberDeviceMappingRepository.findByDeviceId(other)).isEmpty();
         assertThat(desiredMemberProjectionRepository.findByDeviceId(other)).isEmpty();
         assertThat(deviceSyncCommandRepository.count()).isEqualTo(commands);

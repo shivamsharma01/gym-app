@@ -212,8 +212,9 @@ public class PendingEnrollmentService {
         }
         withdrawCollidingSeed(device, deviceUserId, scan);
         DeviceObservedUser snapshot = saveSnapshot(device, payload, deviceUserId, scan.stamp(), false);
-        if (serverAllocated(device.getId(), deviceUserId)
-                && !reviews.releaseIfReplaced(device, deviceUserId, payload)) {
+        // Mapped id: any field drift (including name+photo) is a CONFLICT for staff — never auto-suspend.
+        // True strangers only enroll when the id is not allocated to a member.
+        if (serverAllocated(device.getId(), deviceUserId)) {
             reviews.record(device, payload, deviceUserId);
             return;
         }
@@ -267,18 +268,17 @@ public class PendingEnrollmentService {
 
     /**
      * The gateway found someone at an id other than the member it expected, and wrote nothing.
-     * Someone else entirely suspends that member here and makes the person an enrollment; a change
-     * to the member's own record opens the member's review. The row is held either way until staff decide.
+     * Opens a CONFLICT for staff (Keep reader / Overwrite / Remove). Never auto-suspends: a device
+     * edit that changes every field is still that mapped member until staff say otherwise.
      */
     @Transactional
     public void occupantChanged(Device device, DesiredMemberProjection desired, ExpectedOccupant known,
                                 JsonNode payload) {
         String deviceUserId = desired.getDeviceUserId();
         saveSnapshot(device, payload, deviceUserId, ScanStamp.of(payload), true);
-        if (known != null && ReaderReviewService.replaced(known, desired, payload)) {
-            reviews.suspend(device, desired, payload);
-            enroll(device, deviceUserId);
-            return;
+        if (known != null) {
+            FlowLog.info("device", "occupant changed reader={} user={} expectedPresent={}",
+                    device.getPublicId(), deviceUserId, known.present());
         }
         reviews.recordChange(device, desired, payload);
         desired.setHeld(true);

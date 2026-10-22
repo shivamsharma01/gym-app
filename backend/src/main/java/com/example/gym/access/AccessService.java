@@ -14,9 +14,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Computes a member's <em>business</em> access decision from their memberships. This does not talk
- * to any device; it is the authoritative "allowed / denied" that desired revisions carry to the
- * readers.
+ * Computes a member's access decision for the staff UI. Door enablement for a member with no plan
+ * follows reader / adopted validity (same as desired state); memberships tighten that when present.
  */
 @Service
 public class AccessService {
@@ -41,7 +40,8 @@ public class AccessService {
         List<Membership> memberships = membershipRepository
                 .findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId());
         if (memberships.isEmpty()) {
-            return deny(member, null, today, AccessReason.NO_MEMBERSHIP);
+            // Matches DesiredProjectionService: no plan keeps the member enabled on reader dates.
+            return build(member, null, today, true, AccessReason.READER_VALIDITY);
         }
 
         Optional<Membership> current = memberships.stream()

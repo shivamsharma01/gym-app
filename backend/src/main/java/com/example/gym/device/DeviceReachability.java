@@ -24,15 +24,20 @@ public class DeviceReachability {
     }
 
     /**
-     * The state to show staff. A stored Online from the last report is Offline once the gym PC
-     * is no longer online. A reader with no gym PC keeps the state it has.
+     * The state to show staff. A gym PC that has gone offline takes its readers offline with it,
+     * including a reader still marked online from the last report. A PC that has never checked
+     * in leaves a reader that has never reported as unknown.
      */
     public static DeviceConnectionState shown(Device device, GatewayStatus gatewayStatus) {
-        if (device.getGatewayId() != null && gatewayStatus != GatewayStatus.ONLINE) {
+        DeviceConnectionState reported = device.getConnectionState() == null
+                ? DeviceConnectionState.UNKNOWN : device.getConnectionState();
+        if (device.getGatewayId() == null || gatewayStatus == GatewayStatus.ONLINE) {
+            return reported;
+        }
+        if (gatewayStatus == GatewayStatus.OFFLINE || reported == DeviceConnectionState.ONLINE) {
             return DeviceConnectionState.OFFLINE;
         }
-        DeviceConnectionState reported = device.getConnectionState();
-        return reported == null ? DeviceConnectionState.UNKNOWN : reported;
+        return reported;
     }
 
     public DeviceConnectionState shown(Device device) {

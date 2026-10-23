@@ -19,6 +19,10 @@ class DeviceReachabilityTest {
         assertThat(DeviceReachability.shown(reader, GatewayStatus.OFFLINE)).isEqualTo(DeviceConnectionState.OFFLINE);
         assertThat(DeviceReachability.shown(reader, GatewayStatus.UNKNOWN)).isEqualTo(DeviceConnectionState.OFFLINE);
         assertThat(DeviceReachability.shown(reader, null)).isEqualTo(DeviceConnectionState.OFFLINE);
+
+        reader.setConnectionState(DeviceConnectionState.UNKNOWN);
+        assertThat(DeviceReachability.shown(reader, GatewayStatus.UNKNOWN)).isEqualTo(DeviceConnectionState.UNKNOWN);
+        assertThat(DeviceReachability.shown(reader, GatewayStatus.OFFLINE)).isEqualTo(DeviceConnectionState.OFFLINE);
     }
 
     @Test

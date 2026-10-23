@@ -56,7 +56,8 @@ export function accessReasonLabel(allowed: boolean, reason?: string | null): str
 
 /** A reader stays online only while the gym PC that talks to it is online. */
 export function readerConnection(reported: string, gatewayStatus: string | null | undefined, assigned: boolean) {
-  if (assigned && gatewayStatus && gatewayStatus !== 'ONLINE') return 'OFFLINE'
+  if (!assigned || !gatewayStatus || gatewayStatus === 'ONLINE') return reported
+  if (gatewayStatus === 'OFFLINE' || reported === 'ONLINE') return 'OFFLINE'
   return reported
 }
 

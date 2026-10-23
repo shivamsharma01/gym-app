@@ -241,6 +241,8 @@ function readerSyncTitle(syncState: string | undefined) {
       return 'Removed from this reader'
     case 'ok':
       return 'On reader'
+    case 'seen':
+      return 'Already on this reader'
     default:
       return undefined
   }

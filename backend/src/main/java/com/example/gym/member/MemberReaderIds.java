@@ -1,5 +1,6 @@
 package com.example.gym.member;
 
+import com.example.gym.device.ReaderFacePresence;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceReviewItem;
@@ -26,15 +27,18 @@ public class MemberReaderIds {
     private final MemberDeviceMappingRepository mappings;
     private final DesiredMemberProjectionRepository projections;
     private final DeviceReviewItemRepository reviews;
+    private final ReaderFacePresence seenOnReader;
 
     public MemberReaderIds(DeviceRepository devices,
                            MemberDeviceMappingRepository mappings,
                            DesiredMemberProjectionRepository projections,
-                           DeviceReviewItemRepository reviews) {
+                           DeviceReviewItemRepository reviews,
+                           ReaderFacePresence seenOnReader) {
         this.devices = devices;
         this.mappings = mappings;
         this.projections = projections;
         this.reviews = reviews;
+        this.seenOnReader = seenOnReader;
     }
 
     public List<ReaderUserId> of(Member member) {
@@ -73,19 +77,22 @@ public class MemberReaderIds {
                     .computeIfAbsent(item.getMemberId(), id -> new HashSet<>())
                     .add(item.getDeviceId());
         }
+        Map<Long, Map<Long, ReaderFacePresence.Sight>> seen = seenOnReader.forMembers(tenantId, memberIds);
         Map<Long, List<ReaderUserId>> out = new HashMap<>();
         for (Member member : members) {
             Map<Long, String> onReaders = byMember.getOrDefault(member.getId(), Map.of());
             Map<Long, DesiredMemberProjection> rows = projByMember.getOrDefault(member.getId(), Map.of());
+            Map<Long, ReaderFacePresence.Sight> seenHere = seen.getOrDefault(member.getId(), Map.of());
             Set<Long> needsReview = openReviewDevices.getOrDefault(member.getId(), Set.of());
             List<ReaderUserId> list = new ArrayList<>(readers.size());
             for (Device device : readers) {
                 String deviceUserId = onReaders.get(device.getId());
-                list.add(new ReaderUserId(
-                        device.getPublicId(),
-                        device.getName(),
-                        deviceUserId,
-                        syncState(deviceUserId, rows.get(device.getId()), needsReview.contains(device.getId()))));
+                ReaderFacePresence.Sight sight = deviceUserId == null ? seenHere.get(device.getId()) : null;
+                String shownId = deviceUserId != null ? deviceUserId : sight == null ? null : sight.deviceUserId();
+                String state = deviceUserId == null && sight != null
+                        ? "seen"
+                        : syncState(deviceUserId, rows.get(device.getId()), needsReview.contains(device.getId()));
+                list.add(new ReaderUserId(device.getPublicId(), device.getName(), shownId, state));
             }
             out.put(member.getId(), List.copyOf(list));
         }
@@ -94,7 +101,7 @@ public class MemberReaderIds {
 
     /**
      * Compact sync marker for list UI: {@code none}, {@code ok}, {@code pending}, {@code held},
-     * {@code failed}, or {@code absent}.
+     * {@code failed}, {@code absent}, or {@code seen} when the caller already chose that.
      */
     static String syncState(String deviceUserId, DesiredMemberProjection row, boolean openReview) {
         if (deviceUserId == null) {

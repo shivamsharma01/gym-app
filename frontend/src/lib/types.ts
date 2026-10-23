@@ -93,12 +93,12 @@ export type Member = {
   deviceAuthority?: 'USER' | 'ADMIN'
   createdAt: string
   coverageStatus: string
-  /** Per-reader device user id and sync marker; null when not mapped on that reader. */
+  /** Per-reader device user id and sync marker. `seen` is an id the reader already has for this photo. */
   readers?: {
     deviceId: string
     deviceName: string
     deviceUserId: string | null
-    /** none | ok | pending | held | failed | absent */
+    /** none | ok | pending | held | failed | absent | seen */
     syncState?: string
   }[]
 }
@@ -266,9 +266,11 @@ export type MemberDeviceSync = {
     applyError: string | null
     applyAttempts: number | null
     applyErrorPermanent: boolean
-    /** Desired validity on this reader; null when not present. */
+    /** Desired validity on this reader, or the dates the reader already stores when only seen. */
     validFrom: string | null
     validTo: string | null
+    /** Reader user id for this photo when there is no mapping yet. */
+    seenDeviceUserId: string | null
   }[]
 }
 

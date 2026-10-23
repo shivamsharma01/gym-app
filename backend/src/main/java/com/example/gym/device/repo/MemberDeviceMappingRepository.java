@@ -19,6 +19,15 @@ public interface MemberDeviceMappingRepository extends JpaRepository<MemberDevic
 
     List<MemberDeviceMapping> findByDeviceId(Long deviceId);
 
+    @org.springframework.data.jpa.repository.Query("""
+            select m from MemberDeviceMapping m
+            where m.deviceId in :deviceIds
+              and (m.deviceUserId in :deviceUserIds or m.pendingDeviceUserId in :deviceUserIds)
+            """)
+    List<MemberDeviceMapping> findByDeviceIdInAndDeviceUserIdIn(
+            @org.springframework.data.repository.query.Param("deviceIds") Collection<Long> deviceIds,
+            @org.springframework.data.repository.query.Param("deviceUserIds") Collection<String> deviceUserIds);
+
     Optional<MemberDeviceMapping> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
     Optional<MemberDeviceMapping> findFirstByDeviceIdAndPendingDeviceUserId(Long deviceId, String pendingDeviceUserId);

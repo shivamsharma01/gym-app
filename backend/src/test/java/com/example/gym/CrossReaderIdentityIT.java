@@ -67,6 +67,37 @@ class CrossReaderIdentityIT extends AbstractReaderIT {
 
 
     @Test
+    void theMemberPageShowsAReaderThatAlreadyHasTheSamePhoto() throws Exception {
+        String face = uploadFace(Color.RED);
+        trustedRoster(entranceId, person("11", "Asha Rao", 0, ASHA_FROM, ASHA_TO, face));
+        trustedRoster(exitId,
+                person("6", "Asha Rao", 0, OTHER_FROM, OTHER_TO, uploadFace(Color.BLUE)),
+                person("7", "Asha Rao", 0, OTHER_FROM, OTHER_TO, face));
+        assertThat(importPending(entranceId).get("created").asInt()).isEqualTo(1);
+        Member asha = member("Asha Rao");
+
+        JsonNode exit = readerRow(getJson("/api/v1/members/" + asha.getPublicId() + "/device-sync").get("devices"));
+        assertThat(exit.get("deviceUserId").isNull()).isTrue();
+        assertThat(exit.get("seenDeviceUserId").asString()).isEqualTo("7");
+        assertThat(exit.get("validFrom").asString()).isEqualTo(OTHER_FROM);
+        assertThat(exit.get("validTo").asString()).isEqualTo(OTHER_TO);
+        assertThat(exit.get("facePresent").asBoolean()).isTrue();
+
+        JsonNode listed = readerRow(getJson("/api/v1/members/" + asha.getPublicId()).get("readers"));
+        assertThat(listed.get("deviceUserId").asString()).isEqualTo("7");
+        assertThat(listed.get("syncState").asString()).isEqualTo("seen");
+    }
+
+    private static JsonNode readerRow(JsonNode rows) {
+        for (JsonNode row : rows) {
+            if ("Exit".equals(row.get("deviceName").asString())) {
+                return row;
+            }
+        }
+        throw new AssertionError("Exit row missing");
+    }
+
+    @Test
     void importingASecondReaderLeavesAPersonWhoMayAlreadyBeAMemberPending() throws Exception {
         trustedRoster(entranceId, person("11", "Asha Rao", 0, ASHA_FROM, ASHA_TO, uploadFace(Color.RED)));
         trustedRoster(exitId,

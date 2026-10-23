@@ -2,6 +2,7 @@ package com.example.gym.device.repo;
 
 import com.example.gym.device.domain.DeviceObservedUser;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -14,6 +15,13 @@ public interface DeviceObservedUserRepository extends JpaRepository<DeviceObserv
     Optional<DeviceObservedUser> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
     List<DeviceObservedUser> findByDeviceId(Long deviceId);
+
+    @Query("""
+            select o from DeviceObservedUser o
+            where o.tenantId = :tenantId and lower(o.faceSha256) in :hashes
+            """)
+    List<DeviceObservedUser> findByTenantIdAndFaceSha256In(
+            @Param("tenantId") Long tenantId, @Param("hashes") Collection<String> hashes);
 
     /**
      * What a reader shows for each person staff have not decided on. A locking read: sees an

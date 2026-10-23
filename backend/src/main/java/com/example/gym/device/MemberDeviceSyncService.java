@@ -40,6 +40,7 @@ public class MemberDeviceSyncService {
     private final ReaderRevisionRepository revisions;
     private final DeviceReviewItemRepository reviewItemRepository;
     private final DesiredProjectionService desired;
+    private final ReaderFacePresence seenOnReader;
 
     public MemberDeviceSyncService(MemberService memberService,
                                    MemberFaceRepository faceRepository,
@@ -48,7 +49,8 @@ public class MemberDeviceSyncService {
                                    DesiredMemberProjectionRepository projections,
                                    ReaderRevisionRepository revisions,
                                    DeviceReviewItemRepository reviewItemRepository,
-                                   DesiredProjectionService desired) {
+                                   DesiredProjectionService desired,
+                                   ReaderFacePresence seenOnReader) {
         this.memberService = memberService;
         this.faceRepository = faceRepository;
         this.mappingRepository = mappingRepository;
@@ -57,6 +59,7 @@ public class MemberDeviceSyncService {
         this.revisions = revisions;
         this.reviewItemRepository = reviewItemRepository;
         this.desired = desired;
+        this.seenOnReader = seenOnReader;
     }
 
     /**
@@ -101,6 +104,9 @@ public class MemberDeviceSyncService {
                 .filter(item -> !item.isResolved())
                 .map(DeviceReviewItem::getDeviceId)
                 .collect(Collectors.toSet());
+        Map<Long, ReaderFacePresence.Sight> seenByDevice = seenOnReader
+                .forMembers(tenantId, List.of(member.getId()))
+                .getOrDefault(member.getId(), Map.of());
         List<DeviceRow> rows = new ArrayList<>();
         for (Device device : devices.values().stream()
                 .sorted(Comparator.comparing(Device::getName, String.CASE_INSENSITIVE_ORDER))
@@ -112,6 +118,8 @@ public class MemberDeviceSyncService {
                     .map(ReaderRevision::getAppliedRevision)
                     .orElse(0L);
             boolean held = (row != null && row.isHeld()) || openReviewDevices.contains(device.getId());
+            ReaderFacePresence.Sight seen = mapping == null ? seenByDevice.get(device.getId()) : null;
+            boolean projected = row != null && row.isPresentOnReader();
             rows.add(new DeviceRow(
                     device.getPublicId(),
                     device.getName(),
@@ -121,14 +129,16 @@ public class MemberDeviceSyncService {
                     row == null ? null : row.getRevision(),
                     applied,
                     row != null && row.isApplied(),
-                    row != null && row.isPresentOnReader(),
-                    row != null && row.isPresentOnReader() && row.isFacePresent(),
+                    projected,
+                    (row != null && row.isPresentOnReader() && row.isFacePresent())
+                            || (seen != null && seen.facePresent()),
                     held,
                     row == null ? null : row.getApplyError(),
                     row == null ? null : row.getApplyAttempts(),
                     row != null && row.isApplyErrorPermanent(),
-                    row == null || !row.isPresentOnReader() ? null : row.getValidFrom(),
-                    row == null || !row.isPresentOnReader() ? null : row.getValidTo()));
+                    row != null && row.isPresentOnReader() ? row.getValidFrom() : seen == null ? null : seen.validFrom(),
+                    row != null && row.isPresentOnReader() ? row.getValidTo() : seen == null ? null : seen.validTo(),
+                    seen == null ? null : seen.deviceUserId()));
         }
         return new SyncStatus(faceInfo, rows);
     }
@@ -172,8 +182,13 @@ public class MemberDeviceSyncService {
             Integer applyAttempts,
             /** The gateway cannot apply the current revision as sent; it stays until replaced. */
             boolean applyErrorPermanent,
-            /** Desired validity on this reader (reader-local); null when not present. */
+            /** Desired validity on this reader (reader-local); the reader's own dates when only seen. */
             String validFrom,
-            String validTo) {
+            String validTo,
+            /**
+             * The user id this reader already shows for this member's photo, when there is no mapping.
+             * Null once the member is mapped here, and null when the photo is not on the reader.
+             */
+            String seenDeviceUserId) {
     }
 }

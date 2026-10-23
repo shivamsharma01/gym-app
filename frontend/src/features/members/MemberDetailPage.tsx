@@ -216,11 +216,11 @@ export function MemberDetailPage() {
                   <div key={d.deviceId} className="flex flex-wrap gap-x-4 gap-y-0.5">
                     <div>
                       <span className="text-muted">{d.deviceName} id:</span>{' '}
-                      <span className="font-mono">{d.deviceUserId ?? '—'}</span>
+                      <span className="font-mono">{shownReaderId(d) ?? '—'}</span>
                     </div>
                     <div>
                       <span className="text-muted">Validity:</span>{' '}
-                      {d.present && (d.validFrom || d.validTo)
+                      {showReaderValidity(d)
                         ? `${formatDate(d.validFrom)} – ${formatDate(d.validTo)}`
                         : '—'}
                     </div>
@@ -358,7 +358,16 @@ function summarizeSync(devices: MemberDeviceSync['devices'] | undefined) {
   return null
 }
 
+function shownReaderId(row: MemberDeviceSync['devices'][number]) {
+  return row.deviceUserId ?? row.seenDeviceUserId
+}
+
+function showReaderValidity(row: MemberDeviceSync['devices'][number]) {
+  return (row.present || row.seenDeviceUserId != null) && (row.validFrom || row.validTo)
+}
+
 function readerStateLabel(row: MemberDeviceSync['devices'][number]) {
+  if (row.deviceUserId == null && row.seenDeviceUserId != null) return { label: 'On reader', tone: 'ok' as const }
   if (row.deviceUserId == null) return { label: 'Not on this reader', tone: 'muted' as const }
   if (row.revision == null) return { label: 'Not published', tone: 'muted' as const }
   if (row.held) return { label: 'Needs review', tone: 'warn' as const }
@@ -437,22 +446,25 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
                     <div className="font-medium">
                       {row.deviceName}{' '}
                       <span className="font-mono text-xs text-muted">
-                        · device user {row.deviceUserId ?? '—'}
+                        · device user {shownReaderId(row) ?? '—'}
                       </span>
                     </div>
                     <div className="text-xs text-muted">
                       Validity:{' '}
-                      {row.present && (row.validFrom || row.validTo)
+                      {showReaderValidity(row)
                         ? `${formatDate(row.validFrom)} – ${formatDate(row.validTo)}`
                         : '—'}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Badge tone={statusTone(row.connectionState)}>{row.connectionState ?? 'UNKNOWN'}</Badge>
                       <Badge tone={state.tone}>{state.label}</Badge>
-                      {row.present ? (
+                      {row.present || row.seenDeviceUserId != null ? (
                         <Badge tone={row.facePresent ? 'ok' : 'muted'}>{row.facePresent ? 'Photo' : 'No photo'}</Badge>
                       ) : null}
                     </div>
+                    {row.deviceUserId == null && row.seenDeviceUserId != null ? (
+                      <div className="text-xs text-muted">This reader already has this person.</div>
+                    ) : null}
                     {row.revision != null ? (
                       <div className="text-xs text-muted">
                         Revision {row.revision}

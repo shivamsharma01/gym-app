@@ -22,12 +22,15 @@ public record MemberResponse(
         String deviceAuthority,
         Instant createdAt,
         String coverageStatus,
-        /** Per-reader device user id and sync marker; null deviceUserId when not mapped. */
+        /**
+         * Per-reader device user id and sync marker. The id is the mapping, or the id the reader
+         * already shows for this photo when there is no mapping yet ({@code syncState=seen}).
+         */
         List<ReaderUserId> readers) {
 
     /**
      * @param syncState {@code none}, {@code ok}, {@code pending}, {@code held}, {@code failed},
-     *                  or {@code absent}
+     *                  {@code absent}, or {@code seen} (already on the reader, not a published mapping)
      */
     public record ReaderUserId(String deviceId, String deviceName, String deviceUserId, String syncState) {
     }

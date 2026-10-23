@@ -74,6 +74,47 @@ const membership = {
   netAmount: 1000,
 }
 
+test('a reader shows offline while its gym PC is offline', async ({ page }) => {
+  await mockStaff(page)
+  await page.route('**/api/v1/devices?*', async (route) => {
+    await route.fulfill({
+      json: {
+        content: [device],
+        page: 0,
+        size: 20,
+        totalElements: 1,
+        totalPages: 1,
+        first: true,
+        last: true,
+      },
+    })
+  })
+  await page.route('**/api/v1/gateways?*', async (route) => {
+    await route.fulfill({
+      json: {
+        content: [{
+          id: 'gw-1',
+          name: 'FrontDeskPc',
+          status: 'OFFLINE',
+          lastHeartbeatAt: '2026-10-23T15:20:00Z',
+          lastRegisteredAt: null,
+          agentVersion: null,
+          createdAt: '2026-10-01T00:00:00Z',
+        }],
+        page: 0,
+        size: 1,
+        totalElements: 1,
+        totalPages: 1,
+        first: true,
+        last: true,
+      },
+    })
+  })
+  await page.goto('/app/devices')
+  await expect(page.getByRole('row').filter({ hasText: 'Entrance' })).toContainText('OFFLINE')
+  await expect(page.getByText('FrontDeskPc')).toBeVisible()
+})
+
 test('a reader shows its last stored punch and one reconcile action', async ({ page }) => {
   await mockStaff(page)
   await page.goto('/app/devices/dev-1')
@@ -198,7 +239,39 @@ test('a member page offers send again and remove for each reader', async ({ page
   await page.goto('/app/members/mem-1')
   await expect(page.getByRole('heading', { name: 'Asha Shah' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Update this reader' })).toHaveCount(3)
-  await expect(page.getByRole('button', { name: 'Remove from reader' })).toHaveCount(3)
+  await expect(page.getByRole('button', { name: 'Remove from reader' })).toHaveCount(0)
+})
+
+test('delete removes the member from the gym and every reader', async ({ page }) => {
+  const hits: string[] = []
+  await mockStaff(page, [], { ...user, permissions: [...user.permissions, 'MEMBER_DELETE'] }, hits)
+  await page.goto('/app/members/mem-1')
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  await page.getByRole('button', { name: 'Delete member' }).click()
+  await expect.poll(() => hits).toContain('/api/v1/members/mem-1/permanent')
+  await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible()
+})
+
+test('audit actor and action filters can be combined', async ({ page }) => {
+  await mockStaff(page, [], { ...user, permissions: [...user.permissions, 'AUDIT_VIEW'] })
+  await page.goto('/app/audit')
+  await expect(page.getByText('MEMBER_CREATED')).toBeVisible()
+  await expect(page.getByText('LOGIN_SUCCESS')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Actor', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'gym-admin' }).check()
+  await page.getByRole('button', { name: 'Actor (1)' }).click()
+  await expect(page.getByText('MEMBER_CREATED')).toBeVisible()
+  await expect(page.getByText('LOGIN_SUCCESS')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Action', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'LOGIN_SUCCESS' }).check()
+  await page.getByRole('button', { name: 'Action (1)' }).click()
+  await expect(page.getByText('No matching events')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Clear filters' }).click()
+  await expect(page.getByText('MEMBER_CREATED')).toBeVisible()
+  await expect(page.getByText('LOGIN_SUCCESS')).toBeVisible()
 })
 
 test('a member page shows each reader as applied, not applied, or held, from that row only', async ({ page }) => {
@@ -221,7 +294,7 @@ test('creating a member sends one request with a face and no reader choice', asy
   await expect(page.getByRole('heading', { name: 'New member' })).toBeVisible()
   await expect(page.getByText('Select a reader')).toHaveCount(0)
   await expect(page.getByText('Date of birth')).toHaveCount(0)
-  await expect(page.locator('input[name="serialNumber"]')).toHaveValue('')
+  await expect(page.getByText('Serial number')).toHaveCount(0)
 
   await page.locator('input[name="firstName"]').fill('Asha')
   await page.getByRole('button', { name: 'Save member' }).click()
@@ -247,7 +320,7 @@ test('creating a member sends one request with a face and no reader choice', asy
   expect(created[0].body).toContain('name="member"')
   expect(created[0].body).toContain('name="face"')
   expect(created[0].body).not.toContain('readerId')
-  expect(created[0].body).toContain('"serialNumber":null')
+  expect(created[0].body).not.toContain('serialNumber')
 })
 
 async function mockStaff(
@@ -419,6 +492,66 @@ async function mockStaff(
     }
     if (path === '/api/v1/members/mem-1/payments') {
       await route.fulfill({ json: [] })
+      return
+    }
+    if (path === '/api/v1/members' && method === 'GET') {
+      await route.fulfill({
+        json: { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0, first: true, last: true },
+      })
+      return
+    }
+    if (path === '/api/v1/members/mem-1/permanent' && method === 'DELETE') {
+      reconciles.push(path)
+      await route.fulfill({ status: 204, body: '' })
+      return
+    }
+    if (path === '/api/v1/audit-logs/options') {
+      await route.fulfill({
+        json: { actors: ['desk', 'gym-admin'], actions: ['LOGIN_SUCCESS', 'MEMBER_CREATED'] },
+      })
+      return
+    }
+    if (path === '/api/v1/audit-logs') {
+      const selectedActors = url.searchParams.getAll('actor')
+      const selectedActions = url.searchParams.getAll('action')
+      const rows = [
+        {
+          id: 'a1',
+          action: 'MEMBER_CREATED',
+          result: 'SUCCESS',
+          resourceType: 'Member',
+          resourceId: 'mem-1',
+          resourceLabel: 'Asha Shah',
+          actorUsername: 'gym-admin',
+          correlationId: null,
+          details: null,
+          createdAt: '2026-10-11T05:00:00Z',
+        },
+        {
+          id: 'a2',
+          action: 'LOGIN_SUCCESS',
+          result: 'SUCCESS',
+          resourceType: 'AUTH',
+          resourceId: null,
+          resourceLabel: null,
+          actorUsername: 'desk',
+          correlationId: null,
+          details: null,
+          createdAt: '2026-10-11T04:00:00Z',
+        },
+      ].filter((row) => selectedActors.length === 0 || selectedActors.includes(row.actorUsername))
+        .filter((row) => selectedActions.length === 0 || selectedActions.includes(row.action))
+      await route.fulfill({
+        json: {
+          content: rows,
+          page: 0,
+          size: 25,
+          totalElements: rows.length,
+          totalPages: 1,
+          first: true,
+          last: true,
+        },
+      })
       return
     }
     if (path === '/api/v1/reviews' && method === 'GET') {

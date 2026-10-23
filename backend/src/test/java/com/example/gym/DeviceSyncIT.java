@@ -297,51 +297,6 @@ class DeviceSyncIT extends AbstractIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
-    @Test
-    void newMemberLeavesSerialEmptyAndDuplicateSerialIsAllowed() throws Exception {
-        // Asha holds device user id 1; next-serial skips it as a suggestion only (UI may show it).
-        mockMvc.perform(get("/api/v1/members/next-serial").header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.serialNumber").value("2"));
-
-        // Create without serial: stays null until device-1 ACK fills it.
-        String binaId = readJson(createMemberWithFace(token, "{\"firstName\":\"Bina\"}")
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.serialNumber").value(org.hamcrest.Matchers.nullValue()))
-                .andExpect(jsonPath("$.memberCode").value(org.hamcrest.Matchers.startsWith("MBR-")))
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-
-        createMemberWithFace(token, "{\"firstName\":\"Chetan\",\"serialNumber\":\"1001\"}")
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.serialNumber").value("1001"));
-
-        long commandsBefore = deviceSyncCommandRepository.count();
-        mockMvc.perform(put("/api/v1/members/" + binaId).header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"firstName\":\"Bina Renamed\",\"serialNumber\":\"1001\"}"))
-                .andExpect(status().isOk());
-
-        var bina = memberRepository.findByPublicId(binaId).orElseThrow();
-        assertThat(bina.getSerialNumber()).isEqualTo("1001");
-        assertThat(bina.getFirstName()).isEqualTo("Bina Renamed");
-        var asha = memberRepository.findByPublicId(memberId).orElseThrow();
-        assertThat(asha.getSerialNumber()).isEqualTo("1001");
-        // Serial edit alone does not enqueue device sync commands.
-        assertThat(deviceSyncCommandRepository.count()).isEqualTo(commandsBefore);
-    }
-
-    @Test
-    void changingTheSerialDoesNotWriteAReader() throws Exception {
-        mockMvc.perform(put("/api/v1/members/" + memberId).header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"firstName\":\"Asha\",\"lastName\":\"Rao\",\"serialNumber\":\"7\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.serialNumber").value("7"))
-                .andExpect(jsonPath("$.memberCode").value("1001"));
-        assertThat(deviceSyncCommandRepository.findAll()).isEmpty();
-    }
-
-
     private ResultActions postJson(String path, String body) throws Exception {
         var req = post(path).header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON);

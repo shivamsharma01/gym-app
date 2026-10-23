@@ -17,6 +17,8 @@ public interface MembershipRepository extends JpaRepository<Membership, Long> {
 
     List<Membership> findByMemberIdAndDeletedFalseOrderByStartDateDesc(Long memberId);
 
+    List<Membership> findByMemberId(Long memberId);
+
     List<Membership> findByMemberIdInAndDeletedFalse(Collection<Long> memberIds);
 
     List<Membership> findByDeletedFalseAndStatusInAndEndDateBefore(

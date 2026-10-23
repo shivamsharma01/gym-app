@@ -26,10 +26,7 @@ class MemberListIT extends AbstractIntegrationTest {
         createMember("Kunal", "Sharma", "10");
         createMember("Kunalpreet", "Singh", "2");
         createMember("Asha", null, "1");
-        String noSerial = createMember("Old", "Member", "500");
-        var member = memberRepository.findByPublicId(noSerial).orElseThrow();
-        member.setSerialNumber(null);
-        memberRepository.save(member);
+        createMember("Old", "Member", "500");
     }
 
     @Test
@@ -40,13 +37,6 @@ class MemberListIT extends AbstractIntegrationTest {
         assertThat(names("kunal sharma ")).containsExactly("Kunal Sharma");
         assertThat(names("asha ")).containsExactly("Asha");
         assertThat(names("   ")).hasSize(4);
-        assertThat(names(" 10 ")).containsExactly("Kunal Sharma");
-    }
-
-    @Test
-    void serialSortsAsANumberWithMembersWithoutASerialLast() throws Exception {
-        assertThat(column("serial", "asc", "serialNumber")).containsExactly("1", "2", "10", null);
-        assertThat(column("serial", "desc", "serialNumber")).containsExactly("10", "2", "1", null);
     }
 
     @Test

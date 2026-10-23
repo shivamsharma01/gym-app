@@ -181,7 +181,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
 
         gatewayMessageService.process(envelope(entranceId, "DEVICE_USER_CHANGED", newReaderUser("8001", "Esha Jain")), gatewayId);
 
-        assertThat(memberRepository.findFirstByTenantIdAndSerialNumber(tenant.getId(), "8001")).isEmpty();
+        assertThat(memberRepository.findAll()).noneMatch(m -> m.getFullName().contains("Esha"));
         assertThat(eventsOn(entrance, "8001")).singleElement()
                 .satisfies(e -> assertThat(e.getMemberId()).isNull());
         assertThat(eventsOn(exit, "8001")).singleElement()
@@ -191,7 +191,7 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void changingTheSerialKeepsEarlierAttendanceWithTheMember() throws Exception {
+    void renamingAMemberKeepsEarlierAttendanceWithTheMember() throws Exception {
         Member asha = createMember("Asha", "1001");
         link(asha, entrance, "1001");
         link(asha, exit, "1001");
@@ -200,13 +200,12 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
 
         mockMvc.perform(put("/api/v1/members/" + asha.getPublicId()).header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"firstName\":\"Asha\",\"serialNumber\":\"7\"}"))
+                        .content("{\"firstName\":\"Asha Renamed\"}"))
                 .andExpect(status().isOk());
         assertThat(memberDeviceMappingRepository.findByMemberId(asha.getId()))
                 .allMatch(m -> "1001".equals(m.getDeviceUserId()));
 
-        // Serial may reuse a reader id; attendance still follows the mapping, not the serial.
-        createMemberWithFace(token, "{\"firstName\":\"Bina\",\"serialNumber\":\"1001\"}")
+        createMemberWithFace(token, "{\"firstName\":\"Bina\"}")
                 .andExpect(status().isCreated());
         punch(entranceId, "1001");
         punch(entranceId, "7");
@@ -295,10 +294,6 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
 
     private Member createMember(String firstName, String serial) {
         return saveMember(tenant.getId(), "M-" + serial, firstName, null, serial);
-    }
-
-    private Member memberBySerial(String serial) {
-        return memberRepository.findFirstByTenantIdAndSerialNumber(tenant.getId(), serial).orElseThrow();
     }
 
     private List<AttendanceEvent> eventsOn(Long deviceId, String deviceUserId) {

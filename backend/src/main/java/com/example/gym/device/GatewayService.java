@@ -4,8 +4,11 @@ import com.example.gym.audit.AuditActions;
 import com.example.gym.audit.AuditService;
 import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
+import com.example.gym.device.domain.Device;
+import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.domain.GatewayStatus;
+import com.example.gym.live.StaffLiveBroadcast;
 import com.example.gym.device.dto.DeviceResponses.DeviceView;
 import com.example.gym.device.dto.DeviceResponses.GatewayCreated;
 import com.example.gym.device.dto.GatewayCredentialResponse;
@@ -15,6 +18,7 @@ import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -29,17 +33,20 @@ public class GatewayService {
     private final GatewayAuthService authService;
     private final GatewayProperties properties;
     private final AuditService auditService;
+    private final ApplicationEventPublisher events;
 
     public GatewayService(GatewayRepository gatewayRepository,
                           DeviceRepository deviceRepository,
                           GatewayAuthService authService,
                           GatewayProperties properties,
-                          AuditService auditService) {
+                          AuditService auditService,
+                          ApplicationEventPublisher events) {
         this.gatewayRepository = gatewayRepository;
         this.deviceRepository = deviceRepository;
         this.authService = authService;
         this.properties = properties;
         this.auditService = auditService;
+        this.events = events;
     }
 
     @Transactional(readOnly = true)
@@ -190,21 +197,30 @@ public class GatewayService {
 
     @Transactional
     public void markOffline(String publicId) {
-        gatewayRepository.findByPublicId(publicId).ifPresent(gateway -> {
-            gateway.setStatus(GatewayStatus.OFFLINE);
-            gatewayRepository.save(gateway);
-        });
+        gatewayRepository.findByPublicId(publicId).ifPresent(this::offline);
     }
 
-    /** Marks the gym gateway OFFLINE when the heartbeat has gone stale (connectivity, not device state). */
+    /** Marks the gym PC offline when the heartbeat has gone stale, and its readers with it. */
     @Transactional
     public int markStaleOffline(Instant cutoff) {
         List<Gateway> stale = gatewayRepository.findByStatusAndLastHeartbeatAtBefore(
                 GatewayStatus.ONLINE, cutoff);
         for (Gateway gateway : stale) {
-            gateway.setStatus(GatewayStatus.OFFLINE);
-            gatewayRepository.save(gateway);
+            offline(gateway);
         }
         return stale.size();
+    }
+
+    private void offline(Gateway gateway) {
+        gateway.setStatus(GatewayStatus.OFFLINE);
+        gatewayRepository.save(gateway);
+        for (Device device : deviceRepository.findByGatewayId(gateway.getId())) {
+            if (device.getConnectionState() != DeviceConnectionState.OFFLINE) {
+                device.setConnectionState(DeviceConnectionState.OFFLINE);
+                deviceRepository.save(device);
+            }
+        }
+        events.publishEvent(new StaffLiveBroadcast(gateway.getTenantId(), "GATEWAY_STATUS",
+                Map.of("gatewayId", gateway.getPublicId(), "status", GatewayStatus.OFFLINE.name())));
     }
 }

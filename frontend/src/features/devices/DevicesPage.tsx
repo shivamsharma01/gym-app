@@ -26,7 +26,7 @@ import { api } from '@/lib/api'
 import { toastOk } from '@/lib/toast'
 import { useAuth } from '@/lib/useAuth'
 import { formatDateTime } from '@/lib/cn'
-import { statusTone } from '@/lib/status'
+import { readerConnection, statusTone } from '@/lib/status'
 import type { Device, Gateway, GatewayCreated, PageResponse } from '@/lib/types'
 
 export function DevicesPage() {
@@ -111,7 +111,9 @@ export function DevicesPage() {
                   <Td className="text-muted">{d.role}</Td>
                   <Td className="font-mono text-xs text-muted">{d.host ? `${d.host}:${d.port ?? ''}` : '—'}</Td>
                   <Td>
-                    <Badge tone={statusTone(d.connectionState)}>{d.connectionState}</Badge>
+                    <Badge tone={statusTone(readerConnection(d.connectionState, gateway?.status, d.gatewayAssigned))}>
+                      {readerConnection(d.connectionState, gateway?.status, d.gatewayAssigned)}
+                    </Badge>
                   </Td>
                   <Td className="text-muted">{d.gatewayAssigned ? 'Assigned' : 'None'}</Td>
                 </Tr>

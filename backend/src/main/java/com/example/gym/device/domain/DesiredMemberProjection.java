@@ -154,6 +154,11 @@ public class DesiredMemberProjection extends TenantAwareEntity {
         return memberId;
     }
 
+    /** Cleared when the member row is deleted but the reader still has to drop this id. */
+    public void setMemberId(Long memberId) {
+        this.memberId = memberId;
+    }
+
     public long getRevision() {
         return revision;
     }

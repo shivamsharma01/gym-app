@@ -27,7 +27,7 @@ import { useAuth } from '@/lib/useAuth'
 import { accountStatusLabel, membershipStatusLabel, statusTone } from '@/lib/status'
 import type { Member, PageResponse } from '@/lib/types'
 
-type SortKey = 'name' | 'serial'
+type SortKey = 'name'
 
 export function MembersPage() {
   const { has } = useAuth()
@@ -36,6 +36,7 @@ export function MembersPage() {
   const [status, setStatus] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL')
   const [page, setPage] = useState(0)
   const [deviceAuthority, setDeviceAuthority] = useState<'ALL' | 'ADMIN' | 'USER'>('ALL')
+  const [idsDiffer, setIdsDiffer] = useState(false)
   const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection } | null>(null)
   const toggleSort = (key: SortKey) => {
     // asc → desc → back to the default order (newest first)
@@ -54,7 +55,8 @@ export function MembersPage() {
   }, [q])
 
   const members = useQuery({
-    queryKey: ['members', debounced, status, deviceAuthority, page, sort],    placeholderData: keepPreviousData,
+    queryKey: ['members', debounced, status, deviceAuthority, idsDiffer, page, sort],
+    placeholderData: keepPreviousData,
     queryFn: () => {
       const params = new URLSearchParams({ page: String(page), size: '25' })
       if (debounced.trim()) params.set('q', debounced)
@@ -62,6 +64,7 @@ export function MembersPage() {
       if (deviceAuthority !== 'ALL') {
         params.set('deviceAuthority', deviceAuthority)
       }
+      if (idsDiffer) params.set('idsDiffer', 'true')
       if (sort) {
         params.set('sort', sort.key)
         params.set('direction', sort.direction)
@@ -74,7 +77,7 @@ export function MembersPage() {
     <div>
       <PageHeader
         title="Members"
-        description="Search by name, phone, or serial. Click Member or Serial to sort."
+        description="Search by name, phone, or member code. Click Member to sort."
         actions={
           has('MEMBER_CREATE') ? (
             <Link to="/app/members/new">
@@ -85,7 +88,7 @@ export function MembersPage() {
       />
       <Toolbar>
         <Input
-          placeholder="Search by name, phone, or serial…"
+          placeholder="Search by name, phone, or member code…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           className="max-w-md"
@@ -117,13 +120,28 @@ export function MembersPage() {
           <option value="ACTIVE">Account active</option>
           <option value="INACTIVE">Account inactive</option>
         </Select>
+        <Button
+          type="button"
+          size="sm"
+          variant={idsDiffer ? 'primary' : 'outline'}
+          onClick={() => {
+            setIdsDiffer((current) => !current)
+            setPage(0)
+          }}
+        >
+          Different reader ids
+        </Button>
       </Toolbar>
       {members.isLoading ? <Skeleton className="h-48" /> : null}
       {members.error ? <QueryError error={members.error} onRetry={() => void members.refetch()} /> : null}
       {members.data && members.data.content.length === 0 ? (
         <EmptyState
-          title="No members"
-          body="Add a member to start memberships, payments, and device access."
+          title={idsDiffer ? 'Ids match' : 'No members'}
+          body={
+            idsDiffer
+              ? 'No member has a different id on one reader than on another.'
+              : 'Add a member to start memberships, payments, and device access.'
+          }
           icon={<Users className="h-5 w-5" />}
           action={
             has('MEMBER_CREATE') ? (
@@ -141,9 +159,6 @@ export function MembersPage() {
               <tr>
                 <SortableTh direction={directionFor('name')} onSort={() => toggleSort('name')}>
                   Member
-                </SortableTh>
-                <SortableTh direction={directionFor('serial')} onSort={() => toggleSort('serial')}>
-                  Serial
                 </SortableTh>
                 {(members.data.content[0]?.readers ?? []).map((reader) => (
                   <Th key={reader.deviceId}>{reader.deviceName} id</Th>
@@ -171,7 +186,6 @@ export function MembersPage() {
                       </div>
                       {m.email ? <div className="mt-0.5 text-xs text-muted">{m.email}</div> : null}
                     </Td>
-                    <Td className="font-mono text-xs">{m.serialNumber ?? '—'}</Td>
                     {(m.readers ?? []).map((reader) => (
                       <Td
                         key={reader.deviceId}

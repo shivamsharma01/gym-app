@@ -4,6 +4,7 @@ import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.Device;
+import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.domain.DeviceReviewItem;
 import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.ReaderRevision;
@@ -41,6 +42,7 @@ public class MemberDeviceSyncService {
     private final DeviceReviewItemRepository reviewItemRepository;
     private final DesiredProjectionService desired;
     private final ReaderFacePresence seenOnReader;
+    private final DeviceReachability reachability;
 
     public MemberDeviceSyncService(MemberService memberService,
                                    MemberFaceRepository faceRepository,
@@ -50,7 +52,8 @@ public class MemberDeviceSyncService {
                                    ReaderRevisionRepository revisions,
                                    DeviceReviewItemRepository reviewItemRepository,
                                    DesiredProjectionService desired,
-                                   ReaderFacePresence seenOnReader) {
+                                   ReaderFacePresence seenOnReader,
+                                   DeviceReachability reachability) {
         this.memberService = memberService;
         this.faceRepository = faceRepository;
         this.mappingRepository = mappingRepository;
@@ -60,6 +63,7 @@ public class MemberDeviceSyncService {
         this.reviewItemRepository = reviewItemRepository;
         this.desired = desired;
         this.seenOnReader = seenOnReader;
+        this.reachability = reachability;
     }
 
     /**
@@ -107,6 +111,7 @@ public class MemberDeviceSyncService {
         Map<Long, ReaderFacePresence.Sight> seenByDevice = seenOnReader
                 .forMembers(tenantId, List.of(member.getId()))
                 .getOrDefault(member.getId(), Map.of());
+        Map<Long, DeviceConnectionState> connection = reachability.shown(devices.values());
         List<DeviceRow> rows = new ArrayList<>();
         for (Device device : devices.values().stream()
                 .sorted(Comparator.comparing(Device::getName, String.CASE_INSENSITIVE_ORDER))
@@ -123,7 +128,7 @@ public class MemberDeviceSyncService {
             rows.add(new DeviceRow(
                     device.getPublicId(),
                     device.getName(),
-                    device.getConnectionState() == null ? null : device.getConnectionState().name(),
+                    connection.get(device.getId()).name(),
                     device.getGatewayId() != null,
                     mapping == null ? null : mapping.getDeviceUserId(),
                     row == null ? null : row.getRevision(),

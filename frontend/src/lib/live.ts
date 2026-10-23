@@ -81,6 +81,8 @@ export function useStaffLive() {
         }
         void qc.invalidateQueries({ queryKey: ['attendance'] })
         void qc.invalidateQueries({ queryKey: ['devices'] })
+        void qc.invalidateQueries({ queryKey: ['device'] })
+        void qc.invalidateQueries({ queryKey: ['gateways'] })
         void qc.invalidateQueries({ queryKey: ['security-events'] })
         void qc.invalidateQueries({ queryKey: ['device-health'] })
       }

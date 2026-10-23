@@ -4,6 +4,7 @@ import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
   Badge,
+  Button,
   EmptyState,
   PageHeader,
   Select,
@@ -35,6 +36,63 @@ type Audit = {
 
 const PAGE_SIZES = [10, 25, 50, 100] as const
 
+type AuditOptions = {
+  actors: string[]
+  actions: string[]
+}
+
+function auditPath(page: number, pageSize: number, actors: string[], actions: string[]) {
+  const params = new URLSearchParams({ page: String(page), size: String(pageSize) })
+  for (const actor of actors) params.append('actor', actor)
+  for (const action of actions) params.append('action', action)
+  return `/api/v1/audit-logs?${params.toString()}`
+}
+
+function MultiFilter({
+  label,
+  options,
+  selected,
+  onChange,
+}: Readonly<{
+  label: string
+  options: string[]
+  selected: string[]
+  onChange: (next: string[]) => void
+}>) {
+  const [open, setOpen] = useState(false)
+  const summary = selected.length === 0 ? label : `${label} (${selected.length})`
+  return (
+    <div className="relative">
+      <Button type="button" variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        {summary}
+      </Button>
+      {open ? (
+        <div className="absolute z-20 mt-1 max-h-64 w-64 overflow-auto rounded-lg border border-line bg-canvas p-1 shadow-lg">
+          {options.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-muted">Nothing to choose yet</p>
+          ) : (
+            options.map((option) => {
+              const checked = selected.includes(option)
+              return (
+                <label key={option} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-sm hover:bg-raised">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() =>
+                      onChange(checked ? selected.filter((value) => value !== option) : [...selected, option])
+                    }
+                  />
+                  <span className="truncate">{option}</span>
+                </label>
+              )
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function detailText(details: string | null) {
   if (!details) return null
   try {
@@ -49,21 +107,65 @@ function detailText(details: string | null) {
 export function AuditPage() {
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(25)
-  const logs = useQuery({
-    queryKey: ['audit', page, pageSize],
-    queryFn: () => api<PageResponse<Audit>>(`/api/v1/audit-logs?page=${page}&size=${pageSize}`),
+  const [actors, setActors] = useState<string[]>([])
+  const [actions, setActions] = useState<string[]>([])
+  const options = useQuery({
+    queryKey: ['audit-options'],
+    queryFn: () => api<AuditOptions>('/api/v1/audit-logs/options'),
   })
+  const logs = useQuery({
+    queryKey: ['audit', page, pageSize, actors, actions],
+    queryFn: () => api<PageResponse<Audit>>(auditPath(page, pageSize, actors, actions)),
+  })
+  const filtering = actors.length > 0 || actions.length > 0
 
   return (
     <div>
       <PageHeader
         title="Audit"
-        description="Security and business actions recorded by the API, newest first."
+        description="Who did what, newest first."
       />
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <MultiFilter
+          label="Actor"
+          options={options.data?.actors ?? []}
+          selected={actors}
+          onChange={(next) => {
+            setActors(next)
+            setPage(0)
+          }}
+        />
+        <MultiFilter
+          label="Action"
+          options={options.data?.actions ?? []}
+          selected={actions}
+          onChange={(next) => {
+            setActions(next)
+            setPage(0)
+          }}
+        />
+        {filtering ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setActors([])
+              setActions([])
+              setPage(0)
+            }}
+          >
+            Clear filters
+          </Button>
+        ) : null}
+      </div>
       {logs.isLoading ? <Skeleton className="h-32" /> : null}
       {logs.error ? <QueryError error={logs.error} onRetry={() => void logs.refetch()} /> : null}
       {logs.data && logs.data.content.length === 0 ? (
-        <EmptyState title="No audit events" body="Actions such as login failures and privileged changes will appear here." />
+        <EmptyState
+          title={filtering ? 'No matching events' : 'No audit events'}
+          body={filtering ? 'Try another actor or action.' : 'Logins and changes will appear here.'}
+        />
       ) : null}
       {logs.data && logs.data.content.length > 0 ? (
         <>

@@ -281,7 +281,7 @@ class ReaderConcurrencyIT extends AbstractIntegrationTest {
             ack.add(pool.submit(() -> ackOutcome(staleAck)));
             awaitOneLockWait();
             memberService.update(member,
-                    new UpdateMember("Moved", "Shah", null, null, null, null, null, null, null), tenantId);
+                    new UpdateMember("Moved", "Shah", null, null, null, null, null, null), tenantId);
         });
 
         assertThat(ack.get(0).get(30, TimeUnit.SECONDS))

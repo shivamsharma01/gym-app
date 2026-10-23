@@ -42,4 +42,9 @@ public interface AttendanceEventRepository extends JpaRepository<AttendanceEvent
               and e.deviceUserId = :deviceUserId and e.memberId is null""")
     int linkUnmatched(@Param("tenantId") Long tenantId, @Param("deviceId") Long deviceId,
                       @Param("deviceUserId") String deviceUserId, @Param("memberId") Long memberId);
+
+    /** Keeps the punch after the member row is deleted. */
+    @Modifying(flushAutomatically = true)
+    @Query("update AttendanceEvent e set e.memberId = null where e.memberId = :memberId")
+    int unlinkMember(@Param("memberId") Long memberId);
 }

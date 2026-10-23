@@ -26,6 +26,7 @@ public final class AuditActions {
     public static final String MEMBER_CREATED = "MEMBER_CREATED";
     public static final String MEMBER_UPDATED = "MEMBER_UPDATED";
     public static final String MEMBER_DELETED = "MEMBER_DELETED";
+    public static final String MEMBER_ERASED = "MEMBER_ERASED";
     public static final String MEMBER_REACTIVATED = "MEMBER_REACTIVATED";
     public static final String MEMBER_FACE_UPDATED = "MEMBER_FACE_UPDATED";
     public static final String MEMBER_FACE_DELETED = "MEMBER_FACE_DELETED";

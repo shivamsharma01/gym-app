@@ -24,7 +24,6 @@ export function MemberNewPage() {
       gender: 'UNSPECIFIED',
       notes: '',
       deviceAuthority: 'USER',
-      serialNumber: '',
     },
   })
   const [photo, setPhoto] = useState<File | null>(null)
@@ -39,7 +38,6 @@ export function MemberNewPage() {
         lastName: body.lastName || null,
         phone: body.phone || null,
         dateOfBirth: null,
-        serialNumber: body.serialNumber?.trim() || null,
         memberCode: null,
       }
       const formData = new FormData()

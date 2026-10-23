@@ -41,6 +41,7 @@ public class DeviceReadService {
     private final DeviceService deviceService;
     private final GatewaySessionRegistry sessionRegistry;
     private final MemberService memberService;
+    private final DeviceReachability reachability;
 
     public DeviceReadService(AttendanceEventRepository attendanceRepository,
                              AttendanceSyncCursorRepository cursorRepository,
@@ -49,7 +50,8 @@ public class DeviceReadService {
                              GatewayRepository gatewayRepository,
                              DeviceService deviceService,
                              GatewaySessionRegistry sessionRegistry,
-                             MemberService memberService) {
+                             MemberService memberService,
+                             DeviceReachability reachability) {
         this.attendanceRepository = attendanceRepository;
         this.cursorRepository = cursorRepository;
         this.securityEventRepository = securityEventRepository;
@@ -58,6 +60,7 @@ public class DeviceReadService {
         this.deviceService = deviceService;
         this.sessionRegistry = sessionRegistry;
         this.memberService = memberService;
+        this.reachability = reachability;
     }
 
     @Transactional(readOnly = true)
@@ -107,7 +110,7 @@ public class DeviceReadService {
         AttendanceSyncCursor cursor = cursorRepository.findByDeviceId(device.getId()).orElse(null);
         return new DeviceHealth(
                 device.getPublicId(),
-                device.getConnectionState().name(),
+                reachability.shown(device).name(),
                 gatewayStatus,
                 sessionOnline,
                 device.getLastSeenAt(),

@@ -41,6 +41,20 @@ public class MemberReaderIds {
         this.seenOnReader = seenOnReader;
     }
 
+    /**
+     * True when two or more readers already show an id for this member and those ids are not all
+     * the same. A reader with no id yet does not count.
+     */
+    public static boolean idsDiffer(List<ReaderUserId> readers) {
+        Set<String> ids = new HashSet<>();
+        for (ReaderUserId reader : readers) {
+            if (reader.deviceUserId() != null && !reader.deviceUserId().isBlank()) {
+                ids.add(reader.deviceUserId());
+            }
+        }
+        return ids.size() > 1;
+    }
+
     public List<ReaderUserId> of(Member member) {
         return ofAll(List.of(member), member.getTenantId()).getOrDefault(member.getId(), List.of());
     }

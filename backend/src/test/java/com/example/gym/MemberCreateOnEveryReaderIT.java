@@ -1,6 +1,7 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -283,42 +284,81 @@ class MemberCreateOnEveryReaderIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void serialIsSetFromDevice1AckOnlyWhenEmpty() throws Exception {
-        // Entrance was registered first → device 1. Exit ack must not fill serial.
-        String publicId = createWithoutSerial("Neha", "EVERY-SERIAL");
-        Member before = memberRepository.findByPublicId(publicId).orElseThrow();
-        assertThat(before.getSerialNumber()).isNull();
-        String entranceUserId = mapping(entrance, before).getDeviceUserId();
-        String exitUserId = mapping(exit, before).getDeviceUserId();
-        assertThat(entranceUserId).isEqualTo("1");
-        assertThat(exitUserId).isEqualTo("1");
+    void deletingAMemberRemovesThemFromTheServerAndEveryReader() throws Exception {
+        String publicId = create("Asha", "EVERY-DEL", "1810");
+        Member asha = memberRepository.findByPublicId(publicId).orElseThrow();
+        String entranceUser = mapping(entrance, asha).getDeviceUserId();
+        String exitUser = mapping(exit, asha).getDeviceUserId();
+        String planId = readJson(postJson("/api/v1/plans",
+                "{\"name\":\"Monthly\",\"price\":1000.00,\"currency\":\"INR\",\"durationDays\":30}")
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("id").asString();
+        String membershipId = readJson(postJson("/api/v1/memberships",
+                "{\"memberId\":\"" + publicId + "\",\"planId\":\"" + planId + "\"}")
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("id").asString();
+        postJson("/api/v1/payments",
+                "{\"memberId\":\"" + publicId + "\",\"membershipId\":\"" + membershipId
+                        + "\",\"amount\":1000.00,\"method\":\"CASH\"}")
+                .andExpect(status().isCreated());
 
-        ack(exitId, latest(exitId)).andExpect(status().isOk());
-        assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getSerialNumber())
-                .as("device 2 ack does not set serial")
-                .isNull();
+        mockMvc.perform(delete("/api/v1/members/" + publicId + "/permanent")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
 
-        ack(entranceId, latest(entranceId)).andExpect(status().isOk());
-        assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getSerialNumber())
-                .isEqualTo(entranceUserId);
+        assertThat(memberRepository.findByPublicId(publicId)).isEmpty();
+        assertThat(memberFaceRepository.findByMemberId(asha.getId())).isEmpty();
+        assertThat(memberDeviceMappingRepository.findByMemberId(asha.getId())).isEmpty();
+        assertThat(membershipRepository.findByMemberId(asha.getId())).isEmpty();
+        assertThat(paymentRepository.findByMemberIdOrderByPaidOnDescIdDesc(asha.getId())).isEmpty();
+        for (Long deviceId : List.of(entrance, exit)) {
+            String deviceUserId = deviceId.equals(entrance) ? entranceUser : exitUser;
+            DesiredMemberProjection row = desiredMemberProjectionRepository
+                    .findByDeviceIdAndDeviceUserId(deviceId, deviceUserId).orElseThrow();
+            assertThat(row.getMemberId()).isNull();
+            assertThat(row.isPresentOnReader()).isFalse();
+        }
+        assertThat(latest(entranceId).get("present").asBoolean()).isFalse();
+        assertThat(latest(entranceId).get("deviceUserId").asString()).isEqualTo(entranceUser);
+        assertThat(latest(exitId).get("present").asBoolean()).isFalse();
+        assertThat(latest(exitId).get("deviceUserId").asString()).isEqualTo(exitUser);
 
-        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(
-                                "/api/v1/members/" + publicId)
+        JsonNode erased = readJson(mockMvc.perform(get("/api/v1/audit-logs")
                         .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"firstName":"Neha","lastName":"Shah","serialNumber":"STAFF-9"}
-                                """))
-                .andExpect(status().isOk());
-        assertThat(memberRepository.findByPublicId(publicId).orElseThrow().getSerialNumber())
-                .isEqualTo("STAFF-9");
+                        .param("actor", "fan-admin")
+                        .param("action", AuditActions.MEMBER_ERASED))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(erased.get("content")).hasSize(1);
+        assertThat(erased.get("content").get(0).get("actorUsername").asString()).isEqualTo("fan-admin");
 
-        String kept = create("Riya", "EVERY-KEEP", "KEEP-1");
-        ack(exitId, latest(exitId)).andExpect(status().isOk());
-        ack(entranceId, latest(entranceId)).andExpect(status().isOk());
-        assertThat(memberRepository.findByPublicId(kept).orElseThrow().getSerialNumber())
-                .as("explicit serial is not overwritten by device 1 ack")
-                .isEqualTo("KEEP-1");
+        JsonNode createdOnly = readJson(mockMvc.perform(get("/api/v1/audit-logs")
+                        .header("Authorization", "Bearer " + token)
+                        .param("action", AuditActions.MEMBER_CREATED)
+                        .param("action", AuditActions.MEMBER_ERASED))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(createdOnly.get("content")).hasSizeGreaterThanOrEqualTo(2);
+        for (JsonNode row : createdOnly.get("content")) {
+            assertThat(row.get("action").asString()).isIn(AuditActions.MEMBER_CREATED, AuditActions.MEMBER_ERASED);
+        }
+        assertThat(createdOnly.get("content").toString()).contains("MEMBER_ERASED").contains("MEMBER_CREATED");
+
+        JsonNode options = readJson(mockMvc.perform(get("/api/v1/audit-logs/options")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(options.get("actors").toString()).contains("fan-admin");
+        assertThat(options.get("actions").toString()).contains("MEMBER_ERASED");
+    }
+
+    @Test
+    void twoEmptyReadersGetTheSameIdsBeforeEitherConfirms() throws Exception {
+        Member first = memberRepository.findByPublicId(create("Neha", "EVERY-SAME", "1")).orElseThrow();
+        assertThat(mapping(entrance, first).getDeviceUserId()).isEqualTo("1");
+        assertThat(mapping(exit, first).getDeviceUserId()).isEqualTo("1");
+
+        Member second = memberRepository.findByPublicId(create("Riya", "EVERY-NEXT", "2")).orElseThrow();
+        assertThat(mapping(entrance, second).getDeviceUserId()).isEqualTo("2");
+        assertThat(mapping(exit, second).getDeviceUserId()).isEqualTo("2");
     }
 
     private String create(String firstName, String code, String serial) throws Exception {

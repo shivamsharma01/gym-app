@@ -75,13 +75,8 @@ public class MemberService {
         if (memberRepository.existsByTenantIdAndMemberCode(tenantId, code)) {
             throw CommonExceptions.conflict("Member code already exists");
         }
-        // Leave serial empty when staff omit it; device 1 ACK fills it from that reader's device user id.
-        String serial = StringUtils.hasText(request.serialNumber())
-                ? request.serialNumber().trim()
-                : null;
 
         Member member = new Member(tenantId, code, request.firstName());
-        member.setSerialNumber(serial);
         member.setLastName(request.lastName());
         member.setEmail(request.email());
         member.setPhone(request.phone());
@@ -96,10 +91,9 @@ public class MemberService {
             member.setDeviceAuthority(authority);
         }
         Member saved = memberRepository.save(member);
-        FlowLog.info("member", "created id={} code={} serial={}", saved.getPublicId(), saved.getMemberCode(), serial);
+        FlowLog.info("member", "created id={} code={}", saved.getPublicId(), saved.getMemberCode());
         Map<String, Object> created = new LinkedHashMap<>();
         created.put("memberCode", saved.getMemberCode());
-        created.put("serialNumber", serial);
         auditService.record(AuditActions.MEMBER_CREATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), created);
         return saved;
@@ -108,9 +102,6 @@ public class MemberService {
     @Transactional
     public Member update(String publicId, UpdateMember request, Long tenantId) {
         Member member = getByPublicId(publicId, tenantId);
-        String previousSerial = member.getSerialNumber();
-        String newSerial = StringUtils.hasText(request.serialNumber()) ? request.serialNumber().trim() : null;
-        boolean serialChanged = newSerial != null && !newSerial.equals(previousSerial);
         String previousName = member.getFullName();
         member.setFirstName(request.firstName());
         member.setLastName(request.lastName());
@@ -129,34 +120,20 @@ public class MemberService {
             }
         }
         boolean nameChanged = !previousName.equals(member.getFullName());
-        if (nameChanged || authorityChanged || serialChanged) {
+        if (nameChanged || authorityChanged) {
             member.setProfileChangedAt(Instant.now());
-        }
-        if (serialChanged) {
-            member.setAccessChangedAt(member.getProfileChangedAt());
-            member.setSerialNumber(newSerial);
         }
         Member saved = memberRepository.save(member);
         if (nameChanged || authorityChanged) {
             deviceAuthorizationService.publishProfile(saved);
         }
-        FlowLog.info("member", "updated id={} nameChanged={} authorityChanged={} serialChanged={}",
-                saved.getPublicId(), nameChanged, authorityChanged, serialChanged);
+        FlowLog.info("member", "updated id={} nameChanged={} authorityChanged={}",
+                saved.getPublicId(), nameChanged, authorityChanged);
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("nameChanged", nameChanged);
-        details.put("serialNumber", saved.getSerialNumber());
-        if (serialChanged) {
-            details.put("previousSerialNumber", previousSerial);
-        }
         auditService.record(AuditActions.MEMBER_UPDATED, AuditActions.RESULT_SUCCESS,
                 "Member", saved.getPublicId(), details);
         return saved;
-    }
-
-    /** The number the create form starts with. */
-    @Transactional(readOnly = true)
-    public String nextSerial(Long tenantId) {
-        return numbers.nextSerial(tenantId);
     }
 
     @Transactional
@@ -168,7 +145,7 @@ public class MemberService {
         deviceAuthorizationService.syncMember(member);
         FlowLog.info("member", "deactivated id={}", member.getPublicId());
         auditService.record(AuditActions.MEMBER_DELETED, AuditActions.RESULT_SUCCESS,
-                "Member", member.getPublicId(), serialDetails(member));
+                "Member", member.getPublicId(), Map.of("memberCode", member.getMemberCode()));
     }
 
     @Transactional
@@ -184,7 +161,7 @@ public class MemberService {
         deviceAuthorizationService.syncMember(saved);
         FlowLog.info("member", "reactivated id={}", saved.getPublicId());
         auditService.record(AuditActions.MEMBER_REACTIVATED, AuditActions.RESULT_SUCCESS,
-                "Member", saved.getPublicId(), serialDetails(saved));
+                "Member", saved.getPublicId(), Map.of("memberCode", saved.getMemberCode()));
         return saved;
     }
 
@@ -206,18 +183,13 @@ public class MemberService {
             Member saved = memberRepository.save(member);
             deviceAuthorizationService.publishProfile(saved);
             FlowLog.info("member", "authority updated id={} authority={}", saved.getPublicId(), authority);
-            Map<String, Object> details = serialDetails(saved);
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("memberCode", saved.getMemberCode());
             details.put("deviceAuthority", authority.name());
             auditService.record(AuditActions.MEMBER_UPDATED, AuditActions.RESULT_SUCCESS,
                     "Member", saved.getPublicId(), details);
             return saved;
         }
         return member;
-    }
-
-    private static Map<String, Object> serialDetails(Member member) {
-        Map<String, Object> details = new LinkedHashMap<>();
-        details.put("serialNumber", member.getSerialNumber());
-        return details;
     }
 }

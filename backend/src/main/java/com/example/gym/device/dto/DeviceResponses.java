@@ -2,6 +2,7 @@ package com.example.gym.device.dto;
 
 import com.example.gym.device.domain.AttendanceEvent;
 import com.example.gym.device.domain.Device;
+import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.domain.DeviceSyncCommand;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.domain.SecurityEvent;
@@ -58,9 +59,15 @@ public final class DeviceResponses {
             Instant createdAt) {
 
         public static DeviceView from(Device d) {
+            DeviceConnectionState state = d.getConnectionState() == null
+                    ? DeviceConnectionState.UNKNOWN : d.getConnectionState();
+            return from(d, state);
+        }
+
+        public static DeviceView from(Device d, DeviceConnectionState connectionState) {
             return new DeviceView(d.getPublicId(), d.getName(), d.getRole().name(), d.getHost(),
                     d.getPort(), d.getModel(), d.getSerialNumber(), d.getFirmware(),
-                    d.getConnectionState().name(), d.getLastSeenAt(), d.getGatewayId() != null,
+                    connectionState.name(), d.getLastSeenAt(), d.getGatewayId() != null,
                     d.getCreatedAt());
         }
     }

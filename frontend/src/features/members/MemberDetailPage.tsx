@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useLocation, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { BackLink } from '@/components/BackLink'
 import { ConfirmDialog } from '@/components/Dialog'
 import { PageNav, Pager } from '@/components/Pager'
@@ -51,10 +51,12 @@ export function MemberDetailPage() {
     queryKey: ['member-device-sync', id],
     queryFn: () => api<MemberDeviceSync>(`/api/v1/members/${id}/device-sync`),
   })
+  const navigate = useNavigate()
   const location = useLocation()
   const photoError = (location.state as { photoError?: string | null } | null)?.photoError ?? null
   const [confirmDeactivate, setConfirmDeactivate] = useState(false)
   const [confirmReactivate, setConfirmReactivate] = useState(false)
+  const [confirmErase, setConfirmErase] = useState(false)
   const deactivate = useMutation({
     mutationFn: () => api(`/api/v1/members/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
@@ -64,6 +66,15 @@ export function MemberDetailPage() {
       void qc.invalidateQueries({ queryKey: ['sync-commands'] })
       setConfirmDeactivate(false)
       toastOk('Member deactivated.')
+    },
+  })
+  const erase = useMutation({
+    mutationFn: () => api(`/api/v1/members/${id}/permanent`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['members'] })
+      setConfirmErase(false)
+      toastOk('Member deleted.')
+      navigate('/app/members')
     },
   })
   const reactivate = useMutation({
@@ -114,15 +125,15 @@ export function MemberDetailPage() {
             {has('MEMBER_DELETE') && m.status === 'INACTIVE' ? (
               <Button onClick={() => setConfirmReactivate(true)}>Reactivate</Button>
             ) : null}
+            {has('MEMBER_DELETE') ? (
+              <Button variant="danger" onClick={() => setConfirmErase(true)}>
+                Delete
+              </Button>
+            ) : null}
           </div>
           <div className="text-right">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Serial</div>
-            <div className="font-mono text-4xl font-bold tracking-tight text-ink sm:text-5xl">
-              {m.serialNumber ?? '—'}
-            </div>
-            <div className="mt-1 font-mono text-lg font-semibold tracking-wide text-muted sm:text-xl">
-              {m.memberCode}
-            </div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Member code</div>
+            <div className="font-mono text-lg font-semibold tracking-wide text-ink">{m.memberCode}</div>
           </div>
         </div>
       </div>
@@ -320,6 +331,16 @@ export function MemberDetailPage() {
         busy={reactivate.isPending}
         onConfirm={() => reactivate.mutate()}
       />
+      <ConfirmDialog
+        open={confirmErase}
+        onClose={() => setConfirmErase(false)}
+        title="Delete this member?"
+        description="Removes them from the gym and from every reader. Door history stays, without their name. This cannot be undone."
+        confirmLabel="Delete member"
+        danger
+        busy={erase.isPending}
+        onConfirm={() => erase.mutate()}
+      />
     </div>
   )
 }
@@ -383,8 +404,6 @@ function readerStateLabel(row: MemberDeviceSync['devices'][number]) {
 
 function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
   const { has } = useAuth()
-  const qc = useQueryClient()
-  const [removeDevice, setRemoveDevice] = useState<MemberDeviceSync['devices'][number] | null>(null)
   const sync = useQuery({
     queryKey: ['member-device-sync', memberId],
     queryFn: () => api<MemberDeviceSync>(`/api/v1/members/${memberId}/device-sync`),
@@ -395,16 +414,6 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
     onSuccess: () => {
       void sync.refetch()
       toastOk('Update sent to this reader.')
-    },
-  })
-  const remove = useMutation({
-    mutationFn: (deviceId: string) =>
-      api(`/api/v1/members/${memberId}/device-sync/${deviceId}/remove`, { method: 'POST' }),
-    onSuccess: () => {
-      setRemoveDevice(null)
-      void sync.refetch()
-      void qc.invalidateQueries({ queryKey: ['member', memberId] })
-      toastOk('Removed from this reader.')
     },
   })
   if (sync.error) return <QueryError error={sync.error} />
@@ -503,15 +512,6 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
                       >
                         {retry.isPending ? 'Sending…' : 'Update this reader'}
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={remove.isPending}
-                        title="Take this person off this reader only"
-                        onClick={() => setRemoveDevice(row)}
-                      >
-                        Remove from reader
-                      </Button>
                     </div>
                   ) : null}
                 </div>
@@ -520,20 +520,7 @@ function DeviceSyncPanel({ memberId }: Readonly<{ memberId: string }>) {
           </div>
         )}
         {retry.error instanceof ApiError ? <p className="text-sm text-danger">{retry.error.message}</p> : null}
-        {remove.error instanceof ApiError ? <p className="text-sm text-danger">{remove.error.message}</p> : null}
       </Card>
-      <ConfirmDialog
-        open={removeDevice != null}
-        onClose={() => setRemoveDevice(null)}
-        title={removeDevice ? `Remove from ${removeDevice.deviceName}?` : 'Remove from this reader?'}
-        description="Takes this person off this reader only. The member stays, and other readers are not changed."
-        confirmLabel="Remove from reader"
-        danger
-        busy={remove.isPending}
-        onConfirm={() => {
-          if (removeDevice) remove.mutate(removeDevice.deviceId)
-        }}
-      />
     </section>
   )
 }

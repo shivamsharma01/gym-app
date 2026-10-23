@@ -8,7 +8,6 @@ import java.util.List;
 public record MemberResponse(
         String id,
         String memberCode,
-        String serialNumber,
         String firstName,
         String lastName,
         String fullName,
@@ -39,7 +38,6 @@ public record MemberResponse(
         return new MemberResponse(
                 m.getPublicId(),
                 m.getMemberCode(),
-                m.getSerialNumber(),
                 m.getFirstName(),
                 m.getLastName(),
                 m.getFullName(),

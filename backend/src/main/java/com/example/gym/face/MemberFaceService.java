@@ -93,7 +93,7 @@ public class MemberFaceService {
         memberRepository.save(member);
         FlowLog.info("face", "photo stored member={} version={}", member.getPublicId(), face.getFaceVersion());
         auditService.record(AuditActions.MEMBER_FACE_UPDATED, AuditActions.RESULT_SUCCESS,
-                "Member", member.getPublicId(), serialDetails(member, "faceVersion", face.getFaceVersion()));
+                "Member", member.getPublicId(), faceDetails(member, "faceVersion", face.getFaceVersion()));
         return face;
     }
 
@@ -140,7 +140,7 @@ public class MemberFaceService {
         desiredProjection.publishFaceCleared(member);
         FlowLog.info("face", "photo removed member={}", member.getPublicId());
         auditService.record(AuditActions.MEMBER_FACE_DELETED, AuditActions.RESULT_SUCCESS,
-                "Member", member.getPublicId(), serialDetails(member, null, null));
+                "Member", member.getPublicId(), faceDetails(member, null, null));
     }
 
     private Member member(String publicId, Long tenantId) {
@@ -150,9 +150,9 @@ public class MemberFaceService {
         return member;
     }
 
-    private static Map<String, Object> serialDetails(Member member, String key, Object value) {
+    private static Map<String, Object> faceDetails(Member member, String key, Object value) {
         Map<String, Object> details = new java.util.LinkedHashMap<>();
-        details.put("serialNumber", member.getSerialNumber());
+        details.put("memberCode", member.getMemberCode());
         if (key != null) {
             details.put(key, value);
         }

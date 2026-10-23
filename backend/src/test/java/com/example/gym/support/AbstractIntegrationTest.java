@@ -258,7 +258,6 @@ public abstract class AbstractIntegrationTest {
     protected Member saveMember(Long tenantId, String memberCode, String firstName, String lastName, String serial) {
         Member member = new Member(tenantId, memberCode, firstName);
         member.setLastName(lastName);
-        member.setSerialNumber(serial);
         return memberRepository.save(member);
     }
 

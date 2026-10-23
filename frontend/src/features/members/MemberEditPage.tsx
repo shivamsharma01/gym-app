@@ -32,7 +32,6 @@ export function MemberEditPage() {
       gender: member.data.gender,
       notes: member.data.notes ?? '',
       deviceAuthority: (member.data.deviceAuthority as 'USER' | 'ADMIN') ?? 'USER',
-      serialNumber: member.data.serialNumber ?? '',
     })
   }, [member.data, form])
 
@@ -48,7 +47,6 @@ export function MemberEditPage() {
           lastName: body.lastName || null,
           phone: body.phone || null,
           dateOfBirth: member.data?.dateOfBirth ?? null,
-          serialNumber: body.serialNumber?.trim() || null,
         }),
       })
       return { member: saved, photoError: photo ? await photoUploadError(saved.id, photo) : null }

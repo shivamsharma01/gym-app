@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.device.DeviceSyncService;
+import com.example.gym.device.GatewayService;
 import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.domain.GatewayStatus;
 import com.example.gym.device.domain.SyncCommandState;
@@ -26,6 +27,9 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
 
     @Autowired
     private DeviceSyncService deviceSyncService;
+
+    @Autowired
+    private GatewayService gatewayService;
 
     private String staffToken;
     private String gatewayId;
@@ -308,6 +312,31 @@ class GatewayCredentialIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.type").value("ACK"));
         assertThat(deviceRepository.findByPublicId(ownDeviceId).orElseThrow().getConnectionState())
                 .isEqualTo(DeviceConnectionState.ONLINE);
+    }
+
+    @Test
+    void readersShowOfflineWhileTheGymPcIsOffline() throws Exception {
+        String deviceId = createDevice(staffToken, "Entrance", "10.0.0.8", gatewayId);
+        var reader = deviceRepository.findByPublicId(deviceId).orElseThrow();
+        reader.setConnectionState(DeviceConnectionState.ONLINE);
+        deviceRepository.saveAndFlush(reader);
+        var gateway = gatewayRepository.findByPublicId(gatewayId).orElseThrow();
+        gateway.setStatus(GatewayStatus.OFFLINE);
+        gatewayRepository.saveAndFlush(gateway);
+
+        mockMvc.perform(get("/api/v1/devices/" + deviceId).header("Authorization", "Bearer " + staffToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.connectionState").value("OFFLINE"));
+        mockMvc.perform(get("/api/v1/devices/" + deviceId + "/health").header("Authorization", "Bearer " + staffToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deviceConnectionState").value("OFFLINE"))
+                .andExpect(jsonPath("$.gatewayStatus").value("OFFLINE"));
+        assertThat(deviceRepository.findByPublicId(deviceId).orElseThrow().getConnectionState())
+                .isEqualTo(DeviceConnectionState.ONLINE);
+
+        gatewayService.markOffline(gatewayId);
+        assertThat(deviceRepository.findByPublicId(deviceId).orElseThrow().getConnectionState())
+                .isEqualTo(DeviceConnectionState.OFFLINE);
     }
 
     @Test

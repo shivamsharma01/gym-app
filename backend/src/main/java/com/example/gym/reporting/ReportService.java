@@ -1,9 +1,11 @@
 package com.example.gym.reporting;
 
 import com.example.gym.common.error.CommonExceptions;
+import com.example.gym.device.DeviceReachability;
 import com.example.gym.device.domain.AccessResult;
 import com.example.gym.device.domain.AttendanceEvent;
 import com.example.gym.device.domain.Device;
+import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.repo.AttendanceEventRepository;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.access.ReaderValidity;
@@ -39,17 +41,20 @@ public class ReportService {
     private final PaymentRepository paymentRepository;
     private final AttendanceEventRepository attendanceEventRepository;
     private final DeviceRepository deviceRepository;
+    private final DeviceReachability reachability;
 
     public ReportService(MemberRepository memberRepository,
                          MembershipRepository membershipRepository,
                          PaymentRepository paymentRepository,
                          AttendanceEventRepository attendanceEventRepository,
-                         DeviceRepository deviceRepository) {
+                         DeviceRepository deviceRepository,
+                         DeviceReachability reachability) {
         this.memberRepository = memberRepository;
         this.membershipRepository = membershipRepository;
         this.paymentRepository = paymentRepository;
         this.attendanceEventRepository = attendanceEventRepository;
         this.deviceRepository = deviceRepository;
+        this.reachability = reachability;
     }
 
     @Transactional(readOnly = true)
@@ -73,8 +78,10 @@ public class ReportService {
                 .filter(m -> m.effectiveStatus(today) == MembershipStatus.EXPIRED)
                 .count();
 
-        List<Map<String, Object>> devices = deviceRepository.findByTenantId(tenantId).stream()
-                .map(this::deviceRow)
+        List<Device> deviceList = deviceRepository.findByTenantId(tenantId);
+        Map<Long, DeviceConnectionState> connection = reachability.shown(deviceList);
+        List<Map<String, Object>> devices = deviceList.stream()
+                .map(device -> deviceRow(device, connection.get(device.getId())))
                 .toList();
 
         return new ReportSummary(
@@ -260,12 +267,12 @@ public class ReportService {
                 newMemberRows.stream().map(this::memberRow).toList(), attendanceRows, inactiveMembers);
     }
 
-    private Map<String, Object> deviceRow(Device device) {
+    private Map<String, Object> deviceRow(Device device, DeviceConnectionState connectionState) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", device.getPublicId());
         row.put("name", device.getName());
         row.put("role", device.getRole().name());
-        row.put("connectionState", device.getConnectionState().name());
+        row.put("connectionState", connectionState.name());
         row.put("lastSeenAt", device.getLastSeenAt());
         return row;
     }

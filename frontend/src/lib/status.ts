@@ -54,6 +54,12 @@ export function accessReasonLabel(allowed: boolean, reason?: string | null): str
   }
 }
 
+/** A reader stays online only while the gym PC that talks to it is online. */
+export function readerConnection(reported: string, gatewayStatus: string | null | undefined, assigned: boolean) {
+  if (assigned && gatewayStatus && gatewayStatus !== 'ONLINE') return 'OFFLINE'
+  return reported
+}
+
 export function statusTone(value?: string | null): Tone {
   const v = (value ?? '').toUpperCase()
   if (v === 'NOT_SYNCED' || v === 'INACTIVE') {

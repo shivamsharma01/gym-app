@@ -1,8 +1,10 @@
 package com.example.gym.device.web;
 
 import com.example.gym.common.web.PageResponse;
+import com.example.gym.device.DeviceReachability;
 import com.example.gym.device.DeviceReadService;
 import com.example.gym.device.DeviceService;
+import com.example.gym.device.domain.DeviceConnectionState;
 import com.example.gym.device.ReaderImportService;
 import com.example.gym.device.ReaderImportService.Imported;
 import com.example.gym.device.ReaderImportService.Summary;
@@ -24,6 +26,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
+import java.util.Map;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
@@ -47,17 +50,20 @@ public class DeviceController {
 
     private final DeviceService deviceService;
     private final DeviceReadService deviceReadService;
+    private final DeviceReachability reachability;
     private final ReaderReconcileService reconcileService;
     private final ReaderImportService importService;
     private final ReaderLinkService linkService;
 
     public DeviceController(DeviceService deviceService,
                             DeviceReadService deviceReadService,
+                            DeviceReachability reachability,
                             ReaderReconcileService reconcileService,
                             ReaderImportService importService,
                             ReaderLinkService linkService) {
         this.deviceService = deviceService;
         this.deviceReadService = deviceReadService;
+        this.reachability = reachability;
         this.reconcileService = reconcileService;
         this.importService = importService;
         this.linkService = linkService;
@@ -72,15 +78,17 @@ public class DeviceController {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize,
                 Sort.by(Sort.Direction.ASC, "name"));
-        return PageResponse.from(
-                deviceService.list(SecurityUtils.currentTenantId(), pageable), DeviceView::from);
+        var devices = deviceService.list(SecurityUtils.currentTenantId(), pageable);
+        Map<Long, DeviceConnectionState> shown = reachability.shown(devices.getContent());
+        return PageResponse.from(devices, device -> DeviceView.from(device, shown.get(device.getId())));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('DEVICE_VIEW')")
     @Operation(summary = "Get a device")
     public DeviceView get(@PathVariable String id) {
-        return DeviceView.from(deviceService.getByPublicId(id, SecurityUtils.currentTenantId()));
+        var device = deviceService.getByPublicId(id, SecurityUtils.currentTenantId());
+        return DeviceView.from(device, reachability.shown(device));
     }
 
     @PostMapping
@@ -88,14 +96,16 @@ public class DeviceController {
     @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
     @Operation(summary = "Register a device")
     public DeviceView create(@Valid @RequestBody CreateDevice request) {
-        return DeviceView.from(deviceService.create(request, SecurityUtils.currentTenantId()));
+        var device = deviceService.create(request, SecurityUtils.currentTenantId());
+        return DeviceView.from(device, reachability.shown(device));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('DEVICE_MANAGE')")
     @Operation(summary = "Update a device")
     public DeviceView update(@PathVariable String id, @Valid @RequestBody UpdateDevice request) {
-        return DeviceView.from(deviceService.update(id, request, SecurityUtils.currentTenantId()));
+        var device = deviceService.update(id, request, SecurityUtils.currentTenantId());
+        return DeviceView.from(device, reachability.shown(device));
     }
 
     @GetMapping("/{id}/health")

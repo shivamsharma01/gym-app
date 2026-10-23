@@ -124,7 +124,7 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
 
         assertThat(gatewayMessageService.process(message, gatewayId).orElseThrow()).contains("ERROR");
         assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isFalse();
-        assertThat(memberRepository.findFirstByTenantIdAndSerialNumber(tenant.getId(), "9100")).isEmpty();
+        assertThat(memberRepository.findAll()).isEmpty();
 
         // Resent (the gateway keeps it until ACK): processed this time, then deduplicated.
         assertThat(gatewayMessageService.process(message, gatewayId).orElseThrow()).contains("ACK");

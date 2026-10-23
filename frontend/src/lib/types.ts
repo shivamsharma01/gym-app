@@ -78,8 +78,6 @@ export type TokenResponse = {
 export type Member = {
   id: string
   memberCode: string
-  /** The id staff use on readers (device user id); null for older members whose readers disagree. */
-  serialNumber: string | null
   firstName: string
   lastName: string
   fullName: string

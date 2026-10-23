@@ -19,15 +19,6 @@ export function MemberFormFields({ form }: { form: UseFormReturn<MemberFormValue
         </div>
       </div>
       <div>
-        <Label>Serial number</Label>
-        <Input inputMode="numeric" className="font-mono" {...form.register('serialNumber')} />
-        <p className="mt-1 text-xs text-muted">
-          Optional staff label. When left empty on create, it is set from device 1 after that reader
-          acknowledges the member. Not the same as each reader&apos;s device user id.
-        </p>
-        <FieldError message={form.formState.errors.serialNumber?.message} />
-      </div>
-      <div>
         <Label>Email</Label>
         <Input type="email" {...form.register('email')} />
         <FieldError message={form.formState.errors.email?.message} />

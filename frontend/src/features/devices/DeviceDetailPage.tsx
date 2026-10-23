@@ -10,7 +10,7 @@ import { toastOk } from '@/lib/toast'
 import { useAuth } from '@/lib/useAuth'
 import { DEVICE_MODELS } from '@/lib/catalog'
 import { cn, formatDateTime } from '@/lib/cn'
-import { statusTone } from '@/lib/status'
+import { readerConnection, statusTone } from '@/lib/status'
 import type { Device, DeviceHealth, Gateway, PageResponse, SecurityEvent, SyncCommand } from '@/lib/types'
 
 export function DeviceDetailPage() {
@@ -18,10 +18,16 @@ export function DeviceDetailPage() {
   const tab = section ?? 'overview'
   const { has } = useAuth()
   const device = useQuery({ queryKey: ['device', id], queryFn: () => api<Device>(`/api/v1/devices/${id}`) })
+  const health = useQuery({
+    queryKey: ['device-health', id],
+    queryFn: () => api<DeviceHealth>(`/api/v1/devices/${id}/health`),
+    enabled: Boolean(id),
+  })
 
   if (device.isLoading) return <Skeleton className="h-40" />
   if (device.error || !device.data) return <QueryError error={device.error ?? new Error('Not found')} />
   const d = device.data
+  const connection = readerConnection(d.connectionState, health.data?.gatewayStatus, d.gatewayAssigned)
   const showEvents = has('SECURITY_ALERT_VIEW')
   const showSettings = has('DEVICE_MANAGE')
   if ((tab === 'events' && !showEvents) || (tab === 'settings' && !showSettings)) {
@@ -43,7 +49,7 @@ export function DeviceDetailPage() {
         }
       />
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={statusTone(d.connectionState)}>{d.connectionState}</Badge>
+        <Badge tone={statusTone(connection)}>{connection}</Badge>
         <Badge tone={d.gatewayAssigned ? 'ok' : 'warn'}>{d.gatewayAssigned ? 'Connected to the gym PC' : 'Not connected to the gym PC'}</Badge>
       </div>
       <p className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted">
@@ -105,7 +111,9 @@ function Overview({ device }: { device: Device }) {
         <div className="grid gap-3 sm:grid-cols-2">
           <Card>
             <div className="text-xs uppercase text-muted">Device</div>
-            <div className="mt-1 font-semibold">{health.data.deviceConnectionState}</div>
+            <div className="mt-1 font-semibold">
+              {readerConnection(health.data.deviceConnectionState, health.data.gatewayStatus, device.gatewayAssigned)}
+            </div>
             <p className="mt-2 text-sm text-muted">Last seen {formatDateTime(health.data.lastSeenAt)}</p>
           </Card>
           <Card>

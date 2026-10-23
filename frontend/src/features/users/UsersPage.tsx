@@ -6,6 +6,7 @@ import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, EmptyState, Input, Label, PageHeader, Select, Skeleton } from '@/components/ui'
 import { api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import { useAuth } from '@/lib/useAuth'
 import { STAFF_ROLES } from '@/lib/catalog'
 import { statusTone } from '@/lib/status'
@@ -68,20 +69,30 @@ export function UsersPage() {
       setFullName('')
       setPassword('')
       void qc.invalidateQueries({ queryKey: ['users'] })
+      toastOk('Staff login added.')
     },
   })
   const disable = useMutation({
     mutationFn: (id: string) => api(`/api/v1/users/${id}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['users'] })
+      toastOk('Login turned off.')
+    },
   })
   const enable = useMutation({
     mutationFn: (id: string) => api(`/api/v1/users/${id}/enable`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['users'] })
+      toastOk('Login turned on.')
+    },
   })
   const changeRole = useMutation({
     mutationFn: ({ user, role }: { user: StaffUser; role: string }) =>
       api(`/api/v1/users/${user.id}/roles`, { method: 'PUT', body: JSON.stringify({ roles: [role] }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['users'] })
+      toastOk('Role updated.')
+    },
   })
 
   return (
@@ -89,7 +100,7 @@ export function UsersPage() {
       <div>
         <PageHeader
           title="Staff accounts"
-          description="Logins for this app only. Gym members are created under Members. The TrueFace tablet never sees these roles."
+          description="Logins for this app. Members are added under Members."
         />
         {users.isLoading ? <Skeleton className="h-32" /> : null}
         {users.error ? <QueryError error={users.error} onRetry={() => void users.refetch()} /> : null}
@@ -157,7 +168,7 @@ export function UsersPage() {
         >
           <h2 className="text-sm font-semibold tracking-tight">New staff login</h2>
           <p className="text-sm text-muted">
-            To enrol someone on the door, create them as a{' '}
+            To add someone at the door, create them as a{' '}
             {has('MEMBER_CREATE') ? (
               <Link className="font-medium text-accent hover:underline" to="/app/members/new">
                 member
@@ -165,7 +176,7 @@ export function UsersPage() {
             ) : (
               'member'
             )}
-            , then map them on the member page.
+            , not as a staff login.
           </p>
         <Label>Username</Label>
         <Input value={username} onChange={(e) => setUsername(e.target.value)} />
@@ -189,7 +200,7 @@ export function UsersPage() {
         {catalog.error ? <QueryError error={catalog.error} /> : null}
         {create.error ? <QueryError error={create.error} /> : null}
         <Button type="submit" disabled={create.isPending || !role}>
-          Create
+          {create.isPending ? 'Adding…' : 'Add login'}
         </Button>
         </form>
       </Card>

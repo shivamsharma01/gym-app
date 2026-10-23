@@ -34,7 +34,7 @@ export function AttendanceLivePage() {
       {attendance.data && attendance.data.content.length === 0 ? (
         <EmptyState
           title="Waiting for events"
-          body="Door activity appears here when the gateway reports access events."
+          body="Punches show up here when a reader reports them."
           icon={<Activity className="h-5 w-5" />}
         />
       ) : null}

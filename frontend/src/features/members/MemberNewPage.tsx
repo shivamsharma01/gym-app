@@ -9,6 +9,7 @@ import { MemberFormFields } from '@/features/members/MemberFormFields'
 import { MemberPhotoField } from '@/features/members/MemberPhotoField'
 import { memberFormSchema, type MemberFormValues } from '@/features/members/memberFormSchema'
 import { ApiError, api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import type { Member } from '@/lib/types'
 
 export function MemberNewPage() {
@@ -46,7 +47,10 @@ export function MemberNewPage() {
       formData.append('face', photo)
       return api<Member>('/api/v1/members', { method: 'POST', body: formData })
     },
-    onSuccess: (member) => navigate(`/app/members/${member.id}`),
+    onSuccess: (member) => {
+      toastOk('Member added.')
+      navigate(`/app/members/${member.id}`)
+    },
   })
 
   return (
@@ -54,7 +58,7 @@ export function MemberNewPage() {
       <BackLink to="/app/members" label="Back to members" />
       <PageHeader
         title="New member"
-        description="Serial is optional. When empty, it is filled from device 1 after that reader acknowledges the member. Every reader of the gym receives the member."
+        description="A photo is required. The member is sent to every reader."
       />
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => mutation.mutate(v))}>
         <MemberFormFields form={form} />

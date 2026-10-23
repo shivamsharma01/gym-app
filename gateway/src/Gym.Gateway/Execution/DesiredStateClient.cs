@@ -61,8 +61,30 @@ public interface IDesiredStateClient
     /// </summary>
     Task<bool> ObservationProcessedAsync(string deviceId, IReadOnlyList<string> messageIds, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// How many of these messages the server has saved. Processed is true only when every one is
+    /// saved. Callers that only implement <see cref="ObservationProcessedAsync"/> still answer.
+    /// </summary>
+    Task<ObservationCheck> CheckObservationAsync(string deviceId, IReadOnlyList<string> messageIds,
+        CancellationToken cancellationToken)
+    {
+        return ObservationProcessedAsync(deviceId, messageIds, cancellationToken)
+            .ContinueWith(task =>
+            {
+                var processed = task.GetAwaiter().GetResult();
+                var asked = messageIds.Count;
+                return new ObservationCheck(processed, processed ? asked : 0, processed ? 0 : asked);
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
     /// <summary>A revision exhausted its retries or cannot be applied as sent. Nothing about the reader changes.</summary>
     Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken);
+}
+
+/// <summary>How far the server got with one reader list. Processed means every message is saved.</summary>
+public readonly record struct ObservationCheck(bool Processed, int Saved, int Waiting)
+{
+    public int Asked => Saved + Waiting;
 }
 
 /// <summary>The server answered 409: the revision was replaced, or it does not accept what was sent.</summary>
@@ -168,17 +190,44 @@ public sealed class DesiredStateClient : IDesiredStateClient
     public async Task<bool> ObservationProcessedAsync(
         string deviceId, IReadOnlyList<string> messageIds, CancellationToken cancellationToken)
     {
+        var check = await CheckObservationAsync(deviceId, messageIds, cancellationToken).ConfigureAwait(false);
+        return check.Processed;
+    }
+
+    public async Task<ObservationCheck> CheckObservationAsync(
+        string deviceId, IReadOnlyList<string> messageIds, CancellationToken cancellationToken)
+    {
         var json = JsonSerializer.Serialize(new { deviceId, messageIds }, Json);
         using var response = await PostAsync("/internal/gateway/desired/observed", json, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            return false;
+            return new ObservationCheck(false, 0, messageIds.Count);
         }
 
         using var document = JsonDocument.Parse(body);
-        return document.RootElement.TryGetProperty("processed", out var processed)
-            && processed.ValueKind == JsonValueKind.True;
+        var root = document.RootElement;
+        var processed = root.TryGetProperty("processed", out var processedValue)
+            && processedValue.ValueKind == JsonValueKind.True;
+        var saved = OptionalInt(root, "saved");
+        var waiting = OptionalInt(root, "waiting");
+        if (saved < 0 || waiting < 0)
+        {
+            saved = processed ? messageIds.Count : 0;
+            waiting = processed ? 0 : messageIds.Count;
+        }
+
+        return new ObservationCheck(processed, saved, waiting);
+    }
+
+    private static int OptionalInt(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Number)
+        {
+            return -1;
+        }
+
+        return value.GetInt32();
     }
 
     public async Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken)

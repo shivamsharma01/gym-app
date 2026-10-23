@@ -23,6 +23,7 @@ import {
   Tr,
 } from '@/components/ui'
 import { api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import { useAuth } from '@/lib/useAuth'
 import { formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
@@ -50,12 +51,16 @@ export function DevicesPage() {
       setIssued(created)
       setGwName('')
       void qc.invalidateQueries({ queryKey: ['gateways'] })
+      toastOk('Gym PC added. Copy the setup code.')
     },
   })
   const reissueEnrollment = useMutation({
     mutationFn: (id: string) =>
       api<GatewayCreated>(`/api/v1/gateways/${id}/enrollment`, { method: 'POST' }),
-    onSuccess: (created) => setIssued(created),
+    onSuccess: (created) => {
+      setIssued(created)
+      toastOk('New setup code ready.')
+    },
   })
   const gateway = gateways.data?.content[0]
 
@@ -63,11 +68,11 @@ export function DevicesPage() {
     <div className="space-y-10">
       <PageHeader
         title="Devices"
-        description="This gym has one Windows gateway. Register TrueFace terminals against it. The PC runs the gateway agent with the one-time token."
+        description="Readers on the gym PC. Add a reader, then connect it."
         actions={
           has('DEVICE_MANAGE') ? (
             <Link to="/app/devices/new">
-              <Button>Register device</Button>
+              <Button>Add a reader</Button>
             </Link>
           ) : null
         }
@@ -77,8 +82,8 @@ export function DevicesPage() {
       {devices.error ? <QueryError error={devices.error} onRetry={() => void devices.refetch()} /> : null}
       {devices.data && devices.data.content.length === 0 ? (
         <EmptyState
-          title="No devices"
-          body="Create the gym gateway first, then register the TrueFace terminal against it."
+          title="No readers"
+          body="Add the gym PC first, then add a reader."
           icon={<MonitorSmartphone className="h-5 w-5" />}
         />
       ) : null}
@@ -120,7 +125,7 @@ export function DevicesPage() {
       ) : null}
 
       <section>
-        <SectionTitle title="Gateway" description="The Windows agent that bridges this gym's readers to the backend" />
+        <SectionTitle title="Gym PC" description="The computer that talks to the readers" />
         {gateways.error ? <QueryError error={gateways.error} onRetry={() => void gateways.refetch()} /> : null}
         {gateway ? (
           <Card className="max-w-lg p-4">
@@ -138,17 +143,16 @@ export function DevicesPage() {
                 disabled={reissueEnrollment.isPending}
                 onClick={() => reissueEnrollment.mutate(gateway.id)}
               >
-                Reissue enrollment
+                {reissueEnrollment.isPending ? 'Creating code…' : 'New setup code'}
               </Button>
             ) : null}
           </Card>
         ) : null}
         {has('DEVICE_MANAGE') && gateways.data?.content.length === 0 ? (
           <Card className="mt-4 max-w-lg space-y-3">
-            <h3 className="text-sm font-semibold tracking-tight">Create the gym gateway</h3>
+            <h3 className="text-sm font-semibold tracking-tight">Add the gym PC</h3>
             <p className="text-sm leading-relaxed text-muted">
-              Issues a one-time enrollment token for the Windows Gateway Configurator. It is shown
-              once, expires soon, and is not the long-lived credential the service stores.
+              Creates a one-time code for the gym PC. It is shown once.
             </p>
             <div>
               <Label htmlFor="gw-name">Name</Label>
@@ -156,7 +160,7 @@ export function DevicesPage() {
             </div>
             {createGateway.error ? <QueryError error={createGateway.error} /> : null}
             <Button disabled={!gwName.trim() || createGateway.isPending} onClick={() => createGateway.mutate()}>
-              Issue enrollment token
+              {createGateway.isPending ? 'Creating…' : 'Create setup code'}
             </Button>
           </Card>
         ) : null}
@@ -165,20 +169,20 @@ export function DevicesPage() {
       <Dialog
         open={Boolean(issued)}
         onClose={() => setIssued(null)}
-        title="Enrollment token (shown once)"
-        description="Enter the gateway id and this token in the Windows Gateway Configurator. Closing means you cannot retrieve the token from the app."
+        title="Setup code (shown once)"
+        description="Enter this id and code on the gym PC. You cannot see the code again after you close this."
         className="max-w-lg"
       >
         {issued ? (
           <div className="space-y-4">
             <p className="break-all rounded-lg bg-raised p-3 font-mono text-xs leading-relaxed">{issued.token}</p>
-            <p className="font-mono text-xs text-muted">gateway id {issued.id}</p>
+            <p className="font-mono text-xs text-muted">gym PC id {issued.id}</p>
             {issued.enrollmentExpiresAt ? (
               <p className="text-sm text-muted">Expires {formatDateTime(issued.enrollmentExpiresAt)}</p>
             ) : null}
             <div className="flex flex-wrap gap-2">
               <Button type="button" onClick={() => void navigator.clipboard.writeText(issued.token)}>
-                Copy token
+                Copy code
               </Button>
               <Button variant="outline" onClick={() => setIssued(null)}>
                 I have saved it

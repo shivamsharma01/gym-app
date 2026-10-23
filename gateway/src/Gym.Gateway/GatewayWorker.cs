@@ -33,8 +33,6 @@ public sealed class GatewayWorker : BackgroundService
     private readonly HashSet<string> _attachedReaders = new(StringComparer.Ordinal);
     private readonly object _readersGate = new();
     private bool _readersAttached;
-    private long _commandsReceived;
-    private DateTimeOffset _lastCommandAt;
     private CancellationToken _stop;
 
     public GatewayWorker(
@@ -214,7 +212,21 @@ public sealed class GatewayWorker : BackgroundService
             try
             {
                 await Task.Delay(interval, stoppingToken).ConfigureAwait(false);
-                _log.LogInformation("Gateway link={Link} readers={Count}", ServerLinkStatus(), _adapters.Count);
+                var link = _link.WebSocketLive
+                    ? "Gateway is connected."
+                    : "Gateway is not on the live connection. It is using a slower backup connection.";
+                var statuses = _desiredRevisions.StatusLines();
+                if (statuses.Count == 0)
+                {
+                    _log.LogInformation("{Link} No readers are attached, so member sync is not running.", link);
+                }
+                else
+                {
+                    foreach (var status in statuses)
+                    {
+                        _log.LogInformation("{Link} {Status}", link, status);
+                    }
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -409,6 +421,7 @@ public sealed class GatewayWorker : BackgroundService
                 ct => path.BootstrapAsync(ct),
                 path.ScanNowAsync);
             _desiredRevisions.AttachRetry(deviceId, path.RetryAsync);
+            _desiredRevisions.AttachStatus(deviceId, path.StatusText);
             _log.LogInformation("Reader {Reader}: attached for desired state and device→server observations", readerLabel);
         }
     }
@@ -697,22 +710,8 @@ public sealed class GatewayWorker : BackgroundService
     /// Queues a command and returns immediately. Each reader has its own worker, so the two doors
     /// run at the same time and a slow SDK call does not stop the socket.
     /// </summary>
-    private string ServerLinkStatus()
-    {
-        var link = _link.WebSocketLive ? "connected (live)" : "not on live connection (polling over REST)";
-        var received = Interlocked.Read(ref _commandsReceived);
-        var last = _lastCommandAt;
-        // Desired revisions are pulled over REST / DESIRED_REVISION notices; "commands" are rare
-        // staff pushes. Saying "no commands since start" every minute looked like a fault.
-        return received == 0
-            ? link + ", waiting for staff commands (desired state uses pull)"
-            : $"{link}, {received} staff command(s) since start, last {(long)(DateTimeOffset.UtcNow - last).TotalSeconds} s ago";
-    }
-
     private Task AcceptCommand(GatewayEnvelope command)
     {
-        Interlocked.Increment(ref _commandsReceived);
-        _lastCommandAt = DateTimeOffset.UtcNow;
         _log.LogInformation("Server command received: {Type} device={DeviceId} corr={Corr}",
             command.Type, command.DeviceId, command.CorrelationId);
         var key = string.IsNullOrWhiteSpace(command.DeviceId) ? "" : command.DeviceId;

@@ -39,7 +39,7 @@ class MembershipFlowIT extends AbstractIntegrationTest {
 
         String memberId = createMemberId(token, "{\"firstName\":\"John\",\"lastName\":\"Doe\",\"phone\":\"5551234567\"}");
 
-        // No membership yet -> allowed on reader / adopted validity (same as desired state).
+        // No membership and no reader dates yet -> allowed on reader validity (same as desired state).
         getAccess(memberId)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.allowed").value(true))
@@ -186,6 +186,24 @@ class MembershipFlowIT extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[1].expiringWithin7Days").value(false));
     }
 
+
+    @Test
+    void expiredReaderDatesDenyAccessAndShowExpiredWhileTheAccountStaysActive() throws Exception {
+        token = tokenFor("flow-admin");
+        String memberId = createMemberId(token, "{\"firstName\":\"Lapsed\"}");
+        var member = memberRepository.findByPublicId(memberId).orElseThrow();
+        member.adoptReaderWindow("2026-01-01T00:00:00+05:30", "2026-10-01T23:59:59+05:30");
+        memberRepository.save(member);
+
+        getAccess(memberId)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.allowed").value(false))
+                .andExpect(jsonPath("$.reason").value("READER_VALIDITY_EXPIRED"));
+        mockMvc.perform(get("/api/v1/members/" + memberId).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.coverageStatus").value("EXPIRED"));
+    }
 
     private ResultActions post(String path, String body) throws Exception {
         var req = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path)

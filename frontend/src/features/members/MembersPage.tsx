@@ -194,7 +194,9 @@ export function MembersPage() {
                       <Badge tone={statusTone(m.coverageStatus)}>{membershipStatusLabel(m.coverageStatus)}</Badge>
                     </Td>
                     <Td>
-                      <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
+                      <span title="Only Deactivate changes this. Validity dates do not.">
+                        <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
+                      </span>
                     </Td>
                   </Tr>
                 )
@@ -216,9 +218,9 @@ function worstSyncBadge(
   readers: Member['readers'] | undefined,
 ): SyncBadge | null {
   const states = (readers ?? []).map((r) => r.syncState)
-  if (states.includes('failed')) return { label: 'Sync failed', tone: 'danger' }
+  if (states.includes('failed')) return { label: 'Update failed', tone: 'danger' }
   if (states.includes('held')) return { label: 'Needs review', tone: 'warn' }
-  if (states.includes('pending')) return { label: 'Syncing', tone: 'warn' }
+  if (states.includes('pending')) return { label: 'Waiting', tone: 'warn' }
   return null
 }
 
@@ -232,11 +234,11 @@ function readerSyncCellClass(syncState: string | undefined) {
 function readerSyncTitle(syncState: string | undefined) {
   switch (syncState) {
     case 'failed':
-      return 'Reader could not apply the latest change'
+      return 'The reader could not update this member'
     case 'held':
-      return 'Paused — decide in Review before this reader updates'
+      return 'Paused. Decide in Review first'
     case 'pending':
-      return 'Waiting for the reader to apply the latest change'
+      return 'Waiting for the reader to confirm'
     case 'absent':
       return 'Removed from this reader'
     case 'ok':

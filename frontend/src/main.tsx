@@ -1,4 +1,5 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { Toaster } from 'sonner'
 import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router'
@@ -34,6 +35,7 @@ import { SettingsPage } from '@/features/settings/SettingsPage'
 import { RolesPage } from '@/features/users/RolesPage'
 import { UsersPage } from '@/features/users/UsersPage'
 import { ApiError } from '@/lib/api'
+import { toastError } from '@/lib/toast'
 import { AuthProvider } from '@/lib/auth'
 import { DEFAULT_GYM_SLUG } from '@/lib/brand'
 import { FEATURES } from '@/lib/features'
@@ -48,6 +50,9 @@ import { AppIndexRedirect } from '@/components/AppIndexRedirect'
 import './index.css'
 
 const queryClient = new QueryClient({
+  mutationCache: new MutationCache({
+    onError: (error) => toastError(error),
+  }),
   defaultOptions: {
     queries: {
       staleTime: 15_000,
@@ -157,6 +162,18 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <RouterProvider router={router} />
+        <Toaster
+          duration={5000}
+          position="top-center"
+          closeButton
+          toastOptions={{
+            style: {
+              background: 'var(--color-panel)',
+              color: 'var(--color-ink)',
+              border: '1px solid var(--color-line)',
+            },
+          }}
+        />
       </AuthProvider>
     </QueryClientProvider>
   </StrictMode>,

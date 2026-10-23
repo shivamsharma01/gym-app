@@ -49,6 +49,8 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Desired member for one flagged reader. The gateway is told the reader id and the revision, then
@@ -57,6 +59,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 @Service
 public class DesiredProjectionService {
+
+    private static final Logger log = LoggerFactory.getLogger(DesiredProjectionService.class);
 
     /** The measured reader clock is India local. Dates are not converted to UTC before the write. */
     static final ZoneId READER_ZONE = ZoneId.of("Asia/Kolkata");
@@ -642,6 +646,8 @@ public class DesiredProjectionService {
                 .toList();
         if (!items.isEmpty()) {
             cursor.served(items.getLast().revision());
+            log.info("{}: handed the gateway members {} to {} of {} to write onto the reader.",
+                    device.getName(), items.getFirst().revision(), items.getLast().revision(), desired);
         }
         return new DesiredPage(desired, applied, items);
     }
@@ -676,6 +682,12 @@ public class DesiredProjectionService {
         reviews.settle(device.getId(), row.getDeviceUserId(), row.getMemberId(), ack.revision(), readAfter);
         if (ack.revision() > cursor.getAppliedRevision()) {
             cursor.setAppliedRevision(ack.revision());
+        }
+        long written = cursor.getAppliedRevision();
+        long wanted = cursor.getDesiredRevision();
+        if (written == ack.revision() && (written == wanted || written % 25 == 0)) {
+            log.info("{}: the reader confirmed member {} ({} of {} written).",
+                    device.getName(), row.getDeviceUserId(), written, wanted);
         }
         return new RevisionNotice(device.getPublicId(), cursor.getAppliedRevision());
     }

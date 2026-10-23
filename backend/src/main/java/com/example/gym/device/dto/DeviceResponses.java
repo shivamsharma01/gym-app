@@ -103,6 +103,7 @@ public final class DeviceResponses {
             String id,
             Instant occurredAt,
             String direction,
+            String reader,
             String method,
             String result,
             String deviceUserId,
@@ -113,11 +114,11 @@ public final class DeviceResponses {
             Instant createdAt) {
 
         public static AttendanceView from(AttendanceEvent e) {
-            return from(e, null);
+            return from(e, null, null);
         }
 
-        public static AttendanceView from(AttendanceEvent e, String memberName) {
-            return new AttendanceView(e.getPublicId(), e.getOccurredAt(), e.getDirection().name(),
+        public static AttendanceView from(AttendanceEvent e, String memberName, String reader) {
+            return new AttendanceView(e.getPublicId(), e.getOccurredAt(), e.getDirection().name(), reader,
                     e.getMethod(), e.getResult().name(), e.getDeviceUserId(), e.getDeviceRecNo(),
                     e.getDenyReason(), e.getMemberId() != null, memberName, e.getCreatedAt());
         }

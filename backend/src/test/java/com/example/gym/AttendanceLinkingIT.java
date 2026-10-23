@@ -9,8 +9,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.example.gym.device.AttendanceLinker;
 import com.example.gym.device.GatewayMessageService;
+import com.example.gym.device.PunchMemberResolver;
+import com.example.gym.device.domain.AccessDirection;
 import com.example.gym.device.domain.AttendanceEvent;
+import com.example.gym.device.domain.DeviceObservedUser;
 import com.example.gym.device.domain.MemberDeviceMapping;
+import com.example.gym.face.FaceSource;
+import com.example.gym.face.MemberFace;
 import com.example.gym.live.StaffLiveBroadcast;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractIntegrationTest;
@@ -43,6 +48,9 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
 
     @Autowired
     private AttendanceLinker attendanceLinker;
+
+    @Autowired
+    private PunchMemberResolver punchMemberResolver;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -124,7 +132,11 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
         assertThat(eventsOn(entrance, "792")).hasSize(2)
                 .allMatch(e -> meera.getId().equals(e.getMemberId()));
         assertThat(eventsOn(exit, "792")).singleElement()
-                .satisfies(e -> assertThat(e.getMemberId()).isNull());
+                .satisfies(e -> {
+                    assertThat(e.getMemberId()).isNull();
+                    assertThat(e.getDirection()).isEqualTo(AccessDirection.OUT);
+                });
+        assertThat(eventsOn(entrance, "792")).allMatch(e -> e.getDirection() == AccessDirection.IN);
         mockMvc.perform(get("/api/v1/members/" + meera.getPublicId() + "/attendance")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -234,6 +246,32 @@ class AttendanceLinkingIT extends AbstractIntegrationTest {
 
         assertThat(listedUsers("desc")).containsExactly("a3", "a2", "a1", "early");
         assertThat(listedUsers("asc")).containsExactly("early", "a1", "a2", "a3");
+    }
+
+    @Test
+    void aPunchOnAReaderWithNoMappingIsCreditedWhenThatReaderShowsTheMembersPhoto() throws Exception {
+        Member azad = createMember("Azad", "9009");
+        String hash = "be4eca3b4d1c990e871ca8e9de46f30e425c47c6ee5b9e9f1f4f070b65075c4b";
+        MemberFace face = new MemberFace(azad.getTenantId(), azad.getId());
+        face.replace("faces/azad.jpg", hash, 10, FaceSource.DEVICE, exit, Instant.now());
+        memberFaceRepository.save(face);
+
+        punch(exitId, "9");
+        assertThat(eventsOn(exit, "9")).singleElement()
+                .satisfies(e -> assertThat(e.getMemberId()).isNull());
+
+        DeviceObservedUser seen = new DeviceObservedUser(tenant.getId(), exit, "9");
+        seen.setFaceSha256(hash);
+        seen.setObservedAt(Instant.now());
+        deviceObservedUserRepository.save(seen);
+        punchMemberResolver.creditEarlierPunches(deviceRepository.findById(exit).orElseThrow(), "9");
+
+        assertThat(eventsOn(exit, "9")).singleElement()
+                .satisfies(e -> assertThat(e.getMemberId()).isEqualTo(azad.getId()));
+
+        punch(exitId, "9");
+        assertThat(eventsOn(exit, "9")).hasSize(2)
+                .allMatch(e -> azad.getId().equals(e.getMemberId()));
     }
 
     private List<String> listedUsers(String direction) throws Exception {

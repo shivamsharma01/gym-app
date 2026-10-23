@@ -79,16 +79,17 @@ test('a reader shows its last stored punch and one reconcile action', async ({ p
   await page.goto('/app/devices/dev-1')
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
   await expect(page.getByText(/Last punch stored/)).toBeVisible()
-  await expect(page.getByRole('button', { name: /reconcile/i })).toHaveCount(1)
-  await expect(page.getByRole('button', { name: 'Reconcile members' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /send missing members/i })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Send missing members' })).toBeVisible()
 })
 
 test('reconciling a reader sends one request and reports what was written', async ({ page }) => {
   const reconciles: string[] = []
   await mockStaff(page, [], user, reconciles)
   await page.goto('/app/devices/dev-1')
-  await page.getByRole('button', { name: 'Reconcile members' }).click()
-  await expect(page.getByText(/2 members queued for this reader/)).toBeVisible()
+  await page.getByRole('button', { name: 'Send missing members' }).click()
+  await expect(page.locator('#main-content').getByText(/Sending 2 members to this reader/)).toBeVisible()
+  await expect(page.getByLabel('Notifications alt+T').getByText(/Sending 2 members to this reader/)).toBeVisible()
   expect(reconciles).toEqual(['/api/v1/devices/dev-1/reconcile'])
 })
 
@@ -96,17 +97,17 @@ test('staff without device sync see no reconcile action', async ({ page }) => {
   await mockStaff(page, [], { ...user, roles: ['STAFF'], permissions: ['DEVICE_VIEW', 'MEMBER_VIEW'] })
   await page.goto('/app/devices/dev-1')
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Reconcile members' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Read reader now' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Send missing members' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Read this reader' })).toHaveCount(0)
 })
 
 test('reading a reader now sends one request and shows the gateway result', async ({ page }) => {
   const requests: string[] = []
   await mockStaff(page, [], user, requests)
   await page.goto('/app/devices/dev-1')
-  await page.getByRole('button', { name: 'Read reader now' }).click()
-  await expect(page.getByText('The gateway read this reader and sent its user list to the server.')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Read reader now' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Read this reader' }).click()
+  await expect(page.getByText('Reader list received.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Read this reader' })).toBeEnabled()
   expect(requests).toEqual(['/api/v1/devices/dev-1/scan'])
 })
 
@@ -114,17 +115,27 @@ test('importing a reader sends one request and lists who stayed pending', async 
   const requests: string[] = []
   await mockStaff(page, [], user, requests)
   await page.goto('/app/devices/dev-1')
-  await page.getByRole('button', { name: 'Import pending people' }).click()
-  await expect(page.getByText(/2 members created · 1 left pending/)).toBeVisible()
-  await expect(page.getByText('Reader id 13: The reader face is not on the server')).toBeVisible()
+  await page.getByRole('button', { name: 'Skip likely matches' }).click()
+  await expect(page.getByText(/Added 2. Skipped 1, already in the gym/)).toBeVisible()
+  await expect(page.getByText('Added 2 members.')).toBeVisible()
+  await expect(page.getByText('Id 13: The reader face is not on the server')).toBeVisible()
   expect(requests).toEqual(['/api/v1/devices/dev-1/import-pending?mode=CONSERVATIVE'])
+})
+
+test('a failed import tells staff what happened', async ({ page }) => {
+  await mockStaff(page)
+  await page.route('**/api/v1/devices/dev-1/import-pending**', (route) => route.abort('failed'))
+  await page.goto('/app/devices/dev-1')
+  await page.getByRole('button', { name: 'Add one member per person' }).click()
+  await expect(page.locator('#main-content').getByText('Could not reach the server. Try again.')).toBeVisible()
+  await expect(page.getByLabel('Notifications alt+T').getByText('Could not reach the server. Try again.')).toBeVisible()
 })
 
 test('staff without device sync cannot import a reader', async ({ page }) => {
   await mockStaff(page, [], { ...user, roles: ['STAFF'], permissions: ['DEVICE_VIEW', 'REVIEW_DECIDE'] })
   await page.goto('/app/devices/dev-1')
   await expect(page.getByRole('heading', { name: 'Entrance' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Import pending people' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Skip likely matches' })).toHaveCount(0)
 })
 
 function scanCommand(state: string) {
@@ -178,15 +189,15 @@ test('a validity difference is shown for review and neither side is applied auto
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible()
   await expect(page.getByText('2026-10-08 – 2026-11-15')).toBeVisible()
   await expect(page.getByText('2026-10-01T00:00:00+05:30 – 2026-10-31T23:59:59+05:30')).toHaveCount(2)
-  await expect(page.getByRole('button', { name: 'Keep reader values' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Overwrite with server' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Use the reader' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Use the member record' })).toBeVisible()
 })
 
 test('a member page offers send again and remove for each reader', async ({ page }) => {
   await mockStaff(page)
   await page.goto('/app/members/mem-1')
   await expect(page.getByRole('heading', { name: 'Asha Shah' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Send again' })).toHaveCount(3)
+  await expect(page.getByRole('button', { name: 'Update this reader' })).toHaveCount(3)
   await expect(page.getByRole('button', { name: 'Remove from reader' })).toHaveCount(3)
 })
 
@@ -194,12 +205,11 @@ test('a member page shows each reader as applied, not applied, or held, from tha
   await mockStaff(page)
   await page.goto('/app/members/mem-1')
   await expect(page.getByText('On reader')).toBeVisible()
-  await expect(page.getByText('Revision 2; read back on the reader')).toBeVisible()
-  await expect(page.getByText('Apply failed', { exact: true })).toBeVisible()
-  await expect(page.getByText('Revision 1; not yet read back on the reader')).toBeVisible()
-  await expect(page.getByText('Not applied after 6 attempts: create failed. The gateway keeps retrying.')).toBeVisible()
+  await expect(page.getByText('Confirmed on the reader')).toBeVisible()
+  await expect(page.getByText('Update failed', { exact: true })).toBeVisible()
+  await expect(page.getByText('Still waiting after 6 tries: create failed. It will keep trying.')).toBeVisible()
   await expect(page.getByText('Needs review')).toBeVisible()
-  await expect(page.getByText(/Paused: this reader shows someone else at this id/)).toBeVisible()
+  await expect(page.getByText(/Paused. This reader shows someone else at this id/)).toBeVisible()
   await expect(page.getByText(/reader applied/)).toHaveCount(0)
   await expect(page.getByText('Monthly')).toBeVisible()
 })
@@ -215,7 +225,8 @@ test('creating a member sends one request with a face and no reader choice', asy
 
   await page.locator('input[name="firstName"]').fill('Asha')
   await page.getByRole('button', { name: 'Save member' }).click()
-  await expect(page.getByText('A face photo is required')).toBeVisible()
+  await expect(page.locator('#main-content').getByText('A face photo is required')).toBeVisible()
+  await expect(page.getByLabel('Notifications alt+T').getByText('A face photo is required')).toBeVisible()
   expect(created).toHaveLength(0)
 
   const png = await page.evaluate(() => {

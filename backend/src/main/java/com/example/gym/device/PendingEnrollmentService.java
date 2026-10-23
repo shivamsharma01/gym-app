@@ -36,6 +36,7 @@ public class PendingEnrollmentService {
     private final ReaderReviewService reviews;
     private final DeviceRepository devices;
     private final BootstrapReportService bootstrap;
+    private final PunchMemberResolver punches;
 
     public PendingEnrollmentService(DeviceObservedUserRepository observedUsers,
                                     PendingEnrollmentRepository enrollments,
@@ -43,7 +44,8 @@ public class PendingEnrollmentService {
                                     DesiredMemberProjectionRepository desiredMembers,
                                     ReaderReviewService reviews,
                                     DeviceRepository devices,
-                                    BootstrapReportService bootstrap) {
+                                    BootstrapReportService bootstrap,
+                                    PunchMemberResolver punches) {
         this.observedUsers = observedUsers;
         this.enrollments = enrollments;
         this.mappings = mappings;
@@ -51,6 +53,7 @@ public class PendingEnrollmentService {
         this.reviews = reviews;
         this.devices = devices;
         this.bootstrap = bootstrap;
+        this.punches = punches;
     }
 
     /**
@@ -357,7 +360,9 @@ public class PendingEnrollmentService {
         snapshot.setTimeSectionNum(optionalNumber(payload, "timeSectionNum"));
         snapshot.setFaceSha256(face(text(payload, "faceSha256")));
         snapshot.setObservedAt(Instant.now());
-        return observedUsers.save(snapshot);
+        DeviceObservedUser saved = observedUsers.save(snapshot);
+        punches.creditEarlierPunches(device, saved.getDeviceUserId());
+        return saved;
     }
 
     private boolean serverAllocated(Long deviceId, String deviceUserId) {

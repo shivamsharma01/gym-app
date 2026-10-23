@@ -8,6 +8,7 @@ import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, EmptyState, FieldError, Input, Label, PageHeader, Select, Skeleton, Textarea } from '@/components/ui'
 import { api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import { useAuth } from '@/lib/useAuth'
 import { CURRENCIES, PLAN_DURATIONS } from '@/lib/catalog'
 import { money } from '@/lib/cn'
@@ -58,12 +59,16 @@ export function PlansPage() {
       setEditing(null)
       form.reset({ name: '', description: '', price: '', currency: 'INR', durationDays: '30' })
       void qc.invalidateQueries({ queryKey: ['plans'] })
+      toastOk(editing ? 'Plan updated.' : 'Plan added.')
     },
   })
 
   const archive = useMutation({
     mutationFn: (id: string) => api(`/api/v1/plans/${id}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['plans'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['plans'] })
+      toastOk('Plan archived.')
+    },
   })
 
   function startEdit(plan: Plan) {

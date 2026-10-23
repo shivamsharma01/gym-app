@@ -6,6 +6,7 @@ import com.example.gym.device.domain.AttendanceEvent;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.repo.AttendanceEventRepository;
 import com.example.gym.device.repo.DeviceRepository;
+import com.example.gym.access.ReaderValidity;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.member.MemberStatus;
@@ -126,6 +127,9 @@ public class ReportService {
         long activeMembers = members.stream()
                 .filter(m -> m.getStatus() == MemberStatus.ACTIVE)
                 .count();
+        long validityActiveMembers = members.stream()
+                .filter(m -> ReaderValidity.on(m, today) == ReaderValidity.State.OPEN)
+                .count();
         long activeMemberships = memberships.stream()
                 .filter(m -> m.effectiveStatus(today) == MembershipStatus.ACTIVE)
                 .count();
@@ -216,7 +220,8 @@ public class ReportService {
                 attendance.stream().filter(e -> e.getResult() == AccessResult.GRANTED).count(),
                 uniqueAttendees.size(),
                 attendance.stream().filter(e -> e.getResult() == AccessResult.DENIED).count(),
-                renewals);
+                renewals,
+                validityActiveMembers);
 
         List<ReportOperations.PaymentRow> paymentRows = payments.stream()
                 .map(p -> {

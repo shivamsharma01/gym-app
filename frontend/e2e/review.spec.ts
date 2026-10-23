@@ -92,7 +92,7 @@ test('accept server records the staff decision', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'Asha Shah' }).first()).toBeVisible()
   await expect(page.getByRole('cell', { name: 'Left' })).toBeVisible()
-  await page.getByRole('button', { name: 'Overwrite with server' }).click()
+  await page.getByRole('button', { name: 'Use the member record' }).click()
   await expect(page.getByText('ACCEPT_SERVER')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Link all' })).toHaveCount(0)
 })
@@ -147,7 +147,7 @@ test('bootstrap report lists the roster and offers no bulk link', async ({ page 
   })
 
   await page.goto('/app/review')
-  await page.getByRole('button', { name: 'Bootstrap report' }).click()
+  await page.getByRole('button', { name: 'Check readers' }).click()
   await expect(page.getByRole('cell', { name: 'UNLINKED' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'Walk In' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'run-15' })).toBeVisible()
@@ -188,8 +188,8 @@ test('staff can decide a review item but cannot run bootstrap', async ({ page })
 
   await page.goto('/app/review')
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Bootstrap report' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Overwrite with server' }).click()
+  await expect(page.getByRole('button', { name: 'Check readers' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Use the member record' }).click()
   await expect(page.getByText('ACCEPT_SERVER')).toBeVisible()
 })
 
@@ -253,7 +253,7 @@ test('a suspended member offers restore under a new id or keep off, and no accep
   await expect(page.getByText('Someone else holds this id; the member is off this reader')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Restore under a new id' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Keep off this reader' })).toBeEnabled()
-  await expect(page.getByRole('button', { name: 'Overwrite with server' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Use the member record' })).toHaveCount(0)
 })
 
 test('one member items on two readers are grouped under the member and decided per reader', async ({ page }) => {
@@ -289,12 +289,12 @@ test('one member items on two readers are grouped under the member and decided p
   await expect(member.getByRole('row')).toHaveCount(3)
   await expect(member.getByRole('cell', { name: 'Entrance' })).toBeVisible()
   await expect(member.getByRole('cell', { name: 'Exit' })).toBeVisible()
-  await expect(member.getByRole('button', { name: 'Overwrite with server' })).toHaveCount(2)
-  await expect(member.getByRole('button', { name: 'Keep reader values' })).toHaveCount(2)
+  await expect(member.getByRole('button', { name: 'Use the member record' })).toHaveCount(2)
+  await expect(member.getByRole('button', { name: 'Use the reader' })).toHaveCount(2)
 
   const unknown = page.getByRole('rowgroup', { name: 'People the server does not know' })
   await expect(unknown.getByText('May already be Asha Shah; link instead of creating')).toBeVisible()
-  await expect(page.getByLabel('Server member UUID for 9')).toHaveValue('member-asha')
+  await expect(page.getByLabel('Member id for 9')).toHaveValue('member-asha')
 })
 
 test('the bootstrap suggestion fills in the member to link', async ({ page }) => {
@@ -318,8 +318,8 @@ test('the bootstrap suggestion fills in the member to link', async ({ page }) =>
   )
 
   await page.goto('/app/review')
-  await expect(page.getByLabel('Server member UUID for 7')).toHaveValue('')
-  await page.getByRole('button', { name: 'Bootstrap report' }).click()
-  await expect(page.getByLabel('Server member UUID for 7')).toHaveValue('member-asha')
+  await expect(page.getByLabel('Member id for 7')).toHaveValue('')
+  await page.getByRole('button', { name: 'Check readers' }).click()
+  await expect(page.getByLabel('Member id for 7')).toHaveValue('member-asha')
   await expect(page.getByRole('button', { name: 'Link', exact: true })).toBeEnabled()
 })

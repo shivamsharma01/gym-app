@@ -13,6 +13,7 @@ import {
 import { DateField } from '@/components/DateField';
 import { QueryError } from '@/components/QueryError';
 import { api } from '@/lib/api';
+import { toastOk } from '@/lib/toast';
 import { useAuth } from '@/lib/useAuth';
 import { formatDate, money } from '@/lib/cn';
 import { membershipStatusLabel, statusTone } from '@/lib/status';
@@ -239,6 +240,7 @@ export function MembershipPanel({
       setEndDate('');
       setDiscountAmount('');
       setDiscountConfirmed(false);
+      toastOk('Plan started.');
 
       void qc.invalidateQueries({
         queryKey: ['memberships', memberId],
@@ -272,6 +274,7 @@ export function MembershipPanel({
       setEditPlanId('');
       setEditStart('');
       setEditEnd('');
+      toastOk('Plan updated.');
       setEditDiscountAmount('');
       setEditDiscountConfirmed(false);
 
@@ -301,6 +304,7 @@ export function MembershipPanel({
       }),
 
     onSuccess: () => {
+      toastOk('Saved.');
       void qc.invalidateQueries({
         queryKey: ['memberships', memberId],
       });
@@ -333,6 +337,7 @@ export function MembershipPanel({
 
     onSuccess: () => {
       closeRenewal();
+      toastOk('Plan renewed.');
 
       void qc.invalidateQueries({
         queryKey: ['memberships', memberId],
@@ -361,6 +366,7 @@ export function MembershipPanel({
 
     onSuccess: () => {
       setPaymentMembershipId(null)
+      toastOk('Payment recorded.')
       setPaymentAmount('')
       setPaymentCurrency('INR')
       setPaymentMethod('CASH')

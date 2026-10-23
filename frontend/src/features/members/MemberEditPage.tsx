@@ -12,6 +12,7 @@ import { photoUploadError } from '@/features/members/memberPhotoApi'
 import { useMemberPhotoUrl } from '@/features/members/useMemberPhotoUrl'
 import { memberFormSchema, type MemberFormValues } from '@/features/members/memberFormSchema'
 import { ApiError, api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import type { Member } from '@/lib/types'
 
 export function MemberEditPage() {
@@ -55,6 +56,7 @@ export function MemberEditPage() {
     onSuccess: ({ member: saved, photoError }) => {
       void qc.invalidateQueries({ queryKey: ['member-photo', saved.id] })
       void qc.invalidateQueries({ queryKey: ['member-device-sync', saved.id] })
+      toastOk(photoError ? 'Member saved. The photo was not updated.' : 'Member saved.')
       navigate(`/app/members/${saved.id}`, { state: { photoError } })
     },
   })
@@ -67,8 +69,7 @@ export function MemberEditPage() {
       <BackLink to={id ? `/app/members/${id}` : '/app/members'} label="Back to member" />
       <PageHeader title="Edit member" description={member.data?.memberCode} />
       <p className="mb-4 text-sm text-muted">
-        Saving a name or a photo publishes a new revision for a reader using desired-state sync. Other readers
-        still get an update or a photo command.
+        Saving a name or photo updates the readers that already have this member.
       </p>
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => mutation.mutate(v))}>
         <MemberFormFields form={form} />

@@ -38,7 +38,7 @@ export function AttendancePage() {
     <div>
       <PageHeader
         title="Attendance"
-        description="Punches the device gateway reads from each reader's log. The list refreshes every 15 seconds."
+        description="Door punches. This list refreshes every 15 seconds."
         actions={
           <Link to="/app/attendance/live">
             <Button variant="outline">Live view</Button>
@@ -50,7 +50,7 @@ export function AttendancePage() {
       {attendance.data && attendance.data.content.length === 0 ? (
         <EmptyState
           title="No attendance yet"
-          body="Rows appear shortly after a punch, once the gateway has read the reader's log."
+          body="Punches show up here a few seconds after someone uses a reader."
           icon={<Activity className="h-5 w-5" />}
         />
       ) : null}
@@ -69,6 +69,7 @@ export function AttendancePage() {
                   When
                 </SortableTh>
                 <Th>Device user</Th>
+                <Th>Reader</Th>
                 <Th>Direction</Th>
                 <Th>Result</Th>
                 <Th>Member</Th>
@@ -82,7 +83,8 @@ export function AttendancePage() {
                     <div className="font-medium">{row.memberName ?? 'Unknown member'}</div>
                     <div className="mt-0.5 font-mono text-[11px] text-muted">{row.deviceUserId ?? '—'}</div>
                   </Td>
-                  <Td className="text-muted">{row.direction}</Td>
+                  <Td>{row.reader ?? '—'}</Td>
+                  <Td className="text-muted">{directionLabel(row.direction)}</Td>
                   <Td>
                     <Badge tone={statusTone(row.result)}>{row.result}</Badge>
                   </Td>
@@ -98,4 +100,10 @@ export function AttendancePage() {
       ) : null}
     </div>
   )
+}
+
+function directionLabel(value: string) {
+  if (value === 'IN') return 'In'
+  if (value === 'OUT') return 'Out'
+  return value === 'UNKNOWN' ? 'Unknown' : value
 }

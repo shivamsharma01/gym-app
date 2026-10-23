@@ -6,6 +6,7 @@ import { Badge, Button, Card, Input, Label, PageHeader, Select, Skeleton, Table,
 import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import { useAuth } from '@/lib/useAuth'
 import { DEVICE_MODELS } from '@/lib/catalog'
 import { cn, formatDateTime } from '@/lib/cn'
@@ -36,14 +37,14 @@ export function DeviceDetailPage() {
         actions={
           has('DEVICE_MANAGE') ? (
             <Link to="/app/devices/new">
-              <Button variant="outline">Register another device</Button>
+              <Button variant="outline">Add a reader</Button>
             </Link>
           ) : null
         }
       />
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={statusTone(d.connectionState)}>{d.connectionState}</Badge>
-        <Badge tone={d.gatewayAssigned ? 'ok' : 'warn'}>{d.gatewayAssigned ? 'Gateway assigned' : 'No gateway'}</Badge>
+        <Badge tone={d.gatewayAssigned ? 'ok' : 'warn'}>{d.gatewayAssigned ? 'Connected to the gym PC' : 'Not connected to the gym PC'}</Badge>
       </div>
       <p className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted">
         <span>Device id</span>
@@ -61,7 +62,7 @@ export function DeviceDetailPage() {
         {[
           ['overview', 'Overview'],
           ...(showEvents ? [['events', 'Events']] : []),
-          ['sync', 'Sync'],
+          ['sync', 'Updates'],
           ...(showSettings ? [['settings', 'Settings']] : []),
         ].map(([key, label]) => (
           <NavLink
@@ -108,35 +109,29 @@ function Overview({ device }: { device: Device }) {
             <p className="mt-2 text-sm text-muted">Last seen {formatDateTime(health.data.lastSeenAt)}</p>
           </Card>
           <Card>
-            <div className="text-xs uppercase text-muted">Gateway</div>
+            <div className="text-xs uppercase text-muted">Gym PC</div>
             <div className="mt-1 font-semibold">{health.data.gatewayStatus ?? '—'}</div>
             <p className="mt-2 text-sm text-muted">
-              Session {health.data.gatewaySessionOnline ? 'online' : 'offline'} ·{' '}
+              {health.data.gatewaySessionOnline ? 'Online' : 'Offline'} ·{' '}
               <button
                 type="button"
                 className="font-medium text-accent underline-offset-2 hover:underline"
                 onClick={() => navigate(`/app/devices/${device.id}/sync`)}
               >
-                pending {health.data.pendingCommandCount}
-                {health.data.pendingCommandCount > 0 ? (
-                  <span className="ml-1.5 inline-flex align-middle">
-                    <Badge tone="warn">unsynced</Badge>
-                  </span>
-                ) : null}
+                {health.data.pendingCommandCount} waiting
               </button>
-              {' · '}failed {health.data.failedCommandCount}
+              {' · '}
+              {health.data.failedCommandCount} failed
             </p>
           </Card>
           <Card>
-            <div className="text-xs uppercase text-muted">Last successful auth sync</div>
+            <div className="text-xs uppercase text-muted">Last update confirmed</div>
             <div className="mt-1 font-semibold">{formatDateTime(health.data.lastSuccessfulSyncAt)}</div>
           </Card>
           <Card>
             <div className="text-xs uppercase text-muted">Attendance</div>
             <div className="mt-1 font-semibold">Last punch stored {formatDateTime(health.data.lastPunchAt)}</div>
-            <p className="mt-2 text-sm text-muted">
-              The gateway reads the reader log on a short interval
-            </p>
+            <p className="mt-2 text-sm text-muted">Punches are read from the reader every few seconds.</p>
           </Card>
         </div>
       ) : null}
@@ -148,8 +143,7 @@ function Overview({ device }: { device: Device }) {
       ) : null}
       {has('DEVICE_SYNC') && device.gatewayAssigned ? <Reconcile deviceId={device.id} /> : null}
       <p className="text-sm text-muted">
-        Health is not a single online/offline lamp. Device, gateway session, last sync, and pending/failed commands are
-        separate facts.
+        Health shows the reader, the gym PC, the last update, and anything still waiting or failed.
       </p>
     </div>
   )
@@ -181,45 +175,44 @@ function ImportPending({ deviceId }: Readonly<{ deviceId: string }>) {
   const run = useMutation({
     mutationFn: (mode: 'CONSERVATIVE' | 'DISTINCT_SOURCE') =>
       api<ImportResult>(`/api/v1/devices/${deviceId}/import-pending?mode=${mode}`, { method: 'POST' }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: ['reviews'] })
+      const skipped = result.skipped?.length ?? 0
+      if (result.created === 0) {
+        toastOk(skipped > 0 ? `No new members. ${skipped} were already in the gym.` : 'No new members.')
+      } else {
+        toastOk(`Added ${result.created} member${result.created === 1 ? '' : 's'}.`)
+      }
     },
   })
   const created = run.data?.created ?? 0
   const skipped = run.data?.skipped ?? []
-  const summary = run.data?.summary
   return (
     <Card className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">People already on this reader</h2>
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">People on this reader</h2>
       <p className="text-sm text-muted">
-        Creates a member for every person this reader showed that nobody has decided on yet. Each member keeps the
-        reader&apos;s name, dates and photo, so nothing is written to the reader. Someone disabled on the reader
-        becomes an inactive member. Import pending people leaves same-name or same-photo matches for Review. Create
-        each distinct reader id creates a member per reader id when only the name matches; same photo still stays
-        pending for link or one-by-one create.
+        Adds them as members. The reader is not changed. Skip likely matches leaves anyone who might already be a
+        member for you to check. Add one member per person skips only an identical photo.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate('CONSERVATIVE')}>
-          Import pending people
+          {run.isPending && run.variables === 'CONSERVATIVE' ? 'Adding…' : 'Skip likely matches'}
         </Button>
         <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate('DISTINCT_SOURCE')}>
-          Create each distinct reader id
+          {run.isPending && run.variables === 'DISTINCT_SOURCE' ? 'Adding…' : 'Add one member per person'}
         </Button>
       </div>
       {run.isSuccess ? (
         <p className="text-sm text-muted">
-          {created} member{created === 1 ? '' : 's'} created
-          {skipped.length > 0 ? ` · ${skipped.length} left pending` : ''}.
-          {summary
-            ? ` Observed ${summary.observed} · with photo ${summary.withPhoto} · name hold ${summary.possibleNameMatch} · photo hold ${summary.possibleFaceMatch}.`
-            : null}
+          Added {created}
+          {skipped.length > 0 ? `. Skipped ${skipped.length}, already in the gym` : ''}.
         </p>
       ) : null}
       {skipped.length > 0 ? (
         <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-muted">
           {skipped.map((item) => (
             <li key={item.deviceUserId}>
-              Reader id {item.deviceUserId}: {item.reason}
+              Id {item.deviceUserId}: {item.reason}
             </li>
           ))}
         </ul>
@@ -252,9 +245,10 @@ function LinkMatches({ deviceId }: Readonly<{ deviceId: string }>) {
         method: 'POST',
         body: JSON.stringify({ links: rows.map((row) => ({ enrollmentId: row.enrollmentId, memberId: row.memberId })) }),
       }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       preview.reset()
       void qc.invalidateQueries({ queryKey: ['reviews'] })
+      toastOk(result.linked === 0 ? 'No one was linked.' : `Linked ${result.linked}.`)
     },
   })
   const rows = preview.data ?? []
@@ -262,13 +256,10 @@ function LinkMatches({ deviceId }: Readonly<{ deviceId: string }>) {
     <Card className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Same people as another reader</h2>
       <p className="text-sm text-muted">
-        Lists people on this reader who match exactly one member another reader already holds: same name, same dates and
-        same enabled state on both readers, and nobody else with that name. Check the list, then link. Each link writes
-        the member&apos;s server photo and details to this reader under this reader&apos;s id. Anyone not listed stays on
-        the Review page.
+        Finds people here who match one member already in the gym. Check the list, then link them.
       </p>
       <Button size="sm" variant="outline" disabled={preview.isPending || link.isPending} onClick={() => preview.mutate()}>
-        Find exact matches
+        {preview.isPending ? 'Looking…' : 'Find matches'}
       </Button>
       {preview.isSuccess && rows.length === 0 ? <p className="text-sm text-muted">No exact matches.</p> : null}
       {rows.length > 0 ? (
@@ -302,17 +293,14 @@ function LinkMatches({ deviceId }: Readonly<{ deviceId: string }>) {
             </Table>
           </TableShell>
           <Button size="sm" disabled={link.isPending} onClick={() => link.mutate(rows)}>
-            Link these {rows.length}
+            {link.isPending ? 'Linking…' : `Link these ${rows.length}`}
           </Button>
         </>
       ) : null}
       {link.isSuccess ? (
         <p className="text-sm text-muted">
-          {link.data.linked} linked
-          {link.data.notLinked.length > 0
-            ? ` · ${link.data.notLinked.length} no longer matched and stay on the Review page`
-            : ''}
-          .
+          Linked {link.data.linked}
+          {link.data.notLinked.length > 0 ? `. ${link.data.notLinked.length} no longer matched` : ''}.
         </p>
       ) : null}
       {preview.error ? <QueryError error={preview.error} /> : null}
@@ -327,22 +315,26 @@ function Reconcile({ deviceId }: Readonly<{ deviceId: string }>) {
       api<{ deviceId: string; written: number; held?: number }>(`/api/v1/devices/${deviceId}/reconcile`, {
         method: 'POST',
       }),
+    onSuccess: (result) => {
+      const written = result.written ?? 0
+      const held = result.held ?? 0
+      if (written === 0 && held === 0) toastOk('Everyone who should be here already is.')
+      else if (held > 0) toastOk(`Sending ${written}. ${held} are waiting on Review.`)
+      else toastOk(`Sending ${written} member${written === 1 ? '' : 's'} to this reader.`)
+    },
   })
   const written = reconcile.data?.written ?? 0
   const held = reconcile.data?.held ?? 0
-  const queuedMessage = `${written} member${written === 1 ? '' : 's'} queued for this reader. The reader confirms each one when the gateway applies it.`
-  const heldMessage = ` ${held} member${held === 1 ? '' : 's'} held back: decide on this reader's undecided people first.`
+  const queuedMessage = `Sending ${written} member${written === 1 ? '' : 's'} to this reader.`
+  const heldMessage = ` ${held} waiting until you finish Review.`
   return (
     <Card className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Members on this reader</h2>
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Send members to this reader</h2>
       <p className="text-sm text-muted">
-        Writes every active member with a photo that this reader does not have yet. People already on the reader,
-        members removed from it, and people the server does not know are left as they are. While this reader shows
-        people nobody has decided on, members who may be one of them are held back until staff decide on the Review
-        page.
+        Adds members who have a photo and are not on this reader yet. People already here are left as they are.
       </p>
       <Button size="sm" variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate()}>
-        Reconcile members
+        {reconcile.isPending ? 'Sending…' : 'Send missing members'}
       </Button>
       {reconcile.isSuccess ? (
         <p className="text-sm text-muted">
@@ -362,6 +354,7 @@ const FINISHED_COMMAND_STATES = new Set(['SUCCEEDED', 'DEAD_LETTER', 'CANCELLED'
 function ScanNow({ deviceId }: Readonly<{ deviceId: string }>) {
   const scan = useMutation({
     mutationFn: () => api<SyncCommand>(`/api/v1/devices/${deviceId}/scan`, { method: 'POST' }),
+    onSuccess: () => toastOk('Reading the reader now.'),
   })
   const commandId = scan.data?.id
   const command = useQuery({
@@ -376,21 +369,15 @@ function ScanNow({ deviceId }: Readonly<{ deviceId: string }>) {
   const running = scan.isPending || (!!state && !FINISHED_COMMAND_STATES.has(state))
   return (
     <div className="space-y-2 border-t border-line pt-3">
-      <p className="text-sm text-muted">
-        The gateway reads each reader every few minutes. Read this reader now to pick up people enrolled or
-        changed at the device without waiting.
-      </p>
+      <p className="text-sm text-muted">Checks the reader now instead of waiting for the next read.</p>
       <Button size="sm" variant="outline" disabled={running} onClick={() => scan.mutate()}>
-        Read reader now
+        {running ? 'Reading…' : 'Read this reader'}
       </Button>
       {state === 'SUCCEEDED' ? (
-        <p className="text-sm text-ok">The gateway read this reader and sent its user list to the server.</p>
+        <p className="text-sm text-ok">Reader list received.</p>
       ) : null}
       {state && !FINISHED_COMMAND_STATES.has(state) ? (
-        <p className="text-sm text-muted">
-          Asked the gateway · {state}
-          {current?.lastError ? ` · ${current.lastError}` : ''}
-        </p>
+        <p className="text-sm text-muted">Waiting for the reader{current?.lastError ? `: ${current.lastError}` : '.'}</p>
       ) : null}
       {state === 'DEAD_LETTER' || state === 'CANCELLED' ? (
         <p className="text-sm text-danger">
@@ -450,6 +437,7 @@ function Sync({ deviceId }: { deviceId: string }) {
   const retry = useMutation({
     mutationFn: (id: string) => api<SyncCommand>(`/api/v1/sync-commands/${id}/retry`, { method: 'POST' }),
     onSuccess: () => {
+      toastOk('Trying again.')
       void qc.invalidateQueries({ queryKey: ['sync-commands', deviceId] })
       void qc.invalidateQueries({ queryKey: ['device-health', deviceId] })
     },
@@ -457,6 +445,7 @@ function Sync({ deviceId }: { deviceId: string }) {
   const cancel = useMutation({
     mutationFn: (id: string) => api<SyncCommand>(`/api/v1/sync-commands/${id}/cancel`, { method: 'POST' }),
     onSuccess: () => {
+      toastOk('Cancelled.')
       void qc.invalidateQueries({ queryKey: ['sync-commands', deviceId] })
       void qc.invalidateQueries({ queryKey: ['device-health', deviceId] })
     },
@@ -467,8 +456,7 @@ function Sync({ deviceId }: { deviceId: string }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted">
-          Pending means saved on the server, not yet confirmed on this device. If the gateway is offline, commands stay
-          here until they can be delivered.
+          Pending means saved here, not yet confirmed on the reader. If the gym PC is offline, they wait here.
         </p>
         <div className="flex gap-2">
           <Button size="sm" variant={openOnly ? 'primary' : 'outline'} onClick={() => { setOpenOnly(true); setPage(0) }}>
@@ -483,7 +471,7 @@ function Sync({ deviceId }: { deviceId: string }) {
       {commands.error ? <QueryError error={commands.error} /> : null}
       {commands.data && commands.data.content.length === 0 ? (
         <p className="text-sm text-muted">
-          {openOnly ? 'No open sync commands for this device.' : 'No sync commands for this device.'}
+          {openOnly ? 'Nothing waiting for this reader.' : 'No past updates for this reader.'}
         </p>
       ) : null}
       {commands.data && commands.data.content.length > 0 ? (
@@ -571,6 +559,7 @@ function Settings({ device }: { device: Device }) {
         }),
       }),
     onSuccess: () => {
+      toastOk('Reader saved.')
       void qc.invalidateQueries({ queryKey: ['device', device.id] })
       void qc.invalidateQueries({ queryKey: ['devices'] })
       navigate(`/app/devices/${device.id}`)
@@ -625,14 +614,14 @@ function Settings({ device }: { device: Device }) {
         <Input value={serialNumber} onChange={(e) => setSerialNumber(e.target.value)} />
       </div>
       <div>
-        <Label>Gateway</Label>
+        <Label>Gym PC</Label>
         {gateway ? (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={assigned} onChange={(e) => setAssigned(e.target.checked)} />
-            <span>Assigned to {gateway.name}</span>
+            <span>Connected to {gateway.name}</span>
           </label>
         ) : (
-          <p className="text-sm text-muted">This gym has no gateway yet.</p>
+          <p className="text-sm text-muted">Add the gym PC first.</p>
         )}
       </div>
       {save.error ? <QueryError error={save.error} /> : null}
@@ -653,14 +642,12 @@ function DoorControl({ deviceId }: { deviceId: string }) {
         method: 'POST',
         body: JSON.stringify({ action, confirmed: true, reason }),
       }),
+    onSuccess: () => toastOk(action === 'OPEN' ? 'Open sent to the reader.' : 'Close sent to the reader.'),
   })
   return (
     <Card className="max-w-lg space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Remote door</h2>
-      <p className="text-sm text-muted">
-        High-risk physical operation. Requires confirmation and a reason. The command is queued;
-        this screen does not claim the lock moved.
-      </p>
+      <p className="text-sm text-muted">Opens or closes the door. It is sent to the reader; this screen does not show that the lock moved.</p>
       <Select value={action} onChange={(e) => setAction(e.target.value)}>
         <option value="OPEN">Open</option>
         <option value="CLOSE">Close</option>
@@ -668,19 +655,17 @@ function DoorControl({ deviceId }: { deviceId: string }) {
       <Textarea rows={2} placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-        I confirm this remote door command
+        I confirm this door command
       </label>
       <Button
         variant="danger"
         disabled={!confirmed || !reason.trim() || door.isPending}
         onClick={() => door.mutate()}
       >
-        Queue {action.toLowerCase()}
+        {door.isPending ? 'Sending…' : action === 'OPEN' ? 'Open the door' : 'Close the door'}
       </Button>
       {door.isSuccess ? (
-        <p className="text-sm text-ok">
-          Queued {door.data.type} · {door.data.state}. Wait for the gateway result; do not assume the door moved.
-        </p>
+        <p className="text-sm text-ok">Sent to the reader. Wait to see if the door moves.</p>
       ) : null}
       {door.error ? <QueryError error={door.error} /> : null}
     </Card>

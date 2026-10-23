@@ -166,6 +166,7 @@ export type Attendance = {
   id: string
   occurredAt: string
   direction: string
+  reader: string | null
   method: string
   result: string
   deviceUserId: string | null

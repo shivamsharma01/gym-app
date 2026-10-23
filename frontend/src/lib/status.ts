@@ -28,25 +28,27 @@ export function accountStatusLabel(value?: string | null): string {
 /** Staff-facing label for `/access` reason codes. */
 export function accessReasonLabel(allowed: boolean, reason?: string | null): string {
   if (allowed) {
-    if (reason === 'READER_VALIDITY') return 'Allowed (reader validity)'
-    if (reason === 'READER_VALIDITY_NO_ACTIVE_PLAN') {
-      return 'Allowed (reader validity) — no active plan'
-    }
-    return 'Access allowed'
+    if (reason === 'READER_VALIDITY') return 'Allowed'
+    if (reason === 'READER_VALIDITY_NO_ACTIVE_PLAN') return 'Allowed. No plan'
+    return 'Allowed'
   }
   switch (reason) {
+    case 'READER_VALIDITY_EXPIRED':
+      return 'Denied. Validity ended'
+    case 'READER_VALIDITY_NOT_STARTED':
+      return 'Denied. Validity has not started'
     case 'MEMBER_INACTIVE':
-      return 'Denied: account inactive'
+      return 'Denied. Account is off'
     case 'NO_MEMBERSHIP':
-      return 'Denied: no plan'
+      return 'Denied. No plan'
     case 'NO_ACTIVE_MEMBERSHIP':
-      return 'Denied: no active plan'
+      return 'Denied. No active plan'
     case 'MEMBERSHIP_FROZEN':
-      return 'Denied: plan frozen'
+      return 'Denied. Plan is frozen'
     case 'MEMBERSHIP_EXPIRED':
-      return 'Denied: plan expired'
+      return 'Denied. Plan expired'
     case 'MEMBERSHIP_CANCELLED':
-      return 'Denied: plan cancelled'
+      return 'Denied. Plan cancelled'
     default:
       return reason ? `Denied: ${reason}` : 'Access denied'
   }

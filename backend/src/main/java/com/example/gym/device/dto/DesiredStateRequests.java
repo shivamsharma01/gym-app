@@ -65,8 +65,12 @@ public final class DesiredStateRequests {
             @NotNull @Size(min = 1, max = 5000) java.util.List<@NotBlank @Size(max = 64) String> messageIds) {
     }
 
-    /** True once every message was processed. */
-    public record ObservationStatus(boolean processed) {
+    /**
+     * {@code processed} is true only when every message is saved. {@code saved} and {@code waiting}
+     * are how many of the asked messages are already saved and how many are still missing, so a
+     * pause can be read without guessing.
+     */
+    public record ObservationStatus(boolean processed, int saved, int waiting) {
     }
 
     /**

@@ -29,7 +29,8 @@ public record ReportOperations(
             long attendanceCount,
             long uniqueAttendees,
             long accessDenied,
-            long renewals) {}
+            long renewals,
+            long validityActiveMembers) {}
 
     public record CollectionByMethod(String method, long count, BigDecimal amount) {}
 

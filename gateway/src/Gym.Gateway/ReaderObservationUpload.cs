@@ -80,16 +80,23 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             {
                 _log.LogInformation(
                     ex,
-                    "Reader {Reader}: observation for user {User} queued; server unreachable ({Message})",
+                    "Reader {Reader}: person {User} could not be sent and will be tried again. Member sync stays paused. ({Message})",
                     reader, UserLabel(user), ex.Message);
+            }
+
+            if (sent.Count % 100 == 0 && sent.Count != users.Count)
+            {
+                _log.LogInformation(
+                    "Reader {Reader}: sent {Done} of {Total} people to the server. Member sync stays paused until the server has saved this list.",
+                    reader, sent.Count, users.Count);
             }
         }
 
         if (sent.Count > 0)
         {
             _log.LogInformation(
-                "Reader {Reader}: queued {Count} user update(s) for the server: {Users}",
-                reader, sent.Count, Summarize(users));
+                "Reader {Reader}: sent all {Count} people to the server. Member sync stays paused until the server has saved them.",
+                reader, sent.Count);
         }
 
         return sent;
@@ -148,7 +155,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             {
                 await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
                 _log.LogInformation(
-                    "Reader {Reader}: roster of {Count} users sent to the server (no ack wait)",
+                    "Reader {Reader}: sent the full list of {Count} people to the server without waiting for a reply. Member sync stays paused until the server has saved it.",
                     reader, people.Length);
                 return new RosterUpload(false, envelope.MessageId);
             }
@@ -158,12 +165,13 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             if (!accepted)
             {
                 _log.LogInformation(
-                    "Reader {Reader}: roster was not acknowledged; its users are sent one by one", reader);
+                    "Reader {Reader}: the server did not confirm the full list. People are sent one by one instead. Member sync stays paused until they are saved.",
+                    reader);
             }
             else
             {
                 _log.LogInformation(
-                    "Reader {Reader}: roster of {Count} users acknowledged by the server",
+                    "Reader {Reader}: the server saved the full list of {Count} people. Member sync can continue.",
                     reader, people.Length);
             }
 

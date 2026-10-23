@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { QueryError } from '@/components/QueryError'
 import { Badge, Button, Card, FieldError, Input, Label, PageHeader, Skeleton } from '@/components/ui'
 import { api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import { useAuth } from '@/lib/useAuth'
 import type { UserSummary } from '@/lib/types'
 
@@ -47,6 +48,7 @@ export function ProfilePage() {
         }),
       }),
     onSuccess: async () => {
+      toastOk('Password changed. Sign in again.')
       await logout()
       navigate('/app/login', { replace: true })
     },
@@ -56,7 +58,7 @@ export function ProfilePage() {
     <div className="mx-auto max-w-xl space-y-8">
       <PageHeader
         title="Profile"
-        description="Your staff account. After a platform reset, change the temporary password here."
+        description="Your login. After a reset, change the temporary password here."
       />
       {me.isLoading ? <Skeleton className="h-32" /> : null}
       {me.error ? <QueryError error={me.error} onRetry={() => void me.refetch()} /> : null}

@@ -264,7 +264,7 @@ function StatusCluster({
   return (
     <div className="flex flex-wrap items-center gap-3">
       <LiveDot state={live} labelPrefix="Server" />
-      {showGateway ? <LiveDot state={gatewayState} labelPrefix="Gateway" /> : null}
+      {showGateway ? <LiveDot state={gatewayState} labelPrefix="Gym PC" /> : null}
     </div>
   )
 }

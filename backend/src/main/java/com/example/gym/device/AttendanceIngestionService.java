@@ -7,11 +7,9 @@ import com.example.gym.device.domain.AttendanceEvent;
 import com.example.gym.device.domain.AttendanceSyncCursor;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.DeviceRole;
-import com.example.gym.device.domain.MemberDeviceMapping;
 import com.example.gym.device.domain.SecurityEvent;
 import com.example.gym.device.repo.AttendanceEventRepository;
 import com.example.gym.device.repo.AttendanceSyncCursorRepository;
-import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.live.StaffLiveBroadcast;
 import java.time.Instant;
 import java.util.List;
@@ -25,25 +23,26 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Stores punches the gateway read from a reader's log for one time window. Rows are append-only:
  * a punch already stored is skipped, never rewritten. A punch is credited through the reader's
- * mapping; an unmapped device user id is stored without a member. Member and mapping rows are only read.
+ * mapping. With no mapping, the photo this reader shows at that id credits the punch when exactly
+ * one member has that photo. Member rows are only read.
  */
 @Service
 public class AttendanceIngestionService {
 
     private final AttendanceEventRepository attendanceRepository;
     private final AttendanceSyncCursorRepository cursorRepository;
-    private final MemberDeviceMappingRepository mappingRepository;
+    private final PunchMemberResolver members;
     private final ApplicationEventPublisher events;
     private final AttendanceEventWriter writer;
 
     public AttendanceIngestionService(AttendanceEventRepository attendanceRepository,
                                       AttendanceSyncCursorRepository cursorRepository,
-                                      MemberDeviceMappingRepository mappingRepository,
+                                      PunchMemberResolver members,
                                       ApplicationEventPublisher events,
                                       AttendanceEventWriter writer) {
         this.attendanceRepository = attendanceRepository;
         this.cursorRepository = cursorRepository;
-        this.mappingRepository = mappingRepository;
+        this.members = members;
         this.events = events;
         this.writer = writer;
     }
@@ -109,12 +108,7 @@ public class AttendanceIngestionService {
         }
 
         String deviceUserId = punch.deviceUserId();
-        MemberDeviceMapping mapping = deviceUserId == null ? null
-                : mappingRepository.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
-                        .or(() -> mappingRepository.findFirstByDeviceIdAndPendingDeviceUserId(
-                                device.getId(), deviceUserId))
-                        .orElse(null);
-        Long memberId = mapping == null ? null : mapping.getMemberId();
+        Long memberId = members.memberId(device, deviceUserId);
         AccessResult result = punch.granted() ? AccessResult.GRANTED : AccessResult.DENIED;
         String denyReason = punch.granted() ? null : punch.denyReason();
 

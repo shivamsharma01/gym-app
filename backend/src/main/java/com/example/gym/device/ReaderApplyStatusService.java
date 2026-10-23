@@ -17,8 +17,11 @@ import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ReaderApplyStatusService {
 
+    private static final Logger log = LoggerFactory.getLogger(ReaderApplyStatusService.class);
+
+    private final Map<String, String> lastReported = new ConcurrentHashMap<>();
     private final DesiredProjectionService desired;
     private final GatewayMessageDedupeRepository processed;
     private final DesiredMemberProjectionRepository projections;
@@ -52,16 +58,35 @@ public class ReaderApplyStatusService {
      */
     @Transactional(readOnly = true)
     public ObservationStatus observed(Gateway gateway, ObservationQuery query) {
-        desired.ownedReader(gateway, query.deviceId());
+        Device device = desired.ownedReader(gateway, query.deviceId());
         List<String> ids = List.copyOf(new HashSet<>(query.messageIds()));
         Map<String, GatewayMessageDedupe> found = processed.findAllById(ids).stream()
                 .collect(Collectors.toMap(GatewayMessageDedupe::getMessageId, Function.identity()));
         Instant now = Instant.now();
-        boolean all = ids.stream().allMatch(id -> {
-            GatewayMessageDedupe entry = found.get(id);
-            return entry != null && gateway.getId().equals(entry.getGatewayId()) && entry.getExpiresAt().isAfter(now);
-        });
-        return new ObservationStatus(all);
+        int saved = (int) ids.stream().filter(id -> saved(found.get(id), gateway, now)).count();
+        int waiting = ids.size() - saved;
+        boolean all = waiting == 0;
+        report(device, saved, ids.size(), all);
+        return new ObservationStatus(all, saved, waiting);
+    }
+
+    private static boolean saved(GatewayMessageDedupe entry, Gateway gateway, Instant now) {
+        return entry != null && gateway.getId().equals(entry.getGatewayId()) && entry.getExpiresAt().isAfter(now);
+    }
+
+    /** One line when the count changes, so a long pause shows progress instead of silence. */
+    private void report(Device device, int saved, int total, boolean done) {
+        String value = saved + "/" + total + "/" + done;
+        if (value.equals(lastReported.put(device.getPublicId(), value))) {
+            return;
+        }
+        if (done) {
+            log.info("{}: reader list is saved ({} updates). The gateway can write members onto the reader now.",
+                    device.getName(), total);
+            return;
+        }
+        log.info("{}: reader list is not finished. {} of {} updates are saved. Member sync stays paused until the rest are saved. Nothing to do in the app.",
+                device.getName(), saved, total);
     }
 
     /**

@@ -44,7 +44,107 @@ public sealed class DesiredRevisionPath
     private DateTimeOffset _fencedAt;
     private DateTimeOffset _nextFenceWarn = DateTimeOffset.MinValue;
     private DateTimeOffset _nextObserve = DateTimeOffset.MinValue;
+    private DateTimeOffset _nextFailureLog = DateTimeOffset.MinValue;
     private long _observation;
+    private ObservationCheck _lastCheck;
+    private bool _checkFailed;
+    private long _applyFrom;
+    private long _applyTarget;
+    private long _applyAt;
+    private int _written;
+
+    /// <summary>One plain sentence for the minute status line.</summary>
+    public string StatusText()
+    {
+        lock (_gateLock)
+        {
+            return _readerLabel + ": " + DescribeLocked();
+        }
+    }
+
+    private string DescribeLocked()
+    {
+        var waited = _fencedAt == default ? 0 : Math.Max(0, (int)(_worker.Now - _fencedAt).TotalMinutes);
+        if (_checkFailed && _gate == ObservationGate.Fenced)
+        {
+            return "could not ask the server whether the reader list is saved. Member sync stays paused and this is tried again. Nothing to do in the app.";
+        }
+
+        return _gate switch
+        {
+            ObservationGate.Observing =>
+                "reading the reader and sending its people to the server. Member sync stays paused until the server has saved that list.",
+            ObservationGate.Fenced when _lastCheck.Asked > 0 =>
+                $"member sync is paused. The server has saved {_lastCheck.Saved} of {_lastCheck.Asked} updates from the reader list ({waited} min so far). Nothing to do in the app.",
+            ObservationGate.Fenced =>
+                $"member sync is paused. Waiting for the server to finish saving the reader list ({waited} min so far). Nothing to do in the app.",
+            ObservationGate.Open when _applyTarget > _applyFrom =>
+                $"writing members onto the reader. {_written} written, now at revision {_applyAt} of {_applyTarget}.",
+            ObservationGate.Open =>
+                "the reader list is saved. Checking whether any members still need to be written.",
+            _ => "member sync is paused. The reader list has not been sent to the server yet."
+        };
+    }
+
+    private void NoteCheck(ObservationCheck check)
+    {
+        var changed = false;
+        lock (_gateLock)
+        {
+            _checkFailed = false;
+            changed = check.Processed != _lastCheck.Processed
+                || check.Saved != _lastCheck.Saved
+                || check.Waiting != _lastCheck.Waiting;
+            _lastCheck = check;
+        }
+
+        if (!changed || check.Asked == 0)
+        {
+            return;
+        }
+
+        if (check.Processed)
+        {
+            _log.LogInformation(
+                "Reader {Reader}: the server has saved the reader list ({Saved} updates). Writing members onto the reader now.",
+                _readerLabel, check.Saved);
+            return;
+        }
+
+        _log.LogInformation(
+            "Reader {Reader}: the server has saved {Saved} of {Asked} updates from the reader list. Member sync stays paused until all of them are saved. Nothing to do in the app.",
+            _readerLabel, check.Saved, check.Asked);
+    }
+
+    private void NoteFailure(Exception ex)
+    {
+        lock (_gateLock)
+        {
+            _checkFailed = true;
+        }
+
+        if (_worker.Now < _nextFailureLog)
+        {
+            return;
+        }
+
+        _nextFailureLog = _worker.Now + TimeSpan.FromMinutes(1);
+        _log.LogWarning(
+            ex,
+            "Reader {Reader}: could not ask the server whether the reader list is saved. Member sync stays paused and this is tried again. Nothing to do in the app.",
+            _readerLabel);
+    }
+
+    private void NoteWriting(long from, long target, int written, long at)
+    {
+        lock (_gateLock)
+        {
+            _applyFrom = from;
+            _applyTarget = target;
+            _applyAt = at;
+            _written = written;
+        }
+    }
 
     public DesiredRevisionPath(
         string deviceId,
@@ -385,7 +485,7 @@ public sealed class DesiredRevisionPath
             if (!awaitAcceptance && listed.Count > 0)
             {
                 _log.LogInformation(
-                    "Reader {Reader}: stage=device→server; sending full list ({Count} users) after reconnect: {Users}",
+                    "Reader {Reader}: sending all {Count} people to the server after a reconnect. Member sync stays paused until the server has saved them. First people: {Users}",
                     _readerLabel, listed.Count, SummarizeUsers(listed));
                 perUser.AddRange(await _observations.UploadAsync(_deviceId, scan.Stamp, listed, hashes, cancellationToken)
                     .ConfigureAwait(false));
@@ -620,23 +720,20 @@ public sealed class DesiredRevisionPath
                 if (age >= _options.FenceResendAfter)
                 {
                     _log.LogWarning(
-                        "Reader {Reader}: stage=fenced; observation unprocessed after {Seconds}s; next action=re-read reader and resend observation",
-                        _readerLabel, (int)age.TotalSeconds);
+                        "Reader {Reader}: the server still has not saved the reader list after {Minutes} min. Reading the reader again and sending the list once more. Member sync stays paused.",
+                        _readerLabel, Math.Max(1, (int)age.TotalMinutes));
                     _gate = ObservationGate.Unobserved;
                 }
                 else if (age >= _options.FenceTimeout && _worker.Now >= _nextFenceWarn)
                 {
                     _log.LogWarning(
-                        "Reader {Reader}: stage=fenced; observation still unprocessed after {Seconds}s; next action=probe same observation (resend after {Resend}s)",
-                        _readerLabel, (int)age.TotalSeconds, (int)_options.FenceResendAfter.TotalSeconds);
+                        "Reader {Reader}: the server still has not saved the reader list after {Minutes} min. Asking again. Member sync stays paused. Nothing to do in the app.",
+                        _readerLabel, Math.Max(1, (int)age.TotalMinutes));
                     _nextFenceWarn = _worker.Now + _options.FenceTimeout;
                 }
             }
         }
 
-        _log.LogInformation(
-            "Reader {Reader}: stage=fenced; waiting for the server to finish processing the reader observation before applying desired state",
-            _readerLabel);
         return false;
     }
 
@@ -692,19 +789,34 @@ public sealed class DesiredRevisionPath
 
     private async Task<bool> AnyProcessedAsync(IReadOnlyList<IReadOnlyList<string>> fence, CancellationToken cancellationToken)
     {
+        ObservationCheck best = default;
+        var answered = false;
         foreach (var ids in fence)
         {
             try
             {
-                if (await _client.ObservationProcessedAsync(_deviceId, ids, cancellationToken).ConfigureAwait(false))
+                var check = await _client.CheckObservationAsync(_deviceId, ids, cancellationToken).ConfigureAwait(false);
+                answered = true;
+                if (check.Saved >= best.Saved)
                 {
+                    best = check;
+                }
+
+                if (check.Processed)
+                {
+                    NoteCheck(check);
                     return true;
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _log.LogInformation(ex, "Reader {Reader}: observation check failed; desired state waits", _readerLabel);
+                NoteFailure(ex);
             }
+        }
+
+        if (answered)
+        {
+            NoteCheck(best);
         }
 
         return false;
@@ -937,7 +1049,7 @@ public sealed class DesiredRevisionPath
         var covered = from;
         var seen = new HashSet<long>();
         var reported = false;
-        var progress = new ApplyProgress(_log, _readerLabel, from);
+        var progress = new ApplyProgress(this, _log, _readerLabel, from);
         for (var page = 0; page < MaxPages; page++)
         {
             var pull = await _client.PullAsync(_deviceId, after, cancellationToken).ConfigureAwait(false);
@@ -980,6 +1092,7 @@ public sealed class DesiredRevisionPath
     private sealed class ApplyProgress
     {
         private const int Every = 100;
+        private readonly DesiredRevisionPath _path;
         private readonly ILogger _log;
         private readonly string _reader;
         private readonly long _from;
@@ -993,8 +1106,9 @@ public sealed class DesiredRevisionPath
         private int _reported;
         private int _waiting;
 
-        public ApplyProgress(ILogger log, string reader, long from)
+        public ApplyProgress(DesiredRevisionPath path, ILogger log, string reader, long from)
         {
+            _path = path;
             _log = log;
             _reader = reader;
             _from = from;
@@ -1006,8 +1120,10 @@ public sealed class DesiredRevisionPath
             if (items > 0 && !_announced)
             {
                 _announced = true;
-                _log.LogInformation("Reader {Reader}: applying changes after revision {From} up to revision {Target}",
+                _log.LogInformation(
+                    "Reader {Reader}: writing members onto the reader, from revision {From} through revision {Target}.",
                     _reader, _from, _target);
+                _path.NoteWriting(_from, _target, _written, _from);
             }
         }
 
@@ -1019,9 +1135,10 @@ public sealed class DesiredRevisionPath
                 case MemberApplyKind.Applied:
                     _written++;
                     _log.LogInformation(
-                        "Reader {Reader}: {Action} user {UserId}, read back OK (revision {Revision} of {Target}) in {Ms} ms",
-                        _reader, item.Present ? "wrote" : "removed", item.DeviceUserId, item.Revision, _target,
-                        (long)took.TotalMilliseconds);
+                        "Reader {Reader}: member {UserId} is {Action} the reader ({Revision} of {Target}, {Seconds:0} s).",
+                        _reader, item.DeviceUserId, item.Present ? "now on" : "removed from", item.Revision, _target,
+                        took.TotalSeconds);
+                    _path.NoteWriting(_from, _target, _written, item.Revision);
                     break;
                 case MemberApplyKind.AlreadyApplied:
                     _matched++;
@@ -1041,8 +1158,9 @@ public sealed class DesiredRevisionPath
             if (_checked % Every == 0)
             {
                 _log.LogInformation(
-                    "Reader {Reader}: {Checked} changes checked so far (revision {Revision} of {Target}), {Seconds:0} s",
-                    _reader, _checked, item.Revision, _target, Stopwatch.GetElapsedTime(_started).TotalSeconds);
+                    "Reader {Reader}: {Written} members written, {Matched} already on the reader, {Failed} not written. Now at revision {Revision} of {Target}.",
+                    _reader, _written, _matched, _failed, item.Revision, _target);
+                _path.NoteWriting(_from, _target, _written, item.Revision);
             }
         }
 
@@ -1054,9 +1172,10 @@ public sealed class DesiredRevisionPath
             }
 
             _log.LogInformation(
-                "Reader {Reader}: changes up to revision {Target} done in {Seconds:0} s: {Written} written, {Matched} already matched, {Failed} failed (retried later), {Reported} reported to the server for review, {Waiting} waiting",
-                _reader, _target, Stopwatch.GetElapsedTime(_started).TotalSeconds, _written, _matched, _failed, _reported,
-                _waiting);
+                "Reader {Reader}: finished this batch in {Seconds:0} s. {Written} written, {Matched} already on the reader, {Failed} not written and will be tried again, {Reported} sent back for review, {Waiting} still waiting. Through revision {Target}.",
+                _reader, Stopwatch.GetElapsedTime(_started).TotalSeconds, _written, _matched, _failed, _reported,
+                _waiting, _target);
+            _path.NoteWriting(_from, _target, _written, _target);
         }
     }
 

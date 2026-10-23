@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Button, Card, Input, PageHeader, Table, TableShell, THead, Th, Td, Tr } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import { useAuth } from '@/lib/useAuth'
 import type { BootstrapReport, ReviewItem } from '@/lib/types'
 
@@ -19,6 +20,7 @@ export function ReviewPage() {
     onSuccess: (next) => {
       setReport(next)
       void qc.invalidateQueries({ queryKey: ['reviews'] })
+      toastOk('Check finished.')
     },
   })
   const decide = useMutation({
@@ -32,6 +34,7 @@ export function ReviewPage() {
       void qc.invalidateQueries({ queryKey: ['members'] })
       void qc.invalidateQueries({ queryKey: ['member'] })
       void qc.invalidateQueries({ queryKey: ['member-device-sync'] })
+      toastOk('Saved.')
     },
   })
 
@@ -41,11 +44,11 @@ export function ReviewPage() {
     <div className="space-y-6">
       <PageHeader
         title="Review"
-        description="Each row is one reader’s observation (name, dates, status, or photo). Photo compares to the last hash read from that device, so re-encodes after a server write do not open noise. Keep reader values adopts the edit; Create as new releases that id for a different person."
+        description="People on a reader who still need a decision."
         actions={
           has('DEVICE_MANAGE') ? (
             <Button type="button" disabled={bootstrap.isPending} onClick={() => bootstrap.mutate()}>
-              Bootstrap report
+              {bootstrap.isPending ? 'Checking…' : 'Check readers'}
             </Button>
           ) : null
         }
@@ -101,7 +104,7 @@ export function ReviewPage() {
                     {group.title}
                     {group.items.length > 1 ? (
                       <span className="ml-2 text-xs font-normal text-muted">
-                        {group.items.length} items — approving keep server/reader syncs all mapped readers
+                        {group.items.length} changes. One choice updates every reader this member is on.
                       </span>
                     ) : null}
                   </Td>
@@ -228,7 +231,6 @@ function decisionCell(
         <div>{item.decision}</div>
         <div className="text-xs text-muted">
           {item.actor} · {item.priorState} → {item.chosenState}
-          {item.revision != null ? ` · revision ${item.revision}` : ''}
         </div>
         {item.verificationError ? <div className="text-xs text-danger">{item.verificationError}</div> : null}
       </div>
@@ -264,8 +266,7 @@ function RowActions({
     return (
       <div className="flex flex-col gap-2">
         <p className="max-w-sm text-xs text-muted">
-          Link needs the server member UUID from the member page URL (e.g. /app/members/…), not reader id{' '}
-          {item.deviceUserId}. Link keeps the reader&apos;s name, dates, and photo on that member.
+          To link, paste the member id from their page. The number on the reader is not the member id.
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" size="sm" disabled={pending} onClick={() => onDecide('create')}>
@@ -275,10 +276,10 @@ function RowActions({
             Reject
           </Button>
           <Input
-            aria-label={`Server member UUID for ${item.deviceUserId}`}
+            aria-label={`Member id for ${item.deviceUserId}`}
             value={memberId}
             onChange={(event) => setMemberId(event.target.value)}
-            placeholder="Server member UUID"
+            placeholder="Member id"
             className="w-56 font-mono text-xs"
           />
           <Button
@@ -288,7 +289,7 @@ function RowActions({
             disabled={pending || memberId.trim() === '' || memberId.trim() === item.deviceUserId}
             title={
               memberId.trim() === item.deviceUserId
-                ? 'That is the reader id; paste the member UUID from the member page'
+                ? 'That is the reader number. Paste the member id from their page'
                 : undefined
             }
             onClick={() => onDecide('link', { memberId: memberId.trim() })}
@@ -303,18 +304,18 @@ function RowActions({
     return (
       <div className="flex flex-col gap-2">
         <p className="max-w-xs text-xs text-muted">
-          Name and photo both differ from what was last verified, so this looked like a different person. If it is
-          still {item.memberName || 'this member'}, adopt the reader values — do not create a new member.
+          The name and photo both changed, so this may be a different person. If it is still{' '}
+          {item.memberName || 'this member'}, use the reader. Do not add a new member.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             size="sm"
             disabled={pending}
-            title="Keep this member; take name, dates, and photo from the reader at the same id"
+            title="Keep this member and take the name, dates, and photo from the reader"
             onClick={() => onDecide('adopt-reader')}
           >
-            Keep as this member (reader wins)
+            Use the reader
           </Button>
           <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => onDecide('restore')}>
             Restore under a new id
@@ -329,35 +330,34 @@ function RowActions({
   return (
     <div className="flex flex-col gap-2">
       <p className="max-w-sm text-xs text-muted">
-        Device edits stay on this member until you decide. Keep reader values if it is the same person; Create as
-        new if someone else is at this id.
+        Same person: use the reader or the member record. Someone else: add them as a new member.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
           size="sm"
           disabled={pending || item.readerAbsent}
-          title="Approve the reader's values as the member record and sync them to all mapped readers"
+          title="Save what the reader shows onto the member"
           onClick={() => onDecide('accept-reader')}
         >
-          Keep reader values
+          Use the reader
         </Button>
         <Button
           type="button"
           size="sm"
           variant="outline"
           disabled={pending}
-          title="Write the server record onto this reader and sync it to all mapped readers"
+          title="Write the member record onto this reader"
           onClick={() => onDecide('accept-server')}
         >
-          Overwrite with server
+          Use the member record
         </Button>
         <Button
           type="button"
           size="sm"
           variant="outline"
           disabled={pending || item.readerAbsent}
-          title="Release this member from the id and create a new member from what the reader shows"
+          title="Add a new member from what the reader shows, and free this id"
           onClick={() => onDecide('create-as-new')}
         >
           Create as new
@@ -367,7 +367,7 @@ function RowActions({
           size="sm"
           variant="danger"
           disabled={pending}
-          title="Remove this member from this reader only"
+          title="Take this member off this reader only"
           onClick={() => onDecide('remove')}
         >
           Remove from this reader

@@ -17,6 +17,8 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -34,7 +36,9 @@ import tools.jackson.databind.json.JsonMapper;
 public class GatewayMessageService {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayMessageService.class);
+    private static final int READER_UPDATE_LOG_EVERY = 100;
 
+    private final Map<Long, AtomicInteger> savedPeople = new ConcurrentHashMap<>();
     private final GatewayService gatewayService;
     private final GatewayRepository gatewayRepository;
     private final DeviceRepository deviceRepository;
@@ -194,12 +198,31 @@ public class GatewayMessageService {
                 Device device = ownedDevice(message);
                 if (device != null) {
                     deviceUserChangeService.apply(device, message.payload());
+                    noteReaderUpdate(device, message.payload());
                 }
                 yield ack(message);
             }
             default -> Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
                     Map.of("error", "unsupported inbound type: " + type)));
         };
+    }
+
+    /**
+     * A full list resets the count. People sent one by one log every hundred, because that upload
+     * pauses member sync and otherwise looks idle.
+     */
+    private void noteReaderUpdate(Device device, JsonNode payload) {
+        if (payload != null && payload.has("users") && payload.get("users").isArray()) {
+            savedPeople.put(device.getId(), new AtomicInteger());
+            log.info("{}: saved a reader list of {} people. Member sync stays paused until the gateway confirms this list is complete.",
+                    device.getName(), payload.get("users").size());
+            return;
+        }
+        int count = savedPeople.computeIfAbsent(device.getId(), id -> new AtomicInteger()).incrementAndGet();
+        if (count == 1 || count % READER_UPDATE_LOG_EVERY == 0) {
+            log.info("{}: saved {} people from the reader. Member sync stays paused until the whole list is saved.",
+                    device.getName(), count);
+        }
     }
 
     String credentialRequiredError() {

@@ -15,6 +15,7 @@ public sealed class DesiredRevisionHub
     private readonly ConcurrentDictionary<string, Func<CancellationToken, Task>> _observations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Func<CancellationToken, Task<bool>>> _scansNow = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Func<CancellationToken, Task>> _retries = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Func<string>> _statuses = new(StringComparer.Ordinal);
     private readonly ILogger<DesiredRevisionHub> _log;
     private readonly ReaderLabels _labels;
 
@@ -50,6 +51,16 @@ public sealed class DesiredRevisionHub
             _scansNow[deviceId] = scanNow;
         }
     }
+
+    /// <summary>One plain sentence about what this reader is doing, for the minute status line.</summary>
+    public void AttachStatus(string deviceId, Func<string> status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        _statuses[deviceId] = status;
+    }
+
+    public IReadOnlyList<string> StatusLines() =>
+        _statuses.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry => entry.Value()).ToList();
 
     /// <summary>The reader's periodic retry of failed revisions, unsent acknowledgements, and its observation.</summary>
     public void AttachRetry(string deviceId, Func<CancellationToken, Task> retry)

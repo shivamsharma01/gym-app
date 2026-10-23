@@ -1,5 +1,6 @@
 package com.example.gym.member;
 
+import com.example.gym.access.ReaderValidity;
 import com.example.gym.membership.Membership;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.membership.MembershipStatus;
@@ -24,7 +25,8 @@ public class MemberCoverage {
     }
 
     public String of(Member member) {
-        return of(membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId()));
+        return of(member, membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId()),
+                LocalDate.now());
     }
 
     public Map<Long, String> ofAll(List<Member> members) {
@@ -37,8 +39,9 @@ public class MemberCoverage {
             grouped.computeIfAbsent(membership.getMemberId(), id -> new java.util.ArrayList<>()).add(membership);
         }
         Map<Long, String> coverage = new HashMap<>();
+        LocalDate today = LocalDate.now();
         for (Member member : members) {
-            coverage.put(member.getId(), of(grouped.getOrDefault(member.getId(), List.of())));
+            coverage.put(member.getId(), of(member, grouped.getOrDefault(member.getId(), List.of()), today));
         }
         return coverage;
     }
@@ -75,5 +78,14 @@ public class MemberCoverage {
             return MembershipStatus.EXPIRED.name();
         }
         return "NO_PLAN";
+    }
+
+    /** No plan, but the dates copied from the reader have already ended. */
+    private static String of(Member member, List<Membership> memberships, LocalDate today) {
+        String coverage = of(memberships);
+        if ("NO_PLAN".equals(coverage) && ReaderValidity.on(member, today) == ReaderValidity.State.EXPIRED) {
+            return MembershipStatus.EXPIRED.name();
+        }
+        return coverage;
     }
 }

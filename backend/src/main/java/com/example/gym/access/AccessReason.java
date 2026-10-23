@@ -5,6 +5,10 @@ public enum AccessReason {
     ALLOWED,
     /** Active member with no plan: doors use reader / adopted validity dates. */
     READER_VALIDITY,
+    /** Reader dates are stored and today is after the end date. */
+    READER_VALIDITY_EXPIRED,
+    /** Reader dates are stored and today is before the start date. */
+    READER_VALIDITY_NOT_STARTED,
     /**
      * No plan covers today, but reader / adopted validity still allows access (same as doors).
      * Staff UI should not show this as Denied.

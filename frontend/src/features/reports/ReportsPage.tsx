@@ -41,6 +41,7 @@ type Operations = {
     uniqueAttendees: number;
     accessDenied: number;
     renewals: number;
+    validityActiveMembers: number;
   };
   collectionsByMethod: {
     method: string;
@@ -222,7 +223,7 @@ export function ReportsPage() {
       <div className="space-y-8">
         <PageHeader
             title="Reports"
-            description="Day-to-day gym operations: collections, dues, memberships, attendance and member activity."
+            description="Collections, dues, plans, visits, and members."
         />
 
         <Card>
@@ -288,7 +289,12 @@ export function ReportsPage() {
                 <StatCard
                     label="Members"
                     value={query.data.overview.membersTotal}
-                    hint={`${query.data.overview.activeMembers} active`}
+                    hint={`${query.data.overview.activeMembers} not turned off`}
+                />
+                <StatCard
+                    label="Active members"
+                    value={query.data.overview.validityActiveMembers}
+                    hint="Validity covers today"
                 />
                 <StatCard
                     label="New members"

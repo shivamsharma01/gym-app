@@ -8,6 +8,7 @@ import { BackLink } from '@/components/BackLink'
 import { Button, FieldError, Input, Label, PageHeader, Select } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import { DEVICE_MODELS } from '@/lib/catalog'
 import type { Device, Gateway, PageResponse } from '@/lib/types'
 
@@ -53,13 +54,16 @@ export function DeviceNewPage() {
           gatewayId: body.gatewayId || null,
         }),
       }),
-    onSuccess: (d) => navigate(`/app/devices/${d.id}`),
+    onSuccess: (d) => {
+      toastOk('Reader added.')
+      navigate(`/app/devices/${d.id}`)
+    },
   })
 
   return (
     <div className="max-w-xl">
       <BackLink to="/app/devices" label="Back to devices" />
-      <PageHeader title="Register device" description="Device passwords stay on the LAN gateway, not in this form." />
+      <PageHeader title="Add a reader" description="The password stays on the gym PC. It is not saved here." />
       <form className="space-y-4" onSubmit={form.handleSubmit((v) => create.mutate(v))}>
         <div>
           <Label>Name</Label>
@@ -100,15 +104,15 @@ export function DeviceNewPage() {
           <Input {...form.register('serialNumber')} />
         </div>
         <div>
-          <Label>Gateway</Label>
+          <Label>Gym PC</Label>
           <p className="text-sm text-muted">
-            {gateway ? gateway.name : 'Create the gym gateway before registering a reader.'}
+            {gateway ? gateway.name : 'Add the gym PC before adding a reader.'}
           </p>
         </div>
         {create.error ? <QueryError error={create.error} /> : null}
         <div className="flex gap-2">
           <Button type="submit" disabled={create.isPending || !gateway}>
-            Create
+            {create.isPending ? 'Adding…' : 'Add reader'}
           </Button>
           <Button type="button" variant="outline" onClick={() => navigate(-1)}>
             Cancel

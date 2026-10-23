@@ -3,7 +3,9 @@ package com.example.gym.device.web;
 import com.example.gym.common.web.PageResponse;
 import com.example.gym.device.DeviceReadService;
 import com.example.gym.device.domain.AttendanceEvent;
+import com.example.gym.device.domain.Device;
 import com.example.gym.device.dto.DeviceResponses.AttendanceView;
+import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.member.Member;
 import com.example.gym.member.MemberRepository;
 import com.example.gym.security.SecurityUtils;
@@ -34,10 +36,13 @@ public class AttendanceController {
 
     private final DeviceReadService deviceReadService;
     private final MemberRepository memberRepository;
+    private final DeviceRepository deviceRepository;
 
-    public AttendanceController(DeviceReadService deviceReadService, MemberRepository memberRepository) {
+    public AttendanceController(DeviceReadService deviceReadService, MemberRepository memberRepository,
+                                DeviceRepository deviceRepository) {
         this.deviceReadService = deviceReadService;
         this.memberRepository = memberRepository;
+        this.deviceRepository = deviceRepository;
     }
 
     @GetMapping("/attendance")
@@ -50,7 +55,9 @@ public class AttendanceController {
         PageRequest pageable = pageByTime(page, size, direction);
         Page<AttendanceEvent> result = deviceReadService.attendance(SecurityUtils.currentTenantId(), pageable);
         Map<Long, String> names = memberNames(result.getContent());
-        return PageResponse.from(result, e -> AttendanceView.from(e, memberName(names, e.getMemberId())));
+        Map<Long, String> readers = readerNames(result.getContent());
+        return PageResponse.from(result, e -> AttendanceView.from(
+                e, memberName(names, e.getMemberId()), readers.get(e.getDeviceId())));
     }
 
     @GetMapping("/members/{memberId}/attendance")
@@ -65,7 +72,9 @@ public class AttendanceController {
         Page<AttendanceEvent> result = deviceReadService.attendanceForMember(
                 memberId, SecurityUtils.currentTenantId(), pageable);
         Map<Long, String> names = memberNames(result.getContent());
-        return PageResponse.from(result, e -> AttendanceView.from(e, memberName(names, e.getMemberId())));
+        Map<Long, String> readers = readerNames(result.getContent());
+        return PageResponse.from(result, e -> AttendanceView.from(
+                e, memberName(names, e.getMemberId()), readers.get(e.getDeviceId())));
     }
 
     /** Events with the same time keep the order they were stored in, so pages never shuffle. */
@@ -84,6 +93,17 @@ public class AttendanceController {
         if (!ids.isEmpty()) {
             for (Member member : memberRepository.findAllById(ids)) {
                 names.put(member.getId(), member.getFullName());
+            }
+        }
+        return names;
+    }
+
+    private Map<Long, String> readerNames(List<AttendanceEvent> events) {
+        Set<Long> ids = events.stream().map(AttendanceEvent::getDeviceId).collect(Collectors.toSet());
+        Map<Long, String> names = new HashMap<>();
+        if (!ids.isEmpty()) {
+            for (Device device : deviceRepository.findAllById(ids)) {
+                names.put(device.getId(), device.getName());
             }
         }
         return names;

@@ -68,7 +68,7 @@ export function DashboardPage() {
       <PageHeader
         eyebrow="Overview"
         title={`Welcome back, ${firstName}`}
-        description="Operational snapshot for this gym. Counts come from live APIs — nothing is mocked."
+        description="Today at a glance."
         actions={
           <div className="flex flex-wrap gap-2">
             {has('MEMBER_CREATE') ? (
@@ -134,7 +134,7 @@ export function DashboardPage() {
         {has('ATTENDANCE_VIEW') ? <div>
           <SectionTitle
             title="Recent attendance"
-            description="Latest door events from the gateway"
+            description="Latest punches from the readers"
             actions={
               has('ATTENDANCE_VIEW') ? (
                 <Link to="/app/attendance" className="text-xs font-semibold text-accent hover:underline">
@@ -148,7 +148,7 @@ export function DashboardPage() {
           {attendance.data && attendance.data.content.length === 0 ? (
             <EmptyState
               title="No attendance yet"
-              body="Events appear when the Windows gateway reports door activity from TrueFace."
+              body="Punches show up here a few seconds after someone uses a reader."
               icon={<Activity className="h-5 w-5" />}
               action={
                 has('DEVICE_VIEW') ? (
@@ -208,7 +208,7 @@ export function DashboardPage() {
 
           {canReport && has('DEVICE_VIEW') && summary.data?.devices?.length ? (
             <div>
-              <SectionTitle title="Devices" description="Connection at last report query" />
+              <SectionTitle title="Readers" description="Last time each reader was seen" />
               <Card padded={false} className="divide-y divide-line overflow-hidden">
                 {summary.data.devices.slice(0, 5).map((d) => (
                   <Link

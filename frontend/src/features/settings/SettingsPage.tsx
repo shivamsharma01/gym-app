@@ -5,6 +5,7 @@ import { Link } from 'react-router'
 import { Button, Input, Label, PageHeader, Skeleton, Textarea } from '@/components/ui'
 import { QueryError } from '@/components/QueryError'
 import { api } from '@/lib/api'
+import { toastOk } from '@/lib/toast'
 import { gymPath, type PublicSite } from '@/lib/brand'
 import { cn } from '@/lib/cn'
 import { applyTheme, readStoredTheme, THEME_OPTIONS, type ThemeMode } from '@/lib/theme'
@@ -48,6 +49,7 @@ export function SettingsPage() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['settings'] })
       void qc.invalidateQueries({ queryKey: ['public-site'] })
+      toastOk('Settings saved.')
     },
   })
 

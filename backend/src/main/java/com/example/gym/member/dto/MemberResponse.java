@@ -21,6 +21,8 @@ public record MemberResponse(
         String deviceAuthority,
         Instant createdAt,
         String coverageStatus,
+        LocalDate validFrom,
+        LocalDate validTo,
         /**
          * Per-reader device user id and sync marker. The id is the mapping, or the id the reader
          * already shows for this photo when there is no mapping yet ({@code syncState=seen}).
@@ -35,6 +37,11 @@ public record MemberResponse(
     }
 
     public static MemberResponse from(Member m, String coverageStatus, List<ReaderUserId> readers) {
+        return from(m, coverageStatus, null, null, readers);
+    }
+
+    public static MemberResponse from(Member m, String coverageStatus, LocalDate validFrom, LocalDate validTo,
+                                      List<ReaderUserId> readers) {
         return new MemberResponse(
                 m.getPublicId(),
                 m.getMemberCode(),
@@ -51,6 +58,8 @@ public record MemberResponse(
                 m.getDeviceAuthority() == null ? "USER" : m.getDeviceAuthority().name(),
                 m.getCreatedAt(),
                 coverageStatus,
+                validFrom,
+                validTo,
                 readers == null ? List.of() : List.copyOf(readers));
     }
 }

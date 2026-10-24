@@ -196,11 +196,11 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         if (failed > 0)
         {
             _log.LogWarning(
-                firstFailure,
-                "Outbox replay failed for {Failed} of {Pending} pending message(s); first messageId={MessageId}. Remains queued until the link is healthy",
+                "Outbox replay failed for {Failed} of {Pending} pending message(s); first messageId={MessageId}. Remains queued until the link is healthy. {Detail}",
                 failed,
                 pending,
-                firstMessageId);
+                firstMessageId,
+                ExceptionBrief.Of(firstFailure!));
         }
     }
 
@@ -388,7 +388,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "WebSocket session ended");
+                _log.LogWarning("WebSocket session ended: {Detail}", ExceptionBrief.Of(ex));
             }
             finally
             {
@@ -434,7 +434,7 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.LogWarning(ex, "Reconnect read-before-write failed");
+            _log.LogWarning("Reconnect read-before-write failed: {Detail}", ExceptionBrief.Of(ex));
         }
     }
 

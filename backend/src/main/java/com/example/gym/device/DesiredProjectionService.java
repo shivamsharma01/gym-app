@@ -465,6 +465,17 @@ public class DesiredProjectionService {
     }
 
     /**
+     * The other reader already has this member, with the same id the reader chose. Remember that id
+     * and copy what the reader shows into the desired row, so the gateway does not write anything
+     * until staff later change the member. The member record itself is left as it is.
+     */
+    @Transactional
+    public long recordAlreadyPresent(Member member, Device device, MemberFace face, DeviceObservedUser observed) {
+        return keepingId(member, device, observed,
+                (row, revision) -> adopt(row, revision, member, face, observed));
+    }
+
+    /**
      * A member created from a reader person holds what that reader already shows: name, status,
      * validity, door, time section and photo. The gateway reads it back as matching and writes
      * nothing. The reader is written only when staff later change the member. The caller makes a

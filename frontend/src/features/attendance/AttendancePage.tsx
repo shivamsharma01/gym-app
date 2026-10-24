@@ -81,7 +81,6 @@ export function AttendancePage() {
                   <Td className="whitespace-nowrap text-muted">{formatDateTime(row.occurredAt)}</Td>
                   <Td>
                     <div className="font-medium">{row.memberName ?? 'Unknown member'}</div>
-                    <div className="mt-0.5 font-mono text-[11px] text-muted">{row.deviceUserId ?? '—'}</div>
                   </Td>
                   <Td>{row.reader ?? '—'}</Td>
                   <Td className="text-muted">{directionLabel(row.direction)}</Td>

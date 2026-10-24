@@ -178,7 +178,7 @@ export function DashboardPage() {
                       <Td className="whitespace-nowrap text-muted">{formatDateTime(row.occurredAt)}</Td>
                       <Td>
                         <div className="font-medium">{row.memberName ?? 'Unknown member'}</div>
-                        <div className="mt-0.5 font-mono text-[11px] text-muted">{row.deviceUserId ?? '—'}</div>
+                        <div className="mt-0.5 text-xs text-muted">{row.reader ?? '—'}</div>
                       </Td>
                       <Td>
                         <Badge tone={statusTone(row.result)}>{row.result}</Badge>

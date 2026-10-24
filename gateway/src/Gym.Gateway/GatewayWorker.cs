@@ -387,7 +387,7 @@ public sealed class GatewayWorker : BackgroundService
             var reader = new LockedReaderAdapter(deviceId, opened, _locks);
             _attendancePolls.Add(new AttendancePoll(
                 deviceId, reader, _attendance, AttendancePollSettings.From(_options),
-                _logFactory.CreateLogger<AttendancePoll>(), readerLabel: readerLabel));
+                _logFactory.CreateLogger<AttendancePoll>(), readerName: () => _readerLabels.Of(deviceId)));
             var journal = Path.Combine(_readerJournalDirectory, JournalFile(deviceId));
             var worker = new ReaderWorker(deviceId, reader, journal, online: () => !KnownOffline(deviceId));
             _readerWorkers.Add(worker);
@@ -695,7 +695,7 @@ public sealed class GatewayWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Heartbeat failed");
+                _log.LogWarning("Heartbeat failed: {Detail}", ExceptionBrief.Of(ex));
                 // Send can fail while ReceiveAsync is still blocked on a half-closed socket; abort
                 // so RunWebSocketAsync exits and reconnects instead of logging this every interval.
                 if (link.WebSocketLive)
@@ -790,7 +790,7 @@ public sealed class GatewayWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "REST poll failed");
+                _log.LogWarning("REST poll failed: {Detail}", ExceptionBrief.Of(ex));
             }
         }
     }

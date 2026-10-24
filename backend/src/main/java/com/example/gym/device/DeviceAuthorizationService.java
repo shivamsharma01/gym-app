@@ -41,15 +41,18 @@ public class DeviceAuthorizationService {
     private final MembershipRepository membershipRepository;
     private final GatewayProperties properties;
     private final ObjectProvider<DesiredProjectionService> desiredState;
+    private final SeenMemberClaim claims;
 
     public DeviceAuthorizationService(MemberRepository memberRepository,
                                       MembershipRepository membershipRepository,
                                       GatewayProperties properties,
-                                      ObjectProvider<DesiredProjectionService> desiredState) {
+                                      ObjectProvider<DesiredProjectionService> desiredState,
+                                      SeenMemberClaim claims) {
         this.memberRepository = memberRepository;
         this.membershipRepository = membershipRepository;
         this.properties = properties;
         this.desiredState = desiredState;
+        this.claims = claims;
     }
 
     @Transactional(readOnly = true)
@@ -145,10 +148,12 @@ public class DeviceAuthorizationService {
     /** A name change publishes the current desired user on each reader that already has this member. */
     @Transactional
     public void publishProfile(Member member) {
+        claims.claimMember(member, false);
         desiredState.getObject().publishAccess(member);
     }
 
     private void send(Member member, Optional<AccessWindow> window) {
+        claims.claimMember(member, true);
         member.clearAdoptedReaderWindow();
         member.setDeviceWindow(
                 window.map(AccessWindow::validFrom).orElse(null),

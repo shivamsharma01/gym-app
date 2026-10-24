@@ -14,6 +14,8 @@ public interface DeviceObservedUserRepository extends JpaRepository<DeviceObserv
 
     Optional<DeviceObservedUser> findByDeviceIdAndDeviceUserId(Long deviceId, String deviceUserId);
 
+    List<DeviceObservedUser> findByTenantIdAndDeviceUserId(Long tenantId, String deviceUserId);
+
     List<DeviceObservedUser> findByDeviceId(Long deviceId);
 
     @Query("""

@@ -23,11 +23,12 @@ import {
   Toolbar,
 } from '@/components/ui'
 import { api } from '@/lib/api'
+import { formatShortDate } from '@/lib/cn'
 import { useAuth } from '@/lib/useAuth'
 import { accountStatusLabel, membershipStatusLabel, statusTone } from '@/lib/status'
 import type { Member, PageResponse } from '@/lib/types'
 
-type SortKey = 'name'
+type SortKey = 'name' | 'authority' | 'coverage' | 'account' | 'validTo' | `reader:${string}`
 
 export function MembersPage() {
   const { has } = useAuth()
@@ -66,7 +67,12 @@ export function MembersPage() {
       }
       if (idsDiffer) params.set('idsDiffer', 'true')
       if (sort) {
-        params.set('sort', sort.key)
+        if (sort.key.startsWith('reader:')) {
+          params.set('sort', 'reader')
+          params.set('deviceId', sort.key.slice('reader:'.length))
+        } else {
+          params.set('sort', sort.key)
+        }
         params.set('direction', sort.direction)
       }
       return api<PageResponse<Member>>(`/api/v1/members?${params}`)
@@ -77,7 +83,7 @@ export function MembersPage() {
     <div>
       <PageHeader
         title="Members"
-        description="Search by name, phone, or member code. Click Member to sort."
+        description="Search by name, phone, member code, or reader id. Click a heading to sort."
         actions={
           has('MEMBER_CREATE') ? (
             <Link to="/app/members/new">
@@ -88,7 +94,7 @@ export function MembersPage() {
       />
       <Toolbar>
         <Input
-          placeholder="Search by name, phone, or member code…"
+          placeholder="Search by name, phone, member code, or reader id…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           className="max-w-md"
@@ -161,12 +167,37 @@ export function MembersPage() {
                   Member
                 </SortableTh>
                 {(members.data.content[0]?.readers ?? []).map((reader) => (
-                  <Th key={reader.deviceId}>{reader.deviceName} id</Th>
+                  <SortableTh
+                    key={reader.deviceId}
+                    direction={directionFor(`reader:${reader.deviceId}`)}
+                    onSort={() => toggleSort(`reader:${reader.deviceId}`)}
+                  >
+                    {reader.deviceName} id
+                  </SortableTh>
                 ))}
-                <Th>Phone</Th>
-                <Th>Terminal Level</Th>
-                <Th>Membership status</Th>
-                <Th>Account status</Th>
+                <SortableTh direction={directionFor('authority')} onSort={() => toggleSort('authority')}>
+                  Terminal Level
+                </SortableTh>
+                <Th>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Status</span>
+                    <div className="flex items-center gap-3">
+                      <SortLabel
+                        label="Plan"
+                        direction={directionFor('coverage')}
+                        onSort={() => toggleSort('coverage')}
+                      />
+                      <SortLabel
+                        label="Account"
+                        direction={directionFor('account')}
+                        onSort={() => toggleSort('account')}
+                      />
+                    </div>
+                  </div>
+                </Th>
+                <SortableTh direction={directionFor('validTo')} onSort={() => toggleSort('validTo')}>
+                  Validity ends
+                </SortableTh>
               </tr>
             </THead>
             <tbody>
@@ -198,19 +229,27 @@ export function MembersPage() {
                         </span>
                       </Td>
                     ))}
-                    <Td className="text-muted">{m.phone ?? '—'}</Td>
                     <Td>
                       <Badge tone={m.deviceAuthority === 'ADMIN' ? 'danger' : 'muted'}>
                         {m.deviceAuthority === 'ADMIN' ? 'Admin' : 'User'}
                       </Badge>
                     </Td>
                     <Td>
-                      <Badge tone={statusTone(m.coverageStatus)}>{membershipStatusLabel(m.coverageStatus)}</Badge>
+                      <div className="flex min-w-[9.5rem] flex-col gap-1 rounded-md border border-line px-2 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wide text-muted">Plan</span>
+                          <Badge tone={statusTone(m.coverageStatus)}>{membershipStatusLabel(m.coverageStatus)}</Badge>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wide text-muted">Account</span>
+                          <span title="Only Deactivate changes this. Validity dates do not.">
+                            <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
+                          </span>
+                        </div>
+                      </div>
                     </Td>
-                    <Td>
-                      <span title="Only Deactivate changes this. Validity dates do not.">
-                        <Badge tone={statusTone(m.status)}>{accountStatusLabel(m.status)}</Badge>
-                      </span>
+                    <Td className={`whitespace-nowrap font-medium ${validityTone(m.validFrom, m.validTo)}`}>
+                      {formatShortDate(m.validTo)}
                     </Td>
                   </Tr>
                 )
@@ -262,6 +301,36 @@ function readerSyncTitle(syncState: string | undefined) {
     default:
       return undefined
   }
+}
+
+function SortLabel({
+  label,
+  direction,
+  onSort,
+}: {
+  label: string
+  direction?: SortDirection
+  onSort: () => void
+}) {
+  return (
+    <button type="button" onClick={onSort} className="inline-flex items-center gap-1 text-xs hover:text-ink">
+      {label}
+      <span className={direction ? 'text-ink' : 'text-muted'} aria-hidden>
+        {direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕'}
+      </span>
+    </button>
+  )
+}
+
+function validityTone(from?: string | null, to?: string | null) {
+  const today = new Date()
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const start = from?.slice(0, 10)
+  const end = to?.slice(0, 10)
+  if (start && start > todayKey) return 'text-sky-400'
+  if (end && end < todayKey) return 'text-danger'
+  if ((start && end && start <= todayKey && todayKey <= end) || (end && end >= todayKey)) return 'text-ok'
+  return 'text-muted'
 }
 
 function readerSyncDot(syncState: string | undefined) {

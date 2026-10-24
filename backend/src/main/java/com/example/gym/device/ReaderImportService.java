@@ -18,16 +18,17 @@ import org.springframework.stereotype.Service;
 /**
  * Staff turn every person one reader showed, and nobody has decided on yet, into a member. Each
  * person is one create decision in its own transaction, audited like a single create, and the
- * member holds what the reader already shows, so nothing is written to the reader. Nobody is
- * linked, and no other reader is touched. {@link Mode#CONSERVATIVE} leaves name or photo matches
- * pending; {@link Mode#DISTINCT_SOURCE} creates a member per reader id unless the photo already
- * belongs to a member.
+ * member holds what the reader already shows, so nothing is written to the reader. A person another
+ * reader already shows with the same photo, name, dates and access is linked there automatically.
+ * {@link Mode#CONSERVATIVE} leaves a different name or photo pending; {@link Mode#DISTINCT_SOURCE}
+ * creates a member per reader id unless the photo already belongs to a member.
  */
 @Service
 public class ReaderImportService {
 
     private final DeviceRepository devices;
     private final PendingEnrollmentRepository enrollments;
+    private final SeenMemberClaim claims;
     private final DeviceObservedUserRepository observedUsers;
     private final MemberMatcher matcher;
     private final ReaderImportStep step;
@@ -35,12 +36,14 @@ public class ReaderImportService {
 
     public ReaderImportService(DeviceRepository devices,
                                PendingEnrollmentRepository enrollments,
+                               SeenMemberClaim claims,
                                DeviceObservedUserRepository observedUsers,
                                MemberMatcher matcher,
                                ReaderImportStep step,
                                ReviewDecisionAudit audit) {
         this.devices = devices;
         this.enrollments = enrollments;
+        this.claims = claims;
         this.observedUsers = observedUsers;
         this.matcher = matcher;
         this.step = step;
@@ -92,6 +95,7 @@ public class ReaderImportService {
             created += batch.created().size();
             skipped.addAll(batch.skipped());
         }
+        claims.claimQuiet(reader.getTenantId());
         Summary summary = summarize(reader, chosen, created, skipped.size());
         FlowLog.info("device", "imported reader={} mode={} created={} skipped={}",
                 reader.getPublicId(), chosen, created, skipped.size());

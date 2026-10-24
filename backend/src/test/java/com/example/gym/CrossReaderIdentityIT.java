@@ -98,6 +98,25 @@ class CrossReaderIdentityIT extends AbstractReaderIT {
     }
 
     @Test
+    void importingOneReaderLinksTheSamePersonAlreadyOnTheOther() throws Exception {
+        String face = uploadFace(Color.RED);
+        trustedRoster(entranceId, person("11", "Asha Rao", 0, ASHA_FROM, ASHA_TO, face));
+        trustedRoster(exitId, person("11", "Asha Rao", 0, ASHA_FROM, ASHA_TO, face));
+
+        assertThat(importPending(entranceId).get("created").asInt()).isEqualTo(1);
+
+        Member asha = member("Asha Rao");
+        assertThat(memberDeviceMappingRepository.findByMemberId(asha.getId())).hasSize(2);
+        assertThat(enrollment(exitId, "11").isResolved()).isTrue();
+        assertThat(enrollment(exitId, "11").getDecision()).isEqualTo("LINK");
+        assertThat(projection(exitId, asha).getDeviceUserId()).isEqualTo("11");
+        assertThat(getJson("/api/v1/reviews"))
+                .as("Exit is the same person, so only Entrance is still waiting for its own confirmation")
+                .extracting(item -> item.get("deviceName").asString())
+                .containsExactly("Entrance");
+    }
+
+    @Test
     void importingASecondReaderLeavesAPersonWhoMayAlreadyBeAMemberPending() throws Exception {
         trustedRoster(entranceId, person("11", "Asha Rao", 0, ASHA_FROM, ASHA_TO, uploadFace(Color.RED)));
         trustedRoster(exitId,

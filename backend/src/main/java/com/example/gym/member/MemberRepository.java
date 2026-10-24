@@ -1,6 +1,7 @@
 package com.example.gym.member;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -22,7 +23,8 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
      * authority filters. All filters are optional (pass {@code null} to skip).
      * {@code name} is matched against "first last " (word-separated, ending in a space), so a
      * trailing space ("kunal ") finds Kunal Sharma but not Kunalpreet, and "kunal sharma " still
-     * matches; {@code q} is the trimmed text for the other columns.
+     * matches; {@code q} is the trimmed text for the other columns. {@code readerMemberIds} is
+     * never empty: pass a single {@code -1} when the text is not a reader id.
      */
     @Query("""
             select m from Member m
@@ -32,13 +34,15 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
               and (:q is null
                    or lower(concat(m.firstName, ' ', coalesce(m.lastName, ''), ' ')) like lower(concat('%', :name, '%'))
                    or lower(m.memberCode) like lower(concat('%', :q, '%'))
-                   or m.phone like concat('%', :q, '%'))
+                   or m.phone like concat('%', :q, '%')
+                   or m.id in :readerMemberIds)
             """)
     Page<Member> search(@Param("tenantId") Long tenantId,
                         @Param("q") String q,
                         @Param("name") String name,
                         @Param("status") MemberStatus status,
                         @Param("deviceAuthority") DeviceAuthority deviceAuthority,
+                        @Param("readerMemberIds") Collection<Long> readerMemberIds,
                         Pageable pageable);
 
     long countByTenantId(Long tenantId);

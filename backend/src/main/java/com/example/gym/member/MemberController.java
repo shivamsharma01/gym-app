@@ -57,53 +57,52 @@ public class MemberController {
     @GetMapping
     @PreAuthorize("hasAuthority('MEMBER_VIEW')")
     @Operation(summary = "Search/list members by name, phone, or member code. "
-            + "sort=name (default newest first), direction=asc|desc. "
+            + "sort=name|authority|account (those stay in the database) or coverage|validTo|reader "
+            + "(those scan the matching members). direction=asc|desc. "
+            + "reader sort also takes deviceId. "
             + "idsDiffer=true keeps members whose known reader ids are not all the same.")
     public PageResponse<MemberResponse> list(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) MemberStatus status,
             @RequestParam(required = false) DeviceAuthority deviceAuthority,
             @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String deviceId,
             @RequestParam(defaultValue = "asc") String direction,
             @RequestParam(defaultValue = "false") boolean idsDiffer,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         int safePage = Math.max(page, 0);
-        Sort ordering = listSort(sort, direction);
+        boolean memory = idsDiffer || !MemberListOrder.inDatabase(sort);
+        Sort ordering = MemberListOrder.databaseSort(sort, direction);
         Long tenantId = SecurityUtils.currentTenantId();
-        if (idsDiffer) {
+        if (memory) {
             var matched = memberService.search(tenantId, q, status, deviceAuthority,
                             PageRequest.of(0, MAX_DIFFER_SCAN, ordering))
                     .getContent();
             var known = memberReaderIds.ofAll(matched, tenantId);
-            var differing = matched.stream()
-                    .filter(member -> MemberReaderIds.idsDiffer(known.getOrDefault(member.getId(), List.of())))
+            var rows = matched.stream()
+                    .filter(member -> !idsDiffer || MemberReaderIds.idsDiffer(known.getOrDefault(member.getId(), List.of())))
                     .toList();
-            int from = Math.min(safePage * safeSize, differing.size());
-            int to = Math.min(from + safeSize, differing.size());
-            var slice = differing.subList(from, to);
-            var coverage = memberCoverage.ofAll(slice);
+            var windows = memberCoverage.windows(rows);
+            if (!MemberListOrder.inDatabase(sort)) {
+                rows = rows.stream()
+                        .sorted(MemberListOrder.comparator(sort, "desc".equalsIgnoreCase(direction), deviceId, windows, known))
+                        .toList();
+            }
+            int from = Math.min(safePage * safeSize, rows.size());
+            int to = Math.min(from + safeSize, rows.size());
+            var slice = rows.subList(from, to);
             return PageResponse.from(
-                    new PageImpl<>(slice, PageRequest.of(safePage, safeSize, ordering), differing.size()),
-                    member -> MemberResponse.from(
-                            member, coverage.get(member.getId()), known.getOrDefault(member.getId(), List.of())));
+                    new PageImpl<>(slice, PageRequest.of(safePage, safeSize), rows.size()),
+                    member -> respond(member, windows.get(member.getId()), known.getOrDefault(member.getId(), List.of())));
         }
         PageRequest pageable = PageRequest.of(safePage, safeSize, ordering);
         var members = memberService.search(tenantId, q, status, deviceAuthority, pageable);
-        var coverage = memberCoverage.ofAll(members.getContent());
+        var windows = memberCoverage.windows(members.getContent());
         var readers = memberReaderIds.ofAll(members.getContent(), tenantId);
-        return PageResponse.from(members, member -> MemberResponse.from(
-                member, coverage.get(member.getId()), readers.getOrDefault(member.getId(), List.of())));
-    }
-
-    /** Name sort, or newest first. */
-    static Sort listSort(String sort, String direction) {
-        Sort.Direction dir = "desc".equalsIgnoreCase(direction) ? Sort.Direction.DESC : Sort.Direction.ASC;
-        if ("name".equalsIgnoreCase(sort)) {
-            return Sort.by(new Sort.Order(dir, "firstName"), new Sort.Order(dir, "lastName"), Sort.Order.asc("id"));
-        }
-        return Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+        return PageResponse.from(members, member -> respond(
+                member, windows.get(member.getId()), readers.getOrDefault(member.getId(), List.of())));
     }
 
     @GetMapping("/{id}")
@@ -165,6 +164,11 @@ public class MemberController {
     }
 
     private MemberResponse respond(Member member) {
-        return MemberResponse.from(member, memberCoverage.of(member), memberReaderIds.of(member));
+        return respond(member, memberCoverage.window(member), memberReaderIds.of(member));
+    }
+
+    private static MemberResponse respond(Member member, MemberCoverage.Window window, List<MemberResponse.ReaderUserId> readers) {
+        MemberCoverage.Window known = window == null ? new MemberCoverage.Window("NO_PLAN", null, null) : window;
+        return MemberResponse.from(member, known.status(), known.validFrom(), known.validTo(), readers);
     }
 }

@@ -91,6 +91,8 @@ export type Member = {
   deviceAuthority?: 'USER' | 'ADMIN'
   createdAt: string
   coverageStatus: string
+  validFrom?: string | null
+  validTo?: string | null
   /** Per-reader device user id and sync marker. `seen` is an id the reader already has for this photo. */
   readers?: {
     deviceId: string

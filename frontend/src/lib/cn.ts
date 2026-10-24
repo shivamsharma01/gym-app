@@ -1,9 +1,17 @@
 import { clsx, type ClassValue } from 'clsx'
 import { format, isValid, parseISO } from 'date-fns'
+import { enUS } from 'date-fns/locale'
 import { twMerge } from 'tailwind-merge'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+
+export function formatShortDate(value?: string | null) {
+  if (!value) return '—'
+  const d = parseISO(value.length === 10 ? `${value}T00:00:00` : value)
+  if (!isValid(d)) return value.slice(0, 10)
+  return format(d, 'dd-MMM-yy', { locale: enUS })
 }
 
 export function formatDate(value?: string | null) {

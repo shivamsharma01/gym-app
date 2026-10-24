@@ -216,13 +216,77 @@ test('a punch stored by the gateway appears once in the attendance list without 
     deviceRecNo: 7,
     memberLinked: true,
     memberName: 'Asha Shah',
+    reader: 'Entry',
     createdAt: '2026-10-11T05:00:05Z',
   })
   await page.clock.runFor(16_000)
 
   await expect(page.locator('tbody tr')).toHaveCount(1)
   await expect(page.locator('tbody tr').first()).toContainText('Asha Shah')
+  await expect(page.locator('tbody tr').first()).toContainText('Entry')
 })
+
+test('the member list groups plan and account and colours the validity end date', async ({ page }) => {
+  await mockStaff(page)
+  const readers = [
+    { deviceId: 'dev-entry', deviceName: 'Entry', deviceUserId: '9', syncState: 'ok' },
+    { deviceId: 'dev-exit', deviceName: 'Exit', deviceUserId: '10', syncState: 'ok' },
+  ]
+  const content = [
+    memberRow('Past', '2019-01-01', '2020-01-15', 'EXPIRED', readers),
+    memberRow('Later', '2099-01-01', '2099-06-15', 'PENDING', readers),
+    memberRow('Now', '2020-01-01', '2090-06-15', 'ACTIVE', readers),
+  ]
+  await page.route('**/api/v1/members?**', async (route) => {
+    await route.fulfill({
+      json: { content, page: 0, size: 25, totalElements: content.length, totalPages: 1, first: true, last: true },
+    })
+  })
+  await page.goto('/app/members')
+  await expect(page.getByRole('columnheader', { name: 'Phone' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Entry id' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Exit id' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Plan' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Account' })).toBeVisible()
+  await expect(page.getByText('555000')).toHaveCount(0)
+  const past = page.getByText('15-Jan-20')
+  const later = page.getByText('15-Jun-99')
+  const now = page.getByText('15-Jun-90')
+  await expect(past).toHaveClass(/text-danger/)
+  await expect(later).toHaveClass(/text-sky-400/)
+  await expect(now).toHaveClass(/text-ok/)
+
+  const sorted = page.waitForRequest((request) => request.url().includes('sort=reader'))
+  await page.getByRole('button', { name: 'Entry id' }).click()
+  const url = new URL((await sorted).url())
+  expect(url.searchParams.get('deviceId')).toBe('dev-entry')
+  expect(url.searchParams.get('direction')).toBe('asc')
+})
+
+function memberRow(
+  name: string,
+  validFrom: string,
+  validTo: string,
+  coverageStatus: string,
+  readers: { deviceId: string; deviceName: string; deviceUserId: string; syncState: string }[],
+) {
+  return {
+    id: name,
+    memberCode: name,
+    firstName: name,
+    lastName: 'Shah',
+    fullName: `${name} Shah`,
+    email: null,
+    phone: '555000',
+    status: 'ACTIVE',
+    deviceAuthority: 'USER',
+    coverageStatus,
+    validFrom,
+    validTo,
+    createdAt: '2026-10-09T00:00:00Z',
+    readers,
+  }
+}
 
 test('a validity difference is shown for review and neither side is applied automatically', async ({ page }) => {
   await mockStaff(page)
@@ -272,6 +336,11 @@ test('audit actor and action filters can be combined', async ({ page }) => {
   await page.getByRole('button', { name: 'Clear filters' }).click()
   await expect(page.getByText('MEMBER_CREATED')).toBeVisible()
   await expect(page.getByText('LOGIN_SUCCESS')).toBeVisible()
+
+  await page.getByLabel('From').fill('2026-10-12')
+  await expect(page.getByText('No matching events')).toBeVisible()
+  await page.getByRole('button', { name: 'Clear filters' }).click()
+  await expect(page.getByText('MEMBER_CREATED')).toBeVisible()
 })
 
 test('a member page shows each reader as applied, not applied, or held, from that row only', async ({ page }) => {
@@ -514,6 +583,8 @@ async function mockStaff(
     if (path === '/api/v1/audit-logs') {
       const selectedActors = url.searchParams.getAll('actor')
       const selectedActions = url.searchParams.getAll('action')
+      const from = url.searchParams.get('from')
+      const to = url.searchParams.get('to')
       const rows = [
         {
           id: 'a1',
@@ -541,6 +612,8 @@ async function mockStaff(
         },
       ].filter((row) => selectedActors.length === 0 || selectedActors.includes(row.actorUsername))
         .filter((row) => selectedActions.length === 0 || selectedActions.includes(row.action))
+        .filter((row) => !from || row.createdAt.slice(0, 10) >= from)
+        .filter((row) => !to || row.createdAt.slice(0, 10) <= to)
       await route.fulfill({
         json: {
           content: rows,

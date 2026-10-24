@@ -5,6 +5,7 @@ import com.example.gym.membership.Membership;
 import com.example.gym.membership.MembershipRepository;
 import com.example.gym.membership.MembershipStatus;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +28,32 @@ public class MemberCoverage {
     public String of(Member member) {
         return of(member, membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId()),
                 LocalDate.now());
+    }
+
+    /** The plan status plus the start and end that status comes from. */
+    public record Window(String status, LocalDate validFrom, LocalDate validTo) {
+    }
+
+    public Window window(Member member) {
+        return window(member, membershipRepository.findByMemberIdAndDeletedFalseOrderByStartDateDesc(member.getId()),
+                LocalDate.now());
+    }
+
+    public Map<Long, Window> windows(List<Member> members) {
+        if (members.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = members.stream().map(Member::getId).toList();
+        Map<Long, List<Membership>> grouped = new HashMap<>();
+        for (Membership membership : membershipRepository.findByMemberIdInAndDeletedFalse(ids)) {
+            grouped.computeIfAbsent(membership.getMemberId(), id -> new java.util.ArrayList<>()).add(membership);
+        }
+        Map<Long, Window> coverage = new HashMap<>();
+        LocalDate today = LocalDate.now();
+        for (Member member : members) {
+            coverage.put(member.getId(), window(member, grouped.getOrDefault(member.getId(), List.of()), today));
+        }
+        return coverage;
     }
 
     public Map<Long, String> ofAll(List<Member> members) {
@@ -80,10 +107,42 @@ public class MemberCoverage {
         return "NO_PLAN";
     }
 
+    /** Plan dates when a plan sets the status; otherwise the dates copied from a reader. */
+    public static Window window(Member member, List<Membership> memberships, LocalDate today) {
+        String status = of(member, memberships, today);
+        Membership chosen = switch (status) {
+            case "ACTIVE" -> pick(memberships, today, MembershipStatus.ACTIVE, false);
+            case "FROZEN" -> pick(memberships, today, MembershipStatus.FROZEN, false);
+            case "PENDING" -> pick(memberships, today, MembershipStatus.PENDING, true);
+            case "EXPIRED" -> pick(memberships, today, MembershipStatus.EXPIRED, false);
+            default -> null;
+        };
+        if (chosen != null) {
+            return new Window(status, chosen.getStartDate(), chosen.getEndDate());
+        }
+        ReaderValidity.Dates dates = ReaderValidity.dates(member);
+        if (dates == null) {
+            return new Window(status, null, null);
+        }
+        return new Window(status, dates.from(), dates.to());
+    }
+
+    private static Membership pick(List<Membership> memberships, LocalDate today, MembershipStatus wanted,
+                                   boolean earliestStart) {
+        Comparator<Membership> order = earliestStart
+                ? Comparator.comparing(Membership::getStartDate)
+                : Comparator.comparing(Membership::getEndDate).reversed();
+        return memberships.stream()
+                .filter(membership -> !membership.isDeleted())
+                .filter(membership -> membership.effectiveStatus(today) == wanted)
+                .min(order)
+                .orElse(null);
+    }
+
     /** No plan, but the dates copied from the reader have already ended. */
     private static String of(Member member, List<Membership> memberships, LocalDate today) {
         String coverage = of(memberships);
-        if ("NO_PLAN".equals(coverage) && ReaderValidity.on(member, today) == ReaderValidity.State.EXPIRED) {
+        if ("NO_PLAN".equals(coverage) && member != null && ReaderValidity.on(member, today) == ReaderValidity.State.EXPIRED) {
             return MembershipStatus.EXPIRED.name();
         }
         return coverage;

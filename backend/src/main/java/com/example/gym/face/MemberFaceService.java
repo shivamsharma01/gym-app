@@ -6,6 +6,7 @@ import com.example.gym.common.error.CommonExceptions;
 import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.DesiredProjectionService;
 import com.example.gym.device.ReaderReconcileService;
+import com.example.gym.device.SeenMemberClaim;
 import com.example.gym.device.domain.Device;
 import com.example.gym.device.domain.Gateway;
 import com.example.gym.device.repo.DeviceRepository;
@@ -37,6 +38,7 @@ public class MemberFaceService {
     private final DeviceRepository deviceRepository;
     private final MemberDeviceMappingRepository mappingRepository;
     private final DesiredProjectionService desiredProjection;
+    private final SeenMemberClaim claims;
 
     public MemberFaceService(MemberFaceRepository faceRepository,
                              GatewayFaceUploadRepository uploadRepository,
@@ -46,7 +48,8 @@ public class MemberFaceService {
                              AuditService auditService,
                              DeviceRepository deviceRepository,
                              MemberDeviceMappingRepository mappingRepository,
-                             DesiredProjectionService desiredProjection) {
+                             DesiredProjectionService desiredProjection,
+                             SeenMemberClaim claims) {
         this.faceRepository = faceRepository;
         this.uploadRepository = uploadRepository;
         this.storage = storage;
@@ -56,12 +59,14 @@ public class MemberFaceService {
         this.deviceRepository = deviceRepository;
         this.mappingRepository = mappingRepository;
         this.desiredProjection = desiredProjection;
+        this.claims = claims;
     }
 
     /** Staff upload (React). Returns the current face (unchanged when the image is identical). */
     @Transactional
     public MemberFace upload(String memberPublicId, byte[] raw, Long tenantId) {
         Member member = member(memberPublicId, tenantId);
+        claims.claimMember(member, true);
         Optional<MemberFace> existing = faceRepository.findByMemberId(member.getId());
         String previousSha = existing.map(MemberFace::getSha256).orElse(null);
         int previousVersion = existing.map(MemberFace::getFaceVersion).orElse(-1);

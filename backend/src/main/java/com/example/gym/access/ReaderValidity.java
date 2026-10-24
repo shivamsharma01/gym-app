@@ -25,23 +25,38 @@ public final class ReaderValidity {
     private ReaderValidity() {
     }
 
+    public record Dates(LocalDate from, LocalDate to) {
+    }
+
     public static State on(Member member, LocalDate today) {
+        Dates dates = dates(member);
+        if (dates == null || dates.from() == null || dates.to() == null) {
+            return State.NONE;
+        }
+        if (today.isBefore(dates.from())) {
+            return State.NOT_STARTED;
+        }
+        if (today.isAfter(dates.to())) {
+            return State.EXPIRED;
+        }
+        return State.OPEN;
+    }
+
+    /** Adopted reader dates when both ends are stored, otherwise the last window sent to a reader. */
+    public static Dates dates(Member member) {
+        if (member == null) {
+            return null;
+        }
         LocalDate from = day(member.getAdoptedValidFrom());
         LocalDate to = day(member.getAdoptedValidTo());
         if (from == null || to == null) {
             from = member.getDeviceValidFrom();
             to = member.getDeviceValidTo();
         }
-        if (from == null || to == null) {
-            return State.NONE;
+        if (from == null && to == null) {
+            return null;
         }
-        if (today.isBefore(from)) {
-            return State.NOT_STARTED;
-        }
-        if (today.isAfter(to)) {
-            return State.EXPIRED;
-        }
-        return State.OPEN;
+        return new Dates(from, to);
     }
 
     private static LocalDate day(String readerTime) {

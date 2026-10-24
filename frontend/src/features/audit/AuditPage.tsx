@@ -6,6 +6,7 @@ import {
   Badge,
   Button,
   EmptyState,
+  Input,
   PageHeader,
   Select,
   Skeleton,
@@ -41,10 +42,12 @@ type AuditOptions = {
   actions: string[]
 }
 
-function auditPath(page: number, pageSize: number, actors: string[], actions: string[]) {
+function auditPath(page: number, pageSize: number, actors: string[], actions: string[], from: string, to: string) {
   const params = new URLSearchParams({ page: String(page), size: String(pageSize) })
   for (const actor of actors) params.append('actor', actor)
   for (const action of actions) params.append('action', action)
+  if (from) params.set('from', from)
+  if (to) params.set('to', to)
   return `/api/v1/audit-logs?${params.toString()}`
 }
 
@@ -109,15 +112,17 @@ export function AuditPage() {
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(25)
   const [actors, setActors] = useState<string[]>([])
   const [actions, setActions] = useState<string[]>([])
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const options = useQuery({
     queryKey: ['audit-options'],
     queryFn: () => api<AuditOptions>('/api/v1/audit-logs/options'),
   })
   const logs = useQuery({
-    queryKey: ['audit', page, pageSize, actors, actions],
-    queryFn: () => api<PageResponse<Audit>>(auditPath(page, pageSize, actors, actions)),
+    queryKey: ['audit', page, pageSize, actors, actions, from, to],
+    queryFn: () => api<PageResponse<Audit>>(auditPath(page, pageSize, actors, actions, from, to)),
   })
-  const filtering = actors.length > 0 || actions.length > 0
+  const filtering = actors.length > 0 || actions.length > 0 || from !== '' || to !== ''
 
   return (
     <div>
@@ -144,6 +149,26 @@ export function AuditPage() {
             setPage(0)
           }}
         />
+        <Input
+          type="date"
+          aria-label="From"
+          value={from}
+          onChange={(event) => {
+            setFrom(event.target.value)
+            setPage(0)
+          }}
+          className="w-40"
+        />
+        <Input
+          type="date"
+          aria-label="To"
+          value={to}
+          onChange={(event) => {
+            setTo(event.target.value)
+            setPage(0)
+          }}
+          className="w-40"
+        />
         {filtering ? (
           <Button
             type="button"
@@ -152,6 +177,8 @@ export function AuditPage() {
             onClick={() => {
               setActors([])
               setActions([])
+              setFrom('')
+              setTo('')
               setPage(0)
             }}
           >
@@ -164,7 +191,7 @@ export function AuditPage() {
       {logs.data && logs.data.content.length === 0 ? (
         <EmptyState
           title={filtering ? 'No matching events' : 'No audit events'}
-          body={filtering ? 'Try another actor or action.' : 'Logins and changes will appear here.'}
+          body={filtering ? 'Try another actor, action, or date.' : 'Logins and changes will appear here.'}
         />
       ) : null}
       {logs.data && logs.data.content.length > 0 ? (

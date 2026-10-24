@@ -37,6 +37,7 @@ public class PendingEnrollmentService {
     private final DeviceRepository devices;
     private final BootstrapReportService bootstrap;
     private final PunchMemberResolver punches;
+    private final SeenMemberClaim claims;
 
     public PendingEnrollmentService(DeviceObservedUserRepository observedUsers,
                                     PendingEnrollmentRepository enrollments,
@@ -45,7 +46,8 @@ public class PendingEnrollmentService {
                                     ReaderReviewService reviews,
                                     DeviceRepository devices,
                                     BootstrapReportService bootstrap,
-                                    PunchMemberResolver punches) {
+                                    PunchMemberResolver punches,
+                                    SeenMemberClaim claims) {
         this.observedUsers = observedUsers;
         this.enrollments = enrollments;
         this.mappings = mappings;
@@ -54,6 +56,7 @@ public class PendingEnrollmentService {
         this.devices = devices;
         this.bootstrap = bootstrap;
         this.punches = punches;
+        this.claims = claims;
     }
 
     /**
@@ -68,9 +71,10 @@ public class PendingEnrollmentService {
         JsonNode users = payload.get("users");
         if (users != null && users.isArray()) {
             observeSet(device, payload, users, scan);
-            return;
+        } else {
+            observeOne(device, payload, scan);
         }
-        observeOne(device, payload, scan);
+        claims.claimQuiet(device);
     }
 
     /**

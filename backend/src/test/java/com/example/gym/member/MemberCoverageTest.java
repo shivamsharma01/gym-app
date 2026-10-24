@@ -31,6 +31,22 @@ class MemberCoverageTest {
         assertThat(MemberCoverage.of(List.of(current))).isEqualTo("ACTIVE");
     }
 
+    @Test
+    void validityWindowFollowsThePlanThatSetsTheStatus() {
+        LocalDate today = LocalDate.now();
+        Membership gold = membership("Gold", today.minusDays(29), today.minusDays(1), MembershipStatus.ACTIVE);
+        Membership platinum = membership("Platinum", today.plusDays(1), today.plusDays(90), MembershipStatus.PENDING);
+
+        var pending = MemberCoverage.window(null, List.of(platinum, gold), today);
+        assertThat(pending.status()).isEqualTo("PENDING");
+        assertThat(pending.validFrom()).isEqualTo(platinum.getStartDate());
+        assertThat(pending.validTo()).isEqualTo(platinum.getEndDate());
+
+        var expired = MemberCoverage.window(null, List.of(gold), today);
+        assertThat(expired.status()).isEqualTo("EXPIRED");
+        assertThat(expired.validTo()).isEqualTo(gold.getEndDate());
+    }
+
     private static Membership membership(String name, LocalDate start, LocalDate end, MembershipStatus status) {
         return new Membership(1L, 1L, 1L, name, BigDecimal.TEN, "INR", start, end, status);
     }

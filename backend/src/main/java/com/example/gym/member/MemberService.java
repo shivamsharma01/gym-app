@@ -12,6 +12,7 @@ import com.example.gym.security.SecurityUtils;
 import com.example.gym.tenant.TenantGuard;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -27,27 +28,34 @@ public class MemberService {
     private final DeviceAuthorizationService deviceAuthorizationService;
     private final MemberNumbers numbers;
     private final ReaderReconcileService readers;
+    private final MemberReaderSearch readerSearch;
 
     public MemberService(MemberRepository memberRepository, AuditService auditService,
                          DeviceAuthorizationService deviceAuthorizationService,
-                         MemberNumbers numbers, ReaderReconcileService readers) {
+                         MemberNumbers numbers, ReaderReconcileService readers,
+                         MemberReaderSearch readerSearch) {
         this.memberRepository = memberRepository;
         this.auditService = auditService;
         this.deviceAuthorizationService = deviceAuthorizationService;
         this.numbers = numbers;
         this.readers = readers;
+        this.readerSearch = readerSearch;
     }
 
     @Transactional(readOnly = true)
     public Page<Member> search(Long tenantId, String query, MemberStatus status,
                                DeviceAuthority deviceAuthority, Pageable pageable) {
         String trimmed = query == null ? "" : query.strip();
+        List<Long> readerMemberIds = readerSearch.matching(tenantId, trimmed);
+        if (readerMemberIds.isEmpty()) {
+            readerMemberIds = List.of(-1L);
+        }
         if (trimmed.isEmpty()) {
-            return memberRepository.search(tenantId, null, null, status, deviceAuthority, pageable);
+            return memberRepository.search(tenantId, null, null, status, deviceAuthority, readerMemberIds, pageable);
         }
         // Spaces are kept between words (and one at the end) so "kunal " narrows to that first name.
         String name = query.stripLeading().replaceAll("\\s+", " ");
-        return memberRepository.search(tenantId, trimmed, name, status, deviceAuthority, pageable);
+        return memberRepository.search(tenantId, trimmed, name, status, deviceAuthority, readerMemberIds, pageable);
     }
 
     @Transactional(readOnly = true)

@@ -40,7 +40,7 @@ public sealed class AttendancePoll
     public const int UploadBatch = 100;
 
     private readonly string _deviceId;
-    private readonly string _readerLabel;
+    private readonly Func<string> _readerName;
     private readonly IReaderAdapter _reader;
     private readonly IAttendanceClient _client;
     private readonly AttendancePollSettings _settings;
@@ -57,10 +57,20 @@ public sealed class AttendancePoll
         AttendancePollSettings settings,
         ILogger? log = null,
         Func<DateTimeOffset>? clock = null,
-        string? readerLabel = null)
+        string? readerLabel = null,
+        Func<string>? readerName = null)
     {
         _deviceId = deviceId;
-        _readerLabel = string.IsNullOrWhiteSpace(readerLabel) ? deviceId : readerLabel.Trim();
+        _readerName = () =>
+        {
+            var live = readerName?.Invoke();
+            if (!string.IsNullOrWhiteSpace(live))
+            {
+                return live.Trim();
+            }
+
+            return string.IsNullOrWhiteSpace(readerLabel) ? deviceId : readerLabel.Trim();
+        };
         _reader = reader ?? throw new ArgumentNullException(nameof(reader));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _settings = settings;
@@ -72,6 +82,8 @@ public sealed class AttendancePoll
 
     /// <summary>The reader's last stored punch time as the server last reported it.</summary>
     public DateTimeOffset? LastStored => _lastStored;
+
+    private string ReaderName() => _readerName();
 
     public async Task<AttendancePollResult> PollOnceAsync(CancellationToken cancellationToken)
     {
@@ -92,7 +104,7 @@ public sealed class AttendancePoll
         if (!read.Ok)
         {
             _log.LogWarning("Reader {Reader}: attendance read failed for {From:o}..{To:o}: {Error}",
-                _readerLabel, from, to, read.Error);
+                ReaderName(), from, to, read.Error);
             return new AttendancePollResult(false, from, to, 0, 0, 0, read.Error);
         }
 
@@ -100,7 +112,7 @@ public sealed class AttendancePoll
         {
             _log.LogWarning(
                 "Reader {Reader}: stage=attendance; skipped {Skipped} punch(es) with unreadable time in {From:o}..{To:o}; valid rows continue",
-                _readerLabel, read.MalformedSkipped, from, to);
+                ReaderName(), read.MalformedSkipped, from, to);
         }
 
         var fresh = read.Punches
@@ -126,7 +138,7 @@ public sealed class AttendancePoll
             {
                 _log.LogWarning(ex,
                     "Reader {Reader}: attendance upload failed after {Sent} of {Fresh}; the rest is read again next time",
-                    _readerLabel, sent, fresh.Length);
+                    ReaderName(), sent, fresh.Length);
                 Forget();
                 return new AttendancePollResult(false, from, to, read.Punches.Count, sent, stored, ex.Message);
             }
@@ -143,7 +155,7 @@ public sealed class AttendancePoll
 
         Forget();
         _log.LogInformation("Reader {Reader}: attendance {From:o}..{To:o} read {Read}, sent {Sent}, stored {Stored}",
-            _readerLabel, from, to, read.Punches.Count, sent, stored);
+            ReaderName(), from, to, read.Punches.Count, sent, stored);
         return new AttendancePollResult(true, from, to, read.Punches.Count, sent, stored, null);
     }
 

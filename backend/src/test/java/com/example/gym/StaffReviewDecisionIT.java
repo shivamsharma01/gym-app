@@ -509,7 +509,7 @@ class StaffReviewDecisionIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void staffCreateAMemberFromAPendingEnrollmentOnThatReaderOnly() throws Exception {
+    void staffCreateAMemberFromAPendingEnrollmentWritesThemOnEveryReader() throws Exception {
         postFace("22", "Nila Sen", uploadFace());
         PendingEnrollment enrollment = pendingEnrollmentRepository.findByDeviceIdAndDeviceUserId(flagged, "22")
                 .orElseThrow();
@@ -534,9 +534,17 @@ class StaffReviewDecisionIT extends AbstractIntegrationTest {
         assertThat(memberRepository.count()).isEqualTo(members + 1);
         assertThat(memberRepository.findByPublicId(memberId).orElseThrow().getFullName()).isEqualTo("Nila Sen");
         assertThat(mapping(memberId).getDeviceUserId()).isEqualTo("22");
-        assertThat(memberDeviceMappingRepository.findByMemberId(memberPk)).hasSize(1);
-        assertThat(desiredMemberProjectionRepository.findByDeviceIdAndMemberId(side, memberPk)).isEmpty();
-        assertThat(desiredMemberProjectionRepository.findByDeviceId(other)).isEmpty();
+        assertThat(memberDeviceMappingRepository.findByMemberId(memberPk)).hasSize(3);
+        DesiredMemberProjection onSide = desiredMemberProjectionRepository
+                .findByDeviceIdAndMemberId(side, memberPk).orElseThrow();
+        DesiredMemberProjection onExit = desiredMemberProjectionRepository
+                .findByDeviceIdAndMemberId(other, memberPk).orElseThrow();
+        assertThat(onSide.getDeviceUserId()).isNotEqualTo("22");
+        assertThat(onExit.getDeviceUserId()).isNotEqualTo("22");
+        assertThat(onSide.getReaderName()).isEqualTo("Nila Sen");
+        assertThat(onExit.getReaderName()).isEqualTo("Nila Sen");
+        assertThat(onSide.isFacePresent()).isTrue();
+        assertThat(onExit.isFacePresent()).isTrue();
         assertThat(deviceSyncCommandRepository.count()).isEqualTo(commands);
         assertMemberCreatedBy(memberId, "front-desk");
         JsonNode audited = onlyDecisionAudit(enrollment.getPublicId(), "ENROLLMENT_DECIDED", "front-desk");

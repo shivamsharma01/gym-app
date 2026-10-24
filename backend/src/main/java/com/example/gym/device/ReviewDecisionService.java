@@ -27,7 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Staff choose what a reader should hold. Each choice is a desired revision on the existing apply
- * path. Link and create keep the reader's device user id. Reject creates no member.
+ * path. Link and create keep the reader's device user id. Create also writes that new member onto
+ * every other reader of the gym. Reject creates no member.
  */
 @Service
 public class ReviewDecisionService {
@@ -40,6 +41,7 @@ public class ReviewDecisionService {
     private final MemberService members;
     private final MemberFaceService faces;
     private final DesiredProjectionService desired;
+    private final ReaderReconcileService readers;
 
     public ReviewDecisionService(DeviceRepository devices,
                                  DeviceReviewItemRepository reviews,
@@ -48,7 +50,8 @@ public class ReviewDecisionService {
                                  PendingEnrollmentService observations,
                                  MemberService members,
                                  MemberFaceService faces,
-                                 DesiredProjectionService desired) {
+                                 DesiredProjectionService desired,
+                                 ReaderReconcileService readers) {
         this.devices = devices;
         this.reviews = reviews;
         this.readerReviews = readerReviews;
@@ -57,6 +60,7 @@ public class ReviewDecisionService {
         this.members = members;
         this.faces = faces;
         this.desired = desired;
+        this.readers = readers;
     }
 
     @Transactional(readOnly = true)
@@ -228,7 +232,9 @@ public class ReviewDecisionService {
         }
         MemberFace face = faces.applyFromDevice(member, upload, enrollment.getDeviceId(), Instant.now());
         Device device = device(enrollment.getDeviceId(), tenantId);
+        readers.lockReaders(tenantId);
         long revision = desired.adoptFromReader(member, device, face, observed);
+        readers.reconcile(member);
         enrollment.decide(ReviewDecisions.CREATE, actor(), "PENDING", member.getPublicId(), revision);
         return enrollmentView(enrollments.save(enrollment));
     }
@@ -262,7 +268,9 @@ public class ReviewDecisionService {
             member.setStatus(MemberStatus.INACTIVE);
         }
         MemberFace face = faces.applyFromDevice(member, upload, device.getId(), Instant.now());
+        readers.lockReaders(tenantId);
         long revision = desired.adoptFromReader(member, device, face, observed);
+        readers.reconcile(member);
         item.setMemberId(member.getId());
         item.decide(ReviewDecisions.CREATE, actor(), prior, member.getPublicId(), revision);
         return reviewView(reviews.save(item));

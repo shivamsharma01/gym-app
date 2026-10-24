@@ -206,6 +206,7 @@ public class DesiredProjectionService {
         }
         ReaderRevision cursor = revisions.lock(member.getTenantId(), device.getId());
         String deviceUserId = allocator.allocate(cursor);
+        retireFinishedAbsence(device.getId(), deviceUserId);
         MemberDeviceMapping saved = mappings.save(new MemberDeviceMapping(
                 member.getTenantId(), member.getId(), device.getId(), deviceUserId));
         attendance.linkEarlierEvents(saved);
@@ -223,6 +224,23 @@ public class DesiredProjectionService {
         FlowLog.info("device", "desired member reader={} revision={} user={}",
                 device.getPublicId(), revision, deviceUserId);
         return revision;
+    }
+
+    /**
+     * A finished removal leaves a row with no member. The id can be allocated again. Remove that
+     * row before the new member row is saved, so one device user id stays one row.
+     */
+    private void retireFinishedAbsence(Long deviceId, String deviceUserId) {
+        List<DesiredMemberProjection> rows = projections.findAllByDeviceIdAndDeviceUserId(deviceId, deviceUserId);
+        if (rows.isEmpty()) {
+            return;
+        }
+        for (DesiredMemberProjection row : rows) {
+            if (row.getMemberId() == null && row.isApplied() && !row.isPresentOnReader()) {
+                projections.delete(row);
+            }
+        }
+        projections.flush();
     }
 
     /**

@@ -15,6 +15,7 @@ import com.example.gym.device.repo.PendingEnrollmentRepository;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -236,6 +237,7 @@ public class PendingEnrollmentService {
      * person there is treated as the reader's own.
      */
     private void withdrawCollidingSeed(Device device, String deviceUserId, ObservationOrder.Scan scan) {
+        retireFinishedAbsence(device.getId(), deviceUserId);
         desiredMembers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .filter(row -> row.unservedSeed(scan.servedRevision()))
                 .filter(row -> reviews.baseline(device.getId(), deviceUserId).isEmpty())
@@ -246,6 +248,24 @@ public class PendingEnrollmentService {
                     FlowLog.info("device", "seed withdrawn reader={} user={}: the reader already uses the id",
                             device.getPublicId(), deviceUserId);
                 });
+    }
+
+    /**
+     * A finished removal leaves a row with no member. Giving that id to a member adds a second row.
+     * The reader list then cannot be saved, and every later write stays Waiting. Drop the finished
+     * removal when a member row for the same id exists, so the save continues.
+     */
+    private void retireFinishedAbsence(Long deviceId, String deviceUserId) {
+        List<DesiredMemberProjection> rows = desiredMembers.findAllByDeviceIdAndDeviceUserId(deviceId, deviceUserId);
+        if (rows.size() < 2 || rows.stream().noneMatch(row -> row.getMemberId() != null)) {
+            return;
+        }
+        for (DesiredMemberProjection row : rows) {
+            if (row.getMemberId() == null && row.isApplied() && !row.isPresentOnReader()) {
+                desiredMembers.delete(row);
+            }
+        }
+        desiredMembers.flush();
     }
 
     /**

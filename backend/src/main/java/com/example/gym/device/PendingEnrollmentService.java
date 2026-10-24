@@ -13,6 +13,7 @@ import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.device.repo.PendingEnrollmentRepository;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -237,7 +238,7 @@ public class PendingEnrollmentService {
      * person there is treated as the reader's own.
      */
     private void withdrawCollidingSeed(Device device, String deviceUserId, ObservationOrder.Scan scan) {
-        retireFinishedAbsence(device.getId(), deviceUserId);
+        retireFinishedAbsence(device, deviceUserId);
         desiredMembers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .filter(row -> row.unservedSeed(scan.servedRevision()))
                 .filter(row -> reviews.baseline(device.getId(), deviceUserId).isEmpty())
@@ -255,17 +256,46 @@ public class PendingEnrollmentService {
      * The reader list then cannot be saved, and every later write stays Waiting. Drop the finished
      * removal when a member row for the same id exists, so the save continues.
      */
-    private void retireFinishedAbsence(Long deviceId, String deviceUserId) {
-        List<DesiredMemberProjection> rows = desiredMembers.findAllByDeviceIdAndDeviceUserId(deviceId, deviceUserId);
+    private void retireFinishedAbsence(Device device, String deviceUserId) {
+        List<DesiredMemberProjection> rows = desiredMembers.findAllByDeviceIdAndDeviceUserId(
+                device.getId(), deviceUserId);
         if (rows.size() < 2 || rows.stream().noneMatch(row -> row.getMemberId() != null)) {
             return;
         }
+        int removed = 0;
+        List<DesiredMemberProjection> left = new ArrayList<>();
         for (DesiredMemberProjection row : rows) {
             if (row.getMemberId() == null && row.isApplied() && !row.isPresentOnReader()) {
                 desiredMembers.delete(row);
+                removed++;
+            } else {
+                left.add(row);
             }
         }
         desiredMembers.flush();
+        if (removed > 0) {
+            FlowLog.info("device", "dropped {} finished removal row(s) reader={} user={} so the reader list can be saved",
+                    removed, device.getPublicId(), deviceUserId);
+        }
+        if (left.size() > 1) {
+            FlowLog.warn("device", "reader={} user={} still has {} desired rows: {}",
+                    device.getPublicId(), deviceUserId, left.size(), desiredRows(left));
+        }
+    }
+
+    private static String desiredRows(List<DesiredMemberProjection> rows) {
+        StringBuilder text = new StringBuilder();
+        for (DesiredMemberProjection row : rows) {
+            if (!text.isEmpty()) {
+                text.append(", ");
+            }
+            text.append(row.getId())
+                    .append("/member=").append(row.getMemberId())
+                    .append("/rev=").append(row.getRevision())
+                    .append("/applied=").append(row.isApplied())
+                    .append("/present=").append(row.isPresentOnReader());
+        }
+        return text.toString();
     }
 
     /**

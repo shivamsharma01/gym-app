@@ -66,7 +66,10 @@ public class ReaderApplyStatusService {
         int saved = (int) ids.stream().filter(id -> saved(found.get(id), gateway, now)).count();
         int waiting = ids.size() - saved;
         boolean all = waiting == 0;
-        report(device, saved, ids.size(), all);
+        List<String> missing = all || waiting > 5
+                ? List.of()
+                : ids.stream().filter(id -> !saved(found.get(id), gateway, now)).toList();
+        report(device, saved, ids.size(), all, missing);
         return new ObservationStatus(all, saved, waiting);
     }
 
@@ -75,18 +78,19 @@ public class ReaderApplyStatusService {
     }
 
     /** One line when the count changes, so a long pause shows progress instead of silence. */
-    private void report(Device device, int saved, int total, boolean done) {
-        String value = saved + "/" + total + "/" + done;
+    private void report(Device device, int saved, int total, boolean done, List<String> missing) {
+        String value = saved + "/" + total + "/" + done + "/" + String.join(",", missing);
         if (value.equals(lastReported.put(device.getPublicId(), value))) {
             return;
         }
         if (done) {
-            log.info("{}: reader list is saved ({} updates). The gateway can write members onto the reader now.",
-                    device.getName(), total);
+            log.info("{} ({}): reader list is saved ({} updates). The gateway can write members onto the reader now.",
+                    device.getName(), device.getPublicId(), total);
             return;
         }
-        log.info("{}: reader list is not finished. {} of {} updates are saved. Member sync stays paused until the rest are saved. Nothing to do in the app.",
-                device.getName(), saved, total);
+        String unsaved = missing.isEmpty() ? "" : " Not saved: " + String.join(", ", missing) + ".";
+        log.info("{} ({}): reader list is not finished. {} of {} updates are saved.{} Member sync stays paused until the rest are saved. Nothing to do in the app.",
+                device.getName(), device.getPublicId(), saved, total, unsaved);
     }
 
     /**

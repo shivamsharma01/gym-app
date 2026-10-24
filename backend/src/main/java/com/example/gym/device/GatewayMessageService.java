@@ -116,7 +116,8 @@ public class GatewayMessageService {
                     Map.of("error", "observation out of order")));
         } catch (RuntimeException ex) {
             // Not recorded as processed: the gateway keeps it (no ACK) and resends it on reconnect.
-            log.error("Error handling gateway message {} ({})", message.type(), message.messageId(), ex);
+            log.error("Error handling gateway message {} ({}) device={}{}",
+                    message.type(), message.messageId(), message.deviceId(), failureContext(message), ex);
             return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
                     Map.of("error", "processing failed")));
         }
@@ -227,6 +228,23 @@ public class GatewayMessageService {
 
     String credentialRequiredError() {
         return reply(GatewayMessageType.ERROR, null, Map.of("error", "gateway credential required"));
+    }
+
+    /** Device user id, or the size of a full list. No name and no photo. */
+    private String failureContext(GatewayMessage message) {
+        JsonNode payload = message.payload();
+        if (payload == null) {
+            return "";
+        }
+        String user = text(payload, "deviceUserId");
+        if (user != null && !user.isBlank()) {
+            return " user=" + user;
+        }
+        JsonNode users = payload.get("users");
+        if (users != null && users.isArray()) {
+            return " people=" + users.size();
+        }
+        return "";
     }
 
     /** Short, safe summary of the fields that explain a message (no photos or credentials). */

@@ -63,7 +63,7 @@ public class ReaderImportStep {
         if (hold.isPresent()) {
             throw CommonExceptions.conflict(hold.get());
         }
-        return decisions.create(enrollment.getPublicId(), tenantId);
+        return decisions.create(enrollment.getPublicId(), tenantId, false);
     }
 
     /**
@@ -81,7 +81,7 @@ public class ReaderImportStep {
                 skipped.add(new ReaderImportService.Skipped(enrollment.getDeviceUserId(), hold.get()));
                 continue;
             }
-            created.add(decisions.create(enrollment.getPublicId(), tenantId));
+            created.add(decisions.create(enrollment.getPublicId(), tenantId, false));
         }
         return new BatchResult(List.copyOf(created), List.copyOf(skipped));
     }

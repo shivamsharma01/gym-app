@@ -218,8 +218,19 @@ public class ReviewDecisionService {
         return enrollmentView(enrollments.save(enrollment));
     }
 
+    /** Staff Create on Review. The new member is written onto every reader of the gym. */
     @Transactional
     public ReviewItemView create(String publicId, Long tenantId) {
+        return create(publicId, tenantId, true);
+    }
+
+    /**
+     * @param onEveryReader false for a bulk import, which keeps the person on the reader they came
+     *                      from. Other readers receive them only after staff decide who those
+     *                      readers already show.
+     */
+    @Transactional
+    public ReviewItemView create(String publicId, Long tenantId, boolean onEveryReader) {
         PendingEnrollment enrollment = openEnrollment(publicId, tenantId);
         DeviceObservedUser observed = requireObserved(enrollment);
         GatewayFaceUpload upload = faces.findUnconsumedByHash(tenantId, observed.getFaceSha256())
@@ -232,9 +243,13 @@ public class ReviewDecisionService {
         }
         MemberFace face = faces.applyFromDevice(member, upload, enrollment.getDeviceId(), Instant.now());
         Device device = device(enrollment.getDeviceId(), tenantId);
-        readers.lockReaders(tenantId);
+        if (onEveryReader) {
+            readers.lockReaders(tenantId);
+        }
         long revision = desired.adoptFromReader(member, device, face, observed);
-        readers.reconcile(member);
+        if (onEveryReader) {
+            readers.reconcile(member);
+        }
         enrollment.decide(ReviewDecisions.CREATE, actor(), "PENDING", member.getPublicId(), revision);
         return enrollmentView(enrollments.save(enrollment));
     }

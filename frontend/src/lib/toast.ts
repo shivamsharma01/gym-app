@@ -1,5 +1,5 @@
 import { toast } from 'sonner'
-import { ApiError } from '@/lib/api'
+import { ApiError, humanError, isHtml } from '@/lib/api'
 
 /** Plain message for a failed action. Network drops stay short. */
 export function toastError(error: unknown) {
@@ -25,6 +25,7 @@ export function plainError(error: unknown) {
 }
 
 function clip(message: string) {
+  if (isHtml(message)) return humanError(502, '', '')
   const clean = message.replace(/\s+/g, ' ').trim()
   return clean.length > 180 ? `${clean.slice(0, 177)}…` : clean
 }

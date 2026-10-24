@@ -17,6 +17,28 @@ export class ApiError extends Error {
 }
 
 /** "fullName: must not be blank" → "Full name: must not be blank". */
+function textField(value: unknown) {
+  return typeof value === 'string' ? value : ''
+}
+
+/** A proxy or Cloudflare outage is an HTML page, not a message we can show. */
+export function isHtml(value: string) {
+  return /<!doctype|<html|<\/[a-z][\w:-]*>/i.test(value)
+}
+
+/** Keep a real API sentence. Replace an HTML error page with one short line. */
+export function humanError(status: number, raw: string, statusText: string) {
+  const text = raw.replace(/\s+/g, ' ').trim()
+  if (text && !isHtml(text)) return text
+  if (status === 502 || status === 503 || status === 504) {
+    return 'The server is restarting. Try again in a moment.'
+  }
+  if (status >= 500) return 'The server had a problem. Try again.'
+  const fallback = statusText.replace(/\s+/g, ' ').trim()
+  if (fallback && !isHtml(fallback)) return fallback
+  return 'That did not work. Try again.'
+}
+
 function readableError(raw: string) {
   const split = raw.indexOf(': ')
   if (split < 0) return raw
@@ -61,7 +83,7 @@ async function send(path: string, init: RequestInit, retried: boolean): Promise<
 export async function apiBlob(path: string): Promise<Blob | null> {
   const res = await send(path, {}, false)
   if (res.status === 404) return null
-  if (!res.ok) throw new ApiError(res.status, res.statusText)
+  if (!res.ok) throw new ApiError(res.status, humanError(res.status, '', res.statusText))
   return res.blob()
 }
 
@@ -74,17 +96,19 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
 
   const text = await res.text()
   let json: Record<string, unknown> = {}
+  let unparsed = ''
   if (text) {
     try {
       json = JSON.parse(text) as Record<string, unknown>
     } catch {
-      json = { detail: text }
+      unparsed = text
     }
   }
   if (!res.ok) {
-    const detail = (json.detail as string) || (json.title as string) || res.statusText
+    const fromJson = textField(json.detail) || textField(json.title) || textField(json.message)
+    const detail = humanError(res.status, fromJson || unparsed, res.statusText)
     const errors = Array.isArray(json.errors)
-      ? json.errors.filter((e): e is string => typeof e === 'string').map(readableError)
+      ? json.errors.filter((e): e is string => typeof e === 'string').map(readableError).filter((e) => !isHtml(e))
       : []
     throw new ApiError(res.status, detail, json.code as string | undefined, errors)
   }

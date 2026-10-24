@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form'
 import { Link, Navigate, useNavigate } from 'react-router'
 import { z } from 'zod'
 import { Button, FieldError, Input, Label } from '@/components/ui'
-import { ApiError } from '@/lib/api'
+import { plainError } from '@/lib/toast'
 import { useAuth } from '@/lib/useAuth'
 import { isPlatformSuperAdmin, platformHomePath } from '@/lib/platform'
 
@@ -39,7 +39,7 @@ export function LoginPage() {
       const loggedIn = await login(values.usernameOrEmail, values.password)
       navigate(isPlatformSuperAdmin(loggedIn) ? platformHomePath() : '/app/dashboard', { replace: true })
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'Sign in failed')
+      setFormError(plainError(err))
     }
   }
 

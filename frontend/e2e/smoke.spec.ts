@@ -32,4 +32,20 @@ test.describe('Staff login page', () => {
     await page.getByRole('button', { name: 'Continue' }).click()
     await expect(page.getByRole('alert')).toBeVisible({ timeout: 10_000 })
   })
+
+  test('a gateway outage shows a short message instead of the error page', async ({ page }) => {
+    await page.route('**/api/v1/auth/login', async (route) => {
+      await route.fulfill({
+        status: 502,
+        contentType: 'text/html',
+        body: '<!DOCTYPE html><html><head><title>kainazi.com | 502: Bad gateway</title></head><body>Bad gateway</body></html>',
+      })
+    })
+    await page.goto('/app/login')
+    await page.getByLabel('Username or email').fill('gym-admin')
+    await page.getByLabel('Password').fill('secret')
+    await page.getByRole('button', { name: 'Continue' }).click()
+    await expect(page.getByRole('alert')).toHaveText('The server is restarting. Try again in a moment.')
+    await expect(page.getByText('DOCTYPE')).toHaveCount(0)
+  })
 })

@@ -40,6 +40,19 @@ public class TrueFaceUpsertTests
     }
 
     [Fact]
+    public void A_failed_read_is_not_an_empty_id()
+    {
+        var present = new DeviceUserSnapshot("1238", "abc", false);
+
+        Assert.Null(TrueFaceDeviceAdapter.RequireConfirmedRead(Lookup.Missing, null, "1238"));
+        Assert.Same(present, TrueFaceDeviceAdapter.RequireConfirmedRead(Lookup.Found, present, "1238"));
+        Assert.Throws<DeviceReadException>(() =>
+            TrueFaceDeviceAdapter.RequireConfirmedRead(Lookup.Unreadable, null, "1238"));
+        Assert.Throws<DeviceReadException>(() =>
+            TrueFaceDeviceAdapter.RequireConfirmedRead(Lookup.Unknown, null, "1238"));
+    }
+
+    [Fact]
     public void A_transport_failure_is_unreadable_and_an_unexplained_error_is_unknown()
     {
         Assert.Equal(Lookup.Unreadable, TrueFaceDeviceAdapter.ClassifyUserRead(false, null, EM_FAILCODE.UNKNOWN, false));
@@ -108,5 +121,44 @@ public class TrueFaceUpsertTests
         Assert.Equal(23u, created.stuValidEndTime.dwHour);
         Assert.Equal(from, snapshot.ValidFrom);
         Assert.Equal(to, snapshot.ValidTo);
+    }
+
+    [Fact]
+    public void A_wrapped_reader_that_cannot_confirm_absence_is_not_treated_as_deleted()
+    {
+        var read = new DeviceReaderAdapter(new UnreadableUser()).GetUser("1238");
+
+        Assert.False(read.Ok);
+        Assert.NotEqual(FakeReader.FailNoRecord, read.FailCode);
+        Assert.Contains("did not confirm", read.Error, StringComparison.Ordinal);
+    }
+
+    private sealed class UnreadableUser : IDeviceAdapter
+    {
+        public string DeviceId => "entry";
+        public DeviceConnectionStatus Connect(DeviceConnectionConfig config) => DeviceConnectionStatus.Online();
+        public void Disconnect() { }
+        public DeviceInfoSnapshot GetDeviceInfo() => new(null, 0, 0, 0, 0, 0);
+        public DeviceHealth GetHealth() => new("ONLINE", null, null);
+        public DeviceCommandResult CreateUser(DeviceUserMutation mutation) => DeviceCommandResult.Fail("unused");
+        public DeviceCommandResult UpdateUser(DeviceUserMutation mutation) => DeviceCommandResult.Fail("unused");
+        public DeviceCommandResult DisableUser(string deviceUserId) => DeviceCommandResult.Fail("unused");
+        public DeviceCommandResult EnableUser(string deviceUserId) => DeviceCommandResult.Fail("unused");
+        public DeviceCommandResult DeleteUser(string deviceUserId) => DeviceCommandResult.Fail("unused");
+        public DeviceCommandResult UpdateValidity(DeviceUserMutation mutation) => DeviceCommandResult.Fail("unused");
+        public IReadOnlyList<DeviceUserSnapshot> ListUsers() => [];
+        public DeviceUserSnapshot? GetUser(string deviceUserId) =>
+            throw new DeviceReadException("could not read user 1238; the reader did not confirm that the user is absent");
+        public DeviceCommandResult UpsertFace(string deviceUserId, byte[] jpegBytes) => DeviceCommandResult.Fail("unused");
+        public DeviceFaceRead GetFace(string deviceUserId) => DeviceFaceRead.Fail("unused");
+        public DeviceCommandResult DeleteFace(string deviceUserId) => DeviceCommandResult.Fail("unused");
+        public FaceProbeResult ProbeRemoteFaceInsert(string deviceUserId, byte[] jpegBytes) =>
+            new(false, 0, "0", null, "unused");
+        public IReadOnlyList<DeviceAttendanceRecord> FetchAttendance(DateTimeOffset? fromUtc, DateTimeOffset? toUtc) => [];
+        public void RegisterEventListener(IDeviceEventListener listener) { }
+        public DeviceCommandResult OpenDoor() => DeviceCommandResult.Fail("unused");
+        public DeviceCommandResult CloseDoor() => DeviceCommandResult.Fail("unused");
+        public DeviceCommandResult SynchronizeTime(DateTimeOffset utcNow) => DeviceCommandResult.Fail("unused");
+        public void Dispose() { }
     }
 }

@@ -30,7 +30,10 @@ public interface IDeviceAdapter : IDisposable
     /// <summary>Enumerate access users (id, name, frozen, validity). No biometrics.</summary>
     IReadOnlyList<DeviceUserSnapshot> ListUsers();
 
-    /// <summary>One access user, or null when absent / not readable.</summary>
+    /// <summary>
+    /// One access user. Null only when the reader confirmed the id is empty.
+    /// A read that does not confirm absence throws <see cref="DeviceReadException"/>.
+    /// </summary>
     DeviceUserSnapshot? GetUser(string deviceUserId);
 
     /// <summary>

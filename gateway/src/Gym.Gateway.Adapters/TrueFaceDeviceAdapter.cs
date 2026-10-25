@@ -180,8 +180,25 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         return QueryUsers();
     }
 
-    public DeviceUserSnapshot? GetUser(string deviceUserId) =>
-        LookUpUser(deviceUserId, out var user) == UserLookup.Found ? ToSnapshot(user) : null;
+    public DeviceUserSnapshot? GetUser(string deviceUserId)
+    {
+        var lookup = LookUpUser(deviceUserId, out var user);
+        if (lookup is UserLookup.Found or UserLookup.Missing)
+        {
+            return RequireConfirmedRead(lookup, lookup == UserLookup.Found ? ToSnapshot(user) : null, deviceUserId);
+        }
+
+        // The production reader is wrapped, and that wrapper only has this method. Null there means
+        // "already gone" and closes a delete. A failed read must throw. A list that still has the
+        // person is returned so the delete is sent.
+        var listed = ListedUser(deviceUserId);
+        if (listed != null)
+        {
+            return listed;
+        }
+
+        return RequireConfirmedRead(lookup, null, deviceUserId);
+    }
 
     /// <summary>
     /// Missing is a not-found answer that a full user list also supports. A transport failure, and a
@@ -189,10 +206,47 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     /// </summary>
     internal UserRead ReadUser(string deviceUserId)
     {
-        var lookup = LookUpUser(deviceUserId, out var user);
-        return lookup == UserLookup.Found
-            ? new UserRead(lookup, ToSnapshot(user))
-            : new UserRead(lookup, null);
+        try
+        {
+            var user = GetUser(deviceUserId);
+            return user == null
+                ? new UserRead(UserLookup.Missing, null)
+                : new UserRead(UserLookup.Found, user);
+        }
+        catch (DeviceReadException)
+        {
+            return new UserRead(UserLookup.Unreadable, null);
+        }
+    }
+
+    /// <summary>Null when this lookup must not be reported as an empty id.</summary>
+    internal static DeviceUserSnapshot? RequireConfirmedRead(UserLookup lookup, DeviceUserSnapshot? user, string deviceUserId)
+    {
+        if (lookup == UserLookup.Found)
+        {
+            return user ?? throw new DeviceReadException($"reader found user {deviceUserId} with no record");
+        }
+
+        if (lookup == UserLookup.Missing)
+        {
+            return null;
+        }
+
+        throw new DeviceReadException(
+            $"could not read user {deviceUserId}; the reader did not confirm that the user is absent");
+    }
+
+    private DeviceUserSnapshot? ListedUser(string deviceUserId)
+    {
+        try
+        {
+            return QueryUsers().FirstOrDefault(user =>
+                string.Equals(user.DeviceUserId, deviceUserId.Trim(), StringComparison.Ordinal));
+        }
+        catch (DeviceReadException)
+        {
+            return null;
+        }
     }
 
     internal readonly record struct UserRead(UserLookup Lookup, DeviceUserSnapshot? User);

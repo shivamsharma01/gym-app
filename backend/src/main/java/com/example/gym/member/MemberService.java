@@ -152,7 +152,7 @@ public class MemberService {
         memberRepository.save(member);
         deviceAuthorizationService.syncMember(member);
         FlowLog.info("member", "deactivated id={}", member.getPublicId());
-        auditService.record(AuditActions.MEMBER_DELETED, AuditActions.RESULT_SUCCESS,
+        auditService.record(AuditActions.MEMBER_DEACTIVATED, AuditActions.RESULT_SUCCESS,
                 "Member", member.getPublicId(), Map.of("memberCode", member.getMemberCode()));
     }
 

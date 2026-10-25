@@ -43,6 +43,8 @@ public class TrueFaceUpsertTests
     public void A_transport_failure_is_unreadable_and_an_unexplained_error_is_unknown()
     {
         Assert.Equal(Lookup.Unreadable, TrueFaceDeviceAdapter.ClassifyUserRead(false, null, EM_FAILCODE.UNKNOWN, false));
+        Assert.Equal(Lookup.Unreadable, TrueFaceDeviceAdapter.ClassifyUserRead(false, null, EM_FAILCODE.NO_RECORD, false));
+        Assert.Equal(Lookup.Unreadable, TrueFaceDeviceAdapter.ClassifyUserRead(false, null, EM_FAILCODE.INVALID_USER, false));
         Assert.Equal(Lookup.Unknown, TrueFaceDeviceAdapter.ClassifyUserRead(false, null, EM_FAILCODE.UNKNOWN, true));
         Assert.Equal(Lookup.Unknown, TrueFaceDeviceAdapter.ClassifyUserRead(false, null, EM_FAILCODE.NOERROR, true));
     }

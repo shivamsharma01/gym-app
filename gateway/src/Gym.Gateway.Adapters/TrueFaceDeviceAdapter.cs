@@ -183,7 +183,10 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     public DeviceUserSnapshot? GetUser(string deviceUserId) =>
         LookUpUser(deviceUserId, out var user) == UserLookup.Found ? ToSnapshot(user) : null;
 
-    /// <summary>Missing is fail code NO_RECORD. Any other answer, including the shared SDK error, is not.</summary>
+    /// <summary>
+    /// Missing is a not-found answer that a full user list also supports. A transport failure, and a
+    /// not-found answer the list does not support, are not a missing user.
+    /// </summary>
     internal UserRead ReadUser(string deviceUserId)
     {
         var lookup = LookUpUser(deviceUserId, out var user);
@@ -876,6 +879,16 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
         if (lookup == UserLookup.Found)
         {
             user = users[0];
+            return lookup;
+        }
+
+        // A dead login has answered NO_RECORD for a person still on the reader. Trusting that
+        // closed a delete and reported a disable as "not present". Absence stands only when a
+        // full list, one that actually returned people, does not contain the id. A failed, empty,
+        // or contradictory list stays unreadable, and the caller retries after the reader is back.
+        if (lookup == UserLookup.Missing)
+        {
+            lookup = ConfirmAbsentByList(deviceUserId);
         }
 
         return lookup;
@@ -890,7 +903,7 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
                 : UserLookup.Missing;
         }
 
-        if (fail is EM_FAILCODE.NO_RECORD or EM_FAILCODE.INVALID_USER)
+        if (readerAnswered && fail is EM_FAILCODE.NO_RECORD or EM_FAILCODE.INVALID_USER)
         {
             return UserLookup.Missing;
         }
@@ -899,8 +912,9 @@ public sealed class TrueFaceDeviceAdapter : IDeviceAdapter
     }
 
     /// <summary>
-    /// Only for creates: a full user list that does not contain the user counts as absent. An empty or
-    /// failed list (a reader busy importing returns one) does not.
+    /// A full user list that does not contain the user counts as absent. An empty or failed list
+    /// (a reader busy importing, or a login that is no longer talking to the reader, returns one) does not.
+    /// A list that still contains the user does not count as absent either.
     /// </summary>
     private UserLookup ConfirmAbsentByList(string deviceUserId)
     {

@@ -1,12 +1,17 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.PendingEnrollment;
+import com.example.gym.member.Member;
 import com.example.gym.support.AbstractReaderIT;
 import java.awt.Color;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 
 /** A person nobody decided on who is no longer on the reader is closed, and reopens if the id shows someone again. */
 class ReaderPersonLeftIT extends AbstractReaderIT {
@@ -38,6 +43,42 @@ class ReaderPersonLeftIT extends AbstractReaderIT {
 
         assertThat(enrollment("1").isResolved()).isFalse();
         assertThat(enrollment("1").getReviewStatus()).isEqualTo(PendingEnrollment.PENDING);
+    }
+
+    @Test
+    void aFinishedRemovalIsQueuedAgainWhenTheReaderStillShowsThePerson() throws Exception {
+        Member member = onlyOn(readerId, "abc", "Shah", "LEFT-ABC", "9301");
+        String deviceUserId = projection(readerId, member).getDeviceUserId();
+        ackEverything(readerId);
+        mockMvc.perform(delete("/api/v1/members/" + member.getPublicId() + "/permanent")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+        ackEverything(readerId);
+
+        DesiredMemberProjection finished = desiredMemberProjectionRepository
+                .findByDeviceIdAndDeviceUserId(readerPk(readerId), deviceUserId).orElseThrow();
+        long closed = finished.getRevision();
+        assertThat(finished.getMemberId()).isNull();
+        assertThat(finished.isApplied()).isTrue();
+
+        trustedRoster(readerId, person(deviceUserId, finished.getReaderName(), 0,
+                finished.getValidFrom(), finished.getValidTo(), finished.getFaceSha256()));
+
+        DesiredMemberProjection queued = desiredMemberProjectionRepository
+                .findByDeviceIdAndDeviceUserId(readerPk(readerId), deviceUserId).orElseThrow();
+        assertThat(queued.getRevision()).isGreaterThan(closed);
+        assertThat(queued.isPresentOnReader()).isFalse();
+        assertThat(queued.isApplied()).isFalse();
+        JsonNode page = pull(readerId, closed);
+        assertThat(page.get("items")).hasSize(1);
+        assertThat(page.get("items").get(0).get("present").asBoolean()).isFalse();
+        assertThat(page.get("items").get(0).get("deviceUserId").asString()).isEqualTo(deviceUserId);
+
+        trustedRoster(readerId, person(deviceUserId, finished.getReaderName(), 0,
+                finished.getValidFrom(), finished.getValidTo(), finished.getFaceSha256()));
+        assertThat(desiredMemberProjectionRepository
+                .findByDeviceIdAndDeviceUserId(readerPk(readerId), deviceUserId).orElseThrow().getRevision())
+                .isEqualTo(queued.getRevision());
     }
 
     @Test

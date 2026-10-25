@@ -557,6 +557,24 @@ public class DesiredProjectionService {
     }
 
     /**
+     * The reader still shows a person whose removal was already confirmed. One new removal is
+     * published so the gateway deletes them. A removal that is still waiting is left alone.
+     */
+    @Transactional
+    public long republishFinishedAbsence(Device device, DeviceObservedUser observed) {
+        String deviceUserId = observed.getDeviceUserId();
+        if (deviceUserId == null || deviceUserId.isBlank()) {
+            return 0;
+        }
+        DesiredMemberProjection row = projections.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+                .orElse(null);
+        if (row == null || row.getMemberId() != null || row.isPresentOnReader() || row.isHeld() || !row.isApplied()) {
+            return 0;
+        }
+        return publishAbsence(device, observed);
+    }
+
+    /**
      * Reject removes the reader person staff saw at this id and does not attach a member. The
      * gateway's existing absence apply is the writer. Someone else at the id is not removed.
      */

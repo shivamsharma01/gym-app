@@ -40,6 +40,7 @@ public class PendingEnrollmentService {
     private final BootstrapReportService bootstrap;
     private final PunchMemberResolver punches;
     private final SeenMemberClaim claims;
+    private final DesiredProjectionService desired;
 
     public PendingEnrollmentService(DeviceObservedUserRepository observedUsers,
                                     PendingEnrollmentRepository enrollments,
@@ -49,7 +50,8 @@ public class PendingEnrollmentService {
                                     DeviceRepository devices,
                                     BootstrapReportService bootstrap,
                                     PunchMemberResolver punches,
-                                    SeenMemberClaim claims) {
+                                    SeenMemberClaim claims,
+                                    DesiredProjectionService desired) {
         this.observedUsers = observedUsers;
         this.enrollments = enrollments;
         this.mappings = mappings;
@@ -59,6 +61,7 @@ public class PendingEnrollmentService {
         this.bootstrap = bootstrap;
         this.punches = punches;
         this.claims = claims;
+        this.desired = desired;
     }
 
     /**
@@ -225,6 +228,7 @@ public class PendingEnrollmentService {
         // True strangers only enroll when the id is not allocated to a member.
         if (serverAllocated(device.getId(), deviceUserId)) {
             reviews.record(device, payload, deviceUserId);
+            desired.republishFinishedAbsence(device, snapshot);
             return;
         }
         if (enroll(device, deviceUserId)) {

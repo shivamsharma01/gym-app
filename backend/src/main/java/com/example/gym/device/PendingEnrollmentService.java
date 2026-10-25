@@ -82,6 +82,47 @@ public class PendingEnrollmentService {
         claims.claimQuiet(device);
     }
 
+    /** Records whether this complete list was empty. The device row is reloaded so a detached reader is not overwritten. */
+    @Transactional
+    public void markRoster(Device device, boolean trustedEmpty) {
+        Device current = devices.findById(device.getId()).orElse(device);
+        current.setRosterTrustedEmpty(trustedEmpty);
+        devices.save(current);
+    }
+
+    /**
+     * One slice of a complete list, under the reader lock. The lock ends when this batch commits,
+     * so the next slice, a single-person update, or a member write can proceed.
+     */
+    @Transactional
+    public void observeRosterBatch(Device device, List<JsonNode> users, ObservationOrder.Scan scan) {
+        bootstrap.lockForRoster(device);
+        Known known = known(device, scan);
+        for (JsonNode user : users) {
+            if (!observeUnallocated(device, user, scan, known)) {
+                observeOne(device, user, scan);
+            }
+        }
+    }
+
+    /**
+     * After every slice of a complete list is stored: people the list no longer shows are closed,
+     * and a mapped person missing from it is recorded absent.
+     */
+    @Transactional
+    public void finishRoster(Device device, ObservationOrder.Scan scan, Set<String> present) {
+        bootstrap.lockForRoster(device);
+        Known known = known(device, scan);
+        closeLeft(device, scan, known, present);
+        for (DesiredMemberProjection desired : desiredMembers.findByDeviceId(device.getId())) {
+            if (desired.isPresentOnReader() && !present.contains(desired.getDeviceUserId())
+                    && wasOnReader(device, desired.getDeviceUserId())
+                    && !scan.staleFor(desired.getDeviceUserId())) {
+                reviews.recordAbsence(device, desired.getDeviceUserId());
+            }
+        }
+    }
+
     /**
      * A short, empty, or mismatched list is not a disappearance and does not change the member.
      * A trusted list records a mapped id that is missing from it, when the reader had that id

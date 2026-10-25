@@ -80,6 +80,48 @@ public class ReaderReconcileService {
         return seed(reader).written();
     }
 
+    /**
+     * Seeds at most {@code limit} active members whose id is greater than {@code afterMemberId}.
+     * Returns the last member id looked at, or null when the member list is exhausted. Callers
+     * repeat until null so a large gym commits the reader lock between slices.
+     */
+    @Transactional
+    public Long seedAfter(Device reader, Long afterMemberId, int limit) {
+        if (reader == null || reader.getGatewayId() == null || limit <= 0) {
+            return null;
+        }
+        desired.lockReader(reader);
+        Set<Long> mapped = new HashSet<>(mappings.lockMemberIdsByDeviceId(reader.getId()));
+        MemberMatcher.Undecided undecided = matcher.undecided(reader);
+        int taken = 0;
+        int written = 0;
+        int held = 0;
+        Long last = null;
+        for (Member member : members.findByTenantIdAndStatus(reader.getTenantId(), MemberStatus.ACTIVE).stream()
+                .sorted(Comparator.comparing(Member::getId))
+                .toList()) {
+            if (afterMemberId != null && member.getId() <= afterMemberId) {
+                continue;
+            }
+            last = member.getId();
+            taken++;
+            if (!mapped.contains(member.getId())) {
+                if (undecided.holds(member)) {
+                    held++;
+                } else if (desired.seedIfAbsent(member, reader) != null) {
+                    written++;
+                }
+            }
+            if (taken >= limit) {
+                break;
+            }
+        }
+        if (written > 0 || held > 0) {
+            FlowLog.info("device", "reconciled reader={} written={} held={}", reader.getPublicId(), written, held);
+        }
+        return taken < limit ? null : last;
+    }
+
     private Reconciled seed(Device reader) {
         if (reader == null || reader.getGatewayId() == null) {
             return new Reconciled(reader == null ? null : reader.getPublicId(), 0, 0);

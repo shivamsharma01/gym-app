@@ -96,6 +96,35 @@ public class SeenMemberClaim {
         return linked;
     }
 
+    /** Open enrollments on this reader that staff have not decided, in id order. */
+    @Transactional(readOnly = true)
+    public List<Long> undecidedIds(Device device) {
+        if (device == null) {
+            return List.of();
+        }
+        return enrollments.findByDeviceIdAndResolvedFalse(device.getId()).stream()
+                .filter(enrollment -> enrollment.getDecision() == null)
+                .map(PendingEnrollment::getId)
+                .sorted()
+                .toList();
+    }
+
+    /** Links one slice of {@link #undecidedIds}. A slice commits on its own so the reader lock stays short. */
+    @Transactional
+    public void claimThese(Device device, List<Long> enrollmentIds) {
+        if (device == null || enrollmentIds == null || enrollmentIds.isEmpty()) {
+            return;
+        }
+        List<PendingEnrollment> open = new ArrayList<>();
+        for (PendingEnrollment enrollment : enrollments.findAllById(enrollmentIds)) {
+            if (device.getId().equals(enrollment.getDeviceId())
+                    && enrollment.getDecision() == null && !enrollment.isResolved()) {
+                open.add(enrollment);
+            }
+        }
+        linkOpen(device, open, new HashMap<>());
+    }
+
     /** Link quiet copies on this reader only. The caller may already hold its lock. */
     @Transactional
     public int claimQuiet(Device device) {

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.gym.device.DeviceUserChangeService;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.PendingEnrollment;
 import com.example.gym.member.Member;
@@ -25,6 +26,26 @@ class ReaderPersonLeftIT extends AbstractReaderIT {
     void setUp() throws Exception {
         gymWithGateway("person-left");
         readerId = createReader("Exit");
+    }
+
+    @Test
+    void aLongReaderListIsSavedAndAMissingPersonIsStillClosed() throws Exception {
+        int count = DeviceUserChangeService.ROSTER_BATCH + 5;
+        String[] people = new String[count];
+        for (int i = 0; i < count; i++) {
+            people[i] = person(Integer.toString(i + 1), "Person " + (i + 1), 0, FROM, TO, null);
+        }
+        trustedRoster(readerId, people);
+        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(count);
+
+        String[] stillThere = new String[count - 1];
+        System.arraycopy(people, 1, stillThere, 0, stillThere.length);
+        trustedRoster(readerId, stillThere);
+
+        assertThat(enrollment("1").isResolved()).isTrue();
+        assertThat(enrollment("1").getReviewStatus()).isEqualTo(PendingEnrollment.GONE);
+        assertThat(enrollment("2").isResolved()).isFalse();
+        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(count);
     }
 
     @Test

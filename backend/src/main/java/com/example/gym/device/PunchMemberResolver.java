@@ -9,7 +9,12 @@ import com.example.gym.device.repo.MemberDeviceMappingRepository;
 import com.example.gym.face.MemberFace;
 import com.example.gym.face.MemberFaceRepository;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -18,6 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Component
 public class PunchMemberResolver {
+
+    private static final Logger log = LoggerFactory.getLogger(PunchMemberResolver.class);
 
     private final MemberDeviceMappingRepository mappings;
     private final DeviceObservedUserRepository observedUsers;
@@ -47,14 +54,40 @@ public class PunchMemberResolver {
         return memberByPhoto(device, deviceUserId);
     }
 
-    /** Fills punches stored before this reader's photo was known. Already linked punches stay put. */
-    @Transactional
+    /**
+     * Fills punches stored before this reader's photo was known. Already linked punches stay put.
+     * Runs in its own transaction so a deadlock or lock wait cannot roll back the observation that
+     * just saved the person. A link failure is logged and left for a later claim or punch.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void creditEarlierPunches(Device device, String deviceUserId) {
         Long memberId = memberId(device, deviceUserId);
         if (memberId == null) {
             return;
         }
-        attendance.linkUnmatched(device.getTenantId(), device.getId(), deviceUserId, memberId);
+        try {
+            attendance.linkUnmatched(device.getTenantId(), device.getId(), deviceUserId, memberId);
+        } catch (CannotAcquireLockException | DeadlockLoserDataAccessException ex) {
+            log.warn("Could not link earlier punches for reader {} user {} (will retry later): {}",
+                    device.getPublicId(), deviceUserId, ex.getMessage());
+        } catch (RuntimeException ex) {
+            if (isLockFailure(ex)) {
+                log.warn("Could not link earlier punches for reader {} user {} (will retry later): {}",
+                        device.getPublicId(), deviceUserId, ex.getMessage());
+                return;
+            }
+            throw ex;
+        }
+    }
+
+    private static boolean isLockFailure(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null && (message.contains("Deadlock") || message.contains("Lock wait timeout"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Long memberByPhoto(Device device, String deviceUserId) {

@@ -38,6 +38,7 @@ public class DeviceUserChangeService {
     private final ObservationOrder order;
     private final ReaderReconcileService reconcile;
     private final SeenMemberClaim claims;
+    private final PunchMemberResolver punches;
     private final TransactionTemplate chunks;
     private final ThreadLocal<Runnable> followUp = new ThreadLocal<>();
 
@@ -45,11 +46,13 @@ public class DeviceUserChangeService {
                                    ObservationOrder order,
                                    ReaderReconcileService reconcile,
                                    SeenMemberClaim claims,
+                                   PunchMemberResolver punches,
                                    PlatformTransactionManager transactions) {
         this.pendingEnrollments = pendingEnrollments;
         this.order = order;
         this.reconcile = reconcile;
         this.claims = claims;
+        this.punches = punches;
         TransactionTemplate template = new TransactionTemplate(transactions);
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         template.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -118,7 +121,11 @@ public class DeviceUserChangeService {
         FlowLog.info("device", "reader={} saved a list of {} people in batches of {}",
                 device.getPublicId(), users.size(), ROSTER_BATCH);
         Device reader = device;
-        followUp.set(() -> seedAndClaim(reader));
+        Set<String> credited = Set.copyOf(present);
+        followUp.set(() -> {
+            seedAndClaim(reader);
+            creditEarlierPunches(reader, credited);
+        });
     }
 
     private void seedAndClaim(Device device) {
@@ -137,6 +144,13 @@ public class DeviceUserChangeService {
             chunks.executeWithoutResult(status -> claims.claimThese(device, page));
         }
         log.debug("{}: finished seeding and claiming after a saved list", device.getPublicId());
+    }
+
+    /** After the list is recorded as saved — never fails the list when linking deadlocks. */
+    private void creditEarlierPunches(Device device, Set<String> deviceUserIds) {
+        for (String deviceUserId : deviceUserIds) {
+            punches.creditEarlierPunches(device, deviceUserId);
+        }
     }
 
     private static String text(JsonNode node, String field) {

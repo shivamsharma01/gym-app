@@ -77,7 +77,7 @@ public class PendingEnrollmentService {
         if (users != null && users.isArray()) {
             observeSet(device, payload, users, scan);
         } else {
-            observeOne(device, payload, scan);
+            observeOne(device, payload, scan, true);
         }
         claims.claimQuiet(device);
     }
@@ -99,8 +99,10 @@ public class PendingEnrollmentService {
         bootstrap.lockForRoster(device);
         Known known = known(device, scan);
         for (JsonNode user : users) {
-            if (!observeUnallocated(device, user, scan, known)) {
-                observeOne(device, user, scan);
+            // Punch credit runs after the list is markProcessed — linking inside the batch deadlocks
+            // with attendance ingest and rolls back the whole list (gateway "0 of 1" fence).
+            if (!observeUnallocated(device, user, scan, known, false)) {
+                observeOne(device, user, scan, false);
             }
         }
     }
@@ -140,8 +142,8 @@ public class PendingEnrollmentService {
         Known known = known(device, scan);
         Set<String> present = new HashSet<>();
         for (JsonNode user : users) {
-            if (!observeUnallocated(device, user, scan, known)) {
-                observeOne(device, user, scan);
+            if (!observeUnallocated(device, user, scan, known, true)) {
+                observeOne(device, user, scan, true);
             }
             String deviceUserId = text(user, "deviceUserId");
             if (deviceUserId != null) {
@@ -200,7 +202,8 @@ public class PendingEnrollmentService {
      *
      * @return false when the id is allocated and must take the full path
      */
-    private boolean observeUnallocated(Device device, JsonNode payload, ObservationOrder.Scan scan, Known known) {
+    private boolean observeUnallocated(Device device, JsonNode payload, ObservationOrder.Scan scan, Known known,
+                                       boolean creditPunches) {
         String deviceUserId = text(payload, "deviceUserId");
         if (deviceUserId == null || deviceUserId.isBlank() || known.allocated().contains(deviceUserId)) {
             return false;
@@ -210,7 +213,7 @@ public class PendingEnrollmentService {
             return true;
         }
         DeviceObservedUser snapshot = saveSnapshot(device, payload, deviceUserId, scan.stamp(), false,
-                known.snapshots().get(deviceUserId));
+                known.snapshots().get(deviceUserId), creditPunches);
         known.snapshots().put(deviceUserId, snapshot);
         PendingEnrollment enrollment = reopen(device, deviceUserId, known.enrollments().get(deviceUserId));
         known.enrollments().put(deviceUserId, enrollment);
@@ -252,7 +255,7 @@ public class PendingEnrollmentService {
                 || reviews.verifiedOnReader(device.getId(), deviceUserId);
     }
 
-    private void observeOne(Device device, JsonNode payload, ObservationOrder.Scan scan) {
+    private void observeOne(Device device, JsonNode payload, ObservationOrder.Scan scan, boolean creditPunches) {
         String deviceUserId = text(payload, "deviceUserId");
         if (deviceUserId == null || deviceUserId.isBlank() || scan.staleFor(deviceUserId)) {
             return;
@@ -264,7 +267,7 @@ public class PendingEnrollmentService {
             return;
         }
         withdrawCollidingSeed(device, deviceUserId, scan);
-        DeviceObservedUser snapshot = saveSnapshot(device, payload, deviceUserId, scan.stamp(), false);
+        DeviceObservedUser snapshot = saveSnapshot(device, payload, deviceUserId, scan.stamp(), false, creditPunches);
         // Mapped id: any field drift (including name+photo) is a CONFLICT for staff — never auto-suspend.
         // True strangers only enroll when the id is not allocated to a member.
         if (serverAllocated(device.getId(), deviceUserId)) {
@@ -377,7 +380,7 @@ public class PendingEnrollmentService {
     public void occupantChanged(Device device, DesiredMemberProjection desired, ExpectedOccupant known,
                                 JsonNode payload) {
         String deviceUserId = desired.getDeviceUserId();
-        saveSnapshot(device, payload, deviceUserId, ScanStamp.of(payload), true);
+        saveSnapshot(device, payload, deviceUserId, ScanStamp.of(payload), true, true);
         if (known != null) {
             FlowLog.info("device", "occupant changed reader={} user={} expectedPresent={}",
                     device.getPublicId(), deviceUserId, known.present());
@@ -408,7 +411,7 @@ public class PendingEnrollmentService {
         desiredMembers.delete(desired);
         desiredMembers.flush();
         if (payload != null) {
-            saveSnapshot(device, payload, deviceUserId, ScanStamp.of(payload), true);
+            saveSnapshot(device, payload, deviceUserId, ScanStamp.of(payload), true, true);
         }
         PendingEnrollment enrollment = enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .orElseGet(() -> new PendingEnrollment(device.getTenantId(), device.getId(), deviceUserId));
@@ -435,13 +438,14 @@ public class PendingEnrollmentService {
      * ({@code readBack}). A read at write time is later than every scan up to {@code stamp}.
      */
     private DeviceObservedUser saveSnapshot(Device device, JsonNode payload, String deviceUserId, ScanStamp stamp,
-                                            boolean readBack) {
+                                            boolean readBack, boolean creditPunches) {
         return saveSnapshot(device, payload, deviceUserId, stamp, readBack,
-                observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null));
+                observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null),
+                creditPunches);
     }
 
     private DeviceObservedUser saveSnapshot(Device device, JsonNode payload, String deviceUserId, ScanStamp stamp,
-                                            boolean readBack, DeviceObservedUser existing) {
+                                            boolean readBack, DeviceObservedUser existing, boolean creditPunches) {
         DeviceObservedUser snapshot = existing != null ? existing
                 : new DeviceObservedUser(device.getTenantId(), device.getId(), deviceUserId);
         if (stamp != null) {
@@ -460,7 +464,9 @@ public class PendingEnrollmentService {
         snapshot.setFaceSha256(face(text(payload, "faceSha256")));
         snapshot.setObservedAt(Instant.now());
         DeviceObservedUser saved = observedUsers.save(snapshot);
-        punches.creditEarlierPunches(device, saved.getDeviceUserId());
+        if (creditPunches) {
+            punches.creditEarlierPunches(device, saved.getDeviceUserId());
+        }
         return saved;
     }
 

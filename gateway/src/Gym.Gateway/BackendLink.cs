@@ -43,6 +43,12 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     /// <summary>True while this messageId is still queued and not yet acknowledged.</summary>
     public bool IsPending(string messageId) => _outbox.IsPending(messageId);
 
+    /// <summary>Newest complete-list messageId still queued for this reader, if any.</summary>
+    public string? PendingListMessageId(string deviceId) => _outbox.TryGetPendingListMessageId(deviceId);
+
+    /// <summary>Marks a queued message acknowledged (e.g. after observed confirms it was saved).</summary>
+    public void Acknowledge(string messageId) => _outbox.Acknowledge(messageId);
+
     public void ApplyCredential(string credential)
     {
         if (string.IsNullOrWhiteSpace(credential))

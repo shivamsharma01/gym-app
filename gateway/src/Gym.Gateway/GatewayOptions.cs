@@ -32,12 +32,12 @@ public sealed class GatewayOptions
     public List<DeviceEndpointOptions> Devices { get; set; } = [];
 
     /// <summary>
-    /// How often each reader is read for observations (safety scan). Staff can ask for one reader now
-    /// from the app (SCAN_READER). Default 5 minutes: measured ~1,200-user list is a few seconds.
-    /// Product rule by typical scan duration: under ~30s → every 5 minutes; 30s–2 minutes → hourly;
-    /// longer → daily.
+    /// How often each reader is read and a full trusted list is sent (safety scan). Staff can ask for
+    /// one reader now from the app (SCAN_READER). Default 1 hour so a large list has time to save
+    /// before the next full send; <see cref="RosterRefreshMinutes"/> matches so an unchanged list
+    /// is still resent on that cadence.
     /// </summary>
-    public int RosterPollSeconds { get; set; } = 300;
+    public int RosterPollSeconds { get; set; } = 3600;
 
     /// <summary>
     /// A scan that finds exactly what the server last acknowledged sends nothing; the list is sent

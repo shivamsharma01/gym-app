@@ -54,7 +54,10 @@ public class PendingEnrollmentTests : IDisposable
         await path.ObserveAsync(CancellationToken.None);
         await path.ObserveAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "7", "7" }, sink.Ids);
+        // Hourly observe sends a full trusted list; a second observe within refresh does not resend.
+        Assert.Equal(new[] { 1 }, sink.TrustedRosterTotals);
+        Assert.Equal(new[] { "7" }, sink.RosterIds);
+        Assert.Empty(sink.Ids);
         Assert.Equal(0, client.Pulls);
         Assert.Equal(writes, reader.Writes.Count);
         Assert.Empty(sibling.Writes);
@@ -104,7 +107,9 @@ public class PendingEnrollmentTests : IDisposable
         await path.ObserveAsync(CancellationToken.None);
         await path.ObserveAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "1", "1" }, sink.Ids);
+        Assert.Equal(new[] { 1 }, sink.TrustedRosterTotals);
+        Assert.Equal(new[] { "1" }, sink.RosterIds);
+        Assert.Empty(sink.Ids);
         Assert.Equal(writes, reader.Writes);
         Assert.Empty(sibling.Writes);
         Assert.Empty(sibling.Calls);
@@ -128,8 +133,9 @@ public class PendingEnrollmentTests : IDisposable
         await leftPath.ObserveAsync(CancellationToken.None);
         await rightPath.ObserveAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "1", "1" }, sink.Ids);
-        Assert.Equal(new[] { "Left", "Right" }, sink.Names);
+        Assert.Equal(new[] { 1, 1 }, sink.TrustedRosterTotals);
+        Assert.Equal(new[] { "1", "1" }, sink.RosterIds);
+        Assert.Empty(sink.Ids);
         Assert.Equal(leftWrites, left.Writes);
         Assert.Equal(rightWrites, right.Writes);
         Assert.Equal("Left", left.GetUser("1").User!.Name);
@@ -154,8 +160,10 @@ public class PendingEnrollmentTests : IDisposable
         await path.ObserveAsync(CancellationToken.None);
         await path.ObserveAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "2", "2" }, sink.Ids);
-        Assert.Equal(new[] { "1", "1" }, sink.AbsentIds);
+        Assert.Equal(new[] { 1 }, sink.TrustedRosterTotals);
+        Assert.Equal(new[] { "2" }, sink.RosterIds);
+        Assert.Equal(new[] { "1" }, sink.AbsentIds);
+        Assert.Empty(sink.Ids);
         Assert.Equal(writes, reader.Writes);
         Assert.Empty(sibling.Writes);
         Assert.Empty(sibling.Calls);
@@ -182,29 +190,34 @@ public class PendingEnrollmentTests : IDisposable
 
         await path.ObserveAsync(CancellationToken.None);
         Assert.Equal(new[] { "1" }, sink.AbsentIds);
+        Assert.Equal(new[] { "2" }, sink.RosterIds);
 
+        // Announced count mismatch — nothing sent.
         await path.ObserveAsync(CancellationToken.None);
         Assert.Equal(new[] { "1" }, sink.AbsentIds);
-        Assert.Equal(new[] { "2" }, sink.Ids);
+        Assert.Equal(new[] { "2" }, sink.RosterIds);
 
+        // Empty trusted list is sent, but absences are not inferred from an empty list.
         await path.ObserveAsync(CancellationToken.None);
         Assert.Equal(new[] { "1" }, sink.AbsentIds);
-        Assert.Equal(new[] { "2" }, sink.Ids);
+        Assert.Equal(new[] { "2" }, sink.RosterIds);
+        Assert.Equal(new[] { 1, 0 }, sink.TrustedRosterTotals);
 
+        // Announced mismatch again — nothing sent.
         await path.ObserveAsync(CancellationToken.None);
         Assert.Equal(new[] { "1" }, sink.AbsentIds);
-        Assert.Equal(new[] { "2" }, sink.Ids);
+        Assert.Equal(new[] { 1, 0 }, sink.TrustedRosterTotals);
 
+        // Complete list again (person 2); refresh may still hold the empty acceptance, so a resend
+        // of person 2 is allowed when the fingerprint differs — reader is never written.
         await path.ObserveAsync(CancellationToken.None);
-        Assert.Equal(new[] { "1", "1" }, sink.AbsentIds);
-        Assert.Equal(new[] { "2", "2" }, sink.Ids);
         Assert.Equal(writes, reader.Writes);
         Assert.Empty(sibling.Writes);
         Assert.Empty(sibling.Calls);
     }
 
     [Fact]
-    public async Task The_same_face_on_two_ids_is_uploaded_twice()
+    public async Task The_same_face_on_two_ids_is_on_the_trusted_list_once_per_id()
     {
         var reader = new FakeReader();
         var sibling = new FakeReader();
@@ -222,9 +235,9 @@ public class PendingEnrollmentTests : IDisposable
         await path.ObserveAsync(CancellationToken.None);
         await path.ObserveAsync(CancellationToken.None);
 
-        var hash = FaceHash.Sha256Hex(face);
-        Assert.Equal(new[] { "11", "12", "11", "12", "11", "12" }, sink.Ids);
-        Assert.Equal(Enumerable.Repeat(hash, 6), sink.FaceHashes);
+        Assert.Equal(new[] { 2 }, sink.TrustedRosterTotals);
+        Assert.Equal(new[] { "11", "12" }, sink.RosterIds);
+        Assert.Empty(sink.Ids);
         Assert.Equal(writes, reader.Writes);
         Assert.Empty(sibling.Writes);
         Assert.Empty(sibling.Calls);

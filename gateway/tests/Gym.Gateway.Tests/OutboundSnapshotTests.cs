@@ -109,6 +109,24 @@ public sealed class OutboundSnapshotTests : IDisposable
     }
 
     [Fact]
+    public void TryGetPendingListMessageId_returns_the_newest_queued_list_for_the_reader()
+    {
+        var store = Store();
+        var older = Roster("reader-a", 0);
+        store.Persist(older);
+        var newer = Roster("reader-a", 1);
+        store.Persist(newer);
+        store.Persist(Observation("reader-a", "7", 2));
+        store.Persist(Roster("reader-b", 3));
+
+        Assert.Equal(newer.MessageId, store.TryGetPendingListMessageId("reader-a"));
+        Assert.Null(store.TryGetPendingListMessageId("reader-c"));
+
+        store.Acknowledge(newer.MessageId);
+        Assert.Null(store.TryGetPendingListMessageId("reader-a"));
+    }
+
+    [Fact]
     public void A_corrupt_outbox_file_is_quarantined_and_not_reloaded()
     {
         Directory.CreateDirectory(_directory);

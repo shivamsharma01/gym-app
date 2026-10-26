@@ -447,7 +447,9 @@ public class RevisionSupersessionTests : IDisposable
             new DesiredPathOptions
             {
                 ReconnectWait = TimeSpan.Zero,
-                IsMessagePending = id => pending.Contains(id)
+                IsMessagePending = id => pending.Contains(id),
+                PendingListMessageId = _ => pending
+                    .FirstOrDefault(id => id.StartsWith("list-", StringComparison.Ordinal))
             });
 
         await path.ReconnectAsync(CancellationToken.None);
@@ -464,6 +466,49 @@ public class RevisionSupersessionTests : IDisposable
 
         Assert.Equal(ObservationGate.Fenced, path.Gate);
         Assert.Equal(firstIds, upload.MessageIds);
+    }
+
+    [Fact]
+    public async Task A_reconnect_reuses_a_queued_list_already_saved_on_the_server()
+    {
+        var reader = new FakeReader();
+        Enrol(reader, "1", "Asha");
+        var server = new Server { Items = [Item(1, "2", "Ravi")], Processing = false };
+        var upload = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
+        using var worker = Worker(reader, "reconnect-saved");
+        var pending = new HashSet<string>(StringComparer.Ordinal);
+        var acknowledged = new List<string>();
+        var path = new DesiredRevisionPath("r", worker, reader, server, upload, null,
+            new DesiredPathOptions
+            {
+                ReconnectWait = TimeSpan.Zero,
+                IsMessagePending = id => pending.Contains(id),
+                PendingListMessageId = _ => pending
+                    .FirstOrDefault(id => id.StartsWith("list-", StringComparison.Ordinal)),
+                AcknowledgeMessage = id =>
+                {
+                    pending.Remove(id);
+                    acknowledged.Add(id);
+                }
+            });
+
+        await path.ReconnectAsync(CancellationToken.None);
+        var firstIds = upload.MessageIds.ToList();
+        var listId = Assert.Single(firstIds.Where(id => id.StartsWith("list-", StringComparison.Ordinal)));
+        foreach (var id in firstIds)
+        {
+            pending.Add(id);
+        }
+
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
+
+        server.Processing = true;
+        await path.ReconnectAsync(CancellationToken.None);
+
+        Assert.Equal(ObservationGate.Open, path.Gate);
+        Assert.Equal(firstIds, upload.MessageIds);
+        Assert.Equal([listId], acknowledged);
+        Assert.Equal("Ravi", reader.GetUser("2").User!.Name);
     }
 
     [Fact]

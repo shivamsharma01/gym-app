@@ -24,7 +24,8 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
     /// Covers a batched save of a few thousand people plus absences. Seeding runs after the list is
     /// recorded, so a late ACK still opens the gate through the observation check.
     /// </summary>
-    internal static readonly TimeSpan DefaultAcceptanceTimeout = TimeSpan.FromMinutes(3);
+    /// <summary>How long to wait for ACK after sending a full list before falling back to observed poll.</summary>
+    internal static readonly TimeSpan DefaultAcceptanceTimeout = TimeSpan.FromMinutes(10);
 
     private readonly string _gatewayId;
     private readonly BackendLink _link;

@@ -105,6 +105,29 @@ public sealed class DurableOutboundStore
     /// <summary>False once the envelope was acknowledged or replaced by a newer list.</summary>
     public bool IsPending(string messageId) => _pending.ContainsKey(messageId);
 
+    /// <summary>
+    /// The newest complete-list messageId still queued for this reader, or null when none is pending.
+    /// Used on reconnect to wait for or confirm that list instead of replacing it with a new upload.
+    /// </summary>
+    public string? TryGetPendingListMessageId(string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            return null;
+        }
+
+        lock (_snapshotGate)
+        {
+            if (_latestSnapshot.TryGetValue(deviceId, out var latest)
+                && _pending.ContainsKey(latest.MessageId))
+            {
+                return latest.MessageId;
+            }
+        }
+
+        return null;
+    }
+
     public void Acknowledge(string messageId)
     {
         if (string.IsNullOrWhiteSpace(messageId))

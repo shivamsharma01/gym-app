@@ -300,7 +300,9 @@ public sealed class DesiredRevisionPath
     }
 
     /// <summary>
-    /// A trusted list uploads reader-created ids. It does not pull or write desired state.
+    /// Periodic safety scan: read the reader on demand and send a full trusted list (same package as
+    /// a staff scan without force). It does not pull or write desired state here; the fence opens
+    /// when the list is saved, then the usual retry path applies members.
     /// </summary>
     public async Task ObserveAsync(CancellationToken cancellationToken)
     {
@@ -308,7 +310,7 @@ public sealed class DesiredRevisionPath
             .ConfigureAwait(false);
         if (scan != null)
         {
-            await UploadNewPeopleAsync(scan, cancellationToken).ConfigureAwait(false);
+            await UploadTrustedListAsync(scan, true, false, cancellationToken).ConfigureAwait(false);
             await UploadWantedPhotosAsync(scan, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -513,6 +515,16 @@ public sealed class DesiredRevisionPath
         var absences = new List<string>();
         try
         {
+            // Reconnect / observe-for-gate: reuse a queued or already-saved list id instead of
+            // uploading a replacement that drops the previous messageId (false "0 of 1").
+            if (!awaitAcceptance && !force
+                && await TryAdoptExistingListAsync(
+                        scan, observing, list, entries, generation, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                return;
+            }
+
             if (!awaitAcceptance)
             {
                 uploads.Reconnecting();
@@ -633,6 +645,52 @@ public sealed class DesiredRevisionPath
         }
 
         return alternatives;
+    }
+
+    /// <summary>
+    /// On reconnect, if the outbox still holds a complete list for this reader, confirm it on the
+    /// server or keep fencing that id — do not send a newer list that replaces it.
+    /// </summary>
+    private async Task<bool> TryAdoptExistingListAsync(
+        ReaderScan scan,
+        long observing,
+        string list,
+        IReadOnlyDictionary<string, string> entries,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        var pendingId = _options.PendingListMessageId?.Invoke(_deviceId);
+        if (string.IsNullOrWhiteSpace(pendingId))
+        {
+            return false;
+        }
+
+        try
+        {
+            var check = await _client.CheckObservationAsync(_deviceId, [pendingId], cancellationToken)
+                .ConfigureAwait(false);
+            if (check.Processed)
+            {
+                _options.AcknowledgeMessage?.Invoke(pendingId);
+                _memory.Uploads.Accepted(generation, list, entries);
+                _log.LogInformation(
+                    "Reader {Reader}: reconnect found the queued list already saved on the server (messageId={MessageId}); reusing it instead of sending a new list.",
+                    _readerLabel, pendingId);
+                EndObservation(observing, [[pendingId]], true);
+                return true;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogDebug(ex, "Reader {Reader}: could not ask whether queued list {MessageId} was saved",
+                _readerLabel, pendingId);
+        }
+
+        _log.LogInformation(
+            "Reader {Reader}: reconnect while list {MessageId} is still queued; waiting for that save before sending a new list. Member sync stays paused.",
+            _readerLabel, pendingId);
+        EndObservation(observing, [[pendingId]], false);
+        return true;
     }
 
     /// <summary>
@@ -1660,8 +1718,11 @@ public sealed record DesiredPathOptions
 
     public TimeSpan FenceTimeout { get; init; } = TimeSpan.FromMinutes(5);
 
-    /// <summary>After this, stage=fenced falls back to Unobserved and a full observe resend.</summary>
-    public TimeSpan FenceResendAfter { get; init; } = TimeSpan.FromMinutes(15);
+    /// <summary>
+    /// After this, stage=fenced falls back to Unobserved and a full observe resend. Default matches
+    /// the hourly roster poll so a slow list save is not replaced mid-flight.
+    /// </summary>
+    public TimeSpan FenceResendAfter { get; init; } = TimeSpan.FromMinutes(60);
 
     public TimeSpan ReconnectWait { get; init; } = TimeSpan.FromSeconds(5);
 
@@ -1674,4 +1735,10 @@ public sealed record DesiredPathOptions
     /// queued in the outbound store (not yet acknowledged).
     /// </summary>
     public Func<string, bool>? IsMessagePending { get; init; }
+
+    /// <summary>Newest complete-list messageId still queued for a reader device id, if any.</summary>
+    public Func<string, string?>? PendingListMessageId { get; init; }
+
+    /// <summary>Clear an outbox message after observed confirms it was saved.</summary>
+    public Action<string>? AcknowledgeMessage { get; init; }
 }

@@ -418,7 +418,9 @@ public sealed class GatewayWorker : BackgroundService
                 {
                     Log = _logFactory.CreateLogger<DesiredRevisionPath>(),
                     ReaderName = readerLabel,
-                    IsMessagePending = id => _link.IsPending(id)
+                    IsMessagePending = id => _link.IsPending(id),
+                    PendingListMessageId = id => _link.PendingListMessageId(id),
+                    AcknowledgeMessage = id => _link.Acknowledge(id)
                 });
             _desiredRevisions.Attach(
                 deviceId,

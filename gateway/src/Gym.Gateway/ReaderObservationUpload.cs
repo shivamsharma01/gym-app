@@ -20,8 +20,11 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
     /// </summary>
     internal const int MaxRosterBytes = 1_000_000;
 
-    /// <summary>A 1,200-user list took about 8 s on the test database.</summary>
-    internal static readonly TimeSpan DefaultAcceptanceTimeout = TimeSpan.FromSeconds(60);
+    /// <summary>
+    /// Covers a batched save of a few thousand people plus absences. Seeding runs after the list is
+    /// recorded, so a late ACK still opens the gate through the observation check.
+    /// </summary>
+    internal static readonly TimeSpan DefaultAcceptanceTimeout = TimeSpan.FromMinutes(3);
 
     private readonly string _gatewayId;
     private readonly BackendLink _link;
@@ -71,20 +74,20 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                 isNew = true,
                 deleted = false
             }, deviceId);
-            sent.Add(envelope.MessageId);
             try
             {
                 await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
+                sent.Add(envelope.MessageId);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or WebSocketException)
             {
                 _log.LogInformation(
                     ex,
-                    "Reader {Reader}: person {User} could not be sent and will be tried again. Member sync stays paused. ({Message})",
+                    "Reader {Reader}: person {User} could not be sent and will be tried again. ({Message})",
                     reader, UserLabel(user), ex.Message);
             }
 
-            if (sent.Count % 100 == 0 && sent.Count != users.Count)
+            if (sent.Count % 100 == 0 && sent.Count != 0 && sent.Count != users.Count)
             {
                 _log.LogInformation(
                     "Reader {Reader}: sent {Done} of {Total} people to the server. Member sync stays paused until the server has saved this list.",
@@ -165,7 +168,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             if (!accepted)
             {
                 _log.LogInformation(
-                    "Reader {Reader}: the server did not confirm the full list. People are sent one by one instead. Member sync stays paused until they are saved.",
+                    "Reader {Reader}: the server did not confirm the full list within the wait. Asking whether it was saved before sending people one by one.",
                     reader);
             }
             else
@@ -179,6 +182,8 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or WebSocketException)
         {
+            // Persist already queued it. Fence the id so the observation check opens once the
+            // server saves the replay; NotSent is only for a list that was never queued.
             _log.LogInformation(
                 ex,
                 "Reader {Reader}: roster queued; server unreachable ({Message})",
@@ -207,10 +212,10 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
                 isNew = false,
                 deleted = true
             }, deviceId);
-            sent.Add(envelope.MessageId);
             try
             {
                 await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
+                sent.Add(envelope.MessageId);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or WebSocketException)
             {

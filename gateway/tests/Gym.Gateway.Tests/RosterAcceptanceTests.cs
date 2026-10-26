@@ -12,9 +12,10 @@ using Xunit;
 namespace Gym.Gateway.Tests;
 
 /// <summary>
-/// A scan sends the per-user observations only when the server did not acknowledge the whole list.
-/// Acceptance is the server's ACK naming the list, sent after it processed and committed it. It is
-/// not the frame being written, and it says nothing about what a reader applied.
+/// A scan sends per-user observations only when the list was not delivered. A list that was sent
+/// but whose ACK timed out is confirmed via the observation check; people already saved on the
+/// server are not resent one by one. Acceptance is the server's ACK naming the list, sent after it
+/// processed and committed it.
 /// </summary>
 public sealed class RosterAcceptanceTests : IDisposable
 {
@@ -52,16 +53,31 @@ public sealed class RosterAcceptanceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_list_that_is_not_acknowledged_is_followed_by_every_per_user_message()
+    public async Task A_list_whose_ACK_timed_out_but_was_saved_sends_no_per_user_messages()
     {
         var sink = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
-        using var worker = Worker("not-accepted");
+        using var worker = Worker("late-ack");
         var path = new DesiredRevisionPath("reader-a", worker, ReaderWith("7", "8"), new PendingEnrollmentTests.EmptyPull(), sink);
 
         await path.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "list-awaited", "users" }, sink.Calls);
-        Assert.Equal(new[] { "7", "8" }, sink.Ids);
+        Assert.Equal(new[] { "list-awaited" }, sink.Calls);
+        Assert.Empty(sink.Ids);
+        Assert.Equal(ObservationGate.Open, path.Gate);
+    }
+
+    [Fact]
+    public async Task An_unsaved_list_is_not_followed_by_per_user_messages()
+    {
+        var sink = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
+        using var worker = Worker("unsaved");
+        var path = new DesiredRevisionPath("reader-a", worker, ReaderWith("7", "8"), new UnsavedPull(), sink);
+
+        await path.BootstrapAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { "list-awaited" }, sink.Calls);
+        Assert.Empty(sink.Ids);
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
     }
 
     [Fact]
@@ -107,9 +123,11 @@ public sealed class RosterAcceptanceTests : IDisposable
         sink.RosterAccepted = true;
         await path.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "absences", "list-awaited", "users", "absences", "list-awaited" }, sink.Calls);
-        Assert.Equal(new[] { "1", "1" }, sink.AbsentIds);
-        Assert.Equal(new[] { "2" }, sink.Ids);
+        // A late ACK is confirmed via the observation check, so the list is accepted and the
+        // unchanged second scan sends nothing again.
+        Assert.Equal(new[] { "absences", "list-awaited" }, sink.Calls);
+        Assert.Equal(new[] { "1" }, sink.AbsentIds);
+        Assert.Empty(sink.Ids);
     }
 
     [Fact]
@@ -126,7 +144,7 @@ public sealed class RosterAcceptanceTests : IDisposable
         sink.RosterAccepted = true;
         await path.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "list-awaited", "list-awaited" }, sink.Calls);
+        Assert.Equal(new[] { "list-awaited" }, sink.Calls);
         Assert.Empty(sink.Ids);
     }
 
@@ -148,26 +166,40 @@ public sealed class RosterAcceptanceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_list_the_server_rejects_is_followed_by_the_per_user_messages()
+    public async Task A_list_the_server_rejects_retryably_is_fenced_without_per_user_messages()
     {
         var server = new ServerLike { Answer = envelope => IsList(envelope) ? Answer.Error : Answer.Ack };
-        var (path, store) = Chain("rejected", server, ReaderWith("7", "8"));
+        var (path, store) = Chain("rejected", server, ReaderWith("7", "8"), new UnsavedPull());
 
         await path.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "list", "7", "8" }, server.Delivered.Select(Describe));
-        Assert.Empty(store.LoadPending());
+        Assert.Equal(new[] { "list" }, server.Delivered.Select(Describe));
+        Assert.Equal(new[] { "list" }, store.LoadPending().Select(Describe));
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
     }
 
     [Fact]
-    public async Task A_list_answered_with_a_server_error_stays_queued_and_the_per_user_messages_are_sent()
+    public async Task A_list_the_server_rejects_permanently_is_dropped_and_opens_the_gate()
     {
-        var server = new ServerLike { Answer = envelope => IsList(envelope) ? Answer.Status500 : Answer.Ack };
-        var (path, store) = Chain("status-500", server, ReaderWith("7"));
+        var server = new ServerLike { Answer = envelope => IsList(envelope) ? Answer.TerminalError : Answer.Ack };
+        var (path, store) = Chain("terminal", server, ReaderWith("7", "8"));
 
         await path.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "list", "7" }, server.Delivered.Select(Describe));
+        Assert.Equal(new[] { "list" }, server.Delivered.Select(Describe));
+        Assert.Empty(store.LoadPending());
+        Assert.Equal(ObservationGate.Open, path.Gate);
+    }
+
+    [Fact]
+    public async Task A_list_answered_with_a_server_error_stays_queued_without_per_user_messages()
+    {
+        var server = new ServerLike { Answer = envelope => IsList(envelope) ? Answer.Status500 : Answer.Ack };
+        var (path, store) = Chain("status-500", server, ReaderWith("7"), new UnsavedPull());
+
+        await path.BootstrapAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { "list" }, server.Delivered.Select(Describe));
         Assert.Equal(new[] { "list" }, store.LoadPending().Select(Describe));
     }
 
@@ -175,11 +207,12 @@ public sealed class RosterAcceptanceTests : IDisposable
     public async Task A_reply_that_names_no_ack_is_not_acceptance()
     {
         var server = new ServerLike { Answer = envelope => IsList(envelope) ? Answer.Empty : Answer.Ack };
-        var (path, _) = Chain("no-ack", server, ReaderWith("7"));
+        var (path, _) = Chain("no-ack", server, ReaderWith("7"), new UnsavedPull());
 
         await path.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "list", "7" }, server.Delivered.Select(Describe));
+        Assert.Equal(new[] { "list" }, server.Delivered.Select(Describe));
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
     }
 
     [Fact]
@@ -203,24 +236,24 @@ public sealed class RosterAcceptanceTests : IDisposable
     }
 
     [Fact]
-    public async Task After_a_restart_per_user_messages_are_skipped_only_after_a_fresh_acknowledgement()
+    public async Task After_a_restart_only_the_queued_list_is_replayed()
     {
         var server = new ServerLike { Answer = _ => Answer.Unreachable };
-        var (before, beforeStore) = Chain("restart", server, ReaderWith("7", "8"));
+        var (before, beforeStore) = Chain("restart", server, ReaderWith("7", "8"), new UnsavedPull());
 
         await before.BootstrapAsync(CancellationToken.None);
 
         Assert.Empty(server.Delivered);
-        Assert.Equal(new[] { "7", "8", "list" }, beforeStore.LoadPending().Select(Describe).Order());
+        Assert.Equal(new[] { "list" }, beforeStore.LoadPending().Select(Describe));
 
         server.Answer = _ => Answer.Ack;
         var (after, afterStore, link) = ChainWithLink("restart", server, ReaderWith("7", "8"));
         await link.ReplayPendingAsync(CancellationToken.None);
-        Assert.Equal(new[] { "7", "8", "list" }, server.Delivered.Select(Describe).Order());
+        Assert.Equal(new[] { "list" }, server.Delivered.Select(Describe));
 
         await after.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(4, server.Delivered.Count);
+        Assert.Equal(2, server.Delivered.Count);
         Assert.Equal("list", Describe(server.Delivered[^1]));
         Assert.Empty(afterStore.LoadPending());
     }
@@ -257,9 +290,22 @@ public sealed class RosterAcceptanceTests : IDisposable
         await using var session = await SocketSession.OpenAsync(backend, Path.Combine(_directory, "ws-error"));
 
         var clock = Stopwatch.StartNew();
-        Assert.False(await session.Link.SendAndAwaitAckAsync(List("reader-a"), TimeSpan.FromSeconds(30), CancellationToken.None));
+        var list = List("reader-a");
+        Assert.False(await session.Link.SendAndAwaitAckAsync(list, TimeSpan.FromSeconds(30), CancellationToken.None));
 
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10));
+        Assert.True(session.Store.IsPending(list.MessageId));
+    }
+
+    [Fact]
+    public async Task A_terminal_rejection_over_the_socket_drops_the_message_from_the_outbox()
+    {
+        using var backend = new SocketBackend(_ => Answer.TerminalError);
+        await using var session = await SocketSession.OpenAsync(backend, Path.Combine(_directory, "ws-terminal"));
+
+        var list = List("reader-a");
+        Assert.False(await session.Link.SendAndAwaitAckAsync(list, TimeSpan.FromSeconds(10), CancellationToken.None));
+        Assert.False(session.Store.IsPending(list.MessageId));
     }
 
     [Fact]
@@ -320,14 +366,15 @@ public sealed class RosterAcceptanceTests : IDisposable
 
     private static ReaderUser Person(string id) => new(id, "Person " + id, null, 0, ValidFrom, ValidTo, "Customer", 1, 1);
 
-    private (DesiredRevisionPath Path, DurableOutboundStore Store) Chain(string name, ServerLike server, FakeReader reader)
+    private (DesiredRevisionPath Path, DurableOutboundStore Store) Chain(
+        string name, ServerLike server, FakeReader reader, IDesiredStateClient? client = null)
     {
-        var (path, store, _) = ChainWithLink(name, server, reader);
+        var (path, store, _) = ChainWithLink(name, server, reader, client);
         return (path, store);
     }
 
     private (DesiredRevisionPath Path, DurableOutboundStore Store, BackendLink Link) ChainWithLink(
-        string name, ServerLike server, FakeReader reader)
+        string name, ServerLike server, FakeReader reader, IDesiredStateClient? client = null)
     {
         var store = new DurableOutboundStore(NullLogger<DurableOutboundStore>.Instance, Path.Combine(_directory, name + "-outbox"));
         var link = new BackendLink(
@@ -335,7 +382,8 @@ public sealed class RosterAcceptanceTests : IDisposable
             NullLogger<BackendLink>.Instance, store, new HttpClient(server));
         var upload = new ReaderObservationUpload("gw-1", link, NullLogger<ReaderObservationUpload>.Instance);
         var worker = new ReaderWorker("reader-a", reader, Path.Combine(_directory, name + "-" + Guid.NewGuid().ToString("N") + ".sqlite"));
-        return (new DesiredRevisionPath("reader-a", worker, reader, new PendingEnrollmentTests.EmptyPull(), upload), store, link);
+        return (new DesiredRevisionPath("reader-a", worker, reader, client ?? new PendingEnrollmentTests.EmptyPull(), upload),
+            store, link);
     }
 
     private static GatewayEnvelope List(string reader) =>
@@ -350,6 +398,7 @@ public sealed class RosterAcceptanceTests : IDisposable
     {
         Ack,
         Error,
+        TerminalError,
         Status500,
         Empty,
         Unreachable,
@@ -357,21 +406,28 @@ public sealed class RosterAcceptanceTests : IDisposable
         Drop
     }
 
-    private static string Reply(GatewayEnvelope envelope, Answer answer) => answer == Answer.Ack
-        ? JsonSerializer.Serialize(new
+    private static string Reply(GatewayEnvelope envelope, Answer answer)
+    {
+        if (answer == Answer.Ack)
         {
-            messageId = Guid.NewGuid().ToString(),
-            type = "ACK",
-            correlationId = envelope.CorrelationId,
-            payload = new { messageId = envelope.MessageId }
-        })
-        : JsonSerializer.Serialize(new
+            return JsonSerializer.Serialize(new
+            {
+                messageId = Guid.NewGuid().ToString(),
+                type = "ACK",
+                correlationId = envelope.CorrelationId,
+                payload = new { messageId = envelope.MessageId }
+            });
+        }
+
+        var retryable = answer != Answer.TerminalError;
+        return JsonSerializer.Serialize(new
         {
             messageId = Guid.NewGuid().ToString(),
             type = "ERROR",
             correlationId = envelope.CorrelationId,
-            payload = new { error = "processing failed" }
+            payload = new { error = "processing failed", messageId = envelope.MessageId, retryable }
         });
+    }
 
     /// <summary>Answers like the server's REST ingest: 200 with an ACK or ERROR envelope.</summary>
     private sealed class ServerLike : HttpMessageHandler
@@ -580,5 +636,29 @@ public sealed class RosterAcceptanceTests : IDisposable
 
             await Link.DisposeAsync();
         }
+    }
+
+    /// <summary>The observation endpoint says the list is not saved yet.</summary>
+    private sealed class UnsavedPull : IDesiredStateClient
+    {
+        public Task<DesiredPull> PullAsync(string deviceId, long after, CancellationToken cancellationToken) =>
+            Task.FromResult(new DesiredPull(0, after, []));
+
+        public Task AcknowledgeAsync(DesiredAcknowledgement ack, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task ReportOccupiedAsync(
+            string deviceId, long revision, string deviceUserId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<bool> ObservationProcessedAsync(string deviceId, IReadOnlyList<string> messageIds,
+            CancellationToken cancellationToken) => Task.FromResult(false);
+
+        public Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected occupant at " + deviceUserId);
     }
 }

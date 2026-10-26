@@ -122,7 +122,10 @@ class SyncReliabilityIT extends AbstractIntegrationTest {
                  "faceChanged":false,"faceRemoved":false}
                 """.formatted(Instant.now()));
 
-        assertThat(gatewayMessageService.process(message, gatewayId).orElseThrow()).contains("ERROR");
+        String error = gatewayMessageService.process(message, gatewayId).orElseThrow();
+        assertThat(error).contains("ERROR");
+        assertThat(error).contains(messageId);
+        assertThat(error).contains("\"retryable\":true");
         assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isFalse();
         assertThat(memberRepository.findAll()).isEmpty();
 

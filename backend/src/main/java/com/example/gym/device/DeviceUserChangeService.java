@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -21,10 +23,13 @@ import tools.jackson.databind.JsonNode;
  * <p>
  * A complete list of any length is saved in short batches. Each batch commits and releases the
  * reader lock, so a list of hundreds of people does not make the next update wait out MySQL's
- * lock timeout.
+ * lock timeout. Seeding and claiming run after the list is recorded as saved, so a slow seed does
+ * not withhold the ACK that opens the gateway's fence.
  */
 @Service
 public class DeviceUserChangeService {
+
+    private static final Logger log = LoggerFactory.getLogger(DeviceUserChangeService.class);
 
     /** People stored per commit. Short enough that the reader lock is never held for the lock wait. */
     public static final int ROSTER_BATCH = 25;
@@ -34,6 +39,7 @@ public class DeviceUserChangeService {
     private final ReaderReconcileService reconcile;
     private final SeenMemberClaim claims;
     private final TransactionTemplate chunks;
+    private final ThreadLocal<Runnable> followUp = new ThreadLocal<>();
 
     public DeviceUserChangeService(PendingEnrollmentService pendingEnrollments,
                                    ObservationOrder order,
@@ -52,6 +58,7 @@ public class DeviceUserChangeService {
 
     /** @throws ObservationOrder.Unordered when the observation has no usable scan stamp */
     public void apply(Device device, JsonNode payload) {
+        followUp.remove();
         JsonNode users = payload == null ? null : payload.get("users");
         int announced = payload == null ? -1 : payload.path("announcedTotal").asInt(-1);
         if (users != null && users.isArray() && users.size() > ROSTER_BATCH && announced == users.size()) {
@@ -64,6 +71,18 @@ public class DeviceUserChangeService {
                 pendingEnrollments.observe(device, payload, scan);
             }
         });
+    }
+
+    /**
+     * Work deferred until after the list message is recorded as saved. Safe to call when nothing
+     * was deferred. A failure here must not unsave the list.
+     */
+    public void runFollowUp() {
+        Runnable next = followUp.get();
+        followUp.remove();
+        if (next != null) {
+            next.run();
+        }
     }
 
     private void applyRoster(Device device, JsonNode payload, JsonNode users) {
@@ -96,6 +115,13 @@ public class DeviceUserChangeService {
             chunks.executeWithoutResult(status -> pendingEnrollments.observeRosterBatch(device, saving, scan));
         }
         chunks.executeWithoutResult(status -> pendingEnrollments.finishRoster(device, scan, present));
+        FlowLog.info("device", "reader={} saved a list of {} people in batches of {}",
+                device.getPublicId(), users.size(), ROSTER_BATCH);
+        Device reader = device;
+        followUp.set(() -> seedAndClaim(reader));
+    }
+
+    private void seedAndClaim(Device device) {
         Long afterMember = null;
         while (true) {
             final Long from = afterMember;
@@ -110,8 +136,7 @@ public class DeviceUserChangeService {
             List<Long> page = undecided.subList(i, Math.min(i + ROSTER_BATCH, undecided.size()));
             chunks.executeWithoutResult(status -> claims.claimThese(device, page));
         }
-        FlowLog.info("device", "reader={} saved a list of {} people in batches of {}",
-                device.getPublicId(), users.size(), ROSTER_BATCH);
+        log.debug("{}: finished seeding and claiming after a saved list", device.getPublicId());
     }
 
     private static String text(JsonNode node, String field) {

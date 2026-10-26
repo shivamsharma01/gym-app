@@ -258,13 +258,14 @@ public sealed class ChangeOnlyScanTests : IDisposable
     }
 
     [Fact]
-    public async Task While_the_list_is_not_acknowledged_only_changed_users_are_sent_one_by_one()
+    public async Task An_unsaved_list_is_resent_on_refresh_without_sending_people_one_by_one()
     {
         var reader = ReaderWithPhoto();
         var clock = new ManualClock();
         var sink = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
         using var worker = Worker("unacked");
-        var path = Scanner(worker, reader, sink, ReaderScanMemory.InMemory(clock));
+        var path = new DesiredRevisionPath(
+            "reader-a", worker, reader, new UnsavedPull(), sink, ReaderScanMemory.InMemory(clock));
 
         await path.BootstrapAsync(CancellationToken.None);
         await path.BootstrapAsync(CancellationToken.None);
@@ -274,16 +275,17 @@ public sealed class ChangeOnlyScanTests : IDisposable
         await path.BootstrapAsync(CancellationToken.None);
 
         Assert.Equal(
-            new[] { "list-awaited", "users", "list-awaited", "list-awaited", "users", "list-awaited", "users" },
+            new[] { "list-awaited", "list-awaited", "list-awaited", "list-awaited" },
             sink.Calls);
-        Assert.Equal(new[] { "7", "8", "8", "7", "8" }, sink.Ids);
+        Assert.Empty(sink.Ids);
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
     }
 
     [Fact]
     public async Task Users_whose_upload_failed_are_sent_on_the_next_scan()
     {
         var reader = ReaderWithPhoto();
-        var sink = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false, FailUsersOnce = true };
+        var sink = new PendingEnrollmentTests.RecordingUpload { FailList = true, FailUsersOnce = true };
         using var worker = Worker("failed-users");
         var path = Scanner(worker, reader, sink);
 
@@ -373,6 +375,30 @@ public sealed class ChangeOnlyScanTests : IDisposable
     private DesiredRevisionPath Scanner(
         ReaderWorker worker, FakeReader reader, IReaderObservationUpload sink, ReaderScanMemory? memory = null) =>
         new("reader-a", worker, reader, new PendingEnrollmentTests.EmptyPull(), sink, memory);
+
+    /// <summary>The observation endpoint says the list is not saved yet.</summary>
+    private sealed class UnsavedPull : IDesiredStateClient
+    {
+        public Task<DesiredPull> PullAsync(string deviceId, long after, CancellationToken cancellationToken) =>
+            Task.FromResult(new DesiredPull(0, after, []));
+
+        public Task AcknowledgeAsync(DesiredAcknowledgement ack, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task ReportOccupiedAsync(
+            string deviceId, long revision, string deviceUserId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<bool> ObservationProcessedAsync(string deviceId, IReadOnlyList<string> messageIds,
+            CancellationToken cancellationToken) => Task.FromResult(false);
+
+        public Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task ReportOccupantAsync(string deviceId, long revision, string deviceUserId, ReaderOccupant occupant,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected occupant at " + deviceUserId);
+    }
 
     private static ReaderScanMemory Memory(string file) =>
         new(new FaceChecksumCache(file), new ScanUploadState(ReaderScanMemory.DefaultRefresh));

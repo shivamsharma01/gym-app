@@ -229,13 +229,15 @@ class StaleObservationIT extends AbstractReaderIT {
     }
 
     @Test
-    void anObservationWithoutAScanOrderIsRefusedAndTheGatewayIsNotReleased() throws Exception {
+    void anObservationWithoutAScanOrderIsRefusedAndRecordedSoTheGatewayCanDropIt() throws Exception {
         String messageId = UUID.randomUUID().toString();
         String reply = sendUnchecked(exitId, messageId, roster(person("7", "Om Shah", 0, FROM, TO, null)));
 
         assertThat(reply).contains("observation out of order");
-        assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isFalse();
-        assertThat(observed(exitId, messageId)).as("the gateway's observation gate stays closed").isFalse();
+        assertThat(reply).contains(messageId);
+        assertThat(reply).contains("\"retryable\":false");
+        assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isTrue();
+        assertThat(observed(exitId, messageId)).as("a terminal refusal is recorded so the fence can open").isTrue();
         assertThat(deviceObservedUserRepository.findAll()).isEmpty();
         assertThat(pendingEnrollmentRepository.findAll()).isEmpty();
     }
@@ -255,7 +257,9 @@ class StaleObservationIT extends AbstractReaderIT {
                 roster(person("7", "Stale Name", 0, FROM, TO, face)), "old-journal", 501));
 
         assertThat(reply).contains("observation out of order");
-        assertThat(observed(exitId, late)).isFalse();
+        assertThat(reply).contains(late);
+        assertThat(reply).contains("\"retryable\":false");
+        assertThat(observed(exitId, late)).as("a refused old-journal scan is recorded so it is not resent forever").isTrue();
         assertThat(snapshot(exitId, "7").getReaderName()).isEqualTo("Om R Shah");
         assertThat(readerRevisionRepository.findByDeviceId(readerPk(exitId)).orElseThrow().getObservationEpoch())
                 .isEqualTo("new-journal");

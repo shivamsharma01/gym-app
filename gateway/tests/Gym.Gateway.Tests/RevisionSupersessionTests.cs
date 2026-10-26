@@ -327,6 +327,24 @@ public class RevisionSupersessionTests : IDisposable
     }
 
     [Fact]
+    public async Task A_saved_list_opens_the_gate_without_waiting_for_per_user_ids_from_the_same_scan()
+    {
+        var reader = new FakeReader();
+        Enrol(reader, "1", "Asha");
+        var server = new Server { Items = [Item(1, "2", "Ravi")], Processing = true };
+        var upload = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
+        using var worker = Worker(reader, "list-only-fence");
+        var path = Path(worker, reader, server, upload);
+
+        await path.ReconnectAsync(CancellationToken.None);
+
+        Assert.Equal(ObservationGate.Open, path.Gate);
+        Assert.Equal("Ravi", reader.GetUser("2").User!.Name);
+        Assert.Contains("1", upload.Ids);
+        Assert.Contains(upload.MessageIds, id => id.StartsWith("list-", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task A_lost_check_or_an_unprocessed_observation_is_sent_again_without_applying_meanwhile()
     {
         var reader = new FakeReader();

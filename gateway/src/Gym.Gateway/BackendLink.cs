@@ -241,9 +241,13 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             return;
         }
 
-        // REST reply is the ACK — clear durable entry
-        _outbox.Acknowledge(envelope.MessageId);
-        TryAcknowledgeFromReply(body);
+        // ACK and terminal ERROR clear the outbox. A retryable ERROR leaves it queued. An empty
+        // 200 body still means the frame was accepted (tests and rare fallbacks).
+        if (!TryAcknowledgeFromReply(body))
+        {
+            _outbox.Acknowledge(envelope.MessageId);
+        }
+
         Resolve(envelope.MessageId, false);
     }
 
@@ -567,20 +571,59 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
         }
     }
 
-    /// <summary>The server could not process a message; it stays in the outbox and is resent on reconnect.</summary>
+    /// <summary>
+    /// The server could not process a message. A terminal rejection names the message id and is
+    /// dropped from the outbox; a retryable one stays and is resent on reconnect.
+    /// </summary>
     private void LogServerError(GatewayEnvelope envelope)
     {
-        var error = envelope.Payload.ValueKind == JsonValueKind.Object
-                    && envelope.Payload.TryGetProperty("error", out var e) ? e.ToString() : "unknown";
+        var error = "unknown";
+        string? messageId = null;
+        var retryable = true;
+        if (envelope.Payload.ValueKind == JsonValueKind.Object)
+        {
+            if (envelope.Payload.TryGetProperty("error", out var e))
+            {
+                error = e.ToString();
+            }
+
+            if (envelope.Payload.TryGetProperty("messageId", out var mid) && mid.ValueKind == JsonValueKind.String)
+            {
+                messageId = mid.GetString();
+            }
+
+            if (envelope.Payload.TryGetProperty("retryable", out var flag)
+                && (flag.ValueKind == JsonValueKind.False || flag.ValueKind == JsonValueKind.True))
+            {
+                retryable = flag.GetBoolean();
+            }
+        }
+
+        if (!retryable && !string.IsNullOrWhiteSpace(messageId))
+        {
+            _log.LogWarning(
+                "Server rejected gateway message {MessageId} corr={Corr} permanently: {Error}",
+                messageId, envelope.CorrelationId, error);
+            _outbox.Acknowledge(messageId);
+            Resolve(messageId, false);
+            return;
+        }
+
         _log.LogWarning("Server rejected a gateway message corr={Corr}: {Error}", envelope.CorrelationId, error);
+        if (!string.IsNullOrWhiteSpace(messageId))
+        {
+            Resolve(messageId, false);
+        }
+
         RejectByCorrelation(envelope.CorrelationId);
     }
 
-    private void TryAcknowledgeFromReply(string body)
+    /// <returns>True when the body was an ACK or ERROR the gateway acted on.</returns>
+    private bool TryAcknowledgeFromReply(string body)
     {
         if (string.IsNullOrWhiteSpace(body) || body == "{}")
         {
-            return;
+            return false;
         }
 
         try
@@ -589,16 +632,21 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
             if (envelope != null && envelope.Type == ProtocolTypes.Ack)
             {
                 TryAcknowledgeFromEnvelope(envelope);
+                return true;
             }
-            else if (envelope != null && envelope.Type == ProtocolTypes.Error)
+
+            if (envelope != null && envelope.Type == ProtocolTypes.Error)
             {
                 LogServerError(envelope);
+                return true;
             }
         }
         catch
         {
             // ignore
         }
+
+        return false;
     }
 
     private TimeSpan NextBackoff()

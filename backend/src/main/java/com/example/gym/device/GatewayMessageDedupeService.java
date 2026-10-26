@@ -43,8 +43,9 @@ public class GatewayMessageDedupeService {
     }
 
     /**
-     * Records a message as processed. Called only after processing succeeded, so a message whose
-     * processing failed is handled again when the gateway resends it.
+     * Records a message as processed. Called after a successful handle, and after a terminal
+     * refusal (out of order, foreign device) so the gateway drops it. A retryable failure is left
+     * unrecorded and is handled again when the gateway resends it.
      */
     @Transactional
     public void markProcessed(String messageId, String gatewayPublicId) {

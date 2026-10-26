@@ -30,7 +30,8 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Processes inbound gateway messages (§37). Idempotent and defensive: unknown/replayed messages are
  * ignored rather than throwing, and handler errors are returned as an ERROR reply so the gateway
- * link stays healthy.
+ * link stays healthy. Every ERROR names the gateway's message id; a terminal refusal is recorded so
+ * the fence can drop it, and a retryable failure is left unrecorded for reconnect.
  */
 @Service
 public class GatewayMessageService {
@@ -107,27 +108,39 @@ public class GatewayMessageService {
             reply = handle(message);
         } catch (ForeignDeviceRejected ex) {
             log.warn("Rejecting gateway message for a device gateway {} does not own", boundGatewayId);
+            recordProcessed(message);
             return Optional.of(reply(GatewayMessageType.ERROR, ex.correlationId,
-                    Map.of("error", "device is not owned by this gateway")));
+                    errorPayload(message, "device is not owned by this gateway", false)));
         } catch (ObservationOrder.Unordered ex) {
             log.warn("Refusing gateway message {} ({}) for device {}: {}", message.type(), message.messageId(),
                     message.deviceId(), ex.getMessage());
+            recordProcessed(message);
             return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
-                    Map.of("error", "observation out of order")));
+                    errorPayload(message, "observation out of order", false)));
         } catch (RuntimeException ex) {
-            // Not recorded as processed: the gateway keeps it (no ACK) and resends it on reconnect.
+            // Not recorded: the gateway keeps it and resends on reconnect. Named so the fence can
+            // drop only this id once the server later saves it, without pausing the whole reader.
             log.error("Error handling gateway message {} ({}) device={}{}",
                     message.type(), message.messageId(), message.deviceId(), failureContext(message), ex);
             return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
-                    Map.of("error", "processing failed")));
+                    errorPayload(message, "processing failed", true)));
         }
+        recordProcessed(message);
+        try {
+            deviceUserChangeService.runFollowUp();
+        } catch (RuntimeException ex) {
+            log.warn("Follow-up after saving gateway messageId {} failed: {}", message.messageId(), ex.getMessage());
+        }
+        return reply;
+    }
+
+    private void recordProcessed(GatewayMessage message) {
         try {
             dedupeService.markProcessed(message.messageId(), message.gatewayId());
         } catch (RuntimeException ex) {
             // Processing is idempotent; a replay would only be processed again.
             log.warn("Could not record gateway messageId {} as processed: {}", message.messageId(), ex.getMessage());
         }
-        return reply;
     }
 
     private Optional<String> handle(GatewayMessage message) {
@@ -136,7 +149,7 @@ public class GatewayMessageService {
             type = GatewayMessageType.valueOf(message.type());
         } catch (IllegalArgumentException ex) {
             return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
-                    Map.of("error", "unknown type: " + message.type())));
+                    errorPayload(message, "unknown type: " + message.type(), false)));
         }
         if (type != GatewayMessageType.HEARTBEAT && type != GatewayMessageType.DEVICE_STATUS
                 && FlowLog.isDebugEnabled("gateway")) {
@@ -204,7 +217,7 @@ public class GatewayMessageService {
                 yield ack(message);
             }
             default -> Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
-                    Map.of("error", "unsupported inbound type: " + type)));
+                    errorPayload(message, "unsupported inbound type: " + type, false)));
         };
     }
 
@@ -311,7 +324,7 @@ public class GatewayMessageService {
                 && gateway.getId().equals(device.getGatewayId());
     }
 
-    /** Raised when a gateway addresses a device it does not own. Not recorded as processed. */
+    /** Raised when a gateway addresses a device it does not own. Recorded so the fence can close. */
     private static final class ForeignDeviceRejected extends RuntimeException {
         private final String correlationId;
 
@@ -323,6 +336,18 @@ public class GatewayMessageService {
     private Optional<String> ack(GatewayMessage message) {
         return Optional.of(reply(GatewayMessageType.ACK, message.correlationId(),
                 Map.of("messageId", message.messageId() == null ? "" : message.messageId())));
+    }
+
+    /**
+     * Every ERROR names the gateway's message id. {@code retryable} false means the server recorded
+     * it and the gateway must drop it; true means the gateway keeps it for reconnect.
+     */
+    private static Map<String, Object> errorPayload(GatewayMessage message, String error, boolean retryable) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("error", error);
+        payload.put("messageId", message.messageId() == null ? "" : message.messageId());
+        payload.put("retryable", retryable);
+        return payload;
     }
 
     private String reply(GatewayMessageType type, String correlationId, Map<String, Object> payload) {

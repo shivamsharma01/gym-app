@@ -1,17 +1,27 @@
 package com.example.gym;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.device.DeviceUserChangeService;
+import com.example.gym.device.ReaderReconcileService;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.PendingEnrollment;
 import com.example.gym.member.Member;
 import com.example.gym.support.AbstractReaderIT;
+import com.example.gym.support.Scans;
 import java.awt.Color;
+import java.time.Instant;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import tools.jackson.databind.JsonNode;
 
 /** A person nobody decided on who is no longer on the reader is closed, and reopens if the id shows someone again. */
@@ -19,6 +29,9 @@ class ReaderPersonLeftIT extends AbstractReaderIT {
 
     private static final String FROM = "2026-01-01T00:00:00.0000000+05:30";
     private static final String TO = "2026-12-31T23:59:59.0000000+05:30";
+
+    @MockitoSpyBean
+    private ReaderReconcileService reconcile;
 
     private String readerId;
 
@@ -111,6 +124,30 @@ class ReaderPersonLeftIT extends AbstractReaderIT {
         trustedRoster(readerId);
 
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndResolvedFalse(readerPk(readerId))).isEmpty();
+    }
+
+    @Test
+    void aFollowUpSeedFailureDoesNotUnsaveTheList() throws Exception {
+        doThrow(new IllegalStateException("seed failed")).when(reconcile).seedAfter(any(), any(), anyInt());
+        int count = DeviceUserChangeService.ROSTER_BATCH + 5;
+        String[] people = new String[count];
+        for (int i = 0; i < count; i++) {
+            people[i] = person(Integer.toString(i + 1), "Person " + (i + 1), 0, FROM, TO, null);
+        }
+        String messageId = UUID.randomUUID().toString();
+        String envelope = """
+                {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
+                "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
+                """.formatted(messageId, Instant.now(), gatewayPublicId, readerId,
+                UUID.randomUUID(), Scans.stamp(roster(people)));
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(envelope))
+                .andExpect(status().isOk());
+
+        assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isTrue();
+        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(count);
     }
 
     private PendingEnrollment enrollment(String deviceUserId) {

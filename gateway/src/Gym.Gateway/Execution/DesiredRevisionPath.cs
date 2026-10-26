@@ -503,6 +503,11 @@ public sealed class DesiredRevisionPath
 
             var roster = await UploadListAsync(scan.Stamp, observed.AnnouncedTotal, listed, hashes, awaitAcceptance, cancellationToken)
                 .ConfigureAwait(false);
+            if (awaitAcceptance && !roster.Accepted && roster.MessageId != null)
+            {
+                roster = await ConfirmListIfSavedAsync(roster, cancellationToken).ConfigureAwait(false);
+            }
+
             _log.LogInformation(
                 "Reader {Reader}: stage=device→server; user list ({Count} users) {Outcome}",
                 _readerLabel, listed.Count, RosterOutcome(roster));
@@ -510,8 +515,9 @@ public sealed class DesiredRevisionPath
             {
                 uploads.Accepted(generation, list, entries);
             }
-            else if (awaitAcceptance)
+            else if (awaitAcceptance && roster.MessageId == null)
             {
+                // The list was not delivered. Send people one by one so the server still sees them.
                 var unsent = uploads.Unsent(entries);
                 if (unsent.Count > 0)
                 {
@@ -571,8 +577,9 @@ public sealed class DesiredRevisionPath
     }
 
     /// <summary>
-    /// The server has seen the reader once it processed the list, or every per-user message sent
-    /// with it. Absences are part of either.
+    /// The server has seen the reader once it processed the list. Per-user and absence ids from the
+    /// same scan stay in the outbox for retry and are not a second fence. Without a list, every
+    /// delivered per-user and absence id must be saved.
     /// </summary>
     private static List<IReadOnlyList<string>> Alternatives(
         RosterUpload roster, List<string> perUser, List<string> absences)
@@ -580,15 +587,47 @@ public sealed class DesiredRevisionPath
         var alternatives = new List<IReadOnlyList<string>>();
         if (roster.MessageId != null)
         {
-            alternatives.Add([roster.MessageId, .. absences]);
+            alternatives.Add([roster.MessageId]);
+            return alternatives;
         }
 
-        if (perUser.Count > 0 || (roster.MessageId == null && absences.Count > 0))
+        if (perUser.Count > 0 || absences.Count > 0)
         {
             alternatives.Add([.. perUser, .. absences]);
         }
 
         return alternatives;
+    }
+
+    /// <summary>
+    /// After the list wait, ask whether the server recorded that list before falling through to
+    /// per-user uploads. A late ACK or a terminal refusal both show as saved.
+    /// </summary>
+    private async Task<RosterUpload> ConfirmListIfSavedAsync(RosterUpload roster, CancellationToken cancellationToken)
+    {
+        if (roster.MessageId == null)
+        {
+            return roster;
+        }
+
+        try
+        {
+            var check = await _client.CheckObservationAsync(_deviceId, [roster.MessageId], cancellationToken)
+                .ConfigureAwait(false);
+            if (check.Processed)
+            {
+                _log.LogInformation(
+                    "Reader {Reader}: the full list was already saved on the server. Member sync can continue.",
+                    _readerLabel);
+                return new RosterUpload(true, roster.MessageId);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogDebug(ex, "Reader {Reader}: could not confirm whether the list was saved", _readerLabel);
+        }
+
+        return roster;
     }
 
     /// <summary>Any failure of the list counts as not accepted, so the per-user messages still go.</summary>
@@ -717,6 +756,8 @@ public sealed class DesiredRevisionPath
             if (_gate == ObservationGate.Fenced)
             {
                 var age = _worker.Now - _fencedAt;
+                // Only while this fence (the list itself, or every per-user id when there is no list)
+                // is still missing. A saved list opens the gate above and never reaches here.
                 if (age >= _options.FenceResendAfter)
                 {
                     _log.LogWarning(

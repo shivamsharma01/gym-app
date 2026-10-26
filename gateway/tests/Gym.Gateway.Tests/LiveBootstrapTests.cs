@@ -90,29 +90,29 @@ public sealed class LiveBootstrapTests : IDisposable
     }
 
     [Fact]
-    public async Task A_scan_sends_the_per_user_messages_only_while_the_server_does_not_acknowledge_its_list()
+    public async Task A_scan_does_not_send_per_user_messages_when_the_list_was_delivered()
     {
         var reader = new FakeReader();
         reader.CreateUser(new ReaderUser("7", "Walk In", null, 0, ValidFrom, ValidTo, "Customer", 1, 1));
         reader.CreateUser(new ReaderUser("9", "Other", null, 0, ValidFrom, ValidTo, "Customer", 1, 1));
         using var backend = new RosterBackend();
-        var desired = new SeededAfterRoster(() => false, "8");
+        var desired = new SeededAfterRoster(() => false, "8", () => backend.Acks);
         using var gateway = Start(backend.BaseUrl, _ => reader, desired);
 
         await gateway.ScanReadersAsync(CancellationToken.None);
         Assert.Equal(new[] { (2, 2) }, backend.Rosters);
-        Assert.Equal(2, backend.UserMessages);
+        Assert.Equal(0, backend.UserMessages);
 
         backend.Acks = true;
         await gateway.ScanReadersAsync(CancellationToken.None);
         Assert.Equal(new[] { (2, 2), (2, 2) }, backend.Rosters);
-        Assert.Equal(2, backend.UserMessages);
+        Assert.Equal(0, backend.UserMessages);
 
         backend.Acks = false;
         reader.ReplaceUser(new ReaderUser("9", "Renamed", null, 0, ValidFrom, ValidTo, "Customer", 1, 1));
         await gateway.ScanReadersAsync(CancellationToken.None);
         Assert.Equal(new[] { (2, 2), (2, 2), (2, 2) }, backend.Rosters);
-        Assert.Equal(3, backend.UserMessages);
+        Assert.Equal(0, backend.UserMessages);
         Assert.Empty(reader.Writes.Skip(3));
     }
 
@@ -221,7 +221,8 @@ public sealed class LiveBootstrapTests : IDisposable
         public IReaderAdapter? Open(string deviceId, IDeviceAdapter? connected) => open(deviceId);
     }
 
-    private sealed class SeededAfterRoster(Func<bool> rosterSeen, string deviceUserId) : IDesiredStateClient
+    private sealed class SeededAfterRoster(
+        Func<bool> rosterSeen, string deviceUserId, Func<bool>? observationSaved = null) : IDesiredStateClient
     {
         public List<DesiredAcknowledgement> Acknowledgements { get; } = [];
 
@@ -243,7 +244,8 @@ public sealed class LiveBootstrapTests : IDisposable
             Task.CompletedTask;
 
         public Task<bool> ObservationProcessedAsync(string deviceId, IReadOnlyList<string> messageIds,
-            CancellationToken cancellationToken) => Task.FromResult(true);
+            CancellationToken cancellationToken) =>
+            Task.FromResult(observationSaved?.Invoke() ?? true);
 
         public Task ReportFailedAsync(string deviceId, RetryState attempt, CancellationToken cancellationToken) =>
             Task.CompletedTask;

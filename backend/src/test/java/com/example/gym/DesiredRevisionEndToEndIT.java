@@ -845,7 +845,7 @@ class DesiredRevisionEndToEndIT extends AbstractIntegrationTest {
     private void assertNotPublicId(JsonNode report, String publicId) {
         assertThat(publicId).isNotBlank();
         assertThat(report.get("createdId").asString()).isNotEqualTo(publicId);
-        assertThat(report.get("pullTranscript").asString()).doesNotContain(publicId);
+        assertThat(report.get("lastPullBody").asString()).doesNotContain(publicId);
         assertThat(report.get("commandDispatched").asBoolean()).isFalse();
         for (JsonNode write : report.get("writes")) {
             assertThat(write.asString()).doesNotContain(publicId);

@@ -417,7 +417,8 @@ public sealed class GatewayWorker : BackgroundService
                 new DesiredPathOptions
                 {
                     Log = _logFactory.CreateLogger<DesiredRevisionPath>(),
-                    ReaderName = readerLabel
+                    ReaderName = readerLabel,
+                    IsMessagePending = id => _link.IsPending(id)
                 });
             _desiredRevisions.Attach(
                 deviceId,

@@ -101,7 +101,15 @@ public class GatewayMessageService {
                 message.payload());
         if (dedupeService.alreadyProcessed(message.messageId())) {
             log.debug("Ignoring duplicate gateway messageId {}", message.messageId());
+            // List follow-up (seed/claim) is idempotent; replay when the first ACK skipped it.
+            ensureListFollowUpIfComplete(message);
             return ack(message);
+        }
+        long started = System.nanoTime();
+        boolean completeList = isCompleteReaderList(message);
+        if (completeList) {
+            FlowLog.info("device", "list received device={} msg={} people={}",
+                    message.deviceId(), message.messageId(), listPeople(message.payload()));
         }
         Optional<String> reply;
         try {
@@ -120,18 +128,63 @@ public class GatewayMessageService {
         } catch (RuntimeException ex) {
             // Not recorded: the gateway keeps it and resends on reconnect. Named so the fence can
             // drop only this id once the server later saves it, without pausing the whole reader.
+            if (completeList) {
+                FlowLog.info("device", "list failed device={} msg={} ms={}{}",
+                        message.deviceId(), message.messageId(),
+                        (System.nanoTime() - started) / 1_000_000L, failureContext(message));
+            }
             log.error("Error handling gateway message {} ({}) device={}{}",
                     message.type(), message.messageId(), message.deviceId(), failureContext(message), ex);
             return Optional.of(reply(GatewayMessageType.ERROR, message.correlationId(),
                     errorPayload(message, "processing failed", true)));
         }
+        long markStarted = System.nanoTime();
         recordProcessed(message);
+        if (completeList) {
+            FlowLog.info("device", "list markProcessed device={} msg={} handleMs={} markMs={}",
+                    message.deviceId(), message.messageId(),
+                    (markStarted - started) / 1_000_000L,
+                    (System.nanoTime() - markStarted) / 1_000_000L);
+        }
         try {
             deviceUserChangeService.runFollowUp();
         } catch (RuntimeException ex) {
             log.warn("Follow-up after saving gateway messageId {} failed: {}", message.messageId(), ex.getMessage());
         }
         return reply;
+    }
+
+    private void ensureListFollowUpIfComplete(GatewayMessage message) {
+        if (!isCompleteReaderList(message)) {
+            return;
+        }
+        try {
+            Device device = ownedDevice(message);
+            if (device == null) {
+                return;
+            }
+            deviceUserChangeService.ensureListFollowUp(device);
+        } catch (RuntimeException ex) {
+            log.warn("Follow-up on replay of gateway messageId {} failed: {}", message.messageId(), ex.getMessage());
+        }
+    }
+
+    private static boolean isCompleteReaderList(GatewayMessage message) {
+        if (!GatewayMessageType.DEVICE_USER_CHANGED.name().equals(message.type())) {
+            return false;
+        }
+        JsonNode payload = message.payload();
+        if (payload == null) {
+            return false;
+        }
+        JsonNode users = payload.get("users");
+        return users != null && users.isArray()
+                && payload.path("announcedTotal").asInt(-1) == users.size();
+    }
+
+    private static int listPeople(JsonNode payload) {
+        JsonNode users = payload == null ? null : payload.get("users");
+        return users != null && users.isArray() ? users.size() : 0;
     }
 
     private void recordProcessed(GatewayMessage message) {

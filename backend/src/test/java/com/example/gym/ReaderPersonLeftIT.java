@@ -3,12 +3,15 @@ package com.example.gym;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.gym.device.DeviceUserChangeService;
+import com.example.gym.device.PendingEnrollmentService;
 import com.example.gym.device.ReaderReconcileService;
 import com.example.gym.device.domain.DesiredMemberProjection;
 import com.example.gym.device.domain.PendingEnrollment;
@@ -18,6 +21,7 @@ import com.example.gym.support.Scans;
 import java.awt.Color;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -32,6 +36,9 @@ class ReaderPersonLeftIT extends AbstractReaderIT {
 
     @MockitoSpyBean
     private ReaderReconcileService reconcile;
+
+    @MockitoSpyBean
+    private PendingEnrollmentService pendingEnrollments;
 
     private String readerId;
 
@@ -148,6 +155,72 @@ class ReaderPersonLeftIT extends AbstractReaderIT {
 
         assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isTrue();
         assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(count);
+
+        reset(reconcile);
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(envelope))
+                .andExpect(status().isOk());
+        assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isTrue();
+    }
+
+    @Test
+    void aSecondIdenticalLongListKeepsTheSameSavedPeople() throws Exception {
+        int count = DeviceUserChangeService.ROSTER_BATCH + 5;
+        String[] people = new String[count];
+        for (int i = 0; i < count; i++) {
+            people[i] = person(Integer.toString(i + 1), "Person " + (i + 1), 0, FROM, TO, null);
+        }
+        trustedRoster(readerId, people);
+        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(count);
+        assertThat(enrollment("1").isResolved()).isFalse();
+
+        trustedRoster(readerId, people);
+
+        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(count);
+        assertThat(enrollment("1").isResolved()).isFalse();
+        assertThat(pendingEnrollmentRepository.findByDeviceIdAndResolvedFalse(readerPk(readerId))).hasSize(count);
+    }
+
+    @Test
+    void aLongListRetriesAfterAMidBatchFailure() throws Exception {
+        AtomicInteger batches = new AtomicInteger();
+        doAnswer(invocation -> {
+            if (batches.incrementAndGet() == 1) {
+                throw new IllegalStateException("batch failed");
+            }
+            return invocation.callRealMethod();
+        }).when(pendingEnrollments).observeRosterBatch(any(), any(), any());
+
+        int count = DeviceUserChangeService.ROSTER_BATCH + 5;
+        String[] people = new String[count];
+        for (int i = 0; i < count; i++) {
+            people[i] = person(Integer.toString(i + 1), "Person " + (i + 1), 0, FROM, TO, null);
+        }
+        String messageId = UUID.randomUUID().toString();
+        String envelope = """
+                {"messageId":"%s","timestamp":"%s","gatewayId":"%s","deviceId":"%s",\
+                "type":"DEVICE_USER_CHANGED","correlationId":"%s","payload":%s}
+                """.formatted(messageId, Instant.now(), gatewayPublicId, readerId,
+                UUID.randomUUID(), Scans.stamp(roster(people)));
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(envelope))
+                .andExpect(status().isOk());
+        assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isFalse();
+
+        mockMvc.perform(post("/internal/gateway/messages")
+                        .header("Authorization", "Bearer " + gatewayToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(envelope))
+                .andExpect(status().isOk());
+
+        assertThat(gatewayMessageDedupeRepository.existsById(messageId)).isTrue();
+        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(count);
+        assertThat(enrollment("1").isResolved()).isFalse();
     }
 
     private PendingEnrollment enrollment(String deviceUserId) {

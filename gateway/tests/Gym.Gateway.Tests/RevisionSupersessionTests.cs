@@ -394,6 +394,79 @@ public class RevisionSupersessionTests : IDisposable
     }
 
     [Fact]
+    public async Task A_fence_past_resend_age_stays_while_the_list_message_is_still_queued()
+    {
+        var reader = new FakeReader();
+        Enrol(reader, "1", "Asha");
+        var server = new Server { Items = [Item(1, "2", "Ravi")], Processing = false };
+        var upload = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
+        using var worker = Worker(reader, "pending-fence");
+        var pending = new HashSet<string>(StringComparer.Ordinal);
+        var path = new DesiredRevisionPath("r", worker, reader, server, upload, null,
+            new DesiredPathOptions
+            {
+                ReconnectWait = TimeSpan.Zero,
+                FenceTimeout = TimeSpan.FromMinutes(2),
+                FenceResendAfter = TimeSpan.FromMinutes(5),
+                IsMessagePending = id => pending.Contains(id)
+            });
+
+        await path.ReconnectAsync(CancellationToken.None);
+        var firstIds = upload.MessageIds.ToList();
+        Assert.NotEmpty(firstIds);
+        foreach (var id in firstIds)
+        {
+            pending.Add(id);
+        }
+
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
+
+        _now += TimeSpan.FromMinutes(6);
+        await path.RetryAsync(CancellationToken.None);
+
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
+        Assert.Equal(firstIds, upload.MessageIds);
+
+        pending.Clear();
+        await path.RetryAsync(CancellationToken.None);
+        Assert.Equal(ObservationGate.Unobserved, path.Gate);
+        await path.RetryAsync(CancellationToken.None);
+        Assert.True(upload.MessageIds.Count > firstIds.Count);
+    }
+
+    [Fact]
+    public async Task A_reconnect_does_not_replace_a_queued_list_fence()
+    {
+        var reader = new FakeReader();
+        Enrol(reader, "1", "Asha");
+        var server = new Server { Items = [Item(1, "2", "Ravi")], Processing = false };
+        var upload = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
+        using var worker = Worker(reader, "reconnect-pending");
+        var pending = new HashSet<string>(StringComparer.Ordinal);
+        var path = new DesiredRevisionPath("r", worker, reader, server, upload, null,
+            new DesiredPathOptions
+            {
+                ReconnectWait = TimeSpan.Zero,
+                IsMessagePending = id => pending.Contains(id)
+            });
+
+        await path.ReconnectAsync(CancellationToken.None);
+        var firstIds = upload.MessageIds.ToList();
+        Assert.NotEmpty(firstIds);
+        foreach (var id in firstIds)
+        {
+            pending.Add(id);
+        }
+
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
+
+        await path.ReconnectAsync(CancellationToken.None);
+
+        Assert.Equal(ObservationGate.Fenced, path.Gate);
+        Assert.Equal(firstIds, upload.MessageIds);
+    }
+
+    [Fact]
     public async Task A_reconnect_whose_list_fails_applies_nothing_until_a_list_is_processed()
     {
         var reader = new FakeReader();

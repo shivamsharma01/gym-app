@@ -89,6 +89,8 @@ public class DeviceUserChangeService {
     }
 
     private void applyRoster(Device device, JsonNode payload, JsonNode users) {
+        long listStarted = System.nanoTime();
+        long admitStarted = listStarted;
         ObservationOrder.Scan scan = chunks.execute(status -> {
             ObservationOrder.Scan admitted = order.admit(device, payload);
             if (!admitted.stale()) {
@@ -96,11 +98,14 @@ public class DeviceUserChangeService {
             }
             return admitted;
         });
+        FlowLog.info("device", "reader={} list admit done people={} stale={} ms={}",
+                device.getPublicId(), users.size(), scan.stale(), msSince(admitStarted));
         if (scan.stale()) {
             return;
         }
         List<JsonNode> batch = new ArrayList<>(ROSTER_BATCH);
         Set<String> present = new HashSet<>();
+        int batchIndex = 0;
         for (JsonNode user : users) {
             String deviceUserId = text(user, "deviceUserId");
             if (deviceUserId != null) {
@@ -108,24 +113,42 @@ public class DeviceUserChangeService {
             }
             batch.add(user);
             if (batch.size() == ROSTER_BATCH) {
-                List<JsonNode> saving = List.copyOf(batch);
-                chunks.executeWithoutResult(status -> pendingEnrollments.observeRosterBatch(device, saving, scan));
+                batchIndex++;
+                runRosterBatch(device, scan, List.copyOf(batch), batchIndex);
                 batch.clear();
             }
         }
         if (!batch.isEmpty()) {
-            List<JsonNode> saving = List.copyOf(batch);
-            chunks.executeWithoutResult(status -> pendingEnrollments.observeRosterBatch(device, saving, scan));
+            batchIndex++;
+            runRosterBatch(device, scan, List.copyOf(batch), batchIndex);
         }
+        long finishStarted = System.nanoTime();
         chunks.executeWithoutResult(status -> pendingEnrollments.finishRoster(device, scan, present));
-        FlowLog.info("device", "reader={} saved a list of {} people in batches of {}",
-                device.getPublicId(), users.size(), ROSTER_BATCH);
+        FlowLog.info("device",
+                "reader={} saved a list of {} people in {} batches of {} finishMs={} totalMs={}",
+                device.getPublicId(), users.size(), batchIndex, ROSTER_BATCH,
+                msSince(finishStarted), msSince(listStarted));
         Device reader = device;
         Set<String> credited = Set.copyOf(present);
         followUp.set(() -> {
             seedAndClaim(reader);
             creditEarlierPunches(reader, credited);
         });
+    }
+
+    private void runRosterBatch(Device device, ObservationOrder.Scan scan, List<JsonNode> saving, int batchIndex) {
+        long started = System.nanoTime();
+        chunks.executeWithoutResult(status -> pendingEnrollments.observeRosterBatch(device, saving, scan));
+        FlowLog.info("device", "reader={} list batch {} size={} ms={}",
+                device.getPublicId(), batchIndex, saving.size(), msSince(started));
+    }
+
+    /**
+     * Idempotent seed/claim after a list was already recorded as saved. Used when the gateway
+     * replays a messageId whose follow-up never ran (ACK succeeded, seed failed or was skipped).
+     */
+    public void ensureListFollowUp(Device device) {
+        seedAndClaim(device);
     }
 
     private void seedAndClaim(Device device) {
@@ -151,6 +174,10 @@ public class DeviceUserChangeService {
         for (String deviceUserId : deviceUserIds) {
             punches.creditEarlierPunches(device, deviceUserId);
         }
+    }
+
+    private static long msSince(long startedNanos) {
+        return (System.nanoTime() - startedNanos) / 1_000_000L;
     }
 
     private static String text(JsonNode node, String field) {

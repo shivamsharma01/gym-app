@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.stereotype.Service;
@@ -102,7 +103,7 @@ public class PendingEnrollmentService {
             // Punch credit runs after the list is markProcessed — linking inside the batch deadlocks
             // with attendance ingest and rolls back the whole list (gateway "0 of 1" fence).
             if (!observeUnallocated(device, user, scan, known, false)) {
-                observeOne(device, user, scan, false);
+                observeOne(device, user, scan, known, false);
             }
         }
     }
@@ -116,11 +117,13 @@ public class PendingEnrollmentService {
         bootstrap.lockForRoster(device);
         Known known = known(device, scan);
         closeLeft(device, scan, known, present);
-        for (DesiredMemberProjection desired : desiredMembers.findByDeviceId(device.getId())) {
-            if (desired.isPresentOnReader() && !present.contains(desired.getDeviceUserId())
-                    && wasOnReader(device, desired.getDeviceUserId())
-                    && !scan.staleFor(desired.getDeviceUserId())) {
-                reviews.recordAbsence(device, desired.getDeviceUserId());
+        for (DesiredMemberProjection desired : known.desired()) {
+            String deviceUserId = desired.getDeviceUserId();
+            if (desired.isPresentOnReader() && !present.contains(deviceUserId)
+                    && wasOnReader(known, deviceUserId)
+                    && !scan.staleFor(deviceUserId, known.snapshots().get(deviceUserId),
+                    known.baselines().get(deviceUserId), known.enrollments().get(deviceUserId))) {
+                reviews.recordAbsence(device, deviceUserId);
             }
         }
     }
@@ -143,7 +146,7 @@ public class PendingEnrollmentService {
         Set<String> present = new HashSet<>();
         for (JsonNode user : users) {
             if (!observeUnallocated(device, user, scan, known, true)) {
-                observeOne(device, user, scan, true);
+                observeOne(device, user, scan, known, true);
             }
             String deviceUserId = text(user, "deviceUserId");
             if (deviceUserId != null) {
@@ -151,27 +154,30 @@ public class PendingEnrollmentService {
             }
         }
         closeLeft(device, scan, known, present);
-        for (DesiredMemberProjection desired : desiredMembers.findByDeviceId(device.getId())) {
-            if (desired.isPresentOnReader() && !present.contains(desired.getDeviceUserId())
-                    && wasOnReader(device, desired.getDeviceUserId())
-                    && !scan.staleFor(desired.getDeviceUserId())) {
-                reviews.recordAbsence(device, desired.getDeviceUserId());
+        for (DesiredMemberProjection desired : known.desired()) {
+            String deviceUserId = desired.getDeviceUserId();
+            if (desired.isPresentOnReader() && !present.contains(deviceUserId)
+                    && wasOnReader(known, deviceUserId)
+                    && !scan.staleFor(deviceUserId, known.snapshots().get(deviceUserId),
+                    known.baselines().get(deviceUserId), known.enrollments().get(deviceUserId))) {
+                reviews.recordAbsence(device, deviceUserId);
             }
         }
         bootstrap.seedFromTrustedRoster(device);
     }
 
     /**
-     * This reader's rows, read once for a whole list under the reader lock. Processing a list never
-     * gives out an id, so an id not allocated here stays unallocated until the list is done, and only
-     * that id's own snapshot and enrollment change while it is processed.
+     * This reader's rows, read once for a batch under the reader lock. Reloaded each batch because
+     * the lock is released between batches. Processing a list never gives out an id, so an id not
+     * allocated here stays unallocated until the list is done, and only that id's own snapshot and
+     * enrollment change while it is processed.
      *
      * @param unservedSeeds whether any seed the gateway was never sent exists, which an undecided
      *                      person may withdraw
      */
     private record Known(Set<String> allocated, Map<String, DeviceObservedUser> snapshots,
                          Map<String, DeviceReaderBaseline> baselines, Map<String, PendingEnrollment> enrollments,
-                         boolean unservedSeeds) {
+                         List<DesiredMemberProjection> desired, boolean unservedSeeds) {
     }
 
     private Known known(Device device, ObservationOrder.Scan scan) {
@@ -181,9 +187,10 @@ public class PendingEnrollmentService {
             allocated.add(mapping.getPendingDeviceUserId());
         }
         boolean unservedSeeds = false;
-        for (DesiredMemberProjection desired : desiredMembers.findByDeviceId(device.getId())) {
-            allocated.add(desired.getDeviceUserId());
-            unservedSeeds |= desired.unservedSeed(scan.servedRevision());
+        List<DesiredMemberProjection> desired = desiredMembers.findByDeviceId(device.getId());
+        for (DesiredMemberProjection row : desired) {
+            allocated.add(row.getDeviceUserId());
+            unservedSeeds |= row.unservedSeed(scan.servedRevision());
         }
         Map<String, DeviceObservedUser> snapshots = new HashMap<>();
         for (DeviceObservedUser snapshot : observedUsers.findByDeviceId(device.getId())) {
@@ -193,7 +200,7 @@ public class PendingEnrollmentService {
         for (PendingEnrollment enrollment : enrollments.findByDeviceId(device.getId())) {
             pending.put(enrollment.getDeviceUserId(), enrollment);
         }
-        return new Known(allocated, snapshots, reviews.baselines(device.getId()), pending, unservedSeeds);
+        return new Known(allocated, snapshots, reviews.baselines(device.getId()), pending, desired, unservedSeeds);
     }
 
     /**
@@ -250,32 +257,52 @@ public class PendingEnrollmentService {
      * Seen on an earlier list or verified by a read-back. An id published before the reader ever
      * showed or verified it cannot have disappeared from that reader.
      */
-    private boolean wasOnReader(Device device, String deviceUserId) {
-        return observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).isPresent()
-                || reviews.verifiedOnReader(device.getId(), deviceUserId);
+    private boolean wasOnReader(Known known, String deviceUserId) {
+        return known.snapshots().containsKey(deviceUserId) || known.baselines().containsKey(deviceUserId);
     }
 
     private void observeOne(Device device, JsonNode payload, ObservationOrder.Scan scan, boolean creditPunches) {
+        observeOne(device, payload, scan, null, creditPunches);
+    }
+
+    /**
+     * When {@code known} is non-null (list batch / small complete list), skip per-id lookups that
+     * were already loaded under the reader lock.
+     */
+    private void observeOne(Device device, JsonNode payload, ObservationOrder.Scan scan, Known known,
+                            boolean creditPunches) {
         String deviceUserId = text(payload, "deviceUserId");
-        if (deviceUserId == null || deviceUserId.isBlank() || scan.staleFor(deviceUserId)) {
+        if (deviceUserId == null || deviceUserId.isBlank()) {
+            return;
+        }
+        if (known != null
+                ? scan.staleFor(deviceUserId, known.snapshots().get(deviceUserId),
+                known.baselines().get(deviceUserId), known.enrollments().get(deviceUserId))
+                : scan.staleFor(deviceUserId)) {
             return;
         }
         if (bool(payload, "deleted")) {
-            if (serverAllocated(device.getId(), deviceUserId)) {
+            if (allocated(device.getId(), deviceUserId, known)) {
                 reviews.recordAbsence(device, deviceUserId);
             }
             return;
         }
-        withdrawCollidingSeed(device, deviceUserId, scan);
-        DeviceObservedUser snapshot = saveSnapshot(device, payload, deviceUserId, scan.stamp(), false, creditPunches);
+        withdrawCollidingSeed(device, deviceUserId, scan, known);
+        DeviceObservedUser existing = known != null ? known.snapshots().get(deviceUserId) : null;
+        DeviceObservedUser snapshot = known != null
+                ? saveSnapshot(device, payload, deviceUserId, scan.stamp(), false, existing, creditPunches)
+                : saveSnapshot(device, payload, deviceUserId, scan.stamp(), false, creditPunches);
+        if (known != null) {
+            known.snapshots().put(deviceUserId, snapshot);
+        }
         // Mapped id: any field drift (including name+photo) is a CONFLICT for staff — never auto-suspend.
         // True strangers only enroll when the id is not allocated to a member.
-        if (serverAllocated(device.getId(), deviceUserId)) {
+        if (allocated(device.getId(), deviceUserId, known)) {
             reviews.record(device, payload, deviceUserId);
             desired.republishFinishedAbsence(device, snapshot);
             return;
         }
-        if (enroll(device, deviceUserId)) {
+        if (enroll(device, deviceUserId, known)) {
             bootstrap.withdrawUnservedSeeds(device, snapshot);
         }
     }
@@ -285,18 +312,24 @@ public class PendingEnrollmentService {
      * allocated the id before it saw that the reader already uses it. The seed is taken back, so the
      * person there is treated as the reader's own.
      */
-    private void withdrawCollidingSeed(Device device, String deviceUserId, ObservationOrder.Scan scan) {
+    private void withdrawCollidingSeed(Device device, String deviceUserId, ObservationOrder.Scan scan, Known known) {
         retireFinishedAbsence(device, deviceUserId);
-        desiredMembers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
+        Optional<DesiredMemberProjection> colliding = desiredMembers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId)
                 .filter(row -> row.unservedSeed(scan.servedRevision()))
-                .filter(row -> reviews.baseline(device.getId(), deviceUserId).isEmpty())
-                .ifPresent(row -> {
-                    mappings.findByDeviceIdAndMemberId(device.getId(), row.getMemberId()).ifPresent(mappings::delete);
-                    desiredMembers.delete(row);
-                    desiredMembers.flush();
-                    FlowLog.info("device", "seed withdrawn reader={} user={}: the reader already uses the id",
-                            device.getPublicId(), deviceUserId);
-                });
+                .filter(row -> known != null
+                        ? !known.baselines().containsKey(deviceUserId)
+                        : reviews.baseline(device.getId(), deviceUserId).isEmpty());
+        colliding.ifPresent(row -> {
+            mappings.findByDeviceIdAndMemberId(device.getId(), row.getMemberId()).ifPresent(mappings::delete);
+            desiredMembers.delete(row);
+            desiredMembers.flush();
+            if (known != null) {
+                known.allocated().remove(deviceUserId);
+                known.desired().removeIf(d -> Objects.equals(d.getId(), row.getId()));
+            }
+            FlowLog.info("device", "seed withdrawn reader={} user={}: the reader already uses the id",
+                    device.getPublicId(), deviceUserId);
+        });
     }
 
     /**
@@ -352,13 +385,18 @@ public class PendingEnrollmentService {
      *
      * @return true when the person is undecided
      */
-    private boolean enroll(Device device, String deviceUserId) {
-        if (serverAllocated(device.getId(), deviceUserId)) {
+    private boolean enroll(Device device, String deviceUserId, Known known) {
+        if (allocated(device.getId(), deviceUserId, known)) {
             return false;
         }
-        return reopen(device, deviceUserId,
-                enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null))
-                .getDecision() == null;
+        PendingEnrollment existing = known != null
+                ? known.enrollments().get(deviceUserId)
+                : enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null);
+        PendingEnrollment enrollment = reopen(device, deviceUserId, existing);
+        if (known != null) {
+            known.enrollments().put(deviceUserId, enrollment);
+        }
+        return enrollment.getDecision() == null;
     }
 
     private PendingEnrollment reopen(Device device, String deviceUserId, PendingEnrollment existing) {
@@ -468,6 +506,13 @@ public class PendingEnrollmentService {
             punches.creditEarlierPunches(device, saved.getDeviceUserId());
         }
         return saved;
+    }
+
+    private boolean allocated(Long deviceId, String deviceUserId, Known known) {
+        if (known != null) {
+            return known.allocated().contains(deviceUserId);
+        }
+        return serverAllocated(deviceId, deviceUserId);
     }
 
     private boolean serverAllocated(Long deviceId, String deviceUserId) {

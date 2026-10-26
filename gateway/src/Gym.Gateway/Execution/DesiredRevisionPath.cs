@@ -201,14 +201,48 @@ public sealed class DesiredRevisionPath
     /// <summary>
     /// Reconnect order after the gateway is authenticated: the reader answers a read, the server
     /// processes it, then pull, apply, verify, and ack. A list that fails, or that the server has
-    /// not processed, applies nothing.
+    /// not processed, applies nothing. When a fence is already waiting, the current list id is
+    /// polled first so a new upload does not replace an in-flight outbox message.
     /// </summary>
     public Task ReconnectAsync(CancellationToken cancellationToken) =>
-        SerializedAsync(ct =>
+        SerializedAsync(async ct =>
         {
             if (_observations == null)
             {
-                return _reader.ListUsers().Ok ? HandleCoreAsync(true, ct) : Task.CompletedTask;
+                if (_reader.ListUsers().Ok)
+                {
+                    await HandleCoreAsync(true, ct).ConfigureAwait(false);
+                }
+
+                return;
+            }
+
+            ObservationGate gate;
+            lock (_gateLock)
+            {
+                gate = _gate;
+            }
+
+            if (gate == ObservationGate.Fenced)
+            {
+                var checks = _options.ReconnectPoll > TimeSpan.Zero
+                    ? 1 + (int)(_options.ReconnectWait / _options.ReconnectPoll)
+                    : 1;
+                var processed = await CheckProcessedAsync(checks, ct).ConfigureAwait(false);
+                if (processed == true)
+                {
+                    await HandleCoreAsync(true, ct).ConfigureAwait(false);
+                    return;
+                }
+
+                if (FenceOutboundPending())
+                {
+                    _log.LogInformation(
+                        "Reader {Reader}: reconnect while the reader list is still queued for the server. Waiting for that save before sending a new list. Member sync stays paused.",
+                        _readerLabel);
+                    await HandleCoreAsync(false, ct).ConfigureAwait(false);
+                    return;
+                }
             }
 
             lock (_gateLock)
@@ -217,7 +251,7 @@ public sealed class DesiredRevisionPath
                 _nextObserve = DateTimeOffset.MinValue;
             }
 
-            return HandleCoreAsync(true, ct);
+            await HandleCoreAsync(true, ct).ConfigureAwait(false);
         }, cancellationToken);
 
     /// <summary>
@@ -762,10 +796,25 @@ public sealed class DesiredRevisionPath
                 // is still missing. A saved list opens the gate above and never reaches here.
                 if (age >= _options.FenceResendAfter)
                 {
-                    _log.LogWarning(
-                        "Reader {Reader}: the server still has not saved the reader list after {Minutes} min. Reading the reader again and sending the list once more. Member sync stays paused.",
-                        _readerLabel, Math.Max(1, (int)age.TotalMinutes));
-                    _gate = ObservationGate.Unobserved;
+                    // Outbox still holds the same messageId: the server may still be saving it.
+                    // Abandoning the fence would upload a new id and leave "0 of 1" on the wrong one.
+                    if (FenceOutboundPendingUnlocked())
+                    {
+                        if (_worker.Now >= _nextFenceWarn)
+                        {
+                            _log.LogWarning(
+                                "Reader {Reader}: the server still has not saved the reader list after {Minutes} min, and that list is still queued. Waiting for the save instead of sending again. Member sync stays paused.",
+                                _readerLabel, Math.Max(1, (int)age.TotalMinutes));
+                            _nextFenceWarn = _worker.Now + _options.FenceTimeout;
+                        }
+                    }
+                    else
+                    {
+                        _log.LogWarning(
+                            "Reader {Reader}: the server still has not saved the reader list after {Minutes} min. Reading the reader again and sending the list once more. Member sync stays paused.",
+                            _readerLabel, Math.Max(1, (int)age.TotalMinutes));
+                        _gate = ObservationGate.Unobserved;
+                    }
                 }
                 else if (age >= _options.FenceTimeout && _worker.Now >= _nextFenceWarn)
                 {
@@ -773,6 +822,37 @@ public sealed class DesiredRevisionPath
                         "Reader {Reader}: the server still has not saved the reader list after {Minutes} min. Asking again. Member sync stays paused. Nothing to do in the app.",
                         _readerLabel, Math.Max(1, (int)age.TotalMinutes));
                     _nextFenceWarn = _worker.Now + _options.FenceTimeout;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>True when any fenced messageId is still in the outbound store (not yet ACK'd).</summary>
+    private bool FenceOutboundPending()
+    {
+        lock (_gateLock)
+        {
+            return FenceOutboundPendingUnlocked();
+        }
+    }
+
+    private bool FenceOutboundPendingUnlocked()
+    {
+        var pending = _options.IsMessagePending;
+        if (pending == null)
+        {
+            return false;
+        }
+
+        foreach (var alternative in _fence)
+        {
+            foreach (var messageId in alternative)
+            {
+                if (!string.IsNullOrWhiteSpace(messageId) && pending(messageId))
+                {
+                    return true;
                 }
             }
         }
@@ -1588,4 +1668,10 @@ public sealed record DesiredPathOptions
     public TimeSpan ReconnectPoll { get; init; } = TimeSpan.FromMilliseconds(250);
 
     public TimeSpan ObserveRetry { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// When set, <see cref="FenceResendAfter"/> does not abandon a fence whose messageId is still
+    /// queued in the outbound store (not yet acknowledged).
+    /// </summary>
+    public Func<string, bool>? IsMessagePending { get; init; }
 }

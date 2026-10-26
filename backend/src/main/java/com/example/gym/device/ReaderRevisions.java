@@ -1,5 +1,6 @@
 package com.example.gym.device;
 
+import com.example.gym.common.logging.FlowLog;
 import com.example.gym.device.domain.ReaderRevision;
 import com.example.gym.device.repo.ReaderRevisionRepository;
 import com.example.gym.member.Member;
@@ -35,9 +36,16 @@ public class ReaderRevisions {
      * the values are the latest committed ones even when this transaction's snapshot is older.
      */
     public ReaderRevision lock(Long tenantId, Long deviceId) {
+        long started = System.nanoTime();
         ReaderRevision cursor = repository.findByDeviceId(deviceId)
                 .orElseGet(() -> repository.saveAndFlush(new ReaderRevision(tenantId, deviceId)));
-        return reload(cursor);
+        ReaderRevision locked = reload(cursor);
+        long waitMs = (System.nanoTime() - started) / 1_000_000L;
+        // Same-reader writers (list batches, desired apply, review, seed) share this row; Entry/Exit do not.
+        if (waitMs >= 50) {
+            FlowLog.info("device", "reader_revision lock deviceId={} waitMs={}", deviceId, waitMs);
+        }
+        return locked;
     }
 
     /**

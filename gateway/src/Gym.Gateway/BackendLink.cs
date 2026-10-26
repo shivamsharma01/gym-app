@@ -40,6 +40,9 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     /// <summary>See <see cref="DurableOutboundStore.DropObservations"/>.</summary>
     public int DropObservations(string deviceId) => _outbox.DropObservations(deviceId);
 
+    /// <summary>True while this messageId is still queued and not yet acknowledged.</summary>
+    public bool IsPending(string messageId) => _outbox.IsPending(messageId);
+
     public void ApplyCredential(string credential)
     {
         if (string.IsNullOrWhiteSpace(credential))

@@ -117,6 +117,7 @@ public sealed class GatewayWorker : BackgroundService
         var wsLoop = _link.RunWebSocketAsync(
             AcceptCommand, _desiredRevisions.HandleAsync, ReconnectReadersAsync, stoppingToken);
         var heartbeat = HeartbeatLoopAsync(_link, stoppingToken);
+        var outboxLists = OutboxListReplayLoopAsync(_link, stoppingToken);
         var poll = PollLoopAsync(_link, stoppingToken);
         var observe = ObserveReadersAsync(stoppingToken);
         var retry = RetryReadersAsync(stoppingToken);
@@ -131,8 +132,38 @@ public sealed class GatewayWorker : BackgroundService
             new { agentVersion = "gym-gateway-0.5" },
             null), stoppingToken).ConfigureAwait(false);
 
-        await Task.WhenAll(sendLoop, wsLoop, heartbeat, poll, observe, retry, attendance, clock, statusLog, readerHealth)
+        await Task.WhenAll(sendLoop, wsLoop, heartbeat, outboxLists, poll, observe, retry, attendance, clock, statusLog, readerHealth)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// While the WebSocket stays up, keep re-sending complete reader lists that were never ACKed.
+    /// Connect-time replay alone leaves a list stranded after a write the server never processed.
+    /// </summary>
+    private async Task OutboxListReplayLoopAsync(BackendLink link, CancellationToken stoppingToken)
+    {
+        var interval = TimeSpan.FromSeconds(30);
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, stoppingToken).ConfigureAwait(false);
+                if (!link.WebSocketLive)
+                {
+                    continue;
+                }
+
+                await link.RedeliverPendingListsAsync(stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "Pending list redelivery pass failed; will try again");
+            }
+        }
     }
 
     /// <summary>Logs in again to readers whose session broke, each when its pause has passed.</summary>
@@ -420,7 +451,8 @@ public sealed class GatewayWorker : BackgroundService
                     ReaderName = readerLabel,
                     IsMessagePending = id => _link.IsPending(id),
                     PendingListMessageId = id => _link.PendingListMessageId(id),
-                    AcknowledgeMessage = id => _link.Acknowledge(id)
+                    AcknowledgeMessage = id => _link.Acknowledge(id),
+                    RedeliverMessage = (id, ct) => _link.TryRedeliverAsync(id, ct)
                 });
             _desiredRevisions.Attach(
                 deviceId,

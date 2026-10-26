@@ -94,7 +94,7 @@ public sealed class RosterAcceptanceTests : IDisposable
     }
 
     [Fact]
-    public async Task Reconnect_sends_the_per_user_messages_before_the_list_even_when_lists_are_acknowledged()
+    public async Task Reconnect_sends_the_full_list_without_one_by_one_user_uploads()
     {
         var sink = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = true };
         using var worker = Worker("reconnect");
@@ -102,8 +102,9 @@ public sealed class RosterAcceptanceTests : IDisposable
 
         await path.ReconnectAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "users", "list" }, sink.Calls);
-        Assert.Equal(new[] { "7" }, sink.Ids);
+        Assert.Equal(new[] { "list" }, sink.Calls);
+        Assert.Equal(new[] { "7" }, sink.RosterIds);
+        Assert.Empty(sink.Ids);
     }
 
     [Fact]

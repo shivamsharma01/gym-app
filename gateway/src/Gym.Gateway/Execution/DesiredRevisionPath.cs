@@ -45,6 +45,7 @@ public sealed class DesiredRevisionPath
     private DateTimeOffset _nextFenceWarn = DateTimeOffset.MinValue;
     private DateTimeOffset _nextObserve = DateTimeOffset.MinValue;
     private DateTimeOffset _nextFailureLog = DateTimeOffset.MinValue;
+    private DateTimeOffset _nextFenceRedeliver = DateTimeOffset.MinValue;
     private long _observation;
     private ObservationCheck _lastCheck;
     private bool _checkFailed;
@@ -530,14 +531,13 @@ public sealed class DesiredRevisionPath
                 uploads.Reconnecting();
             }
 
+            // Reconnect sends the full list only. One-by-one uploads bury that list in the outbox and
+            // can mark "sent" on a socket write the server never processed.
             if (!awaitAcceptance && listed.Count > 0)
             {
                 _log.LogInformation(
-                    "Reader {Reader}: sending all {Count} people to the server after a reconnect. Member sync stays paused until the server has saved them. First people: {Users}",
+                    "Reader {Reader}: queueing the full list of {Count} people for the server after a reconnect. Member sync stays paused until the server has saved that list. First people: {Users}",
                     _readerLabel, listed.Count, SummarizeUsers(listed));
-                perUser.AddRange(await _observations.UploadAsync(_deviceId, scan.Stamp, listed, hashes, cancellationToken)
-                    .ConfigureAwait(false));
-                uploads.Sent(entries.Keys.ToHashSet(StringComparer.Ordinal), entries);
             }
 
             if (missing.Count > 0)
@@ -563,9 +563,9 @@ public sealed class DesiredRevisionPath
             {
                 uploads.Accepted(generation, list, entries);
             }
-            else if (awaitAcceptance && roster.MessageId == null)
+            else if (roster.MessageId == null && listed.Count > 0)
             {
-                // The list was not delivered. Send people one by one so the server still sees them.
+                // The list was not queued. Send people one by one so the server still sees them.
                 var unsent = uploads.Unsent(entries);
                 if (unsent.Count > 0)
                 {
@@ -578,6 +578,10 @@ public sealed class DesiredRevisionPath
                         .ConfigureAwait(false));
                     uploads.Sent(unsent, entries);
                 }
+            }
+            else if (!awaitAcceptance && roster.MessageId != null)
+            {
+                uploads.Sent(entries.Keys.ToHashSet(StringComparer.Ordinal), entries);
             }
 
             EndObservation(observing, Alternatives(roster, perUser, absences), roster.Accepted);
@@ -602,7 +606,9 @@ public sealed class DesiredRevisionPath
             return "processed by the server";
         }
 
-        return roster.MessageId != null ? "sent to the server" : "not acknowledged; users are sent one by one";
+        return roster.MessageId != null
+            ? "queued for the server (waiting for save, not only a socket write)"
+            : "not queued; users are sent one by one";
     }
 
     private static string SummarizeUsers(IEnumerable<ReaderUser> users)
@@ -687,10 +693,34 @@ public sealed class DesiredRevisionPath
         }
 
         _log.LogInformation(
-            "Reader {Reader}: reconnect while list {MessageId} is still queued; waiting for that save before sending a new list. Member sync stays paused.",
+            "Reader {Reader}: reconnect while list {MessageId} is still queued; re-sending that same list and waiting for the server to save it. Member sync stays paused.",
             _readerLabel, pendingId);
+        await RedeliverQueuedAsync(pendingId, cancellationToken).ConfigureAwait(false);
         EndObservation(observing, [[pendingId]], false);
         return true;
+    }
+
+    private async Task RedeliverQueuedAsync(string messageId, CancellationToken cancellationToken)
+    {
+        var redeliver = _options.RedeliverMessage;
+        if (redeliver == null || string.IsNullOrWhiteSpace(messageId))
+        {
+            return;
+        }
+
+        try
+        {
+            if (await redeliver(messageId, cancellationToken).ConfigureAwait(false))
+            {
+                _log.LogInformation(
+                    "Reader {Reader}: re-queued list {MessageId} for the server (same messageId).",
+                    _readerLabel, messageId);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogDebug(ex, "Reader {Reader}: could not re-queue list {MessageId}", _readerLabel, messageId);
+        }
     }
 
     /// <summary>
@@ -845,6 +875,8 @@ public sealed class DesiredRevisionPath
             return processed.Value;
         }
 
+        await RedeliverFenceIfDueAsync(cancellationToken).ConfigureAwait(false);
+
         lock (_gateLock)
         {
             if (_gate == ObservationGate.Fenced)
@@ -885,6 +917,36 @@ public sealed class DesiredRevisionPath
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// While fenced on an outbox messageId the server has not saved, re-send that same envelope.
+    /// A socket write is not acceptance; without this a list can sit forever if the link stays up.
+    /// </summary>
+    private async Task RedeliverFenceIfDueAsync(CancellationToken cancellationToken)
+    {
+        IReadOnlyList<string> ids;
+        lock (_gateLock)
+        {
+            if (_gate != ObservationGate.Fenced || _worker.Now < _nextFenceRedeliver || _fence.Count == 0)
+            {
+                return;
+            }
+
+            _nextFenceRedeliver = _worker.Now + _options.FenceRedeliverEvery;
+            ids = _fence.SelectMany(alternative => alternative).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal).ToList();
+        }
+
+        var pending = _options.IsMessagePending;
+        foreach (var id in ids)
+        {
+            if (pending != null && !pending(id))
+            {
+                continue;
+            }
+
+            await RedeliverQueuedAsync(id, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>True when any fenced messageId is still in the outbound store (not yet ACK'd).</summary>
@@ -1741,4 +1803,10 @@ public sealed record DesiredPathOptions
 
     /// <summary>Clear an outbox message after observed confirms it was saved.</summary>
     public Action<string>? AcknowledgeMessage { get; init; }
+
+    /// <summary>Re-deliver a still-queued outbox envelope (same messageId). True when a send was attempted.</summary>
+    public Func<string, CancellationToken, Task<bool>>? RedeliverMessage { get; init; }
+
+    /// <summary>How often a fenced, still-queued list is written to the link again while waiting for save.</summary>
+    public TimeSpan FenceRedeliverEvery { get; init; } = TimeSpan.FromSeconds(30);
 }

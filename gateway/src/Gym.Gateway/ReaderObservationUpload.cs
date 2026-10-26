@@ -159,7 +159,7 @@ public sealed class ReaderObservationUpload : IReaderObservationUpload
             {
                 await _link.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
                 _log.LogInformation(
-                    "Reader {Reader}: sent the full list of {Count} people to the server without waiting for a reply. Member sync stays paused until the server has saved it.",
+                    "Reader {Reader}: queued the full list of {Count} people for the server (same messageId until saved). Member sync stays paused until the server has saved it.",
                     reader, people.Length);
                 return new RosterUpload(false, envelope.MessageId);
             }

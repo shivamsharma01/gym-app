@@ -340,8 +340,9 @@ public class RevisionSupersessionTests : IDisposable
 
         Assert.Equal(ObservationGate.Open, path.Gate);
         Assert.Equal("Ravi", reader.GetUser("2").User!.Name);
-        Assert.Contains("1", upload.Ids);
+        Assert.Contains("1", upload.RosterIds);
         Assert.Contains(upload.MessageIds, id => id.StartsWith("list-", StringComparison.Ordinal));
+        Assert.DoesNotContain("users", upload.Calls);
     }
 
     [Fact]
@@ -571,7 +572,8 @@ public class RevisionSupersessionTests : IDisposable
         Assert.Equal([1L, 2L], server.AckedRevisions);
         Assert.Equal(2, worker.AppliedRevision);
         Assert.Equal(ObservationGate.Open, path.Gate);
-        Assert.Contains("5", upload.Ids);
+        Assert.Contains("5", upload.RosterIds);
+        Assert.DoesNotContain("users", upload.Calls);
     }
 
     [Fact]

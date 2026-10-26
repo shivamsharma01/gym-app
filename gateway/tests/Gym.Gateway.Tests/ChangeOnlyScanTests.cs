@@ -308,7 +308,7 @@ public sealed class ChangeOnlyScanTests : IDisposable
         await path.BootstrapAsync(CancellationToken.None);
         await path.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "list-awaited", "users", "list", "list-awaited" }, sink.Calls);
+        Assert.Equal(new[] { "list-awaited", "list", "list-awaited" }, sink.Calls);
     }
 
     [Fact]
@@ -326,7 +326,7 @@ public sealed class ChangeOnlyScanTests : IDisposable
         await scan;
         await path.BootstrapAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "list-awaited", "users", "list", "list-awaited" }, sink.Calls);
+        Assert.Equal(new[] { "list-awaited", "list", "list-awaited" }, sink.Calls);
     }
 
     [Fact]

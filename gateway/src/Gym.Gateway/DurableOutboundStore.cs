@@ -151,9 +151,9 @@ public sealed class DurableOutboundStore
     }
 
     /// <summary>
-    /// Every unacknowledged envelope, oldest first. Of several lists left for one reader (a crash
-    /// between writing a list and dropping the earlier one), only the newest is kept, and none is
-    /// kept when this process has queued a newer list of that reader since the files were read.
+    /// Every unacknowledged envelope. Complete reader lists are first (oldest list first), then
+    /// every other envelope oldest first — so a stranded list is not buried behind thousands of
+    /// per-user rows. Of several lists left for one reader, only the newest is kept.
     /// </summary>
     public IReadOnlyList<GatewayEnvelope> LoadPending()
     {
@@ -184,7 +184,42 @@ public sealed class DurableOutboundStore
             }
         }
 
-        return kept;
+        return kept
+            .OrderByDescending(e => SnapshotKey(e) != null)
+            .ThenBy(e => e.Timestamp, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>Complete-list envelopes still queued, newest snapshot per reader only.</summary>
+    public IReadOnlyList<GatewayEnvelope> LoadPendingLists() =>
+        LoadPending().Where(e => SnapshotKey(e) != null).ToList();
+
+    /// <summary>Reads a still-pending envelope from disk, or null when it is gone.</summary>
+    public GatewayEnvelope? TryReadPending(string messageId)
+    {
+        if (string.IsNullOrWhiteSpace(messageId) || !_pending.ContainsKey(messageId))
+        {
+            return null;
+        }
+
+        var path = PathOf(messageId);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<GatewayEnvelope>(File.ReadAllText(path), JsonOptions.Inbound);
+            return envelope != null && string.Equals(envelope.MessageId, messageId, StringComparison.Ordinal)
+                ? envelope
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to read outbox file {MessageId}", messageId);
+            return null;
+        }
     }
 
     private List<GatewayEnvelope> ReadFiles()

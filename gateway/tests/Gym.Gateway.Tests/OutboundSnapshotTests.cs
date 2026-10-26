@@ -43,7 +43,8 @@ public sealed class OutboundSnapshotTests : IDisposable
 
         Assert.False(store.IsPending(firstA.MessageId));
         var reloaded = Store().LoadPending().Select(e => e.MessageId).ToList();
-        Assert.Equal([observation.MessageId, listB.MessageId, absence.MessageId, lastA.MessageId], reloaded);
+        // Complete lists are ordered before per-user rows; among each group, oldest first.
+        Assert.Equal([listB.MessageId, lastA.MessageId, observation.MessageId, absence.MessageId], reloaded);
         Assert.Equal(4, Directory.GetFiles(_directory, "*.json").Length);
     }
 
@@ -203,13 +204,47 @@ public sealed class OutboundSnapshotTests : IDisposable
         store.Persist(stale);
         var fresh = Roster("reader-a", 2);
         backend.Online = true;
+        // Lists are delivered before per-user rows, so the first write is the list; replacing it
+        // mid-replay must leave only the newer list pending and must not deliver that newer list in
+        // the same pass (it was not in the snapshot).
         backend.OnFirstDelivery = () => store.Persist(fresh);
 
         await Link(store, backend).ReplayPendingAsync(CancellationToken.None);
 
-        Assert.Equal([first.MessageId], backend.Delivered.Select(e => e.MessageId));
+        Assert.Equal([stale.MessageId, first.MessageId], backend.Delivered.Select(e => e.MessageId));
         Assert.True(store.IsPending(fresh.MessageId));
-        Assert.False(File.Exists(Path.Combine(_directory, stale.MessageId + ".json")));
+        Assert.False(store.IsPending(stale.MessageId));
+        Assert.DoesNotContain(backend.Delivered, e => e.MessageId == fresh.MessageId);
+    }
+
+    [Fact]
+    public async Task Pending_lists_are_redelivered_before_per_user_rows()
+    {
+        var backend = new SwitchableBackend { Online = true };
+        var store = Store();
+        var seen = Observation("reader-a", "7", 0);
+        store.Persist(seen);
+        var list = Roster("reader-a", 1);
+        store.Persist(list);
+
+        await Link(store, backend).ReplayPendingAsync(CancellationToken.None);
+
+        Assert.Equal([list.MessageId, seen.MessageId], backend.Delivered.Select(e => e.MessageId));
+    }
+
+    [Fact]
+    public async Task TryRedeliver_resends_the_same_pending_list_messageId()
+    {
+        var backend = new SwitchableBackend { Online = true, Status = HttpStatusCode.InternalServerError };
+        var store = Store();
+        var list = Roster("reader-a", 0);
+        store.Persist(list);
+        var link = Link(store, backend);
+
+        Assert.NotNull(store.TryReadPending(list.MessageId));
+        Assert.True(await link.TryRedeliverAsync(list.MessageId, CancellationToken.None));
+        Assert.True(await link.TryRedeliverAsync(list.MessageId, CancellationToken.None));
+        Assert.True(store.IsPending(list.MessageId));
     }
 
     [Fact]

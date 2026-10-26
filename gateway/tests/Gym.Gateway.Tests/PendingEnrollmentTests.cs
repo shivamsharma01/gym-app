@@ -31,7 +31,7 @@ public class PendingEnrollmentTests : IDisposable
         await path.ReconnectAsync(CancellationToken.None);
         await path.ReconnectAsync(CancellationToken.None);
 
-        Assert.Equal(new[] { "7", "7" }, sink.Ids);
+        Assert.Empty(sink.Ids);
         Assert.Equal(new[] { 1, 1 }, sink.TrustedRosterTotals);
         Assert.Equal(new[] { "7", "7" }, sink.RosterIds);
         Assert.Equal(writes, reader.Writes.Count);

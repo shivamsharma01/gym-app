@@ -166,17 +166,51 @@ public sealed class BackendLink : IAsyncDisposable, IFaceTransfer
     }
 
     /// <summary>
-    /// Replay any envelopes that survived a crash without an ACK. One acknowledged, or replaced by a
-    /// newer list of the same reader, while the replay runs is skipped, so an older list is never
-    /// sent after the list that replaced it.
+    /// Replay any envelopes that survived a crash without an ACK. Complete lists are delivered
+    /// before per-user rows. One acknowledged, or replaced by a newer list of the same reader,
+    /// while the replay runs is skipped, so an older list is never sent after the list that replaced it.
     /// </summary>
-    public async Task ReplayPendingAsync(CancellationToken cancellationToken)
+    public Task ReplayPendingAsync(CancellationToken cancellationToken) =>
+        ReplayAsync(_outbox.LoadPending(), cancellationToken);
+
+    /// <summary>
+    /// Re-sends only complete reader lists still in the outbox. Used while the socket stays up so a
+    /// list that was written to the wire but never ACKed is not stuck until the next reconnect.
+    /// </summary>
+    public Task RedeliverPendingListsAsync(CancellationToken cancellationToken) =>
+        ReplayAsync(_outbox.LoadPendingLists(), cancellationToken);
+
+    /// <summary>
+    /// Re-delivers one still-queued envelope (same messageId). False when it is no longer pending.
+    /// </summary>
+    public async Task<bool> TryRedeliverAsync(string messageId, CancellationToken cancellationToken)
+    {
+        var envelope = _outbox.TryReadPending(messageId);
+        if (envelope == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            await DeliverAsync(envelope, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is WebSocketException or IOException or ObjectDisposedException
+                                       or HttpRequestException or TaskCanceledException)
+        {
+            _log.LogDebug(ex, "Redeliver of {MessageId} failed; remains queued", messageId);
+            return false;
+        }
+    }
+
+    private async Task ReplayAsync(IReadOnlyList<GatewayEnvelope> envelopes, CancellationToken cancellationToken)
     {
         var pending = 0;
         var failed = 0;
         Exception? firstFailure = null;
         string? firstMessageId = null;
-        foreach (var envelope in _outbox.LoadPending())
+        foreach (var envelope in envelopes)
         {
             if (!_outbox.IsPending(envelope.MessageId))
             {

@@ -16,6 +16,7 @@ import com.example.gym.device.dto.DesiredStateRequests.DesiredPage;
 import com.example.gym.device.dto.DesiredStateRequests.ReportOccupied;
 import com.example.gym.device.dto.DesiredStateRequests.RevisionNotice;
 import com.example.gym.device.repo.DesiredMemberProjectionRepository;
+import com.example.gym.device.repo.DeviceObservedUserRepository;
 import com.example.gym.device.repo.DeviceRepository;
 import com.example.gym.device.repo.GatewayRepository;
 import com.example.gym.device.repo.MemberDeviceMappingRepository;
@@ -88,6 +89,7 @@ public class DesiredProjectionService {
     private final ReaderReviewService reviews;
     private final AttendanceLinker attendance;
     private final MemberRepository members;
+    private final DeviceObservedUserRepository observedUsers;
 
     public DesiredProjectionService(DeviceRepository devices,
                                     GatewayRepository gateways,
@@ -102,7 +104,8 @@ public class DesiredProjectionService {
                                     GatewaySessionRegistry sessions,
                                     ReaderReviewService reviews,
                                     AttendanceLinker attendance,
-                                    MemberRepository members) {
+                                    MemberRepository members,
+                                    DeviceObservedUserRepository observedUsers) {
         this.devices = devices;
         this.gateways = gateways;
         this.mappings = mappings;
@@ -117,6 +120,7 @@ public class DesiredProjectionService {
         this.reviews = reviews;
         this.attendance = attendance;
         this.members = members;
+        this.observedUsers = observedUsers;
     }
 
     /**
@@ -743,8 +747,10 @@ public class DesiredProjectionService {
     }
 
     /**
-     * The reader already has this id. Remember it, allocate the next integer, and publish a new
-     * revision. The caller does not choose the replacement id.
+     * The reader already has this id. When that person is the same member (same face), retry at the
+     * same id with the observed record as precondition — typical after an authority/profile publish
+     * that expected an empty slot. Otherwise remember the id as blocked, allocate the next integer,
+     * and publish a new revision. The caller does not choose the replacement id.
      */
     @Transactional
     public RevisionNotice occupied(Gateway gateway, ReportOccupied report) {
@@ -753,6 +759,20 @@ public class DesiredProjectionService {
         DesiredMemberProjection row = currentAt(device, report.revision());
         if (!report.deviceUserId().equals(row.getDeviceUserId())) {
             throw CommonExceptions.conflict("Occupied id is not the desired id");
+        }
+        DeviceObservedUser seen = observedUsers
+                .findByDeviceIdAndDeviceUserId(device.getId(), report.deviceUserId())
+                .orElse(null);
+        if (samePersonOccupying(row, seen)) {
+            long revision = cursor.bumpDesired();
+            row.setRevision(revision);
+            row.setExpected(ExpectedOccupant.of(seen));
+            projections.save(row);
+            notifyAfterCommit(device, revision);
+            FlowLog.info("device",
+                    "occupied id {} on reader={} is the same member; retry revision={} at same id",
+                    report.deviceUserId(), device.getPublicId(), revision);
+            return new RevisionNotice(device.getPublicId(), revision);
         }
         if (!blocked.existsByDeviceIdAndDeviceUserId(device.getId(), report.deviceUserId())) {
             blocked.save(new ReaderBlockedUser(device.getTenantId(), device.getId(), report.deviceUserId()));
@@ -772,6 +792,18 @@ public class DesiredProjectionService {
         FlowLog.info("device", "occupied id {} on reader={}; retry revision={} user={}",
                 report.deviceUserId(), device.getPublicId(), revision, nextId);
         return new RevisionNotice(device.getPublicId(), revision);
+    }
+
+    /** Occupant face matches the desired member's face — not a stranger at the id. */
+    private static boolean samePersonOccupying(DesiredMemberProjection row, DeviceObservedUser seen) {
+        if (row.getMemberId() == null || seen == null || !row.isFacePresent()) {
+            return false;
+        }
+        String desiredFace = row.getFaceSha256();
+        String seenFace = seen.getFaceSha256();
+        return desiredFace != null && !desiredFace.isBlank()
+                && seenFace != null && !seenFace.isBlank()
+                && desiredFace.equalsIgnoreCase(seenFace);
     }
 
     /** A reader of this gateway and the row that still carries {@code revision}, with the reader locked. */
@@ -794,9 +826,22 @@ public class DesiredProjectionService {
         if (stored != null) {
             return stored;
         }
-        return reviews.baseline(row.getDeviceId(), row.getDeviceUserId())
-                .map(ExpectedOccupant::of)
-                .orElse(ExpectedOccupant.ABSENT);
+        Optional<ExpectedOccupant> baseline = reviews.baseline(row.getDeviceId(), row.getDeviceUserId())
+                .map(ExpectedOccupant::of);
+        if (baseline.isPresent()) {
+            return baseline.get();
+        }
+        // Profile publish with no baseline yet: if the reader already shows this member, expect them
+        // so the gateway ReplaceUser instead of reporting Occupied and allocating a new id.
+        if (row.getMemberId() != null && row.isFacePresent() && row.getFaceSha256() != null) {
+            DeviceObservedUser seen = observedUsers
+                    .findByDeviceIdAndDeviceUserId(row.getDeviceId(), row.getDeviceUserId())
+                    .orElse(null);
+            if (samePersonOccupying(row, seen)) {
+                return ExpectedOccupant.of(seen);
+            }
+        }
+        return ExpectedOccupant.ABSENT;
     }
 
     private record Held(Device device, ReaderRevision cursor, DesiredMemberProjection row,

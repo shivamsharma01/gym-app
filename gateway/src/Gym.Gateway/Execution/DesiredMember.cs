@@ -48,12 +48,13 @@ public sealed record ExpectedOccupant(
         }
 
         var user = occupant.User;
+        // Authority is not a precondition: staff change ADMIN↔Customer in place via ReplaceUser.
+        // Comparing it here reported Occupied/OccupantChanged and remapped the member to a new id.
         return user.Name == Name
             && Blank(user.NameEx) == Blank(NameEx)
             && (UserStatus is null || user.UserStatus == UserStatus)
             && SameTime(user.ValidFrom, ValidFrom)
             && SameTime(user.ValidTo, ValidTo)
-            && (Authority is null || NormalAuthority(user.Authority) == NormalAuthority(Authority))
             && (FaceSha256 is null || string.Equals(occupant.FaceSha256, FaceSha256, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -66,11 +67,6 @@ public sealed record ExpectedOccupant(
             && DateTimeOffset.TryParse(expected, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var sent)
             && ReaderLocalClock.Wall(read.Value).Date == ReaderLocalClock.Wall(sent).Date);
 
-    /// <summary>The reader reports an ordinary user as Customer or USER, or not at all.</summary>
-    private static string NormalAuthority(string? value) =>
-        string.IsNullOrWhiteSpace(value) || value.Trim().Equals("USER", StringComparison.OrdinalIgnoreCase)
-            ? "Customer"
-            : value.Trim();
 }
 
 /// <summary>What a reader id holds now: no one, or a user and its photo hash ("" for no photo).</summary>

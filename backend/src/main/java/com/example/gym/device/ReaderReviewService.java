@@ -94,6 +94,10 @@ public class ReaderReviewService {
         if (baseline != null && agrees(payload, held(baseline))) {
             return;
         }
+        // Authority alone is pushed by staff edits; opening Review invited Create and a new device id.
+        if (agreesIgnoringAuthority(payload, held(desired))) {
+            return;
+        }
         open(device, desired, baseline, payload, false);
     }
 
@@ -459,10 +463,15 @@ public class ReaderReviewService {
      * same day is not a difference. Photo is compared to the last device-observed hash.
      */
     private static boolean agrees(JsonNode payload, Held other) {
+        return agreesIgnoringAuthority(payload, other)
+                && authority(text(payload, "authority")).equals(other.authority());
+    }
+
+    /** Name, validity, status, and photo — not terminal authority (ADMIN vs Customer). */
+    private static boolean agreesIgnoringAuthority(JsonNode payload, Held other) {
         Integer readerStatus = status(payload);
         String readerFace = face(payload);
         return shown(text(payload, "name"), text(payload, "nameEx")).equals(other.name())
-                && authority(text(payload, "authority")).equals(other.authority())
                 && validityAgrees(payload, other.validFrom(), other.validTo())
                 && (readerStatus == null || readerStatus == other.userStatus())
                 && (readerFace == null || readerFace.equalsIgnoreCase(other.faceSha256()));

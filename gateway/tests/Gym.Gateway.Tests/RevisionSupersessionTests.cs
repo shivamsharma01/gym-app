@@ -477,24 +477,18 @@ public class RevisionSupersessionTests : IDisposable
         var upload = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
         using var worker = Worker(reader, "reconnect-saved");
         var pending = new HashSet<string>(StringComparer.Ordinal);
-        var acknowledged = new List<string>();
         var path = new DesiredRevisionPath("r", worker, reader, server, upload, null,
             new DesiredPathOptions
             {
                 ReconnectWait = TimeSpan.Zero,
                 IsMessagePending = id => pending.Contains(id),
                 PendingListMessageId = _ => pending
-                    .FirstOrDefault(id => id.StartsWith("list-", StringComparison.Ordinal)),
-                AcknowledgeMessage = id =>
-                {
-                    pending.Remove(id);
-                    acknowledged.Add(id);
-                }
+                    .FirstOrDefault(id => id.StartsWith("list-", StringComparison.Ordinal))
             });
 
         await path.ReconnectAsync(CancellationToken.None);
         var firstIds = upload.MessageIds.ToList();
-        var listId = Assert.Single(firstIds.Where(id => id.StartsWith("list-", StringComparison.Ordinal)));
+        Assert.Contains(firstIds, id => id.StartsWith("list-", StringComparison.Ordinal));
         foreach (var id in firstIds)
         {
             pending.Add(id);
@@ -502,12 +496,38 @@ public class RevisionSupersessionTests : IDisposable
 
         Assert.Equal(ObservationGate.Fenced, path.Gate);
 
+        // Server finished the same messageId; reconnect must open on that id, not upload a replacement.
         server.Processing = true;
         await path.ReconnectAsync(CancellationToken.None);
 
         Assert.Equal(ObservationGate.Open, path.Gate);
         Assert.Equal(firstIds, upload.MessageIds);
-        Assert.Equal([listId], acknowledged);
+        Assert.Equal("Ravi", reader.GetUser("2").User!.Name);
+    }
+
+    [Fact]
+    public async Task Observe_after_unobserved_adopts_a_queued_list_already_saved_on_the_server()
+    {
+        var reader = new FakeReader();
+        Enrol(reader, "1", "Asha");
+        var server = new Server { Items = [Item(1, "2", "Ravi")], Processing = true };
+        var upload = new PendingEnrollmentTests.RecordingUpload { RosterAccepted = false };
+        using var worker = Worker(reader, "observe-adopt");
+        var pendingList = "list-already-queued";
+        var acknowledged = new List<string>();
+        var path = new DesiredRevisionPath("r", worker, reader, server, upload, null,
+            new DesiredPathOptions
+            {
+                ReconnectWait = TimeSpan.Zero,
+                PendingListMessageId = _ => pendingList,
+                AcknowledgeMessage = id => acknowledged.Add(id)
+            });
+
+        await path.ReconnectAsync(CancellationToken.None);
+
+        Assert.Equal(ObservationGate.Open, path.Gate);
+        Assert.Empty(upload.MessageIds);
+        Assert.Equal([pendingList], acknowledged);
         Assert.Equal("Ravi", reader.GetUser("2").User!.Name);
     }
 

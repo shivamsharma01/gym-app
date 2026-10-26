@@ -52,6 +52,7 @@ public sealed class DesiredRevisionPath
     private long _applyTarget;
     private long _applyAt;
     private int _written;
+    private int _matched;
 
     /// <summary>One plain sentence for the minute status line.</summary>
     public string StatusText()
@@ -79,7 +80,7 @@ public sealed class DesiredRevisionPath
             ObservationGate.Fenced =>
                 $"member sync is paused. Waiting for the server to finish saving the reader list ({waited} min so far). Nothing to do in the app.",
             ObservationGate.Open when _applyTarget > _applyFrom =>
-                $"writing members onto the reader. {_written} written, now at revision {_applyAt} of {_applyTarget}.",
+                $"writing members onto the reader. {_written + _matched} of {_applyTarget} confirmed ({_written} written, {_matched} already on the reader), now at revision {_applyAt}.",
             ObservationGate.Open =>
                 "the reader list is saved. Checking whether any members still need to be written.",
             _ => "member sync is paused. The reader list has not been sent to the server yet."
@@ -135,7 +136,7 @@ public sealed class DesiredRevisionPath
             _readerLabel);
     }
 
-    private void NoteWriting(long from, long target, int written, long at)
+    private void NoteWriting(long from, long target, int written, int matched, long at)
     {
         lock (_gateLock)
         {
@@ -143,6 +144,7 @@ public sealed class DesiredRevisionPath
             _applyTarget = target;
             _applyAt = at;
             _written = written;
+            _matched = matched;
         }
     }
 
@@ -1164,7 +1166,7 @@ public sealed class DesiredRevisionPath
                 _log.LogInformation(
                     "Reader {Reader}: writing members onto the reader, from revision {From} through revision {Target}.",
                     _reader, _from, _target);
-                _path.NoteWriting(_from, _target, _written, _from);
+                _path.NoteWriting(_from, _target, _written, _matched, _from);
             }
         }
 
@@ -1179,10 +1181,11 @@ public sealed class DesiredRevisionPath
                         "Reader {Reader}: member {UserId} is {Action} the reader ({Revision} of {Target}, {Seconds:0} s).",
                         _reader, item.DeviceUserId, item.Present ? "now on" : "removed from", item.Revision, _target,
                         took.TotalSeconds);
-                    _path.NoteWriting(_from, _target, _written, item.Revision);
+                    _path.NoteWriting(_from, _target, _written, _matched, item.Revision);
                     break;
                 case MemberApplyKind.AlreadyApplied:
                     _matched++;
+                    _path.NoteWriting(_from, _target, _written, _matched, item.Revision);
                     break;
                 case MemberApplyKind.Failed:
                     _failed++;
@@ -1199,9 +1202,9 @@ public sealed class DesiredRevisionPath
             if (_checked % Every == 0)
             {
                 _log.LogInformation(
-                    "Reader {Reader}: {Written} members written, {Matched} already on the reader, {Failed} not written. Now at revision {Revision} of {Target}.",
-                    _reader, _written, _matched, _failed, item.Revision, _target);
-                _path.NoteWriting(_from, _target, _written, item.Revision);
+                    "Reader {Reader}: {Confirmed} of {Target} confirmed ({Written} written, {Matched} already on the reader, {Failed} not written). Now at revision {Revision}.",
+                    _reader, _written + _matched, _target, _written, _matched, _failed, item.Revision);
+                _path.NoteWriting(_from, _target, _written, _matched, item.Revision);
             }
         }
 
@@ -1213,10 +1216,10 @@ public sealed class DesiredRevisionPath
             }
 
             _log.LogInformation(
-                "Reader {Reader}: finished this batch in {Seconds:0} s. {Written} written, {Matched} already on the reader, {Failed} not written and will be tried again, {Reported} sent back for review, {Waiting} still waiting. Through revision {Target}.",
-                _reader, Stopwatch.GetElapsedTime(_started).TotalSeconds, _written, _matched, _failed, _reported,
-                _waiting, _target);
-            _path.NoteWriting(_from, _target, _written, _target);
+                "Reader {Reader}: finished this batch in {Seconds:0} s. {Confirmed} of {Target} confirmed ({Written} written, {Matched} already on the reader, {Failed} not written and will be tried again, {Reported} sent back for review, {Waiting} still waiting).",
+                _reader, Stopwatch.GetElapsedTime(_started).TotalSeconds, _written + _matched, _target, _written,
+                _matched, _failed, _reported, _waiting);
+            _path.NoteWriting(_from, _target, _written, _matched, _target);
         }
     }
 
@@ -1422,14 +1425,8 @@ public sealed class DesiredRevisionPath
             return;
         }
 
-        var user = _reader.GetUser(item.DeviceUserId);
-        var face = _reader.GetFace(item.DeviceUserId);
-        if (!user.Ok || user.User == null || !face.Ok || face.Bytes is not { Length: > 0 })
-        {
-            throw new ReadBackException("Read-back is incomplete; acknowledgement was not sent");
-        }
-
-        var read = user.User;
+        var (user, face) = await ReadPresentForAckAsync(item.DeviceUserId, cancellationToken).ConfigureAwait(false);
+        var read = user.User!;
         if (read.ValidFrom == null || read.ValidTo == null || string.IsNullOrWhiteSpace(read.Name))
         {
             throw new ReadBackException("Read-back user is incomplete; acknowledgement was not sent");
@@ -1442,7 +1439,7 @@ public sealed class DesiredRevisionPath
             throw new ReadBackException("Read-back user does not match desired; acknowledgement was not sent");
         }
 
-        var hash = Convert.ToHexString(SHA256.HashData(face.Bytes)).ToLowerInvariant();
+        var hash = Convert.ToHexString(SHA256.HashData(face.Bytes!)).ToLowerInvariant();
         await _client.AcknowledgeAsync(new DesiredAcknowledgement(
             _deviceId,
             item.Revision,
@@ -1453,6 +1450,31 @@ public sealed class DesiredRevisionPath
             item.ValidFrom,
             item.ValidTo,
             hash) { ReadAfter = _worker.CurrentScan }, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// One short retry when GetUser/GetFace come back incomplete (reader busy). Mismatch stays an
+    /// immediate failure for the caller.
+    /// </summary>
+    private async Task<(ReaderUserResult User, ReaderFaceResult Face)> ReadPresentForAckAsync(
+        string deviceUserId, CancellationToken cancellationToken)
+    {
+        var user = _reader.GetUser(deviceUserId);
+        var face = _reader.GetFace(deviceUserId);
+        if (user.Ok && user.User != null && face.Ok && face.Bytes is { Length: > 0 })
+        {
+            return (user, face);
+        }
+
+        await Task.Delay(TimeSpan.FromMilliseconds(300), cancellationToken).ConfigureAwait(false);
+        user = _reader.GetUser(deviceUserId);
+        face = _reader.GetFace(deviceUserId);
+        if (!user.Ok || user.User == null || !face.Ok || face.Bytes is not { Length: > 0 })
+        {
+            throw new ReadBackException("Read-back is incomplete; acknowledgement was not sent");
+        }
+
+        return (user, face);
     }
 
     private async Task AcknowledgeFaceClearedAsync(DesiredPullItem item, CancellationToken cancellationToken)

@@ -46,6 +46,27 @@ public class DesiredStateClientContractTests
     }
 
     [Fact]
+    public async Task Many_pulls_do_not_retain_earlier_bodies()
+    {
+        var big = new string('x', 50_000);
+        var reply =
+            "{\"desiredRevision\":1,\"appliedRevision\":0,\"items\":[{\"revision\":1,\"deviceUserId\":\"7\",\"name\":\"Asha\","
+            + "\"userStatus\":0,\"validFrom\":\"2026-10-08T00:00:00+05:30\",\"validTo\":\"2026-10-08T23:59:59+05:30\","
+            + "\"authority\":\"Customer\",\"doorNum\":1,\"timeSectionNum\":1,\"faceBase64\":\"" + big + "\",\"present\":true}]}";
+        var handler = new Backend(reply);
+        var client = new DesiredStateClient(new HttpClient(handler), "http://backend");
+
+        for (var i = 0; i < 40; i++)
+        {
+            await client.PullAsync("r", 0, CancellationToken.None);
+        }
+
+        Assert.Contains(big, client.LastPullBody, StringComparison.Ordinal);
+        Assert.True(client.LastPullBody.Length < 80_000,
+            "only the latest pull body is kept; accumulating pages would OOM the gateway");
+    }
+
+    [Fact]
     public async Task The_occupant_report_carries_what_the_reader_shows()
     {
         var handler = new Backend("{}");

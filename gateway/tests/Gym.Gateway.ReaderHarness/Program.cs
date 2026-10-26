@@ -186,7 +186,7 @@ internal static class Harness
         var publicIdLeaked = arguments.PublicId.Length > 0 && Leaked(
             arguments.PublicId,
             writes,
-            client.PullTranscript,
+            client.LastPullBody,
             client.OccupiedIds,
             users.Select(user => (user.id, user.name, user.nameEx)));
         var acked = client.AcknowledgementPosts > 0;
@@ -210,7 +210,7 @@ internal static class Harness
             acked,
             ackCount = client.AcknowledgementPosts,
             publicIdLeaked,
-            pullTranscript = client.PullTranscript,
+            lastPullBody = client.LastPullBody,
             executedAgain = outcome.ExecutedAgain,
             commandDispatched = outcome.CommandDispatched,
             occupiedId = client.OccupiedIds.FirstOrDefault(),

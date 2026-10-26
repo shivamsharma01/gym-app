@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Gym.Gateway.Execution;
 using Microsoft.Extensions.Logging;
 
 namespace Gym.Gateway;
@@ -16,6 +17,7 @@ public sealed class DesiredRevisionHub
     private readonly ConcurrentDictionary<string, Func<CancellationToken, Task<bool>>> _scansNow = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Func<CancellationToken, Task>> _retries = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Func<string>> _statuses = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Func<ObservationGate>> _gates = new(StringComparer.Ordinal);
     private readonly ILogger<DesiredRevisionHub> _log;
     private readonly ReaderLabels _labels;
 
@@ -58,6 +60,16 @@ public sealed class DesiredRevisionHub
         ArgumentNullException.ThrowIfNull(status);
         _statuses[deviceId] = status;
     }
+
+    /// <summary>Observation gate for this reader, used to pause attendance while a list is in flight.</summary>
+    public void AttachGate(string deviceId, Func<ObservationGate> gate)
+    {
+        ArgumentNullException.ThrowIfNull(gate);
+        _gates[deviceId] = gate;
+    }
+
+    public ObservationGate GateOf(string deviceId) =>
+        _gates.TryGetValue(deviceId, out var gate) ? gate() : ObservationGate.Open;
 
     public IReadOnlyList<string> StatusLines() =>
         _statuses.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry => entry.Value()).ToList();

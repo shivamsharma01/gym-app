@@ -108,6 +108,23 @@ public sealed class OutboundSnapshotTests : IDisposable
         Assert.True(store.IsPending(later.MessageId));
     }
 
+    [Fact]
+    public void A_corrupt_outbox_file_is_quarantined_and_not_reloaded()
+    {
+        Directory.CreateDirectory(_directory);
+        var badPath = Path.Combine(_directory, "corrupt.json");
+        File.WriteAllText(badPath, "{not-json");
+        var good = Observation("reader-a", "7", 1);
+        Store().Persist(good);
+
+        var pending = Store().LoadPending().Select(e => e.MessageId).ToList();
+
+        Assert.Equal([good.MessageId], pending);
+        Assert.False(File.Exists(badPath));
+        Assert.True(File.Exists(badPath + ".bad"));
+        Assert.Equal([good.MessageId], Store().LoadPending().Select(e => e.MessageId).ToList());
+    }
+
     /// <summary>
     /// An hour without the server at one scan every 15 seconds, two readers of three users each.
     /// Every per-user message survives; of 480 lists only the last of each reader is replayed.

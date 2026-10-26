@@ -131,9 +131,8 @@ public sealed class DesiredStateClient : IDesiredStateClient
 
     public IReadOnlyList<string> OccupiedIds => _occupiedIds;
 
+    /// <summary>The most recent pull body only. Never accumulates; faces would OOM the service.</summary>
     public string LastPullBody { get; private set; } = "";
-
-    public string PullTranscript { get; private set; } = "";
 
     private readonly List<string> _occupiedIds = [];
 
@@ -154,7 +153,6 @@ public sealed class DesiredStateClient : IDesiredStateClient
         using var response = await _http.GetAsync(url, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         LastPullBody = body;
-        PullTranscript += body;
         if (!response.IsSuccessStatusCode)
         {
             throw new InvalidOperationException($"Desired pull failed HTTP {(int)response.StatusCode}: {body}");

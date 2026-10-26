@@ -197,7 +197,8 @@ public sealed class LiveBootstrapTests : IDisposable
             logs,
             new SuppliedReaderFactory(open),
             desired,
-            Path.Combine(_directory, "journals"));
+            Path.Combine(_directory, "journals"),
+            listAcceptanceTimeout: TimeSpan.FromMilliseconds(200));
         gateway.AttachReaders();
         return gateway;
     }
@@ -311,24 +312,34 @@ public sealed class LiveBootstrapTests : IDisposable
                     return;
                 }
 
-                using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
-                var body = await reader.ReadToEndAsync().ConfigureAwait(false);
-                Messages++;
-                if (IsTrustedEmptyRoster(body))
+                var path = context.Request.Url?.AbsolutePath ?? "";
+                byte[] bytes;
+                if (path.Contains("faces/wanted", StringComparison.Ordinal))
                 {
-                    SawTrustedEmptyRoster = true;
-                }
-
-                if (Roster(body) is { } roster)
-                {
-                    Rosters.Add(roster);
+                    bytes = "[]"u8.ToArray();
                 }
                 else
                 {
-                    UserMessages++;
+                    using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
+                    var body = await reader.ReadToEndAsync().ConfigureAwait(false);
+                    Messages++;
+                    if (IsTrustedEmptyRoster(body))
+                    {
+                        SawTrustedEmptyRoster = true;
+                    }
+
+                    if (Roster(body) is { } roster)
+                    {
+                        Rosters.Add(roster);
+                    }
+                    else
+                    {
+                        UserMessages++;
+                    }
+
+                    bytes = Acks ? Encoding.UTF8.GetBytes(Ack(body)) : "{}"u8.ToArray();
                 }
 
-                var bytes = Acks ? Encoding.UTF8.GetBytes(Ack(body)) : "{}"u8.ToArray();
                 context.Response.StatusCode = 200;
                 context.Response.ContentType = "application/json";
                 context.Response.ContentLength64 = bytes.Length;

@@ -635,6 +635,18 @@ public class MemberCreateWorkerTests : IDisposable
         Assert.Equal(FakeReader.FailUnknown, reader.GetFace("1").FailCode);
     }
 
+    [Fact]
+    public void An_incomplete_verify_read_back_is_retried_once()
+    {
+        var inner = new FakeReader();
+        var reader = new IncompleteGetUserOnce(inner);
+        using var worker = new ReaderWorker("reader-1", reader, Path.Combine(_directory, "readback-retry.sqlite"), TimeSpan.Zero);
+
+        Assert.Equal(MemberApplyKind.Applied, worker.ApplyMember(Member("1", null)).Kind);
+        Assert.Equal(Face, inner.GetFace("1").Bytes);
+        Assert.True(reader.Retried);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))
@@ -646,6 +658,38 @@ public class MemberCreateWorkerTests : IDisposable
     private ReaderWorker Start(string journal, FakeReader reader)
     {
         return new ReaderWorker("reader-1", reader, journal, TimeSpan.Zero);
+    }
+
+    /// <summary>Fails the verify GetUser once (second call), then succeeds.</summary>
+    private sealed class IncompleteGetUserOnce(FakeReader inner) : IReaderAdapter
+    {
+        private int _gets;
+
+        public bool Retried { get; private set; }
+
+        public ReaderListResult ListUsers() => inner.ListUsers();
+        public FaceChecksumList ListFaceChecksums() => inner.ListFaceChecksums();
+        public ReaderUserResult GetUser(string deviceUserId)
+        {
+            _gets++;
+            if (_gets == 2)
+            {
+                Retried = true;
+                return new ReaderUserResult(false, null, "busy", null, "busy");
+            }
+
+            return inner.GetUser(deviceUserId);
+        }
+
+        public ReaderFaceResult GetFace(string deviceUserId) => inner.GetFace(deviceUserId);
+        public ReaderCallResult CreateUser(ReaderUser user) => inner.CreateUser(user);
+        public ReaderCallResult ReplaceUser(ReaderUser user) => inner.ReplaceUser(user);
+        public ReaderCallResult InsertFace(string deviceUserId, byte[]? jpeg) => inner.InsertFace(deviceUserId, jpeg);
+        public ReaderCallResult UpdateFace(string deviceUserId, byte[]? jpeg) => inner.UpdateFace(deviceUserId, jpeg);
+        public ReaderCallResult RemoveFace(string deviceUserId) => inner.RemoveFace(deviceUserId);
+        public ReaderCallResult RemoveUser(string deviceUserId) => inner.RemoveUser(deviceUserId);
+        public ReaderPunchResult QueryAttendance(DateTimeOffset fromUtc, DateTimeOffset toUtc) =>
+            inner.QueryAttendance(fromUtc, toUtc);
     }
 
     private static DesiredMember Member(string deviceUserId, string? nameEx)

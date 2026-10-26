@@ -169,8 +169,10 @@ public sealed class DurableOutboundStore
         var list = new List<GatewayEnvelope>();
         foreach (var file in Directory.EnumerateFiles(_directory, "*.json"))
         {
+            long length = 0;
             try
             {
+                length = new FileInfo(file).Length;
                 var json = File.ReadAllText(file);
                 var envelope = JsonSerializer.Deserialize<GatewayEnvelope>(json, JsonOptions.Inbound);
                 if (envelope != null && !string.IsNullOrWhiteSpace(envelope.MessageId))
@@ -180,7 +182,29 @@ public sealed class DurableOutboundStore
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Skipping corrupt outbox file {File}", file);
+                var bad = file + ".bad";
+                try
+                {
+                    if (File.Exists(bad))
+                    {
+                        File.Delete(bad);
+                    }
+
+                    File.Move(file, bad);
+                }
+                catch (Exception move)
+                {
+                    _log.LogWarning(
+                        ex,
+                        "Skipping corrupt outbox file {File} ({Bytes} bytes): {Detail}. Could not quarantine as {Bad}: {Move}",
+                        file, length, ex.Message, bad, move.Message);
+                    continue;
+                }
+
+                _log.LogWarning(
+                    ex,
+                    "Skipping corrupt outbox file {File} ({Bytes} bytes): {Detail}. Quarantined as {Bad}",
+                    file, length, ex.Message, bad);
             }
         }
 

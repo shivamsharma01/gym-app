@@ -30,8 +30,10 @@ public sealed class GatewayWorker : BackgroundService
     private readonly string _readerJournalDirectory;
     private readonly List<ReaderWorker> _readerWorkers = [];
     private readonly List<AttendancePoll> _attendancePolls = [];
+    private readonly ConcurrentDictionary<string, byte> _attendanceSkipped = new(StringComparer.Ordinal);
     private readonly HashSet<string> _attachedReaders = new(StringComparer.Ordinal);
     private readonly object _readersGate = new();
+    private readonly TimeSpan? _listAcceptanceTimeout;
     private bool _readersAttached;
     private CancellationToken _stop;
 
@@ -54,7 +56,8 @@ public sealed class GatewayWorker : BackgroundService
         IDesiredStateClient? desired,
         string? journalDirectory,
         IAttendanceClient? attendance = null,
-        DeviceLocks? locks = null)
+        DeviceLocks? locks = null,
+        TimeSpan? listAcceptanceTimeout = null)
     {
         _options = options;
         _link = link;
@@ -69,6 +72,7 @@ public sealed class GatewayWorker : BackgroundService
         _readerJournalDirectory = string.IsNullOrWhiteSpace(journalDirectory)
             ? Path.Combine(GatewayConfigStore.DefaultConfigDirectory(), "reader-journal")
             : journalDirectory;
+        _listAcceptanceTimeout = listAcceptanceTimeout;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -403,7 +407,8 @@ public sealed class GatewayWorker : BackgroundService
             }
 
             IReaderObservationUpload observations = new ReaderObservationUpload(
-                _options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>(), labels: _readerLabels);
+                _options.Id, _link, _logFactory.CreateLogger<ReaderObservationUpload>(),
+                acceptanceTimeout: _listAcceptanceTimeout, labels: _readerLabels);
             var memory = new ReaderScanMemory(
                 new FaceChecksumCache(Path.ChangeExtension(journal, ".faces.json")),
                 new ScanUploadState(TimeSpan.FromMinutes(Math.Max(1, _options.RosterRefreshMinutes))));
@@ -422,6 +427,7 @@ public sealed class GatewayWorker : BackgroundService
                 path.ScanNowAsync);
             _desiredRevisions.AttachRetry(deviceId, path.RetryAsync);
             _desiredRevisions.AttachStatus(deviceId, path.StatusText);
+            _desiredRevisions.AttachGate(deviceId, () => path.Gate);
             _log.LogInformation("Reader {Reader}: attached for desired state and device→server observations", readerLabel);
         }
     }
@@ -538,6 +544,20 @@ public sealed class GatewayWorker : BackgroundService
         {
             try
             {
+                var gate = _desiredRevisions.GateOf(poll.DeviceId);
+                if (gate is ObservationGate.Observing or ObservationGate.Fenced)
+                {
+                    if (_attendanceSkipped.TryAdd(poll.DeviceId, 0))
+                    {
+                        _log.LogInformation(
+                            "Reader {Reader}: attendance waits while the reader list is still being saved (gate={Gate})",
+                            _readerLabels.Of(poll.DeviceId), gate);
+                    }
+
+                    return;
+                }
+
+                _attendanceSkipped.TryRemove(poll.DeviceId, out _);
                 await poll.PollOnceAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

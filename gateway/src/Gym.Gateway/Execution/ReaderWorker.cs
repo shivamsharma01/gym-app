@@ -775,7 +775,13 @@ public sealed class ReaderWorker : IDisposable
         var readFace = reader.GetFace(desired.DeviceUserId);
         if (!readUser.Ok || readUser.User == null || !readFace.Ok || readFace.Bytes == null)
         {
-            return WriteStep.Fail(readUser.Error ?? readFace.Error ?? "read-back failed");
+            Thread.Sleep(300);
+            readUser = reader.GetUser(desired.DeviceUserId);
+            readFace = reader.GetFace(desired.DeviceUserId);
+            if (!readUser.Ok || readUser.User == null || !readFace.Ok || readFace.Bytes == null)
+            {
+                return WriteStep.Fail(readUser.Error ?? readFace.Error ?? "read-back failed");
+            }
         }
 
         var differs = Differences(readUser.User, desired);

@@ -51,7 +51,8 @@ public class BootstrapTests : IDisposable
         var trusted = await path.BootstrapAsync(CancellationToken.None);
 
         Assert.True(trusted);
-        Assert.Equal(new[] { "7" }, sink.Ids);
+        // Bootstrap awaits the list only; per-user rows are not sent when the list is saved.
+        Assert.Empty(sink.Ids);
         Assert.Equal(new[] { 1 }, sink.TrustedRosterTotals);
         Assert.Equal(new[] { "7" }, sink.RosterIds);
         Assert.Equal(0, client.Pulls);

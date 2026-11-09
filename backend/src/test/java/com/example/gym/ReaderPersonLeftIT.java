@@ -65,7 +65,8 @@ class ReaderPersonLeftIT extends AbstractReaderIT {
         assertThat(enrollment("1").isResolved()).isTrue();
         assertThat(enrollment("1").getReviewStatus()).isEqualTo(PendingEnrollment.GONE);
         assertThat(enrollment("2").isResolved()).isFalse();
-        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(count);
+        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(count - 1);
+        assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(readerPk(readerId), "1")).isEmpty();
     }
 
     @Test
@@ -79,11 +80,29 @@ class ReaderPersonLeftIT extends AbstractReaderIT {
         assertThat(enrollment("1").isResolved()).isTrue();
         assertThat(enrollment("1").getReviewStatus()).isEqualTo(PendingEnrollment.GONE);
         assertThat(enrollment("2").isResolved()).isFalse();
+        assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(readerPk(readerId), "1")).isEmpty();
+        assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(readerPk(readerId), "2")).isPresent();
 
         trustedRoster(readerId, asha, ravi);
 
         assertThat(enrollment("1").isResolved()).isFalse();
         assertThat(enrollment("1").getReviewStatus()).isEqualTo(PendingEnrollment.PENDING);
+        assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(readerPk(readerId), "1")).isPresent();
+    }
+
+    @Test
+    void droppingTheHighestObservationLetsAllocateReuseThatId() throws Exception {
+        String asha = person("1", "Asha Rao", 0, FROM, TO, uploadFace(Color.RED));
+        String ravi = person("2", "Ravi Iyer", 0, FROM, TO, uploadFace(Color.BLUE));
+        trustedRoster(readerId, asha, ravi);
+        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).hasSize(2);
+
+        // Highest id leaves the reader; stale observation must be dropped so next allocate is 2.
+        trustedRoster(readerId, asha);
+
+        assertThat(deviceObservedUserRepository.findByDeviceIdAndDeviceUserId(readerPk(readerId), "2")).isEmpty();
+        Member created = onlyOn(readerId, "Gap", "Fill", "GAP-1", "9401");
+        assertThat(projection(readerId, created).getDeviceUserId()).isEqualTo("2");
     }
 
     @Test
@@ -131,6 +150,7 @@ class ReaderPersonLeftIT extends AbstractReaderIT {
         trustedRoster(readerId);
 
         assertThat(pendingEnrollmentRepository.findByDeviceIdAndResolvedFalse(readerPk(readerId))).isEmpty();
+        assertThat(deviceObservedUserRepository.findByDeviceId(readerPk(readerId))).isEmpty();
     }
 
     @Test

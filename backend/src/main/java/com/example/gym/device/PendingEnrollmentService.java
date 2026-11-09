@@ -216,7 +216,12 @@ public class PendingEnrollmentService {
             return false;
         }
         if (scan.staleFor(deviceUserId, known.snapshots().get(deviceUserId), known.baselines().get(deviceUserId),
-                known.enrollments().get(deviceUserId)) || bool(payload, "deleted")) {
+                known.enrollments().get(deviceUserId))) {
+            return true;
+        }
+        if (bool(payload, "deleted")) {
+            dropObservation(device, deviceUserId, known);
+            closeEnrollmentIfOpen(known.enrollments().get(deviceUserId));
             return true;
         }
         DeviceObservedUser snapshot = saveSnapshot(device, payload, deviceUserId, scan.stamp(), false,
@@ -231,9 +236,9 @@ public class PendingEnrollmentService {
     }
 
     /**
-     * A person nobody decided on whom a complete list no longer shows has left the reader, and no
-     * longer holds back a member. A decision already made waits for the reader as before, and a later
-     * look at the person than this list keeps them.
+     * A person a complete list no longer shows has left the reader: open enrollments are closed, and
+     * their observation row is dropped so the id is free to allocate again. A decision already made
+     * waits for the reader as before, and a later look at the person than this list keeps them.
      */
     private void closeLeft(Device device, ObservationOrder.Scan scan, Known known, Set<String> present) {
         int closed = 0;
@@ -251,6 +256,45 @@ public class PendingEnrollmentService {
         if (closed > 0) {
             FlowLog.info("device", "reader={} no longer shows {} undecided people", device.getPublicId(), closed);
         }
+        int dropped = 0;
+        for (DeviceObservedUser snapshot : List.copyOf(known.snapshots().values())) {
+            String deviceUserId = snapshot.getDeviceUserId();
+            if (present.contains(deviceUserId)
+                    || scan.staleFor(deviceUserId, snapshot, known.baselines().get(deviceUserId),
+                    known.enrollments().get(deviceUserId))) {
+                continue;
+            }
+            observedUsers.delete(snapshot);
+            known.snapshots().remove(deviceUserId);
+            dropped++;
+        }
+        if (dropped > 0) {
+            observedUsers.flush();
+            FlowLog.info("device", "reader={} dropped {} observation(s) the list no longer shows",
+                    device.getPublicId(), dropped);
+        }
+    }
+
+    /** Reader confirmed this id is empty: forget the snapshot so allocate can reuse the id. */
+    private void dropObservation(Device device, String deviceUserId, Known known) {
+        DeviceObservedUser snapshot = known != null ? known.snapshots().remove(deviceUserId) : null;
+        if (snapshot != null) {
+            observedUsers.delete(snapshot);
+            observedUsers.flush();
+            return;
+        }
+        observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).ifPresent(row -> {
+            observedUsers.delete(row);
+            observedUsers.flush();
+        });
+    }
+
+    private void closeEnrollmentIfOpen(PendingEnrollment enrollment) {
+        if (enrollment == null || enrollment.isResolved() || enrollment.getDecision() != null) {
+            return;
+        }
+        enrollment.leftReader();
+        enrollments.save(enrollment);
     }
 
     /**
@@ -284,7 +328,12 @@ public class PendingEnrollmentService {
         if (bool(payload, "deleted")) {
             if (allocated(device.getId(), deviceUserId, known)) {
                 reviews.recordAbsence(device, deviceUserId);
+            } else {
+                closeEnrollmentIfOpen(known != null
+                        ? known.enrollments().get(deviceUserId)
+                        : enrollments.findByDeviceIdAndDeviceUserId(device.getId(), deviceUserId).orElse(null));
             }
+            dropObservation(device, deviceUserId, known);
             return;
         }
         withdrawCollidingSeed(device, deviceUserId, scan, known);

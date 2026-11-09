@@ -11,6 +11,10 @@ import org.springframework.stereotype.Service;
  * mapped, seen on the last roster snapshot, sitting on an unacked projection, or reported occupied.
  * It is not derived from a public id, member code, or serial number. The caller must hold the
  * reader lock from {@link ReaderRevisions#lock}; otherwise two callers can pick the same id.
+ * <p>
+ * A deleted high id is reusable once it is no longer in that taken set (roster sync must drop the
+ * stale observation). Lower holes are not filled; only the high-water mark moves down when the
+ * highest taken id is cleared.
  */
 @Service
 public class DeviceUserIdAllocator {

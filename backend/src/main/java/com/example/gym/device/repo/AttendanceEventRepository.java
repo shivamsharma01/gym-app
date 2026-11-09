@@ -23,6 +23,18 @@ public interface AttendanceEventRepository extends JpaRepository<AttendanceEvent
 
     Page<AttendanceEvent> findByTenantId(Long tenantId, Pageable pageable);
 
+    Page<AttendanceEvent> findByTenantIdAndResult(Long tenantId, AccessResult result, Pageable pageable);
+
+    @Query("""
+            select e from AttendanceEvent e
+             where e.tenantId = :tenantId and e.result = :result and e.denyReason in :reasons
+            """)
+    Page<AttendanceEvent> findByTenantIdAndResultAndDenyReasonIn(
+            @Param("tenantId") Long tenantId,
+            @Param("result") AccessResult result,
+            @Param("reasons") List<String> reasons,
+            Pageable pageable);
+
     Page<AttendanceEvent> findByTenantIdAndMemberId(Long tenantId, Long memberId, Pageable pageable);
 
     long countByTenantIdAndOccurredAtGreaterThanEqualAndOccurredAtLessThan(

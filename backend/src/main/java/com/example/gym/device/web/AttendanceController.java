@@ -47,17 +47,21 @@ public class AttendanceController {
 
     @GetMapping("/attendance")
     @PreAuthorize("hasAuthority('ATTENDANCE_VIEW')")
-    @Operation(summary = "List attendance events by time (direction=desc newest first, the default, or asc)")
+    @Operation(summary = "List attendance events by time (direction=desc newest first, the default, or asc). "
+            + "Optional filter: GRANTED, DENIED, or VALIDITY_ENDED (denied after the reader's validity ended).")
     public PageResponse<AttendanceView> list(
             @RequestParam(defaultValue = "desc") String direction,
+            @RequestParam(required = false) String filter,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
         PageRequest pageable = pageByTime(page, size, direction);
-        Page<AttendanceEvent> result = deviceReadService.attendance(SecurityUtils.currentTenantId(), pageable);
-        Map<Long, String> names = memberNames(result.getContent());
+        Page<AttendanceEvent> result = deviceReadService.attendance(
+                SecurityUtils.currentTenantId(), filter, pageable);
+        Map<Long, Member> members = members(result.getContent());
         Map<Long, String> readers = readerNames(result.getContent());
         return PageResponse.from(result, e -> AttendanceView.from(
-                e, memberName(names, e.getMemberId()), readers.get(e.getDeviceId())));
+                e, memberPublicId(members, e.getMemberId()), memberName(members, e.getMemberId()),
+                readers.get(e.getDeviceId())));
     }
 
     @GetMapping("/members/{memberId}/attendance")
@@ -71,10 +75,11 @@ public class AttendanceController {
         PageRequest pageable = pageByTime(page, size, direction);
         Page<AttendanceEvent> result = deviceReadService.attendanceForMember(
                 memberId, SecurityUtils.currentTenantId(), pageable);
-        Map<Long, String> names = memberNames(result.getContent());
+        Map<Long, Member> members = members(result.getContent());
         Map<Long, String> readers = readerNames(result.getContent());
         return PageResponse.from(result, e -> AttendanceView.from(
-                e, memberName(names, e.getMemberId()), readers.get(e.getDeviceId())));
+                e, memberPublicId(members, e.getMemberId()), memberName(members, e.getMemberId()),
+                readers.get(e.getDeviceId())));
     }
 
     /** Events with the same time keep the order they were stored in, so pages never shuffle. */
@@ -84,18 +89,18 @@ public class AttendanceController {
         return PageRequest.of(Math.max(page, 0), safeSize, Sort.by(dir, "occurredAt", "id"));
     }
 
-    private Map<Long, String> memberNames(List<AttendanceEvent> events) {
+    private Map<Long, Member> members(List<AttendanceEvent> events) {
         Set<Long> ids = events.stream()
                 .map(AttendanceEvent::getMemberId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        Map<Long, String> names = new HashMap<>();
+        Map<Long, Member> byId = new HashMap<>();
         if (!ids.isEmpty()) {
             for (Member member : memberRepository.findAllById(ids)) {
-                names.put(member.getId(), member.getFullName());
+                byId.put(member.getId(), member);
             }
         }
-        return names;
+        return byId;
     }
 
     private Map<Long, String> readerNames(List<AttendanceEvent> events) {
@@ -109,7 +114,19 @@ public class AttendanceController {
         return names;
     }
 
-    private static String memberName(Map<Long, String> names, Long memberId) {
-        return memberId == null ? null : names.get(memberId);
+    private static String memberPublicId(Map<Long, Member> members, Long memberId) {
+        if (memberId == null) {
+            return null;
+        }
+        Member member = members.get(memberId);
+        return member == null ? null : member.getPublicId();
+    }
+
+    private static String memberName(Map<Long, Member> members, Long memberId) {
+        if (memberId == null) {
+            return null;
+        }
+        Member member = members.get(memberId);
+        return member == null ? null : member.getFullName();
     }
 }

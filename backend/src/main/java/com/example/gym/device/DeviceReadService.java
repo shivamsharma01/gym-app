@@ -1,5 +1,6 @@
 package com.example.gym.device;
 
+import com.example.gym.device.domain.AccessResult;
 import com.example.gym.device.domain.AttendanceEvent;
 import com.example.gym.device.domain.AttendanceSyncCursor;
 import com.example.gym.device.domain.Device;
@@ -65,6 +66,29 @@ public class DeviceReadService {
 
     @Transactional(readOnly = true)
     public Page<AttendanceEvent> attendance(Long tenantId, Pageable pageable) {
+        return attendanceRepository.findByTenantId(tenantId, pageable);
+    }
+
+    /**
+     * {@code filter}: {@code GRANTED}, {@code DENIED}, or {@code VALIDITY_ENDED} (denied because the
+     * reader's validity window was already over). Blank or unknown → unfiltered list.
+     */
+    @Transactional(readOnly = true)
+    public Page<AttendanceEvent> attendance(Long tenantId, String filter, Pageable pageable) {
+        if (filter == null || filter.isBlank() || "ALL".equalsIgnoreCase(filter)) {
+            return attendanceRepository.findByTenantId(tenantId, pageable);
+        }
+        if ("GRANTED".equalsIgnoreCase(filter)) {
+            return attendanceRepository.findByTenantIdAndResult(tenantId, AccessResult.GRANTED, pageable);
+        }
+        if ("DENIED".equalsIgnoreCase(filter)) {
+            return attendanceRepository.findByTenantIdAndResult(tenantId, AccessResult.DENIED, pageable);
+        }
+        if ("VALIDITY_ENDED".equalsIgnoreCase(filter)) {
+            return attendanceRepository.findByTenantIdAndResultAndDenyReasonIn(
+                    tenantId, AccessResult.DENIED,
+                    List.of("VALIDITY_PERIOD", "PERIOD_ERROR", "OVERDUE"), pageable);
+        }
         return attendanceRepository.findByTenantId(tenantId, pageable);
     }
 

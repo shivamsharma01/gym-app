@@ -171,7 +171,9 @@ export type Attendance = {
   result: string
   deviceUserId: string | null
   deviceRecNo: number | null
+  denyReason: string | null
   memberLinked: boolean
+  memberId: string | null
   memberName: string | null
   createdAt: string
 }

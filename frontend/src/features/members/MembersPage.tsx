@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Users } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useSearchParams } from 'react-router'
 import { PageNav } from '@/components/Pager'
 import { QueryError } from '@/components/QueryError'
 import {
@@ -32,13 +32,24 @@ type SortKey = 'name' | 'authority' | 'coverage' | 'account' | 'validTo' | `read
 
 export function MembersPage() {
   const { has } = useAuth()
+  const location = useLocation()
+  const [params, setParams] = useSearchParams()
+  const page = Math.max(0, Number(params.get('page') ?? '0') || 0)
+  const listPath = `${location.pathname}${location.search}`
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
   const [status, setStatus] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL')
-  const [page, setPage] = useState(0)
   const [deviceAuthority, setDeviceAuthority] = useState<'ALL' | 'ADMIN' | 'USER'>('ALL')
   const [idsDiffer, setIdsDiffer] = useState(false)
   const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection } | null>(null)
+  const setPage = (next: number) => {
+    setParams((current) => {
+      const nextParams = new URLSearchParams(current)
+      if (next <= 0) nextParams.delete('page')
+      else nextParams.set('page', String(next))
+      return nextParams
+    }, { replace: true })
+  }
   const toggleSort = (key: SortKey) => {
     // asc → desc → back to the default order (newest first)
     setSort((current) =>
@@ -47,13 +58,18 @@ export function MembersPage() {
     setPage(0)
   }
   const directionFor = (key: SortKey) => (sort?.key === key ? sort.direction : undefined)
+  const searchReady = useRef(false)
   useEffect(() => {
-    const t = setTimeout(() => {
-      setDebounced(q)
-      setPage(0)
-    }, 300)
+    const t = setTimeout(() => setDebounced(q), 300)
     return () => clearTimeout(t)
   }, [q])
+  useEffect(() => {
+    if (!searchReady.current) {
+      searchReady.current = true
+      return
+    }
+    setPage(0)
+  }, [debounced])
 
   const members = useQuery({
     queryKey: ['members', debounced, status, deviceAuthority, idsDiffer, page, sort],
@@ -207,7 +223,11 @@ export function MembersPage() {
                   <Tr key={m.id}>
                     <Td>
                       <div className="flex items-center gap-1.5">
-                        <Link className="font-semibold text-ink hover:text-accent" to={`/app/members/${m.id}`}>
+                        <Link
+                          className="font-semibold text-ink hover:text-accent"
+                          to={`/app/members/${m.id}`}
+                          state={{ from: listPath }}
+                        >
                           {m.fullName}
                         </Link>
                         {m.deviceAuthority === 'ADMIN' ? (

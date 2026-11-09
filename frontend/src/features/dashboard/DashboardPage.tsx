@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useLocation } from 'react-router'
 import {
   Activity,
   CreditCard,
@@ -26,9 +26,10 @@ import {
   Td,
   Tr,
 } from '@/components/ui'
+import { DeviceUserCell } from '@/features/attendance/DeviceUserCell'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/useAuth'
-import { formatDateTime, money } from '@/lib/cn'
+import { formatDateTime } from '@/lib/cn'
 import { statusTone } from '@/lib/status'
 import type { Attendance, PageResponse } from '@/lib/types'
 
@@ -47,6 +48,7 @@ type Summary = {
 
 export function DashboardPage() {
   const { user, has } = useAuth()
+  const location = useLocation()
   const canReport = has('REPORT_VIEW')
   const summary = useQuery({
     queryKey: ['reports', 'summary'],
@@ -60,6 +62,7 @@ export function DashboardPage() {
     enabled: has('ATTENDANCE_VIEW'),
     placeholderData: keepPreviousData,
   })
+  const listPath = `${location.pathname}${location.search}`
 
   const firstName = user?.fullName?.split(/\s+/)[0] ?? 'there'
 
@@ -92,15 +95,15 @@ export function DashboardPage() {
       {canReport ? (
         <>
           {summary.isLoading ? (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, i) => (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, i) => (
                 <Skeleton key={i} className="h-28" />
               ))}
             </div>
           ) : null}
           {summary.error ? <QueryError error={summary.error} onRetry={() => void summary.refetch()} /> : null}
           {summary.data ? (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               <StatCard
                 label="Members"
                 value={summary.data.membersTotal}
@@ -112,12 +115,6 @@ export function DashboardPage() {
                 value={summary.data.membershipsActive}
                 hint={`${summary.data.membershipsExpiringSoon} expiring in 7 days · ${summary.data.membershipsExpired} expired`}
                 to={has('MEMBERSHIP_VIEW') ? '/app/memberships' : undefined}
-              />
-              <StatCard
-                label="Payments completed"
-                value={money(summary.data.paymentsCompletedAmount, 'INR')}
-                hint={`${summary.data.paymentsCompletedCount} transactions (report window)`}
-                to={has('PAYMENT_VIEW') ? '/app/payments' : undefined}
               />
               <StatCard
                 label="Attendance events"
@@ -167,7 +164,7 @@ export function DashboardPage() {
                 <THead>
                   <tr>
                     <Th>When</Th>
-                    <Th>User</Th>
+                    <Th>Device user</Th>
                     <Th>Result</Th>
                     <Th>Direction</Th>
                   </tr>
@@ -177,7 +174,7 @@ export function DashboardPage() {
                     <Tr key={row.id}>
                       <Td className="whitespace-nowrap text-muted">{formatDateTime(row.occurredAt)}</Td>
                       <Td>
-                        <div className="font-medium">{row.memberName ?? 'Unknown member'}</div>
+                        <DeviceUserCell row={row} from={listPath} />
                         <div className="mt-0.5 text-xs text-muted">{row.reader ?? '—'}</div>
                       </Td>
                       <Td>

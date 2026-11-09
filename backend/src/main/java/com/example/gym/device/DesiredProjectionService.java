@@ -665,6 +665,87 @@ public class DesiredProjectionService {
     }
 
     /**
+     * Moves this member to {@code targetId} on one reader. The old id is published as an absence so
+     * the gateway deletes it; the new id is published as a presence. A finished absence or stale
+     * observation at the target is cleared first. The target must not already belong to another
+     * member on this reader.
+     */
+    @Transactional
+    public long rebindDeviceUserId(Member member, Device device, String targetId) {
+        if (targetId == null || targetId.isBlank()) {
+            throw CommonExceptions.badRequest("Device user id is required");
+        }
+        if (device.getGatewayId() == null) {
+            throw CommonExceptions.badRequest("Reader has no gateway");
+        }
+        ReaderRevision cursor = revisions.lock(member.getTenantId(), device.getId());
+        MemberDeviceMapping mapping = mappings.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .map(revisions::reload)
+                .orElseThrow(() -> CommonExceptions.conflict("Member mapping is missing"));
+        String fromId = mapping.getDeviceUserId();
+        if (fromId.equals(targetId)) {
+            return 0;
+        }
+        if (mappings.existsByDeviceIdAndDeviceUserId(device.getId(), targetId)) {
+            throw CommonExceptions.conflict("Device user id is already mapped");
+        }
+        retireFinishedAbsence(device, targetId);
+        observedUsers.findByDeviceIdAndDeviceUserId(device.getId(), targetId).ifPresent(row -> {
+            observedUsers.delete(row);
+            observedUsers.flush();
+        });
+
+        DesiredMemberProjection row = projections.findByDeviceIdAndMemberId(device.getId(), member.getId())
+                .map(revisions::reload)
+                .orElseThrow(() -> CommonExceptions.conflict("Desired row is missing"));
+        DeviceObservedUser vacating = observedUsers
+                .findByDeviceIdAndDeviceUserId(device.getId(), fromId)
+                .orElse(null);
+
+        mapping.setDeviceUserId(targetId);
+        mappings.save(mapping);
+
+        long presenceRev = cursor.bumpDesired();
+        row.setRevision(presenceRev);
+        row.setDeviceUserId(targetId);
+        row.setPresentOnReader(true);
+        row.setExpected(ExpectedOccupant.ABSENT);
+        projections.save(row);
+
+        long absenceRev = cursor.bumpDesired();
+        DesiredMemberProjection absence = new DesiredMemberProjection(
+                device.getTenantId(), device.getId(), null);
+        absence.setDoorNum(DOOR_NUM);
+        absence.setTimeSectionNum(TIME_SECTION_NUM);
+        absence.setRevision(absenceRev);
+        absence.setDeviceUserId(fromId);
+        absence.setPresentOnReader(false);
+        String name = vacating != null
+                ? ReaderReviewService.shown(vacating.getReaderName(), vacating.getReaderNameEx())
+                : row.getReaderName();
+        absence.setReaderName(name == null || name.isBlank() ? fromId : szName(name));
+        absence.setReaderNameEx(null);
+        absence.setUserStatus(USER_STATUS);
+        absence.setValidFrom(vacating != null && !blank(vacating.getValidFrom())
+                ? cut(vacating.getValidFrom(), 40) : row.getValidFrom());
+        absence.setValidTo(vacating != null && !blank(vacating.getValidTo())
+                ? cut(vacating.getValidTo(), 40) : row.getValidTo());
+        absence.setAuthority(AUTHORITY);
+        String face = vacating != null && vacating.getFaceSha256() != null
+                && vacating.getFaceSha256().length() == 64
+                ? vacating.getFaceSha256()
+                : row.getFaceSha256();
+        absence.setFaceSha256(face != null && face.length() == 64 ? face : "0".repeat(64));
+        absence.setExpected(vacating != null ? ExpectedOccupant.of(vacating) : ExpectedOccupant.ABSENT);
+        projections.save(absence);
+        notifyAfterCommit(device, absenceRev);
+        FlowLog.info("device",
+                "rebound member={} reader={} from={} to={} presenceRev={} absenceRev={}",
+                member.getPublicId(), device.getPublicId(), fromId, targetId, presenceRev, absenceRev);
+        return absenceRev;
+    }
+
+    /**
      * Inactive is access disallowed, not an archive. A member who never had a membership stays
      * enabled; one whose every membership was cancelled is disabled.
      */

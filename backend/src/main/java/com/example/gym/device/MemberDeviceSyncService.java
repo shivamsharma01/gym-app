@@ -161,6 +161,23 @@ public class MemberDeviceSyncService {
         desired.republish(member, device);
     }
 
+    /**
+     * Moves this member to a specific reader user id on one device. The old id is removed on the
+     * reader; the new id is written. Used to align Entry/Exit ids after a stale observation blocked
+     * the natural gap.
+     */
+    @Transactional
+    public void rebind(String memberPublicId, String devicePublicId, String deviceUserId, Long tenantId) {
+        Member member = memberService.getByPublicId(memberPublicId, tenantId);
+        Device device = deviceRepository.findByPublicId(devicePublicId)
+                .orElseThrow(() -> CommonExceptions.notFound("Device"));
+        TenantGuard.check(device.getTenantId(), tenantId, "Device");
+        if (mappingRepository.findByDeviceIdAndMemberId(device.getId(), member.getId()).isEmpty()) {
+            throw CommonExceptions.conflict("Member is not mapped to this reader");
+        }
+        desired.rebindDeviceUserId(member, device, deviceUserId);
+    }
+
     public record SyncStatus(FaceInfo face, List<DeviceRow> devices) {
     }
 

@@ -5,11 +5,12 @@ discovery.docker "containers" {
 discovery.relabel "docker" {
   targets = discovery.docker.containers.targets
 
-  // gym-backend is tailed from the logback file below (console would duplicate it).
   // loki and alloy are dropped so their own log shipping cannot feed itself.
+  // gym-backend is shipped from Docker logs (json-file). The previous logback file
+  // tail stopped producing Loki streams; Docker logs are the reliable path.
   rule {
     source_labels = ["__meta_docker_container_name"]
-    regex         = "/(gym-backend|loki|alloy)"
+    regex         = "/(loki|alloy)"
     action        = "drop"
   }
 
@@ -23,6 +24,13 @@ discovery.relabel "docker" {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
     target_label  = "compose_service"
   }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/gym-backend"
+    target_label  = "job"
+    replacement   = "gym-backend"
+  }
 }
 
 loki.source.docker "containers" {
@@ -31,19 +39,6 @@ loki.source.docker "containers" {
   labels     = {
     environment = "production",
   }
-  forward_to = [loki.write.local.receiver]
-}
-
-loki.source.file "gym_backend" {
-  targets = [
-    {
-      __path__      = "/var/log/gym/gym-backend.log",
-      job           = "gym-backend",
-      source        = "logback",
-      environment   = "production",
-    },
-  ]
-
   forward_to = [loki.write.local.receiver]
 }
 

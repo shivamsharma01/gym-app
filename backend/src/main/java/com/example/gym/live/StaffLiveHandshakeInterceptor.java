@@ -35,7 +35,8 @@ public class StaffLiveHandshakeInterceptor implements HandshakeInterceptor {
                                    WebSocketHandler wsHandler, Map<String, Object> attributes) {
         String token = presentedToken(request);
         if (token == null) {
-            log.warn("Rejecting staff live handshake: missing token");
+            // Expired SPA tabs reconnect often; keep these at debug so they do not flood WARN/audit noise.
+            log.debug("Rejecting staff live handshake: missing token");
             return false;
         }
         try {
@@ -45,14 +46,14 @@ public class StaffLiveHandshakeInterceptor implements HandshakeInterceptor {
             if (authorities == null || (!authorities.contains("ATTENDANCE_VIEW")
                     && !authorities.contains("DEVICE_VIEW")
                     && !authorities.contains("SECURITY_ALERT_VIEW"))) {
-                log.warn("Rejecting staff live handshake: missing live-view permission");
+                log.debug("Rejecting staff live handshake: missing live-view permission");
                 return false;
             }
             Number tid = claims.get("tid", Number.class);
             attributes.put(StaffLiveHub.TENANT_ATTR, tid == null ? null : tid.longValue());
             return true;
         } catch (JwtException | IllegalArgumentException ex) {
-            log.warn("Rejecting staff live handshake: invalid token");
+            log.debug("Rejecting staff live handshake: invalid token");
             return false;
         }
     }

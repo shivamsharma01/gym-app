@@ -42,10 +42,24 @@ type AuditOptions = {
   actions: string[]
 }
 
-function auditPath(page: number, pageSize: number, actors: string[], actions: string[], from: string, to: string) {
+/** Routine session noise — hidden unless staff opts in. */
+const HIDDEN_BY_DEFAULT = ['TOKEN_REFRESH'] as const
+
+function auditPath(
+  page: number,
+  pageSize: number,
+  actors: string[],
+  actions: string[],
+  from: string,
+  to: string,
+  showRoutineAuth: boolean,
+) {
   const params = new URLSearchParams({ page: String(page), size: String(pageSize) })
   for (const actor of actors) params.append('actor', actor)
   for (const action of actions) params.append('action', action)
+  if (!showRoutineAuth && actions.length === 0) {
+    for (const action of HIDDEN_BY_DEFAULT) params.append('excludeAction', action)
+  }
   if (from) params.set('from', from)
   if (to) params.set('to', to)
   return `/api/v1/audit-logs?${params.toString()}`
@@ -114,21 +128,23 @@ export function AuditPage() {
   const [actions, setActions] = useState<string[]>([])
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
+  const [showRoutineAuth, setShowRoutineAuth] = useState(false)
   const options = useQuery({
     queryKey: ['audit-options'],
     queryFn: () => api<AuditOptions>('/api/v1/audit-logs/options'),
   })
   const logs = useQuery({
-    queryKey: ['audit', page, pageSize, actors, actions, from, to],
-    queryFn: () => api<PageResponse<Audit>>(auditPath(page, pageSize, actors, actions, from, to)),
+    queryKey: ['audit', page, pageSize, actors, actions, from, to, showRoutineAuth],
+    queryFn: () =>
+      api<PageResponse<Audit>>(auditPath(page, pageSize, actors, actions, from, to, showRoutineAuth)),
   })
-  const filtering = actors.length > 0 || actions.length > 0 || from !== '' || to !== ''
+  const filtering = actors.length > 0 || actions.length > 0 || from !== '' || to !== '' || showRoutineAuth
 
   return (
     <div>
       <PageHeader
         title="Audit"
-        description="Who did what, newest first."
+        description="Who did what, newest first. Routine token refreshes are hidden unless you turn them on."
       />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <MultiFilter
@@ -169,6 +185,17 @@ export function AuditPage() {
           }}
           className="w-40"
         />
+        <label className="flex items-center gap-2 rounded-lg border border-line px-3 py-1.5 text-xs text-muted">
+          <input
+            type="checkbox"
+            checked={showRoutineAuth}
+            onChange={(event) => {
+              setShowRoutineAuth(event.target.checked)
+              setPage(0)
+            }}
+          />
+          Show token refreshes
+        </label>
         {filtering ? (
           <Button
             type="button"
@@ -179,6 +206,7 @@ export function AuditPage() {
               setActions([])
               setFrom('')
               setTo('')
+              setShowRoutineAuth(false)
               setPage(0)
             }}
           >

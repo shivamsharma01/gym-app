@@ -51,12 +51,14 @@ public class AuditController {
 
     @GetMapping
     @Transactional(readOnly = true)
-    @Operation(summary = "List audit entries for the current tenant (most recent first)")
+    @Operation(summary = "List audit entries for the current tenant (most recent first). "
+            + "Pass excludeAction=TOKEN_REFRESH to hide routine session refreshes.")
     public PageResponse<AuditLogResponse> list(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(name = "actor", required = false) List<String> actor,
             @RequestParam(name = "action", required = false) List<String> action,
+            @RequestParam(name = "excludeAction", required = false) List<String> excludeAction,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
@@ -64,6 +66,7 @@ public class AuditController {
         Long tenantId = SecurityUtils.currentTenantId();
         List<String> actors = clean(actor);
         List<String> actions = clean(action);
+        List<String> excluded = clean(excludeAction);
         if (from != null && to != null && from.isAfter(to)) {
             LocalDate swap = from;
             from = to;
@@ -71,9 +74,11 @@ public class AuditController {
         }
         Instant start = from == null ? null : from.atStartOfDay(ZONE).toInstant();
         Instant end = to == null ? null : to.plusDays(1).atStartOfDay(ZONE).toInstant();
-        Page<AuditLog> result = actors.isEmpty() && actions.isEmpty() && start == null && end == null
+        boolean noFilters = actors.isEmpty() && actions.isEmpty() && excluded.isEmpty()
+                && start == null && end == null;
+        Page<AuditLog> result = noFilters
                 ? unfiltered(tenantId, pageable)
-                : repository.findAll(filtered(tenantId, actors, actions, start, end), pageable);
+                : repository.findAll(filtered(tenantId, actors, actions, excluded, start, end), pageable);
         return PageResponse.from(result, log -> AuditLogResponse.from(log,
                 labelResolver.resolve(log.getResourceType(), log.getResourceId(), log.getDetails())));
     }
@@ -85,7 +90,7 @@ public class AuditController {
     }
 
     private static Specification<AuditLog> filtered(Long tenantId, List<String> actors, List<String> actions,
-                                                    Instant start, Instant end) {
+                                                    List<String> excluded, Instant start, Instant end) {
         return (root, query, cb) -> {
             List<Predicate> parts = new ArrayList<>();
             if (tenantId != null) {
@@ -96,6 +101,9 @@ public class AuditController {
             }
             if (!actions.isEmpty()) {
                 parts.add(root.get("action").in(actions));
+            }
+            if (!excluded.isEmpty()) {
+                parts.add(cb.not(root.get("action").in(excluded)));
             }
             if (start != null) {
                 parts.add(cb.greaterThanOrEqualTo(root.get("createdAt"), start));
